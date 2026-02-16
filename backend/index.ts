@@ -108,6 +108,33 @@ async function startServer() {
   const TEMPERATURE = 0.1;
   const MAX_TOKENS = 800;
   const AUTO_MODEL = true;
+  const splitThinkProgress = (raw: string) => {
+    let visible = "";
+    const thinkParts: string[] = [];
+    let cursor = 0;
+
+    while (cursor < raw.length) {
+      const start = raw.indexOf("<think>", cursor);
+      if (start === -1) {
+        visible += raw.slice(cursor);
+        break;
+      }
+      visible += raw.slice(cursor, start);
+      const thinkStart = start + "<think>".length;
+      const end = raw.indexOf("</think>", thinkStart);
+      if (end === -1) {
+        thinkParts.push(raw.slice(thinkStart));
+        break;
+      }
+      thinkParts.push(raw.slice(thinkStart, end));
+      cursor = end + "</think>".length;
+    }
+
+    return {
+      thinkingText: thinkParts.join("\n\n").trim(),
+      answerText: visible.trim(),
+    };
+  };
 
   app.post("/api/chat", async (req, res) => {
     try {
@@ -171,6 +198,134 @@ async function startServer() {
     } catch (error: any) {
       console.error("Erro no /api/chat:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });
+    }
+  });
+
+  app.post("/api/chat-stream", async (req, res) => {
+    try {
+      console.log("[/api/chat-stream] request received");
+      const apiKey = process.env.GROQ_API_KEY;
+      if (!apiKey) {
+        console.error("[/api/chat-stream] GROQ_API_KEY missing");
+        res.status(500).json({ error: "GROQ_API_KEY não configurada no servidor." });
+        return;
+      }
+
+      const { messages, model } = req.body as {
+        messages?: Array<{ role: string; content: any }>;
+        model?: string;
+      };
+      if (!messages || !Array.isArray(messages) || messages.length === 0) {
+        res.status(400).json({ error: "Mensagens inválidas." });
+        return;
+      }
+
+      const useAuto = model === "auto" || (!model && AUTO_MODEL);
+      const resolvedModel = useAuto ? autoSelectModel(messages) : model || DEFAULT_MODEL;
+      if (!MODEL_IDS.has(resolvedModel)) {
+        res.status(400).json({ error: "Modelo não permitido." });
+        return;
+      }
+
+      const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: resolvedModel,
+          temperature: TEMPERATURE,
+          max_tokens: MAX_TOKENS,
+          stream: true,
+          messages,
+        }),
+      });
+
+      if (!upstream.ok || !upstream.body) {
+        const text = await upstream.text();
+        console.error("[/api/chat-stream] groq error:", upstream.status, text);
+        res.status(upstream.status || 500).json({ error: text || "Erro no streaming da IA." });
+        return;
+      }
+
+      res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      const reader = upstream.body.getReader();
+
+      const writeChunk = (payload: Record<string, any>) => {
+        res.write(`${JSON.stringify(payload)}\n`);
+      };
+
+      let rawModelText = "";
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const data = trimmed.slice(5).trim();
+          if (!data) continue;
+          if (data === "[DONE]") {
+            const finalSplit = splitThinkProgress(rawModelText);
+            writeChunk({
+              type: "done",
+              model: resolvedModel,
+              thinkingText: finalSplit.thinkingText,
+              content: finalSplit.answerText,
+            });
+            res.end();
+            return;
+          }
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed?.choices?.[0]?.delta?.content;
+            if (typeof delta === "string" && delta.length > 0) {
+              rawModelText += delta;
+              const split = splitThinkProgress(rawModelText);
+              writeChunk({
+                type: "delta",
+                model: resolvedModel,
+                thinkingText: split.thinkingText,
+                content: split.answerText,
+              });
+            }
+          } catch {
+            // Ignore malformed data chunks from upstream
+          }
+        }
+      }
+
+      const finalSplit = splitThinkProgress(rawModelText);
+      res.write(
+        encoder.encode(
+          `${JSON.stringify({
+            type: "done",
+            model: resolvedModel,
+            thinkingText: finalSplit.thinkingText,
+            content: finalSplit.answerText,
+          })}\n`
+        )
+      );
+      res.end();
+    } catch (error: any) {
+      console.error("Erro no /api/chat-stream:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: error?.message || "Erro interno" });
+      } else {
+        res.end();
+      }
     }
   });
 
@@ -272,12 +427,18 @@ async function startServer() {
       }
 
       let extractedText = "";
+      let pageCount = 0;
       try {
         const parts = dataUrl.split(",");
         if (parts.length === 2) {
           const raw = Buffer.from(parts[1], "base64");
           const parsed = await pdfParse(raw);
-          extractedText = (parsed?.text || "").replace(/\s+\n/g, "\n").trim();
+          extractedText = (parsed?.text || "")
+            .replace(/\r/g, "\n")
+            .replace(/[ \t]+\n/g, "\n")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim();
+          pageCount = Number(parsed?.numpages || 0);
         }
       } catch (err) {
         console.warn("[/api/upload-file] failed to parse PDF text:", err);
@@ -322,11 +483,17 @@ async function startServer() {
 
       const data = await response.json();
       console.log("[/api/upload-file] success:", data?.public_id);
+      const secureUrl = String(data?.secure_url || "");
+      const downloadUrl = secureUrl.includes("/upload/")
+        ? secureUrl.replace("/upload/", "/upload/fl_attachment/")
+        : secureUrl;
       res.json({
         public_id: data.public_id,
-        secure_url: data.secure_url,
+        secure_url: secureUrl,
+        download_url: downloadUrl,
         format: data.format,
         bytes: data.bytes,
+        pages: pageCount,
         extracted_text: extractedText.slice(0, 25000),
       });
     } catch (error: any) {

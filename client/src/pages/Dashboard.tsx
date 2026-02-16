@@ -52,19 +52,56 @@ type ChatMessage = {
     model?: string;
     imageUrl?: string;
     fileUrl?: string;
+    fileDownloadUrl?: string;
+    fileName?: string;
     fileType?: 'image' | 'pdf';
     thinkingText?: string;
   };
 };
 
-const REQUIRED_MODELS: Array<{ id: string; label: string; capabilities: string[] }> = [
-  { id: 'meta-llama/llama-3.3-70b-versatile', label: 'Llama 3.3 70B', capabilities: ['text'] },
-  { id: 'meta-llama/llama-4-maverick-17b-128e-instruct', label: 'Llama 4 Maverick', capabilities: ['text', 'vision'] },
-  { id: 'meta-llama/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout', capabilities: ['text', 'vision'] },
-  { id: 'meta-llama/llama-guard-4-12b', label: 'Llama Guard 4 12B', capabilities: ['text', 'vision'] },
-  { id: 'qwen/qwen3-32b', label: 'Qwen 3 32B', capabilities: ['text'] },
-  { id: 'moonshotai/kimi-k2-instruct-0905', label: 'Kimi K2 Instruct (0905)', capabilities: ['text'] },
-  { id: 'openai/gpt-oss-20b', label: 'GPT OSS 20B', capabilities: ['text'] },
+const REQUIRED_MODELS: Array<{ id: string; label: string; capabilities: string[]; description: string }> = [
+  {
+    id: 'meta-llama/llama-3.3-70b-versatile',
+    label: 'Llama 3.3 70B',
+    capabilities: ['text'],
+    description: 'Equilíbrio geral para análise técnica e respostas longas em PT-BR.',
+  },
+  {
+    id: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+    label: 'Llama 4 Maverick',
+    capabilities: ['text', 'vision'],
+    description: 'Melhor para imagem/satélite + interpretação contextual detalhada.',
+  },
+  {
+    id: 'meta-llama/llama-4-scout-17b-16e-instruct',
+    label: 'Llama 4 Scout',
+    capabilities: ['text', 'vision'],
+    description: 'Rápido para triagem visual e respostas curtas com boa precisão.',
+  },
+  {
+    id: 'meta-llama/llama-guard-4-12b',
+    label: 'Llama Guard 4 12B',
+    capabilities: ['text'],
+    description: 'Focado em moderação e segurança; não é o principal para análise.',
+  },
+  {
+    id: 'qwen/qwen3-32b',
+    label: 'Qwen 3 32B',
+    capabilities: ['text'],
+    description: 'Bom para raciocínio estruturado, tabelas e extração de dados.',
+  },
+  {
+    id: 'moonshotai/kimi-k2-instruct-0905',
+    label: 'Kimi K2 Instruct (0905)',
+    capabilities: ['text'],
+    description: 'Ótimo para textos longos, síntese e revisão de documentos.',
+  },
+  {
+    id: 'openai/gpt-oss-20b',
+    label: 'GPT OSS 20B',
+    capabilities: ['text'],
+    description: 'Modelo alternativo rápido para tarefas gerais e QA técnico.',
+  },
 ];
 
 type Conversation = {
@@ -137,7 +174,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  const [models] = useState<Array<{ id: string; label: string; capabilities: string[] }>>(REQUIRED_MODELS);
+  const [models] = useState<Array<{ id: string; label: string; capabilities: string[]; description: string }>>(REQUIRED_MODELS);
   const [selectedModel, setSelectedModel] = useState('auto');
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
@@ -154,7 +191,7 @@ export default function Dashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [typingMessageId, setTypingMessageId] = useState<string | null>(null);
   const [typingText, setTypingText] = useState('');
-  const typingTimerRef = useRef<number | null>(null);
+  const [liveThinkingText, setLiveThinkingText] = useState('');
   const [aiThinking, setAiThinking] = useState(false);
   const [processingHintIndex, setProcessingHintIndex] = useState(0);
   const processingTimerRef = useRef<number | null>(null);
@@ -423,7 +460,7 @@ export default function Dashboard() {
     return data?.secure_url || null;
   };
 
-  const uploadPdfIfNeeded = async (): Promise<{ url: string; extractedText: string } | null> => {
+  const uploadPdfIfNeeded = async (): Promise<{ url: string; extractedText: string; downloadUrl: string; pages: number } | null> => {
     if (!pdfFile) return null;
     setUploading(true);
 
@@ -450,7 +487,12 @@ export default function Dashboard() {
 
     const data = await res.json();
     if (!data?.secure_url) return null;
-    return { url: data.secure_url as string, extractedText: (data.extracted_text as string) || '' };
+    return {
+      url: data.secure_url as string,
+      extractedText: (data.extracted_text as string) || '',
+      downloadUrl: (data.download_url as string) || (data.secure_url as string),
+      pages: Number(data.pages || 0),
+    };
   };
 
   const updateConversationMeta = async (updatedMessages: ChatMessage[], lastUserText: string) => {
@@ -522,7 +564,7 @@ export default function Dashboard() {
     }
 
     let imageUrl: string | null = null;
-    let pdfResult: { url: string; extractedText: string } | null = null;
+    let pdfResult: { url: string; extractedText: string; downloadUrl: string; pages: number } | null = null;
     try {
       if (imageFile) imageUrl = await uploadImageIfNeeded();
       if (pdfFile) pdfResult = await uploadPdfIfNeeded();
@@ -539,12 +581,23 @@ export default function Dashboard() {
 
     let userPayloadText = userText;
     if (imageUrl) {
-      userPayloadText = userText || 'Analise a imagem.';
+      userPayloadText =
+        `${userText || 'Analise a imagem anexada.'}\n\n` +
+        'Contexto: a imagem foi anexada pelo usuário para interpretação ambiental/florestal. ' +
+        'Descreva achados objetivos, limitações e próximos dados necessários.';
     } else if (pdfResult?.url) {
       const context = pdfResult.extractedText
         ? `\n\nConteúdo extraído do PDF:\n${pdfResult.extractedText}`
         : '';
-      userPayloadText = `${userText || 'Analise o PDF.'}\n\nArquivo PDF: ${pdfResult.url}${context}`;
+      userPayloadText =
+        `${userText || 'Analise o PDF anexado.'}\n\n` +
+        `Arquivo PDF: ${pdfResult.url}\n` +
+        `Nome do arquivo: ${pdfFile?.name || 'documento.pdf'}\n` +
+        `Páginas detectadas: ${pdfResult.pages || 'não identificado'}\n` +
+        (pdfResult.extractedText
+          ? 'Use o conteúdo extraído abaixo como fonte principal da análise.'
+          : 'Não houve extração de texto. Informe que o PDF pode ser escaneado e peça OCR se necessário.') +
+        context;
     }
 
     const userMessage: ChatMessage = {
@@ -553,9 +606,14 @@ export default function Dashboard() {
       text: userText || (imageUrl ? 'Analise a imagem.' : 'Analise o PDF.'),
       time,
       meta: imageUrl
-        ? { imageUrl, fileType: 'image' }
+        ? { imageUrl, fileType: 'image', fileName: imageFile?.name || 'imagem' }
         : pdfResult?.url
-        ? { fileUrl: pdfResult.url, fileType: 'pdf' }
+        ? {
+            fileUrl: pdfResult.url,
+            fileDownloadUrl: pdfResult.downloadUrl,
+            fileType: 'pdf',
+            fileName: pdfFile?.name || 'documento.pdf',
+          }
         : undefined,
     };
 
@@ -570,6 +628,7 @@ export default function Dashboard() {
     const typingId = nanoid();
     setTypingMessageId(typingId);
     setTypingText('');
+    setLiveThinkingText('');
     setProcessingHintIndex(0);
 
     const currentUserMessageId = userMessage.id;
@@ -577,23 +636,35 @@ export default function Dashboard() {
       systemPrompt,
       ...nextMessages.map((m) => {
         if (m.role === 'user' && m.meta?.imageUrl) {
+          const promptText =
+            m.id === currentUserMessageId
+              ? userPayloadText
+              : `${m.text || 'Imagem anexada.'}\n\nArquivo de imagem previamente anexado pelo usuário.`;
           return {
             role: 'user',
             content: [
-              { type: 'text', text: userPayloadText },
+              { type: 'text', text: promptText },
               { type: 'image_url', image_url: { url: m.meta.imageUrl } },
             ],
           };
         }
-        if (m.role === 'user' && m.meta?.fileType === 'pdf' && m.id === currentUserMessageId) {
-          return { role: 'user', content: userPayloadText };
+        if (m.role === 'user' && m.meta?.fileType === 'pdf') {
+          if (m.id === currentUserMessageId) {
+            return { role: 'user', content: userPayloadText };
+          }
+          const historicalPdfContext =
+            `PDF previamente anexado pelo usuário.\n` +
+            `Nome do arquivo: ${m.meta.fileName || 'documento.pdf'}\n` +
+            `Link: ${m.meta.fileUrl || ''}\n` +
+            `Resumo do pedido original: ${m.text || 'Analisar PDF.'}`;
+          return { role: 'user', content: historicalPdfContext };
         }
         return { role: m.role === 'ai' ? 'assistant' : 'user', content: m.text };
       }),
     ];
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch('/api/chat-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: apiMessages, model: selectedModel }),
@@ -602,47 +673,95 @@ export default function Dashboard() {
         const text = await res.text();
         throw new Error(text || 'Falha ao consultar IA');
       }
+      if (!res.body) {
+        throw new Error('Resposta de streaming inválida');
+      }
 
-      const data = await res.json();
-      const reply = data?.content || 'Desculpe, não consegui responder agora.';
-      const parsed = splitThinkContent(reply);
-      const usedModel = data?.model || selectedModel;
-      setAiThinking(false);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finalContent = '';
+      let finalThinking = '';
+      let usedModel = selectedModel;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          let chunk: any;
+          try {
+            chunk = JSON.parse(trimmed);
+          } catch {
+            continue;
+          }
+
+          if (typeof chunk.model === 'string' && chunk.model) {
+            usedModel = chunk.model;
+          }
+          if (typeof chunk.thinkingText === 'string') {
+            finalThinking = chunk.thinkingText;
+            setLiveThinkingText(chunk.thinkingText);
+          }
+          if (typeof chunk.content === 'string') {
+            finalContent = chunk.content;
+            setTypingText(chunk.content);
+            setAiThinking(false);
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        const trailing = buffer.trim().split('\n');
+        for (const line of trailing) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const chunk = JSON.parse(trimmed);
+            if (typeof chunk.model === 'string' && chunk.model) usedModel = chunk.model;
+            if (typeof chunk.thinkingText === 'string') {
+              finalThinking = chunk.thinkingText;
+              setLiveThinkingText(chunk.thinkingText);
+            }
+            if (typeof chunk.content === 'string') {
+              finalContent = chunk.content;
+              setTypingText(chunk.content);
+            }
+          } catch {
+            // ignore trailing malformed line
+          }
+        }
+      }
+
       const aiMessage: ChatMessage = {
         id: typingId,
         role: 'ai',
-        text: parsed.cleanText,
+        text: finalContent || 'Desculpe, não consegui responder agora.',
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         meta: {
           model: usedModel,
-          thinkingText: parsed.thinkingText || undefined,
+          thinkingText: finalThinking || undefined,
         },
       };
-
-      // Typing animation
-      const full = reply;
-      let idx = 0;
-      if (typingTimerRef.current) {
-        window.clearInterval(typingTimerRef.current);
-      }
-      typingTimerRef.current = window.setInterval(() => {
-        idx += 1;
-        setTypingText(full.slice(0, idx));
-        if (idx >= full.length) {
-          window.clearInterval(typingTimerRef.current!);
-          typingTimerRef.current = null;
-          setTypingMessageId(null);
-          setTypingText('');
-          const updatedMessages = [...nextMessages, aiMessage];
-          setMessages(updatedMessages);
-          updateConversationMeta(updatedMessages, userText || 'Nova conversa');
-        }
-      }, 18);
+      setAiThinking(false);
+      setTypingMessageId(null);
+      setTypingText('');
+      setLiveThinkingText('');
+      const updatedMessages = [...nextMessages, aiMessage];
+      setMessages(updatedMessages);
+      updateConversationMeta(updatedMessages, userText || 'Nova conversa');
     } catch (error: any) {
       toast.error(error.message || 'Erro ao conversar com a IA');
       setAiThinking(false);
       setTypingMessageId(null);
       setTypingText('');
+      setLiveThinkingText('');
     } finally {
       setSending(false);
     }
@@ -904,6 +1023,18 @@ export default function Dashboard() {
                         }
                       `}
                     >
+                      {msg.meta?.fileType === 'pdf' && (
+                        <div
+                          className={`mb-2 inline-flex items-center gap-2 rounded-lg px-2.5 py-1 text-[11px] border ${
+                            msg.role === 'user'
+                              ? 'bg-emerald-700/50 border-emerald-300/30 text-emerald-50'
+                              : 'bg-white/5 border-white/10 text-slate-300'
+                          }`}
+                        >
+                          <FileText size={13} />
+                          <span className="truncate max-w-[220px]">{msg.meta.fileName || 'PDF anexado'}</span>
+                        </div>
+                      )}
                       {msg.role === 'ai' && displayThinking && (
                         <div className="mb-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
                           <div className="flex items-center justify-between gap-3">
@@ -933,12 +1064,13 @@ export default function Dashboard() {
                       )}
                       {msg.meta?.fileType === 'pdf' && msg.meta.fileUrl && (
                         <a
-                          href={msg.meta.fileUrl}
+                          href={msg.meta.fileDownloadUrl || msg.meta.fileUrl}
                           target="_blank"
                           rel="noreferrer"
+                          download
                           className="mt-3 inline-flex items-center gap-2 text-xs text-emerald-200 hover:text-emerald-100"
                         >
-                          <FileText size={14} /> Abrir PDF
+                          <FileText size={14} /> Baixar PDF
                         </a>
                       )}
                       <span
@@ -951,29 +1083,28 @@ export default function Dashboard() {
                     </div>
                   </div>
                 )})}
-                {(aiThinking || typingMessageId) && (
+                {(typingMessageId || aiThinking) && (
                   <div className="flex gap-4 animate-fade-in-up">
                     <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-[#203127] border border-emerald-500/20">
                       <Sparkles size={14} className="text-emerald-300" />
                     </div>
                     <div className="relative max-w-[85%] lg:max-w-[75%] p-4 rounded-2xl bg-[#0f1713]/90 border border-dashed border-emerald-500/35 text-slate-200">
-                      <div className="text-[10px] uppercase tracking-wider text-emerald-300/80 mb-1">
-                        Pensamento da IA
-                      </div>
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap text-slate-300/90">
-                        {(aiThinking
-                          ? [
+                      <div className="mb-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
+                        <div className="text-[10px] uppercase tracking-wider text-emerald-300/80 mb-1">
+                          Pensamento da IA
+                        </div>
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap text-slate-300/90">
+                          {liveThinkingText ||
+                            [
                               'Lendo sua solicitação',
                               'Analisando contexto ambiental',
                               'Selecionando estratégia de resposta',
                               'Consolidando resultado',
-                            ]
-                          : [
-                              'Refinando a resposta',
-                              'Validando consistência',
-                              'Finalizando texto',
-                              'Preparando envio',
-                            ])[processingHintIndex]}
+                            ][processingHintIndex]}
+                        </p>
+                      </div>
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap text-slate-200/95 min-h-5">
+                        {typingText || 'Gerando resposta...'}
                       </p>
                       <div className="flex items-center gap-2 mt-2">
                         <span className="typing-dot"></span>
@@ -1003,7 +1134,14 @@ export default function Dashboard() {
                   {(imageFile || pdfFile) && (
                     <div className="px-4 pb-2">
                       <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs text-slate-300">
-                        {imageFile ? <ImagePlus size={14} className="text-emerald-300" /> : <FileText size={14} className="text-emerald-300" />}
+                        {imageFile ? (
+                          <ImagePlus size={14} className="text-emerald-300" />
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-red-500/20 text-red-200 border border-red-400/20">
+                            <FileText size={13} className="text-red-300" />
+                            PDF
+                          </span>
+                        )}
                         <span className="truncate max-w-[240px]">{imageFile?.name || pdfFile?.name}</span>
                         <button
                           type="button"
@@ -1066,7 +1204,7 @@ export default function Dashboard() {
                               >
                                 <div className="text-xs font-medium">Auto (Florestal)</div>
                                 <div className="text-[11px] text-slate-400 mt-0.5">
-                                  Seleção automática por contexto
+                                  Escolhe modelo por contexto (texto, imagem e documento)
                                 </div>
                               </button>
                               {models.map((model) => (
@@ -1083,9 +1221,14 @@ export default function Dashboard() {
                                       : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
                                   }`}
                                 >
-                                  <div className="text-xs font-medium">{model.label}</div>
-                                  <div className="text-[11px] text-slate-500 mt-0.5">
-                                    {model.capabilities?.join(' + ') || 'text'}
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="text-xs font-medium">{model.label}</div>
+                                    <div className="text-[10px] text-slate-400 uppercase tracking-wider">
+                                      {(model.capabilities || ['text']).join(' + ')}
+                                    </div>
+                                  </div>
+                                  <div className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                                    {model.description}
                                   </div>
                                 </button>
                               ))}
