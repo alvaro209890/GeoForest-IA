@@ -1,7 +1,5 @@
 /**
- * Auth Page - Login & Sign Up
- *
- * Fullscreen, non-scrollable layout tuned for desktop and mobile.
+ * Auth Page - Fullscreen, non-scrollable, no top bar artifacts
  */
 
 import { useEffect, useState } from 'react';
@@ -10,19 +8,19 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { handleSignUp, handleLogin, handleGoogleSignIn } from '@/lib/auth';
+import { useLocation } from 'wouter';
 
 type AuthMode = 'login' | 'signup';
 
 export default function Auth() {
+  const [, setLocation] = useLocation();
   const [mode, setMode] = useState<AuthMode>('login');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // Login form state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
-  // Sign up form state
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
@@ -53,10 +51,7 @@ export default function Auth() {
     };
   }, []);
 
-  const validateEmail = (email: string) => {
-    const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return regex.test(email);
-  };
+  const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
   const validateSignUp = () => {
     if (!fullName.trim()) {
@@ -93,7 +88,6 @@ export default function Auth() {
   const onSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateSignUp()) return;
-
     setLoading(true);
     try {
       await handleSignUp({
@@ -102,7 +96,7 @@ export default function Auth() {
         fullName,
       });
       toast.success('Cadastro realizado com sucesso!');
-      window.location.href = '/dashboard';
+      setLocation('/dashboard');
     } catch (error: any) {
       toast.error(error.message || 'Erro ao cadastrar');
     } finally {
@@ -113,12 +107,11 @@ export default function Auth() {
   const onLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateLogin()) return;
-
     setLoading(true);
     try {
       await handleLogin(loginEmail, loginPassword);
       toast.success('Login realizado com sucesso!');
-      window.location.href = '/dashboard';
+      setLocation('/dashboard');
     } catch (error: any) {
       toast.error(error.message || 'Erro ao fazer login');
     } finally {
@@ -131,7 +124,7 @@ export default function Auth() {
     try {
       await handleGoogleSignIn();
       toast.success('Login com Google realizado com sucesso!');
-      window.location.href = '/dashboard';
+      setLocation('/dashboard');
     } catch (error: any) {
       toast.error(error.message || 'Erro ao entrar com Google');
     } finally {
@@ -140,14 +133,14 @@ export default function Auth() {
   };
 
   return (
-    <div className="fixed inset-0 overflow-hidden">
+    <div className="fixed inset-0 overflow-hidden bg-black">
       <div className="absolute inset-0 bg-[radial-gradient(1200px_800px_at_20%_10%,rgba(34,197,94,0.25),transparent_60%),radial-gradient(900px_700px_at_80%_20%,rgba(234,179,8,0.18),transparent_60%),linear-gradient(135deg,#0b1f16,#0b1b10_45%,#0a1210)]" />
       <div className="absolute inset-0 bg-[url('https://files.manuscdn.com/user_upload_by_module/session_file/310419663030608231/aWDbHEOGaMpaIiIr.jpg')] bg-cover bg-center opacity-35" />
-      <div className="absolute inset-0 bg-black/35" />
+      <div className="absolute inset-0 bg-black/40" />
 
       <div className="relative z-10 h-full w-full flex items-center justify-center px-4">
-        <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-10">
-          <div className="hidden lg:flex flex-col justify-center px-4">
+        <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="hidden lg:flex flex-col justify-center">
             <div className="inline-flex items-center gap-3 mb-6">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center">
                 <span className="text-2xl">🌲</span>
@@ -158,18 +151,8 @@ export default function Auth() {
               </div>
             </div>
             <p className="text-green-100/80 text-lg leading-relaxed max-w-md">
-              Plataforma inteligente para análise, gestão e apoio técnico em projetos florestais.
+              Plataforma inteligente para apoio técnico e análise ambiental com foco em dados florestais.
             </p>
-            <div className="mt-8 grid grid-cols-2 gap-4 max-w-md">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
-                <p className="text-white text-sm font-semibold">Análises rápidas</p>
-                <p className="text-green-200/80 text-xs mt-2">Decisões técnicas com dados.</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
-                <p className="text-white text-sm font-semibold">Dashboards claros</p>
-                <p className="text-green-200/80 text-xs mt-2">Visão direta do projeto.</p>
-              </div>
-            </div>
           </div>
 
           <div className="flex flex-col justify-center">
@@ -178,7 +161,7 @@ export default function Auth() {
                 <span className="text-2xl">🌲</span>
               </div>
               <h1 className="text-3xl font-bold text-white">GeoForest IA</h1>
-              <p className="text-green-200 text-sm mt-1">IA aplicada à Engenharia Florestal</p>
+              <p className="text-green-200 text-sm">IA aplicada à Engenharia Florestal</p>
             </div>
 
             <div className="rounded-3xl border border-white/15 bg-white/8 backdrop-blur-xl shadow-2xl p-6 sm:p-8">
