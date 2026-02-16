@@ -159,15 +159,97 @@ async function startServer() {
   const toImageryLayers = (
     layers: ReturnType<typeof parseLayersFromCapabilities>
   ) => {
+    const preferredOrder = [
+      "SEMAMT:ALOS_PALSAR_DEM",
+      "Geoportal:DECLIVIDADE_GEOPORTAL",
+      "Mosaicos:LANDSAT_5_1984",
+      "semamt:LANDSAT_5",
+      "Mosaicos:LANDSAT_5_1985",
+      "Mosaicos:LANDSAT_5_1986",
+      "Mosaicos:LANDSAT_5_1987",
+      "Mosaicos:LANDSAT_5_1988",
+      "Mosaicos:LANDSAT_5_1989",
+      "Mosaicos:LANDSAT_5_1990",
+      "Mosaicos:LANDSAT_5_1991",
+      "Mosaicos:LANDSAT_5_1992",
+      "Mosaicos:LANDSAT_5_1993",
+      "Mosaicos:LANDSAT_5_1994",
+      "Mosaicos:LANDSAT_5_1995",
+      "Mosaicos:LANDSAT_5_1996",
+      "Mosaicos:LANDSAT_5_1997",
+      "Mosaicos:LANDSAT_5_1998",
+      "Mosaicos:LANDSAT_5_1999",
+      "Mosaicos:LANDSAT_5_2000",
+      "Mosaicos:LANDSAT_5_2003",
+      "Mosaicos:LANDSAT_5_2004",
+      "Mosaicos:LANDSAT_5_2005",
+      "Mosaicos:LANDSAT_5_2006",
+      "Mosaicos:LANDSAT_5_2007",
+      "Mosaicos:LANDSAT_5_2008",
+      "Mosaicos:LANDSAT_5_2009",
+      "Mosaicos:LANDSAT_5_2010",
+      "Mosaicos:LANDSAT_5_2011",
+      "Mosaicos:LANDSAT_7_2002",
+      "Mosaicos:LANDSAT_8_2013",
+      "Mosaicos:LANDSAT_8_2014",
+      "Mosaicos:LANDSAT_8_2015",
+      "Mosaicos:LANDSAT_8_2016",
+      "Mosaicos:LANDSAT_8_2017",
+      "Mosaicos:LANDSAT_8_2018",
+      "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "Mosaicos:RESOURCESAT_2012",
+      "Mosaicos:SENTINEL_2_2016",
+      "Mosaicos:Geoportal_Sentinel_2_2016_NIR",
+      "Mosaicos:SENTINEL_2_2017",
+      "Mosaicos:Geoportal_Sentinel_2_2017_NIR",
+      "Mosaicos:SENTINEL_2_2018",
+      "Mosaicos:Geoportal_Sentinel_2_2018_NIR",
+      "Mosaicos:SENTINEL_2_2019",
+      "Mosaicos:SENTINEL_2_2020",
+      "Mosaicos:Geoportal_Sentinel_2_2020_NIR",
+      "Mosaicos:SENTINEL_2_2021",
+      "Mosaicos:Geoportal_Sentinel_2_2021_NIR",
+      "Mosaicos:SENTINEL_2_2022",
+      "Mosaicos:SENTINEL_2_2023",
+      "Mosaicos:SENTINEL_2_2024",
+    ];
+    const preferredOrderMap = new Map<string, number>();
+    for (const name of preferredOrder) {
+      const key = name.toLowerCase();
+      if (!preferredOrderMap.has(key)) {
+        preferredOrderMap.set(key, preferredOrderMap.size);
+      }
+    }
+    const workspaceRank = (name: string) => {
+      const ws = name.split(":")[0]?.toLowerCase() || "";
+      if (ws === "semamt") return 0;
+      if (ws === "geoportal") return 1;
+      if (ws === "mosaicos") return 2;
+      return 3;
+    };
+
     return layers
       .filter((l) => l.isRenderable)
       .filter((l) => {
         const low = l.name.toLowerCase();
         const txt = `${l.name} ${l.title}`.toLowerCase();
-        if (!low.startsWith("mosaicos:")) return false;
-        return /(landsat|sentinel|spot|resourcesat|mosaico)/.test(txt);
+        const hasKnownWorkspace =
+          low.startsWith("mosaicos:") || low.startsWith("semamt:") || low.startsWith("geoportal:");
+        if (!hasKnownWorkspace) return false;
+        return /(landsat|sentinel|spot|resourcesat|mosaico|alos|palsar|dem|declividade)/.test(txt);
       })
       .sort((a, b) => {
+        const aOrder = preferredOrderMap.get(a.name.toLowerCase());
+        const bOrder = preferredOrderMap.get(b.name.toLowerCase());
+        if (aOrder !== undefined || bOrder !== undefined) {
+          if (aOrder === undefined) return 1;
+          if (bOrder === undefined) return -1;
+          if (aOrder !== bOrder) return aOrder - bOrder;
+        }
+
+        const ws = workspaceRank(a.name) - workspaceRank(b.name);
+        if (ws !== 0) return ws;
+
         const score = (x: (typeof layers)[number]) => {
           let s = 0;
           if (x.name === "Mosaicos:LANDSAT_5_2008") s += 1000;
@@ -186,6 +268,10 @@ async function startServer() {
     return layers
       .filter((l) => l.isRenderable)
       .filter((l) => !l.name.toLowerCase().startsWith("mosaicos:"))
+      .filter((l) => {
+        const txt = `${l.name} ${l.title}`.toLowerCase();
+        return !/(landsat|sentinel|spot|resourcesat|mosaico|alos|palsar|dem|declividade)/.test(txt);
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
   };
 
@@ -319,35 +405,80 @@ async function startServer() {
   };
 
   const extractZipEntries = (zipBuffer: Buffer) => {
-    // Minimal ZIP parser for local file headers (supports "stored" and "deflate")
+    // ZIP parser using central directory (supports local headers with data descriptors).
     const entries: Array<{ name: string; data: Buffer }> = [];
-    let offset = 0;
-    while (offset + 30 <= zipBuffer.length) {
-      const signature = zipBuffer.readUInt32LE(offset);
-      if (signature !== 0x04034b50) break;
-      const method = zipBuffer.readUInt16LE(offset + 8);
-      const compressedSize = zipBuffer.readUInt32LE(offset + 18);
-      const fileNameLength = zipBuffer.readUInt16LE(offset + 26);
-      const extraLength = zipBuffer.readUInt16LE(offset + 28);
-      const nameStart = offset + 30;
-      const nameEnd = nameStart + fileNameLength;
-      const fileName = zipBuffer.subarray(nameStart, nameEnd).toString("utf8");
-      const dataStart = nameEnd + extraLength;
+    const EOCD_SIG = 0x06054b50;
+    const CEN_SIG = 0x02014b50;
+    const LOC_SIG = 0x04034b50;
+    const maxScan = Math.min(zipBuffer.length, 65557);
+
+    let eocdOffset = -1;
+    for (let i = zipBuffer.length - 22; i >= zipBuffer.length - maxScan; i -= 1) {
+      if (i < 0) break;
+      if (zipBuffer.readUInt32LE(i) === EOCD_SIG) {
+        eocdOffset = i;
+        break;
+      }
+    }
+    if (eocdOffset < 0) return entries;
+
+    const totalEntries = zipBuffer.readUInt16LE(eocdOffset + 10);
+    const centralDirOffset = zipBuffer.readUInt32LE(eocdOffset + 16);
+    let cenOffset = centralDirOffset;
+
+    for (let i = 0; i < totalEntries; i += 1) {
+      if (cenOffset + 46 > zipBuffer.length) break;
+      if (zipBuffer.readUInt32LE(cenOffset) !== CEN_SIG) break;
+
+      const method = zipBuffer.readUInt16LE(cenOffset + 10);
+      const compressedSize = zipBuffer.readUInt32LE(cenOffset + 20);
+      const fileNameLength = zipBuffer.readUInt16LE(cenOffset + 28);
+      const extraLength = zipBuffer.readUInt16LE(cenOffset + 30);
+      const commentLength = zipBuffer.readUInt16LE(cenOffset + 32);
+      const localHeaderOffset = zipBuffer.readUInt32LE(cenOffset + 42);
+
+      const fileNameStart = cenOffset + 46;
+      const fileNameEnd = fileNameStart + fileNameLength;
+      if (fileNameEnd > zipBuffer.length) break;
+      const fileName = zipBuffer.subarray(fileNameStart, fileNameEnd).toString("utf8");
+
+      if (localHeaderOffset + 30 > zipBuffer.length) {
+        cenOffset = fileNameEnd + extraLength + commentLength;
+        continue;
+      }
+      if (zipBuffer.readUInt32LE(localHeaderOffset) !== LOC_SIG) {
+        cenOffset = fileNameEnd + extraLength + commentLength;
+        continue;
+      }
+      const localNameLen = zipBuffer.readUInt16LE(localHeaderOffset + 26);
+      const localExtraLen = zipBuffer.readUInt16LE(localHeaderOffset + 28);
+      const dataStart = localHeaderOffset + 30 + localNameLen + localExtraLen;
       const dataEnd = dataStart + compressedSize;
-      if (dataEnd > zipBuffer.length) break;
+      if (dataEnd > zipBuffer.length) {
+        cenOffset = fileNameEnd + extraLength + commentLength;
+        continue;
+      }
+
       const compressed = zipBuffer.subarray(dataStart, dataEnd);
       let data: Buffer;
       if (method === 0) {
         data = Buffer.from(compressed);
       } else if (method === 8) {
-        data = Buffer.from(inflateRawSync(compressed));
+        try {
+          data = Buffer.from(inflateRawSync(compressed));
+        } catch {
+          cenOffset = fileNameEnd + extraLength + commentLength;
+          continue;
+        }
       } else {
-        offset = dataEnd;
+        cenOffset = fileNameEnd + extraLength + commentLength;
         continue;
       }
+
       entries.push({ name: fileName, data });
-      offset = dataEnd;
+      cenOffset = fileNameEnd + extraLength + commentLength;
     }
+
     return entries;
   };
 

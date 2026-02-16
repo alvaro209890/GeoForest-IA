@@ -1546,29 +1546,93 @@ Arquivo de imagem previamente anexado pelo usuário.`;
   }, [mapPolygon, mapBbox]);
 
   const groupedImageLayers = useMemo(() => {
+    const preferredOrder = [
+      'SEMAMT:ALOS_PALSAR_DEM',
+      'Geoportal:DECLIVIDADE_GEOPORTAL',
+      'Mosaicos:LANDSAT_5_1984',
+      'semamt:LANDSAT_5',
+      'Mosaicos:LANDSAT_5_1985',
+      'Mosaicos:LANDSAT_5_1986',
+      'Mosaicos:LANDSAT_5_1987',
+      'Mosaicos:LANDSAT_5_1988',
+      'Mosaicos:LANDSAT_5_1989',
+      'Mosaicos:LANDSAT_5_1990',
+      'Mosaicos:LANDSAT_5_1991',
+      'Mosaicos:LANDSAT_5_1992',
+      'Mosaicos:LANDSAT_5_1993',
+      'Mosaicos:LANDSAT_5_1994',
+      'Mosaicos:LANDSAT_5_1995',
+      'Mosaicos:LANDSAT_5_1996',
+      'Mosaicos:LANDSAT_5_1997',
+      'Mosaicos:LANDSAT_5_1998',
+      'Mosaicos:LANDSAT_5_1999',
+      'Mosaicos:LANDSAT_5_2000',
+      'Mosaicos:LANDSAT_5_2003',
+      'Mosaicos:LANDSAT_5_2004',
+      'Mosaicos:LANDSAT_5_2005',
+      'Mosaicos:LANDSAT_5_2006',
+      'Mosaicos:LANDSAT_5_2007',
+      'Mosaicos:LANDSAT_5_2008',
+      'Mosaicos:LANDSAT_5_2009',
+      'Mosaicos:LANDSAT_5_2010',
+      'Mosaicos:LANDSAT_5_2011',
+      'Mosaicos:LANDSAT_7_2002',
+      'Mosaicos:LANDSAT_8_2013',
+      'Mosaicos:LANDSAT_8_2014',
+      'Mosaicos:LANDSAT_8_2015',
+      'Mosaicos:LANDSAT_8_2016',
+      'Mosaicos:LANDSAT_8_2017',
+      'Mosaicos:LANDSAT_8_2018',
+      'Mosaicos:MOSAICO_SPOT_SEPLAN',
+      'Mosaicos:RESOURCESAT_2012',
+      'Mosaicos:SENTINEL_2_2016',
+      'Mosaicos:Geoportal_Sentinel_2_2016_NIR',
+      'Mosaicos:SENTINEL_2_2017',
+      'Mosaicos:Geoportal_Sentinel_2_2017_NIR',
+      'Mosaicos:SENTINEL_2_2018',
+      'Mosaicos:Geoportal_Sentinel_2_2018_NIR',
+      'Mosaicos:SENTINEL_2_2019',
+      'Mosaicos:SENTINEL_2_2020',
+      'Mosaicos:Geoportal_Sentinel_2_2020_NIR',
+      'Mosaicos:SENTINEL_2_2021',
+      'Mosaicos:Geoportal_Sentinel_2_2021_NIR',
+      'Mosaicos:SENTINEL_2_2022',
+      'Mosaicos:SENTINEL_2_2023',
+      'Mosaicos:SENTINEL_2_2024',
+    ];
+    const preferredOrderMap = new Map<string, number>();
+    preferredOrder.forEach((name, idx) => {
+      const key = name.toLowerCase();
+      if (!preferredOrderMap.has(key)) preferredOrderMap.set(key, idx);
+    });
     const parseYear = (text: string) => {
       const m = text.match(/\b(19|20)\d{2}\b/);
       return m ? Number(m[0]) : 0;
     };
     const groups: Record<string, MapLayerOption[]> = {
-      Landsat: [],
-      Sentinel: [],
-      SPOT: [],
-      Resourcesat: [],
+      SEMAMT: [],
+      Geoportal: [],
+      Mosaicos: [],
       Outras: [],
     };
     for (const layer of mapImageLayers) {
-      const low = `${layer.name} ${layer.title}`.toLowerCase();
-      if (low.includes('landsat')) groups.Landsat.push(layer);
-      else if (low.includes('sentinel')) groups.Sentinel.push(layer);
-      else if (low.includes('spot')) groups.SPOT.push(layer);
-      else if (low.includes('resourcesat')) groups.Resourcesat.push(layer);
+      const ws = String(layer.name.split(':')[0] || '').toLowerCase();
+      if (ws === 'semamt') groups.SEMAMT.push(layer);
+      else if (ws === 'geoportal') groups.Geoportal.push(layer);
+      else if (ws === 'mosaicos') groups.Mosaicos.push(layer);
       else groups.Outras.push(layer);
     }
     Object.values(groups).forEach((arr) =>
       arr.sort((a, b) => {
-        const y = parseYear(`${a.name} ${a.title}`) - parseYear(`${b.name} ${b.title}`);
-        if (y !== 0) return -y;
+        const aOrder = preferredOrderMap.get(a.name.toLowerCase());
+        const bOrder = preferredOrderMap.get(b.name.toLowerCase());
+        if (aOrder !== undefined || bOrder !== undefined) {
+          if (aOrder === undefined) return 1;
+          if (bOrder === undefined) return -1;
+          if (aOrder !== bOrder) return aOrder - bOrder;
+        }
+        const y = parseYear(`${b.name} ${b.title}`) - parseYear(`${a.name} ${a.title}`);
+        if (y !== 0) return y;
         return a.name.localeCompare(b.name);
       })
     );
