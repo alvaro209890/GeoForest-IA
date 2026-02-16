@@ -130,12 +130,14 @@ async function startServer() {
 
   app.post("/api/chat", async (req, res) => {
     try {
+      console.log("[/api/chat] request received");
       const apiKey = process.env.GROQ_API_KEY;
       const defaultModel = DEFAULT_MODEL;
       const temperature = TEMPERATURE;
       const maxTokens = MAX_TOKENS;
       const autoModel = AUTO_MODEL;
       if (!apiKey) {
+        console.error("[/api/chat] GROQ_API_KEY missing");
         res.status(500).json({ error: "GROQ_API_KEY não configurada no servidor." });
         return;
       }
@@ -145,15 +147,20 @@ async function startServer() {
         model?: string;
       };
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
+        console.error("[/api/chat] invalid messages payload");
         res.status(400).json({ error: "Mensagens inválidas." });
         return;
       }
 
-      const resolvedModel = model || (autoModel ? autoSelectModel(messages) : defaultModel);
+      const useAuto = model === "auto" || (!model && autoModel);
+      const resolvedModel = useAuto ? autoSelectModel(messages) : model || defaultModel;
       if (!MODEL_IDS.has(resolvedModel)) {
+        console.error("[/api/chat] model not allowed:", resolvedModel);
         res.status(400).json({ error: "Modelo não permitido." });
         return;
       }
+
+      console.log("[/api/chat] model:", resolvedModel);
 
       const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
@@ -171,13 +178,15 @@ async function startServer() {
 
       if (!response.ok) {
         const text = await response.text();
+        console.error("[/api/chat] groq error:", response.status, text);
         res.status(response.status).json({ error: text });
         return;
       }
 
       const data = await response.json();
       const content = data?.choices?.[0]?.message?.content ?? "";
-      res.json({ content });
+      console.log("[/api/chat] success");
+      res.json({ content, model: resolvedModel });
     } catch (error: any) {
       console.error("Erro no /api/chat:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });
@@ -190,18 +199,21 @@ async function startServer() {
 
   app.post("/api/upload-image", async (req, res) => {
     try {
+      console.log("[/api/upload-image] request received");
       const cloudName = "da19dwpgk";
       const apiKey = process.env.CLOUDINARY_API_KEY;
       const apiSecret = process.env.CLOUDINARY_API_SECRET;
       const folder = process.env.CLOUDINARY_FOLDER;
 
       if (!apiKey || !apiSecret) {
+        console.error("[/api/upload-image] Cloudinary missing keys");
         res.status(500).json({ error: "Cloudinary não configurado." });
         return;
       }
 
       const { dataUrl, filename } = req.body as { dataUrl?: string; filename?: string };
       if (!dataUrl || typeof dataUrl !== "string") {
+        console.error("[/api/upload-image] dataUrl missing");
         res.status(400).json({ error: "dataUrl é obrigatório." });
         return;
       }
@@ -237,11 +249,13 @@ async function startServer() {
 
       if (!response.ok) {
         const text = await response.text();
+        console.error("[/api/upload-image] cloudinary error:", response.status, text);
         res.status(response.status).json({ error: text });
         return;
       }
 
       const data = await response.json();
+      console.log("[/api/upload-image] success:", data?.public_id);
       res.json({
         public_id: data.public_id,
         secure_url: data.secure_url,

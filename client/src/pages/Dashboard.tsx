@@ -1,17 +1,59 @@
 /**
- * Dashboard - Split View IA Chat (modern, responsive)
+ * IA Hub - ChatGPT/Claude style with conversations sidebar
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { LogOut, ImagePlus, Leaf, Sparkles, History, UploadCloud, Layers } from 'lucide-react';
+import {
+  LogOut,
+  ImagePlus,
+  Sparkles,
+  ChevronDown,
+  Plus,
+  Search,
+  Menu,
+} from 'lucide-react';
 import { useLocation } from 'wouter';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp, type DocumentReference } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  orderBy,
+  query,
+  setDoc,
+  serverTimestamp,
+  type DocumentReference,
+} from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { handleLogout, UserProfile } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
+import { nanoid } from 'nanoid';
+
+type ChatMessage = {
+  role: 'user' | 'assistant';
+  content: any;
+  meta?: {
+    model?: string;
+    imageUrl?: string;
+  };
+};
+
+type Conversation = {
+  id: string;
+  title: string;
+  updatedAt?: any;
+  lastMessagePreview?: string;
+};
+
+const DEFAULT_ASSISTANT_MESSAGE: ChatMessage = {
+  role: 'assistant',
+  content:
+    'Olá! Sou a IA da GeoForest. Posso apoiar análises ambientais, dúvidas técnicas e interpretação de dados florestais.',
+  meta: { model: 'auto' },
+};
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
@@ -22,19 +64,17 @@ export default function Dashboard() {
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [models, setModels] = useState<Array<{ id: string; label: string; capabilities: string[] }>>([]);
-  const [selectedModel, setSelectedModel] = useState('llama-3.3-70b-versatile');
+  const [selectedModel, setSelectedModel] = useState('auto');
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageUploading, setImageUploading] = useState(false);
 
-  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: any }>>([
-    {
-      role: 'assistant',
-      content:
-        'Olá! Sou a IA da GeoForest. Posso apoiar análises ambientais, dúvidas técnicas e interpretação de dados florestais.',
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([DEFAULT_ASSISTANT_MESSAGE]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const systemPrompt = useMemo(
     () => ({
@@ -45,7 +85,10 @@ export default function Dashboard() {
     []
   );
 
-  const [chatDocRef, setChatDocRef] = useState<DocumentReference | null>(null);
+  const [conversationsRef, setConversationsRef] = useState<{
+    collection: ReturnType<typeof collection>;
+  } | null>(null);
+  const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -61,14 +104,27 @@ export default function Dashboard() {
           setUserProfile(userDocSnap.data() as UserProfile);
         }
 
-        const nextChatDocRef = doc(db, 'chat_sessions', currentUser.uid);
-        setChatDocRef(nextChatDocRef);
-        const chatSnap = await getDoc(nextChatDocRef);
-        if (chatSnap.exists()) {
-          const data = chatSnap.data() as { messages?: Array<{ role: 'user' | 'assistant'; content: any }> };
-          if (data.messages && data.messages.length > 0) {
-            setMessages(data.messages);
-          }
+        const collRef = collection(db, 'users', currentUser.uid, 'conversations');
+        setConversationsRef({ collection: collRef });
+
+        const qs = query(collRef, orderBy('updatedAt', 'desc'));
+        const snap = await getDocs(qs);
+        const list: Conversation[] = [];
+        snap.forEach((docSnap) => {
+          const data = docSnap.data() as Conversation;
+          list.push({
+            id: docSnap.id,
+            title: data.title || 'Nova conversa',
+            updatedAt: data.updatedAt,
+            lastMessagePreview: data.lastMessagePreview,
+          });
+        });
+
+        if (list.length === 0) {
+          await createConversation(collRef);
+        } else {
+          setConversations(list);
+          await loadConversation(collRef, list[0].id);
         }
       } catch (error) {
         console.error('Erro ao carregar perfil:', error);
@@ -90,9 +146,6 @@ export default function Dashboard() {
         if (Array.isArray(data.models)) {
           setModels(data.models);
         }
-        if (data.defaultModel) {
-          setSelectedModel(data.defaultModel);
-        }
       } catch {
         // ignore
       }
@@ -105,6 +158,51 @@ export default function Dashboard() {
       if (imagePreview) URL.revokeObjectURL(imagePreview);
     };
   }, [imagePreview]);
+
+  const createConversation = async (collRef?: ReturnType<typeof collection>) => {
+    const ref = collRef || conversationsRef?.collection;
+    if (!ref) return;
+
+    const id = nanoid();
+    const docRef = doc(ref, id);
+    const initialMessages = [DEFAULT_ASSISTANT_MESSAGE];
+    await setDoc(docRef, {
+      title: 'Nova conversa',
+      messages: initialMessages,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      lastMessagePreview: '',
+    });
+
+    const nextConv: Conversation = {
+      id,
+      title: 'Nova conversa',
+      lastMessagePreview: '',
+    };
+    setConversations((prev) => [nextConv, ...prev]);
+    setActiveConversationId(id);
+    setActiveConversationRef(docRef);
+    setMessages(initialMessages);
+  };
+
+  const loadConversation = async (collRef: ReturnType<typeof collection>, id: string) => {
+    const docRef = doc(collRef, id);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data() as { messages?: ChatMessage[]; title?: string };
+      setMessages(data.messages?.length ? data.messages : [DEFAULT_ASSISTANT_MESSAGE]);
+    } else {
+      setMessages([DEFAULT_ASSISTANT_MESSAGE]);
+    }
+    setActiveConversationId(id);
+    setActiveConversationRef(docRef);
+  };
+
+  const onSelectConversation = async (id: string) => {
+    if (!conversationsRef) return;
+    await loadConversation(conversationsRef.collection, id);
+    setSidebarOpen(false);
+  };
 
   const onLogout = async () => {
     setLoggingOut(true);
@@ -164,10 +262,45 @@ export default function Dashboard() {
     return data?.secure_url || null;
   };
 
+  const updateConversationMeta = async (updatedMessages: ChatMessage[], lastUserText: string) => {
+    if (!activeConversationRef) return;
+    const title =
+      conversations.find((c) => c.id === activeConversationId)?.title || 'Nova conversa';
+    const shouldSetTitle = title === 'Nova conversa' && lastUserText.trim().length > 0;
+    const nextTitle = shouldSetTitle
+      ? lastUserText.trim().split(/\s+/).slice(0, 6).join(' ')
+      : title;
+
+    await setDoc(
+      activeConversationRef,
+      {
+        title: nextTitle,
+        messages: updatedMessages,
+        updatedAt: serverTimestamp(),
+        lastMessagePreview: lastUserText.slice(0, 120),
+      },
+      { merge: true }
+    );
+
+    setConversations((prev) =>
+      prev
+        .map((c) =>
+          c.id === activeConversationId
+            ? { ...c, title: nextTitle, lastMessagePreview: lastUserText.slice(0, 120) }
+            : c
+        )
+        .sort((a, b) => (a.id === activeConversationId ? -1 : b.id === activeConversationId ? 1 : 0))
+    );
+  };
+
   const onSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     const content = chatInput.trim();
     if ((!content && !imageFile) || chatLoading) return;
+
+    if (!activeConversationRef && conversationsRef) {
+      await createConversation(conversationsRef.collection);
+    }
 
     let imageUrl: string | null = null;
     try {
@@ -189,7 +322,10 @@ export default function Dashboard() {
         ]
       : content;
 
-    const nextMessages = [...messages, { role: 'user' as const, content: userContent as any }];
+    const nextMessages: ChatMessage[] = [
+      ...messages,
+      { role: 'user', content: userContent as any, meta: imageUrl ? { imageUrl } : undefined },
+    ];
     setMessages(nextMessages);
     setChatInput('');
     setImageFile(null);
@@ -197,22 +333,12 @@ export default function Dashboard() {
     setChatLoading(true);
 
     try {
-      let modelToSend = selectedModel;
-      if (imageUrl) {
-        const selected = models.find((m) => m.id === selectedModel);
-        const supportsVision = selected?.capabilities?.includes('vision');
-        if (!supportsVision) {
-          const visionModel = models.find((m) => m.capabilities?.includes('vision'));
-          modelToSend = visionModel?.id || 'meta-llama/llama-4-maverick-17b-128e-instruct';
-        }
-      }
-
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: [systemPrompt, ...nextMessages],
-          model: modelToSend,
+          model: selectedModel,
         }),
       });
 
@@ -223,12 +349,15 @@ export default function Dashboard() {
 
       const data = await res.json();
       const reply = data?.content || 'Desculpe, não consegui responder agora.';
-      const updatedMessages = [...nextMessages, { role: 'assistant' as const, content: reply }];
+      const usedModel = data?.model || selectedModel;
+      const updatedMessages: ChatMessage[] = [
+        ...nextMessages,
+        { role: 'assistant', content: reply, meta: { model: usedModel } },
+      ];
       setMessages(updatedMessages);
 
-      if (chatDocRef) {
-        await setDoc(chatDocRef, { messages: updatedMessages, updatedAt: serverTimestamp() }, { merge: true });
-      }
+      const userTextForTitle = typeof content === 'string' ? content : 'Nova conversa';
+      await updateConversationMeta(updatedMessages, userTextForTitle);
     } catch (error: any) {
       toast.error(error.message || 'Erro ao conversar com a IA');
     } finally {
@@ -237,18 +366,16 @@ export default function Dashboard() {
   };
 
   const onClearChat = async () => {
-    const cleared = [
-      {
-        role: 'assistant' as const,
-        content:
-          'Olá! Sou a IA da GeoForest. Posso apoiar análises ambientais, dúvidas técnicas e interpretação de dados florestais.',
-      },
-    ];
+    const cleared: ChatMessage[] = [DEFAULT_ASSISTANT_MESSAGE];
     setMessages(cleared);
-    if (chatDocRef) {
-      await setDoc(chatDocRef, { messages: cleared, updatedAt: serverTimestamp() }, { merge: true });
+    if (activeConversationRef) {
+      await setDoc(activeConversationRef, { messages: cleared, updatedAt: serverTimestamp() }, { merge: true });
     }
   };
+
+  const filteredConversations = conversations.filter((c) =>
+    c.title.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   if (loading) {
     return (
@@ -262,81 +389,93 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-green-900 to-gray-900">
+    <div className="min-h-screen bg-gradient-to-br from-gray-950 via-green-950 to-gray-950">
       <div className="absolute inset-0 bg-[radial-gradient(1000px_700px_at_10%_10%,rgba(34,197,94,0.18),transparent_60%),radial-gradient(900px_700px_at_90%_20%,rgba(234,179,8,0.12),transparent_60%)] pointer-events-none" />
 
+      {/* Mobile top bar */}
+      <div className="relative z-10 lg:hidden flex items-center justify-between px-4 py-3 border-b border-white/10 bg-gray-900/60 backdrop-blur-md">
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(true)}
+          className="text-white/80 hover:text-white"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+        <div className="text-sm text-green-200/80">GeoForest IA</div>
+        <Button
+          onClick={onLogout}
+          disabled={loggingOut}
+          variant="outline"
+          className="border-green-600 text-green-200 hover:bg-green-900/30 h-8 px-2"
+        >
+          <LogOut className="w-4 h-4" />
+        </Button>
+      </div>
+
       <div className="relative z-10 max-w-7xl mx-auto px-4 py-6 lg:py-10">
-        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
           {/* Sidebar */}
-          <aside className="bg-gray-900/60 backdrop-blur-md rounded-3xl border border-green-900/30 shadow-2xl p-5 lg:p-6 flex flex-col gap-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center">
-                <span className="text-lg">🌲</span>
+          <aside
+            className={`bg-gray-900/70 backdrop-blur-md rounded-3xl border border-green-900/30 shadow-2xl p-4 lg:p-5 flex flex-col gap-4 lg:static lg:translate-x-0 lg:opacity-100 lg:visible transition-all ${
+              sidebarOpen ? 'fixed inset-4 z-50' : 'hidden lg:flex'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center">
+                  <span className="text-lg">🌲</span>
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-white">GeoForest IA</div>
+                  <div className="text-[11px] text-green-200/70">
+                    {userProfile?.fullName || 'Usuário'}
+                  </div>
+                </div>
               </div>
-              <div>
-                <h1 className="text-lg font-bold text-white">GeoForest IA</h1>
-                <p className="text-xs text-green-200/80">Assistente Florestal</p>
-              </div>
-            </div>
-
-            <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-              <div className="text-xs text-green-200/70 mb-2">Perfil ativo</div>
-              <div className="text-white font-semibold">{userProfile?.fullName || 'Usuário'}</div>
-              <div className="text-xs text-green-200/60 mt-1">
-                {userProfile?.email || 'E-mail não informado'}
-              </div>
-              <div className="mt-3 inline-flex items-center gap-2 text-xs text-green-200/80">
-                <Leaf className="w-4 h-4 text-green-400" />
-                Status: ativo
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="text-xs uppercase tracking-wide text-green-200/60">Ações rápidas</div>
-              <button className="w-full text-left px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm text-white/90 transition-colors inline-flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-300" />
-                Nova análise
-              </button>
-              <button className="w-full text-left px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm text-white/90 transition-colors inline-flex items-center gap-2">
-                <UploadCloud className="w-4 h-4 text-green-300" />
-                Importar shapefile
-              </button>
-              <button className="w-full text-left px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm text-white/90 transition-colors inline-flex items-center gap-2">
-                <History className="w-4 h-4 text-green-300" />
-                Ver histórico
-              </button>
-              <button className="w-full text-left px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm text-white/90 transition-colors inline-flex items-center gap-2">
-                <Layers className="w-4 h-4 text-green-300" />
-                Camadas e mapas
-              </button>
-            </div>
-
-            <div className="rounded-2xl bg-white/5 border border-white/10 p-4 space-y-3">
-              <div className="text-xs uppercase tracking-wide text-green-200/60">Modelo</div>
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full bg-white/10 border border-white/20 text-white text-xs rounded-lg px-2 py-2 focus:border-green-400 focus:ring-green-400/40"
-              >
-                {models.length === 0 && (
-                  <option value={selectedModel} className="bg-gray-900">
-                    {selectedModel}
-                  </option>
-                )}
-                {models.map((model) => (
-                  <option key={model.id} value={model.id} className="bg-gray-900">
-                    {model.label}
-                  </option>
-                ))}
-              </select>
-
               <button
+                className="lg:hidden text-white/70 hover:text-white"
+                onClick={() => setSidebarOpen(false)}
                 type="button"
-                onClick={onClearChat}
-                className="w-full text-xs text-green-200 hover:text-white transition-colors py-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10"
               >
-                Limpar conversa
+                ✕
               </button>
+            </div>
+
+            <Button
+              onClick={() => createConversation()}
+              className="bg-green-600 hover:bg-green-700 text-white font-semibold w-full"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Nova conversa
+            </Button>
+
+            <div className="relative">
+              <Search className="w-4 h-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Buscar conversa..."
+                className="pl-9 bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-2">
+              {filteredConversations.map((conv) => (
+                <button
+                  key={conv.id}
+                  onClick={() => onSelectConversation(conv.id)}
+                  className={`w-full text-left px-3 py-2 rounded-xl border transition-colors ${
+                    conv.id === activeConversationId
+                      ? 'bg-white/10 border-green-500/40 text-white'
+                      : 'bg-white/5 border-white/10 text-white/80 hover:bg-white/10'
+                  }`}
+                >
+                  <div className="text-sm font-medium truncate">{conv.title}</div>
+                  {conv.lastMessagePreview && (
+                    <div className="text-[11px] text-white/50 truncate">{conv.lastMessagePreview}</div>
+                  )}
+                </button>
+              ))}
             </div>
 
             <Button
@@ -351,12 +490,19 @@ export default function Dashboard() {
           </aside>
 
           {/* Chat */}
-          <section className="bg-gray-800/40 backdrop-blur-sm rounded-3xl border border-green-900/30 shadow-2xl overflow-hidden flex flex-col">
+          <section className="bg-gray-900/60 backdrop-blur-md rounded-3xl border border-green-900/30 shadow-2xl overflow-hidden flex flex-col min-h-[70vh]">
             <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between">
-              <div className="text-sm text-green-200/80">
-                Conversa ativa • respostas técnicas e objetivas
+              <div className="text-sm text-green-200/80 inline-flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-300" />
+                IA Conversacional • respostas técnicas
               </div>
-              <div className="text-xs text-green-200/60">IA Conversacional</div>
+              <button
+                type="button"
+                onClick={onClearChat}
+                className="text-xs text-green-200 hover:text-white transition-colors"
+              >
+                Limpar conversa
+              </button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-3 bg-gradient-to-b from-transparent to-black/20">
@@ -376,6 +522,11 @@ export default function Dashboard() {
                         .map((part: any) => (part?.type === 'text' ? part.text : '[Imagem]'))
                         .join(' ')
                     : ''}
+                  {msg.meta?.model && msg.role === 'assistant' && (
+                    <div className="mt-2 text-[10px] uppercase tracking-wide text-green-200/60">
+                      Modelo: {msg.meta.model}
+                    </div>
+                  )}
                 </div>
               ))}
               {chatLoading && (
@@ -402,31 +553,54 @@ export default function Dashboard() {
                 </div>
               )}
 
-              <Input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Digite sua pergunta técnica..."
-                className="bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
-              />
-
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="bg-white/10 border border-white/20 text-white text-xs rounded-lg px-3 py-2 cursor-pointer hover:bg-white/15 transition-colors inline-flex items-center gap-2">
-                  <ImagePlus className="w-4 h-4 text-green-300" />
-                  Anexar imagem
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => onPickImage(e.target.files?.[0] || null)}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="flex-1 relative">
+                  <Input
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Digite sua pergunta técnica..."
+                    className="bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40 pr-36"
                   />
-                </label>
-                <Button
-                  type="submit"
-                  disabled={chatLoading || imageUploading}
-                  className="bg-green-600 hover:bg-green-700 text-white font-semibold px-5"
-                >
-                  {imageUploading ? 'Enviando...' : 'Enviar'}
-                </Button>
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <div className="relative">
+                      <select
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        className="bg-white/10 border border-white/20 text-white text-xs rounded-lg pl-3 pr-7 py-1.5 focus:border-green-400 focus:ring-green-400/40 appearance-none"
+                      >
+                        <option value="auto" className="bg-gray-900">
+                          Auto
+                        </option>
+                        {models.map((model) => (
+                          <option key={model.id} value={model.id} className="bg-gray-900">
+                            {model.label}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-3.5 h-3.5 text-white/60 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <label className="bg-white/10 border border-white/20 text-white text-xs rounded-lg px-3 py-2 cursor-pointer hover:bg-white/15 transition-colors inline-flex items-center gap-2">
+                    <ImagePlus className="w-4 h-4 text-green-300" />
+                    Anexar imagem
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => onPickImage(e.target.files?.[0] || null)}
+                    />
+                  </label>
+                  <Button
+                    type="submit"
+                    disabled={chatLoading || imageUploading}
+                    className="bg-green-600 hover:bg-green-700 text-white font-semibold px-5"
+                  >
+                    {imageUploading ? 'Enviando...' : 'Enviar'}
+                  </Button>
+                </div>
               </div>
             </form>
           </section>
