@@ -54,6 +54,7 @@ type ChatMessage = {
     fileUrl?: string;
     fileDownloadUrl?: string;
     fileName?: string;
+    uploadStatus?: 'uploading' | 'done' | 'error';
     fileType?: 'image' | 'pdf';
     thinkingText?: string;
   };
@@ -186,6 +187,7 @@ export default function Dashboard() {
   const [sending, setSending] = useState(false);
 
   const [messages, setMessages] = useState<ChatMessage[]>([DEFAULT_ASSISTANT_MESSAGE]);
+  const messagesRef = useRef<ChatMessage[]>([DEFAULT_ASSISTANT_MESSAGE]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -286,6 +288,10 @@ export default function Dashboard() {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, activeView]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     return () => {
@@ -433,7 +439,6 @@ export default function Dashboard() {
 
   const uploadImageIfNeeded = async (): Promise<string | null> => {
     if (!imageFile) return null;
-    setUploading(true);
 
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -462,7 +467,6 @@ export default function Dashboard() {
 
   const uploadPdfIfNeeded = async (): Promise<{ url: string; extractedText: string; downloadUrl: string; pages: number } | null> => {
     if (!pdfFile) return null;
-    setUploading(true);
 
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -557,73 +561,81 @@ export default function Dashboard() {
     };
   };
 
+  const readFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Falha ao ler arquivo anexado.'));
+      reader.readAsDataURL(file);
+    });
+
+  const patchMessageMeta = async (messageId: string, patch: Partial<NonNullable<ChatMessage['meta']>>, lastUserText: string) => {
+    const updatedMessages = messagesRef.current.map((msg) =>
+      msg.id === messageId
+        ? {
+            ...msg,
+            meta: {
+              ...(msg.meta || {}),
+              ...patch,
+            },
+          }
+        : msg
+    );
+    messagesRef.current = updatedMessages;
+    setMessages(updatedMessages);
+    await updateConversationMeta(updatedMessages, lastUserText || 'Nova conversa');
+  };
+
   const handleSend = async () => {
     if ((!input.trim() && !imageFile && !pdfFile) || sending) return;
     if (!activeConversationRef && conversationsRef) {
       await createConversation(conversationsRef.collection);
     }
 
-    let imageUrl: string | null = null;
-    let pdfResult: { url: string; extractedText: string; downloadUrl: string; pages: number } | null = null;
-    try {
-      if (imageFile) imageUrl = await uploadImageIfNeeded();
-      if (pdfFile) pdfResult = await uploadPdfIfNeeded();
-    } catch (error: any) {
-      toast.error(error.message || 'Erro ao enviar arquivo');
-      setUploading(false);
-      return;
-    } finally {
-      setUploading(false);
-    }
-
     const userText = input.trim();
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const selectedImageFile = imageFile;
+    const selectedPdfFile = pdfFile;
 
     let userPayloadText = userText;
-    if (imageUrl) {
+    if (selectedImageFile) {
       userPayloadText =
-        `${userText || 'Analise a imagem anexada.'}\n\n` +
+        `${userText || 'Analise a imagem anexada.'}
+
+` +
         'Contexto: a imagem foi anexada pelo usuário para interpretação ambiental/florestal. ' +
         'Descreva achados objetivos, limitações e próximos dados necessários.';
-    } else if (pdfResult?.url) {
-      const context = pdfResult.extractedText
-        ? `\n\nConteúdo extraído do PDF:\n${pdfResult.extractedText}`
-        : '';
+    } else if (selectedPdfFile) {
       userPayloadText =
-        `${userText || 'Analise o PDF anexado.'}\n\n` +
-        `Arquivo PDF: ${pdfResult.url}\n` +
-        `Nome do arquivo: ${pdfFile?.name || 'documento.pdf'}\n` +
-        `Páginas detectadas: ${pdfResult.pages || 'não identificado'}\n` +
-        (pdfResult.extractedText
-          ? 'Use o conteúdo extraído abaixo como fonte principal da análise.'
-          : 'Não houve extração de texto. Informe que o PDF pode ser escaneado e peça OCR se necessário.') +
-        context;
+        `${userText || 'Analise o PDF anexado.'}
+
+` +
+        `Nome do arquivo: ${selectedPdfFile.name || 'documento.pdf'}
+` +
+        'O documento está em processamento. Faça análise preliminar e refine com o texto extraído quando disponível.';
     }
 
     const userMessage: ChatMessage = {
       id: nanoid(),
       role: 'user',
-      text: userText || (imageUrl ? 'Analise a imagem.' : 'Analise o PDF.'),
+      text: userText || (selectedImageFile ? 'Analise a imagem.' : 'Analise o PDF.'),
       time,
-      meta: imageUrl
-        ? { imageUrl, fileType: 'image', fileName: imageFile?.name || 'imagem' }
-        : pdfResult?.url
-        ? {
-            fileUrl: pdfResult.url,
-            fileDownloadUrl: pdfResult.downloadUrl,
-            fileType: 'pdf',
-            fileName: pdfFile?.name || 'documento.pdf',
-          }
+      meta: selectedImageFile
+        ? { fileType: 'image', fileName: selectedImageFile?.name || 'imagem', uploadStatus: 'uploading' }
+        : selectedPdfFile
+        ? { fileType: 'pdf', fileName: selectedPdfFile?.name || 'documento.pdf', uploadStatus: 'uploading' }
         : undefined,
     };
 
     const nextMessages = [...messages, userMessage];
     setMessages(nextMessages);
+    messagesRef.current = nextMessages;
     setInput('');
     setImageFile(null);
     setImagePreview(null);
     setPdfFile(null);
     setSending(true);
+    setUploading(Boolean(selectedImageFile || selectedPdfFile));
     setAiThinking(true);
     const typingId = nanoid();
     setTypingMessageId(typingId);
@@ -632,19 +644,67 @@ export default function Dashboard() {
     setProcessingHintIndex(0);
 
     const currentUserMessageId = userMessage.id;
+
+    const imageUploadPromise = selectedImageFile ? uploadImageIfNeeded() : Promise.resolve(null);
+    const pdfUploadPromise = selectedPdfFile ? uploadPdfIfNeeded() : Promise.resolve(null);
+
+    Promise.allSettled([imageUploadPromise, pdfUploadPromise]).finally(() => setUploading(false));
+
+    imageUploadPromise
+      .then(async (uploadedImageUrl) => {
+        if (!uploadedImageUrl) return;
+        await patchMessageMeta(
+          currentUserMessageId,
+          { imageUrl: uploadedImageUrl, uploadStatus: 'done' },
+          userText || 'Nova conversa'
+        );
+      })
+      .catch(async () => {
+        await patchMessageMeta(currentUserMessageId, { uploadStatus: 'error' }, userText || 'Nova conversa');
+      });
+
+    pdfUploadPromise
+      .then(async (uploadedPdf) => {
+        if (!uploadedPdf) return;
+        await patchMessageMeta(
+          currentUserMessageId,
+          {
+            fileUrl: uploadedPdf.url,
+            fileDownloadUrl: uploadedPdf.downloadUrl,
+            uploadStatus: 'done',
+          },
+          userText || 'Nova conversa'
+        );
+      })
+      .catch(async () => {
+        await patchMessageMeta(currentUserMessageId, { uploadStatus: 'error' }, userText || 'Nova conversa');
+      });
+
+    let imageDataUrlForAi: string | null = null;
+    let pdfDataUrlForAi: string | null = null;
+    try {
+      if (selectedImageFile) imageDataUrlForAi = await readFileAsDataUrl(selectedImageFile);
+      if (selectedPdfFile) pdfDataUrlForAi = await readFileAsDataUrl(selectedPdfFile);
+    } catch (error: any) {
+      toast.error(error.message || 'Erro ao ler arquivo anexado');
+    }
+
     const apiMessages = [
       systemPrompt,
       ...nextMessages.map((m) => {
-        if (m.role === 'user' && m.meta?.imageUrl) {
+        if (m.role === 'user' && (m.meta?.imageUrl || (m.id === currentUserMessageId && imageDataUrlForAi))) {
+          const imageUrlForModel = m.id === currentUserMessageId ? imageDataUrlForAi || m.meta?.imageUrl : m.meta?.imageUrl;
           const promptText =
             m.id === currentUserMessageId
               ? userPayloadText
-              : `${m.text || 'Imagem anexada.'}\n\nArquivo de imagem previamente anexado pelo usuário.`;
+              : `${m.text || 'Imagem anexada.'}
+
+Arquivo de imagem previamente anexado pelo usuário.`;
           return {
             role: 'user',
             content: [
               { type: 'text', text: promptText },
-              { type: 'image_url', image_url: { url: m.meta.imageUrl } },
+              { type: 'image_url', image_url: { url: imageUrlForModel } },
             ],
           };
         }
@@ -653,9 +713,12 @@ export default function Dashboard() {
             return { role: 'user', content: userPayloadText };
           }
           const historicalPdfContext =
-            `PDF previamente anexado pelo usuário.\n` +
-            `Nome do arquivo: ${m.meta.fileName || 'documento.pdf'}\n` +
-            `Link: ${m.meta.fileUrl || ''}\n` +
+            `PDF previamente anexado pelo usuário.
+` +
+            `Nome do arquivo: ${m.meta.fileName || 'documento.pdf'}
+` +
+            `Link: ${m.meta.fileUrl || ''}
+` +
             `Resumo do pedido original: ${m.text || 'Analisar PDF.'}`;
           return { role: 'user', content: historicalPdfContext };
         }
@@ -667,12 +730,54 @@ export default function Dashboard() {
       const res = await fetch('/api/chat-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: apiMessages, model: selectedModel }),
+        body: JSON.stringify({
+          messages: apiMessages,
+          model: selectedModel,
+          pendingPdf:
+            selectedPdfFile && pdfDataUrlForAi
+              ? { dataUrl: pdfDataUrlForAi, filename: selectedPdfFile.name }
+              : undefined,
+        }),
       });
+
       if (!res.ok) {
+        if (res.status === 404) {
+          const fallback = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: apiMessages, model: selectedModel }),
+          });
+          if (!fallback.ok) {
+            const fallbackText = await fallback.text();
+            throw new Error(fallbackText || 'Falha ao consultar IA');
+          }
+          const fallbackData = await fallback.json();
+          const parsedFallback = splitThinkContent(String(fallbackData?.content || ''));
+          const aiMessage: ChatMessage = {
+            id: typingId,
+            role: 'ai',
+            text: parsedFallback.cleanText,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            meta: {
+              model: fallbackData?.model || selectedModel,
+              thinkingText: parsedFallback.thinkingText || undefined,
+            },
+          };
+          setAiThinking(false);
+          setTypingMessageId(null);
+          setTypingText('');
+          setLiveThinkingText('');
+          const updatedMessages = [...nextMessages, aiMessage];
+          setMessages(updatedMessages);
+          messagesRef.current = updatedMessages;
+          await updateConversationMeta(updatedMessages, userText || 'Nova conversa');
+          return;
+        }
+
         const text = await res.text();
         throw new Error(text || 'Falha ao consultar IA');
       }
+
       if (!res.body) {
         throw new Error('Resposta de streaming inválida');
       }
@@ -755,7 +860,8 @@ export default function Dashboard() {
       setLiveThinkingText('');
       const updatedMessages = [...nextMessages, aiMessage];
       setMessages(updatedMessages);
-      updateConversationMeta(updatedMessages, userText || 'Nova conversa');
+      messagesRef.current = updatedMessages;
+      await updateConversationMeta(updatedMessages, userText || 'Nova conversa');
     } catch (error: any) {
       toast.error(error.message || 'Erro ao conversar com a IA');
       setAiThinking(false);
@@ -903,9 +1009,9 @@ export default function Dashboard() {
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 space-y-1 custom-scrollbar">
-          {filteredConversations.map((conv) => (
+          {filteredConversations.map((conv, idx) => (
             <div
-              key={conv.id}
+              key={`${conv.id}-${idx}`}
               className={`w-full flex items-center gap-2 p-2 rounded-lg transition-colors group ${
                 conv.id === activeConversationId ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-slate-400'
               }`}
@@ -999,12 +1105,12 @@ export default function Dashboard() {
           <>
             <div className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth custom-scrollbar relative z-0">
               <div className="max-w-3xl mx-auto space-y-6">
-                {messages.map((msg) => {
+                {messages.map((msg, idx) => {
                   const parsedFromText = splitThinkContent(msg.text || '');
                   const displayThinking = msg.meta?.thinkingText || parsedFromText.thinkingText;
                   const displayText = parsedFromText.cleanText;
                   return (
-                  <div key={msg.id} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-fade-in-up`}>
+                  <div key={`${msg.id}-${idx}`} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-fade-in-up`}>
                     <div
                       className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
                         msg.role === 'ai'

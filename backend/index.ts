@@ -136,6 +136,52 @@ async function startServer() {
     };
   };
 
+  const injectPendingPdfContext = async (
+    messages: Array<{ role: string; content: any }>,
+    pendingPdf?: { dataUrl?: string; filename?: string }
+  ) => {
+    if (!pendingPdf?.dataUrl || typeof pendingPdf.dataUrl !== "string") return messages;
+    const parts = pendingPdf.dataUrl.split(",");
+    if (parts.length !== 2) return messages;
+
+    let extractedText = "";
+    try {
+      const raw = Buffer.from(parts[1], "base64");
+      const parsed = await pdfParse(raw);
+      extractedText = (parsed?.text || "")
+        .replace(/\r/g, "\n")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+        .slice(0, 25000);
+    } catch (err) {
+      console.warn("[/api/chat-stream] pendingPdf parse failed:", err);
+    }
+
+    const next = [...messages];
+    for (let i = next.length - 1; i >= 0; i -= 1) {
+      const msg = next[i];
+      if (msg.role !== "user") continue;
+      const baseText =
+        typeof msg.content === "string"
+          ? msg.content
+          : Array.isArray(msg.content)
+            ? msg.content
+                .map((part) => (part?.type === "text" ? String(part?.text || "") : ""))
+                .join("\n")
+            : "";
+      const context =
+        `\n\nDocumento PDF anexado pelo usuário (${pendingPdf.filename || "documento.pdf"}).` +
+        (extractedText
+          ? `\nUse o conteúdo extraído abaixo como base:\n${extractedText}`
+          : "\nNão foi possível extrair texto automaticamente; informe essa limitação.");
+      next[i] = { ...msg, content: `${baseText}${context}`.trim() };
+      break;
+    }
+
+    return next;
+  };
+
   app.post("/api/chat", async (req, res) => {
     try {
       console.log("[/api/chat] request received");
@@ -150,9 +196,10 @@ async function startServer() {
         return;
       }
 
-      const { messages, model } = req.body as {
+      const { messages, model, pendingPdf } = req.body as {
         messages?: Array<{ role: string; content: any }>;
         model?: string;
+        pendingPdf?: { dataUrl?: string; filename?: string };
       };
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         console.error("[/api/chat] invalid messages payload");
@@ -220,8 +267,10 @@ async function startServer() {
         return;
       }
 
+      const messagesForModel = await injectPendingPdfContext(messages, pendingPdf);
+
       const useAuto = model === "auto" || (!model && AUTO_MODEL);
-      const resolvedModel = useAuto ? autoSelectModel(messages) : model || DEFAULT_MODEL;
+      const resolvedModel = useAuto ? autoSelectModel(messagesForModel) : model || DEFAULT_MODEL;
       if (!MODEL_IDS.has(resolvedModel)) {
         res.status(400).json({ error: "Modelo não permitido." });
         return;
@@ -238,7 +287,7 @@ async function startServer() {
           temperature: TEMPERATURE,
           max_tokens: MAX_TOKENS,
           stream: true,
-          messages,
+          messages: messagesForModel,
         }),
       });
 
