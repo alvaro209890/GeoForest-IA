@@ -4,7 +4,6 @@ import path from "path";
 import crypto from "crypto";
 import { inflateRawSync } from "zlib";
 import { fileURLToPath } from "url";
-import pdfParse from "pdf-parse";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,65 +74,163 @@ async function startServer() {
     "541085de-9a2e-454e-bdba-eb3d57a2f492";
 
   const parseLayersFromCapabilities = (xml: string) => {
-    const layerRegex = /<Layer\b[\s\S]*?<\/Layer>/g;
-    const nameRegex = /<Name>\s*([^<]+)\s*<\/Name>/i;
-    const titleRegex = /<Title>\s*([^<]+)\s*<\/Title>/i;
-    const crsRegex = /<(?:CRS|SRS)>\s*([^<]+)\s*<\/(?:CRS|SRS)>/gi;
+    type Node = {
+      name?: string;
+      title?: string;
+      crs: string[];
+      children: number;
+    };
+    const tokenRegex =
+      /<Layer\b[^>]*>|<\/Layer>|<Name>\s*([^<]+)\s*<\/Name>|<Title>\s*([^<]+)\s*<\/Title>|<(?:CRS|SRS)>\s*([^<]+)\s*<\/(?:CRS|SRS)>/gi;
+    const stack: Node[] = [];
     const out: Array<{
       name: string;
       title: string;
       crs: string[];
       inferredYear?: string;
-      group: "spot" | "landsat" | "other";
+      group: "spot" | "landsat" | "sentinel" | "other";
+      isLeaf: boolean;
+      isRenderable: boolean;
+      year?: number;
     }> = [];
 
-    const blocks = xml.match(layerRegex) || [];
-    for (const block of blocks) {
-      const nameMatch = block.match(nameRegex);
-      if (!nameMatch) continue;
-      const rawName = (nameMatch[1] || "").trim();
-      if (!rawName) continue;
-      if (/^(spot|landsat|mosaico|satelite|satelite|imagem)$/i.test(rawName)) {
+    let match: RegExpExecArray | null;
+    while ((match = tokenRegex.exec(xml)) !== null) {
+      const token = match[0];
+      if (/^<Layer\b/i.test(token)) {
+        const parent = stack[stack.length - 1];
+        if (parent) parent.children += 1;
+        stack.push({
+          crs: parent ? [...parent.crs] : [],
+          children: 0,
+        });
         continue;
       }
-
-      const titleMatch = block.match(titleRegex);
-      const title = (titleMatch?.[1] || rawName).trim();
-
-      const crs: string[] = [];
-      let m: RegExpExecArray | null;
-      while ((m = crsRegex.exec(block)) !== null) {
-        const code = String(m[1] || "").trim();
-        if (code && !crs.includes(code)) crs.push(code);
+      if (/^<\/Layer>/i.test(token)) {
+        const node = stack.pop();
+        if (!node || !node.name) continue;
+        const name = node.name.trim();
+        if (!name) continue;
+        const title = (node.title || name).trim();
+        const combined = `${name} ${title}`.toLowerCase();
+        const yearMatch = combined.match(/\b(19|20)\d{2}\b/);
+        const inferredYear = yearMatch?.[0];
+        const year = inferredYear ? Number(inferredYear) : undefined;
+        const group = /spot/.test(combined)
+          ? "spot"
+          : /landsat/.test(combined)
+            ? "landsat"
+            : /sentinel/.test(combined)
+              ? "sentinel"
+              : "other";
+        const isLeaf = node.children === 0;
+        const isRenderable = !!name.includes(":") && isLeaf;
+        out.push({
+          name,
+          title,
+          crs: node.crs,
+          inferredYear,
+          group,
+          isLeaf,
+          isRenderable,
+          year,
+        });
+        continue;
       }
-
-      const combined = `${rawName} ${title}`.toLowerCase();
-      const yearMatch = combined.match(/\b(19|20)\d{2}\b/);
-      const inferredYear = yearMatch?.[0];
-      const group = /spot/.test(combined)
-        ? "spot"
-        : /landsat/.test(combined)
-          ? "landsat"
-          : "other";
-
-      out.push({ name: rawName, title, crs, inferredYear, group });
+      const current = stack[stack.length - 1];
+      if (!current) continue;
+      if (match[1]) {
+        current.name = String(match[1] || "").trim();
+      } else if (match[2]) {
+        current.title = String(match[2] || "").trim();
+      } else if (match[3]) {
+        const code = String(match[3] || "").trim();
+        if (code && !current.crs.includes(code)) current.crs.push(code);
+      }
     }
 
     const uniq = new Map<string, (typeof out)[number]>();
     for (const item of out) {
       if (!uniq.has(item.name)) uniq.set(item.name, item);
     }
+    return [...uniq.values()];
+  };
 
-    return [...uniq.values()].sort((a, b) => {
-      const score = (x: typeof a) => {
-        let s = 0;
-        if (x.group === "spot") s += 50;
-        if (x.group === "landsat") s += 40;
-        if (x.inferredYear === "2008") s += 100;
-        return s;
-      };
-      return score(b) - score(a) || a.name.localeCompare(b.name);
-    });
+  const toImageryLayers = (
+    layers: ReturnType<typeof parseLayersFromCapabilities>
+  ) => {
+    return layers
+      .filter((l) => l.isRenderable)
+      .filter((l) => {
+        const low = l.name.toLowerCase();
+        const txt = `${l.name} ${l.title}`.toLowerCase();
+        if (!low.startsWith("mosaicos:")) return false;
+        return /(landsat|sentinel|spot|resourcesat|mosaico)/.test(txt);
+      })
+      .sort((a, b) => {
+        const score = (x: (typeof layers)[number]) => {
+          let s = 0;
+          if (x.name === "Mosaicos:LANDSAT_5_2008") s += 1000;
+          if (x.group === "landsat") s += 120;
+          if (x.group === "spot") s += 100;
+          if (x.group === "sentinel") s += 80;
+          if (x.year === 2008) s += 400;
+          if (x.year) s += Math.max(0, 2100 - x.year);
+          return s;
+        };
+        return score(b) - score(a) || a.name.localeCompare(b.name);
+      });
+  };
+
+  let cachedPdfParser: null | ((buffer: Buffer) => Promise<any>) = null;
+  const getPdfParser = async () => {
+    if (cachedPdfParser) return cachedPdfParser;
+    try {
+      const mod: any = await import("pdf-parse");
+      const parser = (mod?.default || mod) as (buffer: Buffer) => Promise<any>;
+      if (typeof parser === "function") {
+        cachedPdfParser = parser;
+        return cachedPdfParser;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const parsePdfSafe = async (buffer: Buffer) => {
+    const parser = await getPdfParser();
+    if (!parser) return null;
+    try {
+      return await parser(buffer);
+    } catch {
+      return null;
+    }
+  };
+
+  const fetchSemamtCapabilitiesXml = async () => {
+    const capUrl = new URL(SEMA_WMS_BASE);
+    capUrl.searchParams.set("service", "WMS");
+    capUrl.searchParams.set("request", "GetCapabilities");
+    capUrl.searchParams.set("version", "1.3.0");
+    if (SEMA_WMS_AUTHKEY) {
+      capUrl.searchParams.set("authkey", SEMA_WMS_AUTHKEY);
+    }
+
+    const response = await fetch(capUrl.toString());
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(
+        `Falha ao carregar capabilities da SEMA (${response.status}): ${text.slice(0, 220)}`
+      );
+    }
+    return response.text();
+  };
+
+  const fetchSemamtImageryLayers = async () => {
+    const xml = await fetchSemamtCapabilitiesXml();
+    const parsedLayers = parseLayersFromCapabilities(xml);
+    return toImageryLayers(parsedLayers);
   };
 
   const decodeDataUrl = (dataUrl: string) => {
@@ -214,26 +311,7 @@ async function startServer() {
 
   app.get("/api/map/capabilities", async (_req, res) => {
     try {
-      const capUrl = new URL(SEMA_WMS_BASE);
-      capUrl.searchParams.set("service", "WMS");
-      capUrl.searchParams.set("request", "GetCapabilities");
-      capUrl.searchParams.set("version", "1.3.0");
-      if (SEMA_WMS_AUTHKEY) {
-        capUrl.searchParams.set("authkey", SEMA_WMS_AUTHKEY);
-      }
-
-      const response = await fetch(capUrl.toString());
-      if (!response.ok) {
-        const text = await response.text();
-        res.status(response.status).json({
-          error: "Falha ao carregar capabilities da SEMA.",
-          details: text.slice(0, 500),
-        });
-        return;
-      }
-
-      const xml = await response.text();
-      const layers = parseLayersFromCapabilities(xml).map((l) => ({
+      const layers = (await fetchSemamtImageryLayers()).map((l) => ({
         name: l.name,
         title: l.title,
         crs: l.crs,
@@ -242,15 +320,19 @@ async function startServer() {
       }));
 
       const defaultLayer =
-        layers.find((l) => l.group === "spot" && l.inferredYear === "2008")?.name ||
-        layers.find((l) => l.group === "spot")?.name ||
+        layers.find((l) => l.name === "Mosaicos:LANDSAT_5_2008")?.name ||
         layers.find((l) => l.group === "landsat")?.name ||
+        layers.find((l) => l.group === "spot")?.name ||
+        layers.find((l) => l.group === "sentinel")?.name ||
         layers[0]?.name;
 
       res.json({
         serviceTitle: "SEMA WMS",
         layers,
         defaultLayer,
+        recommended: {
+          legalMarco2008: "Mosaicos:LANDSAT_5_2008",
+        },
       });
     } catch (error: any) {
       console.error("Erro no /api/map/capabilities:", error);
@@ -287,6 +369,24 @@ async function startServer() {
         return;
       }
 
+      let availableImagery: Awaited<ReturnType<typeof fetchSemamtImageryLayers>> = [];
+      try {
+        availableImagery = await fetchSemamtImageryLayers();
+      } catch (capErr) {
+        console.warn("[/api/map/snapshot] capabilities check failed:", capErr);
+      }
+
+      if (availableImagery.length) {
+        const allowed = new Set(availableImagery.map((l) => l.name));
+        if (!allowed.has(layerName)) {
+          res.status(400).json({
+            error: `Layer '${layerName}' não é uma camada de mosaico disponível.`,
+            availableLayers: availableImagery.slice(0, 50).map((l) => l.name),
+          });
+          return;
+        }
+      }
+
       const mapUrl = new URL(SEMA_WMS_BASE);
       mapUrl.searchParams.set("service", "WMS");
       mapUrl.searchParams.set("request", "GetMap");
@@ -318,14 +418,7 @@ async function startServer() {
         const text = await response.text();
         const layerNotDefined = /LayerNotDefined|Could not find layer/i.test(text);
         if (layerNotDefined) {
-          const capUrl = new URL(SEMA_WMS_BASE);
-          capUrl.searchParams.set("service", "WMS");
-          capUrl.searchParams.set("request", "GetCapabilities");
-          capUrl.searchParams.set("version", "1.3.0");
-          if (SEMA_WMS_AUTHKEY) capUrl.searchParams.set("authkey", SEMA_WMS_AUTHKEY);
-          const capRes = await fetch(capUrl.toString());
-          const capText = capRes.ok ? await capRes.text() : "";
-          const available = parseLayersFromCapabilities(capText).slice(0, 12).map((l) => l.name);
+          const available = availableImagery.slice(0, 50).map((l) => l.name);
           res.status(400).json({
             error: `Layer '${layerName}' não existe no WMS da SEMA.`,
             availableLayers: available,
@@ -490,13 +583,15 @@ async function startServer() {
     let extractedText = "";
     try {
       const raw = Buffer.from(parts[1], "base64");
-      const parsed = await pdfParse(raw);
-      extractedText = (parsed?.text || "")
-        .replace(/\r/g, "\n")
-        .replace(/[ \t]+\n/g, "\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim()
-        .slice(0, 25000);
+      const parsed = await parsePdfSafe(raw);
+      if (parsed?.text) {
+        extractedText = (parsed.text || "")
+          .replace(/\r/g, "\n")
+          .replace(/[ \t]+\n/g, "\n")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim()
+          .slice(0, 25000);
+      }
     } catch (err) {
       console.warn("[/api/chat-stream] pendingPdf parse failed:", err);
     }
@@ -726,6 +821,19 @@ async function startServer() {
     res.json({ ok: true, ts: Date.now() });
   });
 
+  app.get("/api/runtime/version", (_req, res) => {
+    res.json({
+      ok: true,
+      ts: Date.now(),
+      node: process.version,
+      env: process.env.NODE_ENV || "development",
+      hasChatStream: true,
+      hasGeometryBbox: true,
+      hasMapSnapshot: true,
+      hasMapCapabilities: true,
+    });
+  });
+
   app.post("/api/upload-image", async (req, res) => {
     try {
       console.log("[/api/upload-image] request received");
@@ -831,13 +939,15 @@ async function startServer() {
       let extractedText = "";
       let pageCount = 0;
       try {
-        const parsed = await pdfParse(fileBuffer);
-        extractedText = (parsed?.text || "")
-          .replace(/\r/g, "\n")
-          .replace(/[ \t]+\n/g, "\n")
-          .replace(/\n{3,}/g, "\n\n")
-          .trim();
-        pageCount = Number(parsed?.numpages || 0);
+        const parsed = await parsePdfSafe(fileBuffer);
+        if (parsed?.text) {
+          extractedText = (parsed.text || "")
+            .replace(/\r/g, "\n")
+            .replace(/[ \t]+\n/g, "\n")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim();
+          pageCount = Number(parsed?.numpages || 0);
+        }
       } catch (err) {
         console.warn("[/api/upload-file] failed to parse PDF text:", err);
       }

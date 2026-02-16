@@ -74,7 +74,7 @@ type MapLayerOption = {
   title: string;
   crs?: string[];
   inferredYear?: string;
-  group?: 'spot' | 'landsat' | 'other';
+  group?: 'spot' | 'landsat' | 'sentinel' | 'other';
 };
 
 const SEMA_WMS_DIRECT_BASE =
@@ -1562,9 +1562,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 space-y-1 custom-scrollbar">
-          {filteredConversations.map((conv, idx) => (
+          {filteredConversations.map((conv) => (
             <div
-              key={`${conv.id}-${idx}`}
+              key={conv.id}
               className={`w-full flex items-center gap-2 p-2 rounded-lg transition-colors group ${
                 conv.id === activeConversationId ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-slate-400'
               }`}
@@ -1662,12 +1662,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           <>
             <div className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth custom-scrollbar relative z-0">
               <div className="max-w-3xl mx-auto space-y-6">
-                {messages.map((msg, idx) => {
+                {messages.map((msg) => {
                   const parsedFromText = splitThinkContent(msg.text || '');
                   const displayThinking = msg.meta?.thinkingText || parsedFromText.thinkingText;
                   const displayText = parsedFromText.cleanText;
                   return (
-                  <div key={`${msg.id}-${idx}`} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-fade-in-up`}>
+                  <div key={msg.id} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-fade-in-up`}>
                     <div
                       className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
                         msg.role === 'ai'
