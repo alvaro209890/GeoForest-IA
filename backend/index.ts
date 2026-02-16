@@ -476,20 +476,25 @@ async function startServer() {
         return;
       }
 
+      const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) {
+        res.status(400).json({ error: "dataUrl de PDF inválido." });
+        return;
+      }
+      const mimeType = match[1] || "application/pdf";
+      const base64Payload = match[2];
+      const fileBuffer = Buffer.from(base64Payload, "base64");
+
       let extractedText = "";
       let pageCount = 0;
       try {
-        const parts = dataUrl.split(",");
-        if (parts.length === 2) {
-          const raw = Buffer.from(parts[1], "base64");
-          const parsed = await pdfParse(raw);
-          extractedText = (parsed?.text || "")
-            .replace(/\r/g, "\n")
-            .replace(/[ \t]+\n/g, "\n")
-            .replace(/\n{3,}/g, "\n\n")
-            .trim();
-          pageCount = Number(parsed?.numpages || 0);
-        }
+        const parsed = await pdfParse(fileBuffer);
+        extractedText = (parsed?.text || "")
+          .replace(/\r/g, "\n")
+          .replace(/[ \t]+\n/g, "\n")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+        pageCount = Number(parsed?.numpages || 0);
       } catch (err) {
         console.warn("[/api/upload-file] failed to parse PDF text:", err);
       }
@@ -513,7 +518,11 @@ async function startServer() {
         .digest("hex");
 
       const form = new FormData();
-      form.append("file", dataUrl);
+      const blob = new Blob([fileBuffer], { type: mimeType });
+      const uploadFilename = filename && filename.toLowerCase().endsWith(".pdf")
+        ? filename
+        : `${filename || "documento"}.pdf`;
+      form.append("file", blob, uploadFilename);
       form.append("api_key", apiKey);
       form.append("timestamp", String(timestamp));
       form.append("signature", signature);
