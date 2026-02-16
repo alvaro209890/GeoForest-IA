@@ -58,6 +58,7 @@ type Conversation = {
   title: string;
   updatedAt?: any;
   lastMessagePreview?: string;
+  lastAttachmentType?: 'image' | 'pdf';
 };
 
 const DEFAULT_ASSISTANT_MESSAGE: ChatMessage = {
@@ -135,6 +136,9 @@ export default function Dashboard() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [typingMessageId, setTypingMessageId] = useState<string | null>(null);
+  const [typingText, setTypingText] = useState('');
+  const typingTimerRef = useRef<number | null>(null);
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
 
   const [conversationsRef, setConversationsRef] = useState<{
@@ -188,6 +192,7 @@ export default function Dashboard() {
             title: data.title || 'Nova conversa',
             updatedAt: data.updatedAt,
             lastMessagePreview: data.lastMessagePreview,
+            lastAttachmentType: (data as any).lastAttachmentType,
           });
         });
 
@@ -249,12 +254,14 @@ export default function Dashboard() {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       lastMessagePreview: '',
+      lastAttachmentType: null,
     });
 
     const nextConv: Conversation = {
       id,
       title: 'Nova conversa',
       lastMessagePreview: '',
+      lastAttachmentType: undefined,
     };
     setConversations((prev) => [nextConv, ...prev]);
     setActiveConversationId(id);
@@ -296,32 +303,36 @@ export default function Dashboard() {
     }
   };
 
-  const onPickImage = (file: File | null) => {
-    if (!file) {
-      if (imagePreview) URL.revokeObjectURL(imagePreview);
-      setImageFile(null);
-      setImagePreview(null);
-      return;
-    }
-    if (!file.type.startsWith('image/')) {
-      toast.error('Selecione um arquivo de imagem');
-      return;
-    }
+  const clearAttachments = () => {
     if (imagePreview) URL.revokeObjectURL(imagePreview);
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
+    setImageFile(null);
+    setImagePreview(null);
+    setPdfFile(null);
   };
 
-  const onPickPdf = (file: File | null) => {
+  const onPickAttachment = (file: File | null) => {
     if (!file) {
+      clearAttachments();
+      return;
+    }
+    const mime = (file.type || '').toLowerCase();
+    const name = (file.name || '').toLowerCase();
+    const isImage = mime.startsWith('image/');
+    const isPdf = mime === 'application/pdf' || name.endsWith('.pdf') || mime.includes('pdf');
+
+    if (isImage) {
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+      setImageFile(file);
+      setImagePreview(URL.createObjectURL(file));
       setPdfFile(null);
       return;
     }
-    if (file.type !== 'application/pdf') {
-      toast.error('Selecione um arquivo PDF');
+    if (isPdf) {
+      clearAttachments();
+      setPdfFile(file);
       return;
     }
-    setPdfFile(file);
+    toast.error('Selecione uma imagem ou PDF');
   };
 
   const uploadImageIfNeeded = async (): Promise<string | null> => {
@@ -353,7 +364,7 @@ export default function Dashboard() {
     return data?.secure_url || null;
   };
 
-  const uploadPdfIfNeeded = async (): Promise<string | null> => {
+  const uploadPdfIfNeeded = async (): Promise<{ url: string; extractedText: string } | null> => {
     if (!pdfFile) return null;
     setUploading(true);
 
@@ -379,7 +390,8 @@ export default function Dashboard() {
     }
 
     const data = await res.json();
-    return data?.secure_url || null;
+    if (!data?.secure_url) return null;
+    return { url: data.secure_url as string, extractedText: (data.extracted_text as string) || '' };
   };
 
   const updateConversationMeta = async (updatedMessages: ChatMessage[], lastUserText: string) => {
@@ -391,6 +403,9 @@ export default function Dashboard() {
       ? lastUserText.trim().split(/\s+/).slice(0, 6).join(' ')
       : title;
 
+    const lastUser = [...updatedMessages].reverse().find((m) => m.role === 'user');
+    const lastAttachmentType = lastUser?.meta?.fileType;
+
     await setDoc(
       activeConversationRef,
       {
@@ -398,6 +413,7 @@ export default function Dashboard() {
         messages: sanitizeMessagesForFirestore(updatedMessages),
         updatedAt: serverTimestamp(),
         lastMessagePreview: lastUserText.slice(0, 120),
+        lastAttachmentType: lastAttachmentType || null,
       },
       { merge: true }
     );
@@ -406,7 +422,12 @@ export default function Dashboard() {
       prev
         .map((c) =>
           c.id === activeConversationId
-            ? { ...c, title: nextTitle, lastMessagePreview: lastUserText.slice(0, 120) }
+            ? {
+                ...c,
+                title: nextTitle,
+                lastMessagePreview: lastUserText.slice(0, 120),
+                lastAttachmentType: lastAttachmentType,
+              }
             : c
         )
         .sort((a, b) => (a.id === activeConversationId ? -1 : b.id === activeConversationId ? 1 : 0))
@@ -428,10 +449,10 @@ export default function Dashboard() {
     }
 
     let imageUrl: string | null = null;
-    let pdfUrl: string | null = null;
+    let pdfResult: { url: string; extractedText: string } | null = null;
     try {
       if (imageFile) imageUrl = await uploadImageIfNeeded();
-      if (pdfFile) pdfUrl = await uploadPdfIfNeeded();
+      if (pdfFile) pdfResult = await uploadPdfIfNeeded();
     } catch (error: any) {
       toast.error(error.message || 'Erro ao enviar arquivo');
       setUploading(false);
@@ -446,8 +467,11 @@ export default function Dashboard() {
     let userPayloadText = userText;
     if (imageUrl) {
       userPayloadText = userText || 'Analise a imagem.';
-    } else if (pdfUrl) {
-      userPayloadText = `${userText || 'Analise o PDF.'}\n\nArquivo PDF: ${pdfUrl}`;
+    } else if (pdfResult?.url) {
+      const context = pdfResult.extractedText
+        ? `\n\nConteúdo extraído do PDF:\n${pdfResult.extractedText}`
+        : '';
+      userPayloadText = `${userText || 'Analise o PDF.'}\n\nArquivo PDF: ${pdfResult.url}${context}`;
     }
 
     const userMessage: ChatMessage = {
@@ -457,8 +481,8 @@ export default function Dashboard() {
       time,
       meta: imageUrl
         ? { imageUrl, fileType: 'image' }
-        : pdfUrl
-        ? { fileUrl: pdfUrl, fileType: 'pdf' }
+        : pdfResult?.url
+        ? { fileUrl: pdfResult.url, fileType: 'pdf' }
         : undefined,
     };
 
@@ -469,7 +493,11 @@ export default function Dashboard() {
     setImagePreview(null);
     setPdfFile(null);
     setSending(true);
+    const typingId = nanoid();
+    setTypingMessageId(typingId);
+    setTypingText('');
 
+    const currentUserMessageId = userMessage.id;
     const apiMessages = [
       systemPrompt,
       ...nextMessages.map((m) => {
@@ -481,6 +509,9 @@ export default function Dashboard() {
               { type: 'image_url', image_url: { url: m.meta.imageUrl } },
             ],
           };
+        }
+        if (m.role === 'user' && m.meta?.fileType === 'pdf' && m.id === currentUserMessageId) {
+          return { role: 'user', content: userPayloadText };
         }
         return { role: m.role === 'ai' ? 'assistant' : 'user', content: m.text };
       }),
@@ -501,16 +532,32 @@ export default function Dashboard() {
       const reply = data?.content || 'Desculpe, não consegui responder agora.';
       const usedModel = data?.model || selectedModel;
       const aiMessage: ChatMessage = {
-        id: nanoid(),
+        id: typingId,
         role: 'ai',
         text: reply,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         meta: { model: usedModel },
       };
 
-      const updatedMessages = [...nextMessages, aiMessage];
-      setMessages(updatedMessages);
-      await updateConversationMeta(updatedMessages, userText || 'Nova conversa');
+      // Typing animation
+      const full = reply;
+      let idx = 0;
+      if (typingTimerRef.current) {
+        window.clearInterval(typingTimerRef.current);
+      }
+      typingTimerRef.current = window.setInterval(() => {
+        idx += 1;
+        setTypingText(full.slice(0, idx));
+        if (idx >= full.length) {
+          window.clearInterval(typingTimerRef.current!);
+          typingTimerRef.current = null;
+          setTypingMessageId(null);
+          setTypingText('');
+          const updatedMessages = [...nextMessages, aiMessage];
+          setMessages(updatedMessages);
+          updateConversationMeta(updatedMessages, userText || 'Nova conversa');
+        }
+      }, 18);
     } catch (error: any) {
       toast.error(error.message || 'Erro ao conversar com a IA');
     } finally {
@@ -634,15 +681,8 @@ export default function Dashboard() {
           >
             <div className="relative flex items-center justify-center gap-2 bg-[#0f241a] group-hover:bg-transparent text-emerald-100 py-3 rounded-[11px] transition-colors">
               <Plus size={20} />
-              <span className="font-medium xl:block lg:hidden">Nova Análise</span>
+              <span className="font-medium xl:block lg:hidden">Novo chat</span>
             </div>
-          </button>
-          <button
-            onClick={() => setActiveView('settings')}
-            className="w-full flex items-center gap-3 p-2.5 rounded-lg transition-colors group hover:bg-white/5 text-slate-400"
-          >
-            <Settings size={18} className="text-slate-500 group-hover:text-emerald-400" />
-            <span className="xl:block lg:hidden text-sm font-medium">Configurações</span>
           </button>
           <div className="relative">
             <Search size={16} className="text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -669,8 +709,10 @@ export default function Dashboard() {
                 className={conv.id === activeConversationId ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}
               />
               <div className="overflow-hidden xl:block lg:hidden">
-                <p className="text-sm text-slate-300 truncate group-hover:text-white transition-colors">
-                  {conv.title}
+                <p className="text-sm text-slate-300 truncate group-hover:text-white transition-colors inline-flex items-center gap-2">
+                  {conv.lastAttachmentType === 'pdf' && <FileText size={12} className="text-emerald-300 shrink-0" />}
+                  {conv.lastAttachmentType === 'image' && <ImagePlus size={12} className="text-emerald-300 shrink-0" />}
+                  <span className="truncate">{conv.title}</span>
                 </p>
                 {conv.lastMessagePreview && <p className="text-[10px] text-slate-600 truncate">{conv.lastMessagePreview}</p>}
               </div>
@@ -679,6 +721,15 @@ export default function Dashboard() {
         </div>
 
         <div className="p-4 border-t border-white/5">
+          <button
+            onClick={() => setActiveView('settings')}
+            className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2"
+          >
+            <Settings size={18} className="text-slate-500 group-hover:text-emerald-400 transition-colors" />
+            <span className="text-sm text-slate-300 group-hover:text-white transition-colors xl:block lg:hidden">
+              Configurações
+            </span>
+          </button>
           <div className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group">
             <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center ring-2 ring-transparent group-hover:ring-emerald-500/30 transition-all">
               <span className="font-bold text-white text-sm">
@@ -721,22 +772,64 @@ export default function Dashboard() {
           </div>
           <div className="flex items-center gap-2">
             {activeView === 'chat' && (
-              <div className="relative">
-                <select
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  className="appearance-none bg-[#050b08] border border-white/10 rounded-lg text-xs text-slate-300 py-2 pl-3 pr-8 outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 cursor-pointer transition-all hover:border-emerald-500/30"
-                >
-                  <option value="auto" className="bg-[#0e1612] text-slate-200 py-2">
-                    Auto (Florestal)
-                  </option>
-                  {models.map((model) => (
-                    <option key={model.id} value={model.id} className="bg-[#0e1612] text-slate-200 py-2">
-                      {model.label}
+              <div className="relative flex items-center">
+                <div className="relative">
+                  <select
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    className="appearance-none bg-[#050b08] border border-white/10 rounded-lg text-xs text-slate-300 py-2 pl-3 pr-16 outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 cursor-pointer transition-all hover:border-emerald-500/30"
+                  >
+                    <option value="auto" className="bg-[#0e1612] text-slate-200 py-2">
+                      Auto (Florestal)
                     </option>
-                  ))}
-                </select>
-                <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                    {models
+                      .filter((m) =>
+                        [
+                          'meta-llama/llama-3.3-70b-versatile',
+                          'meta-llama/llama-4-maverick-17b-128e-instruct',
+                          'qwen/qwen3-32b',
+                        ].includes(m.id)
+                      )
+                      .map((model) => (
+                        <option key={model.id} value={model.id} className="bg-[#0e1612] text-slate-200 py-2">
+                          {model.label}
+                        </option>
+                      ))}
+                  </select>
+                  <ChevronDown size={14} className="absolute right-8 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                  <div className="absolute right-1 top-1/2 -translate-y-1/2 group">
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-[10px] rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:text-emerald-200"
+                    >
+                      +
+                    </button>
+                    <div className="absolute right-0 mt-2 w-56 rounded-xl bg-[#0e1612]/95 border border-white/10 shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all z-20">
+                      <div className="p-2 text-[10px] uppercase tracking-wider text-slate-500">Mais modelos</div>
+                      <div className="max-h-60 overflow-auto custom-scrollbar">
+                        {models
+                          .filter(
+                            (m) =>
+                              ![
+                                'meta-llama/llama-3.3-70b-versatile',
+                                'meta-llama/llama-4-maverick-17b-128e-instruct',
+                                'qwen/qwen3-32b',
+                              ].includes(m.id)
+                          )
+                          .map((model) => (
+                            <button
+                              key={model.id}
+                              onClick={() => setSelectedModel(model.id)}
+                              className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-white/5"
+                            >
+                              {model.label}
+                            </button>
+                          ))}
+                        {models.length === 0 && <div className="px-3 py-2 text-xs text-slate-500">Carregando...</div>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -790,6 +883,24 @@ export default function Dashboard() {
                     </div>
                   </div>
                 ))}
+                {typingMessageId && (
+                  <div className="flex gap-4 animate-fade-in-up">
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-gradient-to-br from-emerald-500 to-green-700 shadow-lg shadow-emerald-900/50">
+                      <Leaf size={14} className="text-white" />
+                    </div>
+                    <div className="relative max-w-[85%] lg:max-w-[75%] p-4 rounded-2xl bg-[#131f18]/80 border border-emerald-500/10 text-slate-200 rounded-tl-sm">
+                      {typingText ? (
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap">{typingText}</p>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span className="typing-dot"></span>
+                          <span className="typing-dot"></span>
+                          <span className="typing-dot"></span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div ref={messagesEndRef} />
               </div>
             </div>
@@ -807,28 +918,36 @@ export default function Dashboard() {
                     rows={1}
                     style={{ height: input ? `${Math.min(input.split('\n').length * 24 + 32, 200)}px` : '60px' }}
                   />
+                  {(imageFile || pdfFile) && (
+                    <div className="px-4 pb-2">
+                      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs text-slate-300">
+                        {imageFile ? <ImagePlus size={14} className="text-emerald-300" /> : <FileText size={14} className="text-emerald-300" />}
+                        <span className="truncate max-w-[240px]">{imageFile?.name || pdfFile?.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => clearAttachments()}
+                          className="text-slate-500 hover:text-red-300 ml-1"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between px-3 pb-3 pt-1">
-                    <div className="flex items-center gap-1">
-                      <label className="p-2 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors tooltip" title="Anexar Imagem">
-                        <Paperclip size={18} />
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs cursor-pointer">
+                        <ImagePlus size={16} className="text-emerald-300" />
+                        Anexar
                         <input
                           type="file"
-                          accept="image/*"
+                          accept="image/*,application/pdf"
                           className="hidden"
-                          onChange={(e) => onPickImage(e.target.files?.[0] || null)}
+                          onChange={(e) => onPickAttachment(e.target.files?.[0] || null)}
                         />
                       </label>
-                      <label className="p-2 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors tooltip" title="Anexar PDF">
-                        <FileText size={18} />
-                        <input
-                          type="file"
-                          accept="application/pdf"
-                          className="hidden"
-                          onChange={(e) => onPickPdf(e.target.files?.[0] || null)}
-                        />
-                      </label>
-                      <button className="p-2 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors tooltip" title="Adicionar Mapa">
-                        <MapIcon size={18} />
+                      <button className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs">
+                        <MapIcon size={16} className="text-emerald-300" />
+                        Mapa
                       </button>
                     </div>
                     <div className="flex items-center gap-3">
@@ -1075,6 +1194,20 @@ export default function Dashboard() {
           }
           .animate-fade-in-up {
             animation: fade-in-up 0.4s ease-out forwards;
+          }
+          .typing-dot {
+            width: 6px;
+            height: 6px;
+            background: rgba(16, 185, 129, 0.7);
+            border-radius: 999px;
+            display: inline-block;
+            animation: typing 1.2s infinite ease-in-out;
+          }
+          .typing-dot:nth-child(2) { animation-delay: 0.15s; }
+          .typing-dot:nth-child(3) { animation-delay: 0.3s; }
+          @keyframes typing {
+            0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+            40% { transform: scale(1); opacity: 1; }
           }
         `}</style>
       </main>

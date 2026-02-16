@@ -3,6 +3,7 @@ import { createServer } from "http";
 import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
+import pdfParse from "pdf-parse";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,23 +30,38 @@ async function startServer() {
 
   const MODEL_CATALOG = [
     {
-      id: "llama-3.3-70b-versatile",
-      label: "Llama 3.3 70B (geral)",
+      id: "meta-llama/llama-3.3-70b-versatile",
+      label: "Llama 3.3 70B",
       capabilities: ["text"],
     },
     {
-      id: "meta-llama/llama-4-scout-17b-16e-instruct",
-      label: "Llama 4 Scout 17B (visão)",
-      capabilities: ["text", "vision"],
-    },
-    {
       id: "meta-llama/llama-4-maverick-17b-128e-instruct",
-      label: "Llama 4 Maverick 17B (visão)",
+      label: "Llama 4 Maverick",
       capabilities: ["text", "vision"],
     },
     {
-      id: "mixtral-8x7b-32768",
-      label: "Mixtral 8x7B (texto)",
+      id: "meta-llama/llama-4-scout-17b-16e-instruct",
+      label: "Llama 4 Scout",
+      capabilities: ["text", "vision"],
+    },
+    {
+      id: "meta-llama/llama-guard-4-12b",
+      label: "Llama Guard 4 12B",
+      capabilities: ["text", "vision"],
+    },
+    {
+      id: "qwen/qwen3-32b",
+      label: "Qwen 3 32B",
+      capabilities: ["text"],
+    },
+    {
+      id: "moonshotai/kimi-k2-instruct-0905",
+      label: "Kimi K2 Instruct (0905)",
+      capabilities: ["text"],
+    },
+    {
+      id: "openai/gpt-oss-20b",
+      label: "GPT-OSS 20B",
       capabilities: ["text"],
     },
   ] as const;
@@ -53,7 +69,7 @@ async function startServer() {
   const MODEL_IDS = new Set(MODEL_CATALOG.map((model) => model.id));
 
   app.get("/api/models", (_req, res) => {
-    const defaultModel = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+    const defaultModel = process.env.GROQ_MODEL || "meta-llama/llama-3.3-70b-versatile";
     res.json({ models: MODEL_CATALOG, defaultModel });
   });
 
@@ -83,12 +99,12 @@ async function startServer() {
 
     const hasDataCue =
       /(shapefile|shape|geojson|csv|xlsx|planilha|tabela|dados|estat[ií]stica|an[áa]lise)/.test(text);
-    if (hasDataCue) return "llama-3.3-70b-versatile";
+    if (hasDataCue) return "meta-llama/llama-3.3-70b-versatile";
 
-    return "llama-3.3-70b-versatile";
+    return "meta-llama/llama-3.3-70b-versatile";
   };
 
-  const DEFAULT_MODEL = "llama-3.3-70b-versatile";
+  const DEFAULT_MODEL = "meta-llama/llama-3.3-70b-versatile";
   const TEMPERATURE = 0.1;
   const MAX_TOKENS = 800;
   const AUTO_MODEL = true;
@@ -255,6 +271,18 @@ async function startServer() {
         return;
       }
 
+      let extractedText = "";
+      try {
+        const parts = dataUrl.split(",");
+        if (parts.length === 2) {
+          const raw = Buffer.from(parts[1], "base64");
+          const parsed = await pdfParse(raw);
+          extractedText = (parsed?.text || "").replace(/\s+\n/g, "\n").trim();
+        }
+      } catch (err) {
+        console.warn("[/api/upload-file] failed to parse PDF text:", err);
+      }
+
       const timestamp = Math.floor(Date.now() / 1000);
       const publicId = filename
         ? `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_")
@@ -299,6 +327,7 @@ async function startServer() {
         secure_url: data.secure_url,
         format: data.format,
         bytes: data.bytes,
+        extracted_text: extractedText.slice(0, 25000),
       });
     } catch (error: any) {
       console.error("Erro no /api/upload-file:", error);
