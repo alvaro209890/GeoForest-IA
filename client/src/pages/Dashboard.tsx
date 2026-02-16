@@ -1079,14 +1079,23 @@ export default function Dashboard() {
       const data = await res.json();
       const bbox = data?.bbox as [number, number, number, number];
       if (!bbox || bbox.length !== 4) throw new Error('BBox inválida retornada do arquivo');
+      const poly = Array.isArray(data?.polygon)
+        ? (data.polygon as Array<[number, number]>).filter(
+            (p) => Array.isArray(p) && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]))
+          )
+        : [];
       setMapBbox(bbox);
-      setMapPolygon([
-        [bbox[0], bbox[1]],
-        [bbox[2], bbox[1]],
-        [bbox[2], bbox[3]],
-        [bbox[0], bbox[3]],
-        [bbox[0], bbox[1]],
-      ]);
+      setMapPolygon(
+        poly.length >= 3
+          ? poly
+          : [
+              [bbox[0], bbox[1]],
+              [bbox[2], bbox[1]],
+              [bbox[2], bbox[3]],
+              [bbox[0], bbox[3]],
+              [bbox[0], bbox[1]],
+            ]
+      );
       await refreshMapPreview(undefined, bbox);
       toast.success('Área carregada do arquivo e aplicada no mapa');
     } catch (error: any) {
@@ -1192,6 +1201,15 @@ export default function Dashboard() {
     const selectedImageFile = imageFile;
     const selectedPdfFile = pdfFile;
     const selectedMapImageUrl = pendingMapImageUrl;
+    let localImagePreviewForChat: string | null = selectedMapImageUrl || null;
+
+    if (selectedImageFile) {
+      try {
+        localImagePreviewForChat = await readFileAsDataUrl(selectedImageFile);
+      } catch (error: any) {
+        toast.error(error.message || 'Erro ao preparar prévia da imagem');
+      }
+    }
 
     let userPayloadText = userText;
     if (selectedImageFile || selectedMapImageUrl) {
@@ -1226,7 +1244,7 @@ export default function Dashboard() {
             fileType: 'image',
             fileName: selectedImageFile?.name || 'mapa-wms.png',
             uploadStatus: selectedMapImageUrl ? 'done' : 'uploading',
-            imageUrl: selectedMapImageUrl || undefined,
+            imageUrl: localImagePreviewForChat || undefined,
             mapContext: pendingMapContext,
           }
         : selectedPdfFile
@@ -1290,10 +1308,9 @@ export default function Dashboard() {
         await patchMessageMeta(currentUserMessageId, { uploadStatus: 'error' }, userText || 'Nova conversa');
       });
 
-    let imageDataUrlForAi: string | null = null;
+    let imageDataUrlForAi: string | null = localImagePreviewForChat;
     let pdfDataUrlForAi: string | null = null;
     try {
-      if (selectedImageFile) imageDataUrlForAi = await readFileAsDataUrl(selectedImageFile);
       if (selectedPdfFile) pdfDataUrlForAi = await readFileAsDataUrl(selectedPdfFile);
     } catch (error: any) {
       toast.error(error.message || 'Erro ao ler arquivo anexado');
@@ -1527,6 +1544,36 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       .join(' ');
     return points;
   }, [mapPolygon, mapBbox]);
+
+  const groupedImageLayers = useMemo(() => {
+    const parseYear = (text: string) => {
+      const m = text.match(/\b(19|20)\d{2}\b/);
+      return m ? Number(m[0]) : 0;
+    };
+    const groups: Record<string, MapLayerOption[]> = {
+      Landsat: [],
+      Sentinel: [],
+      SPOT: [],
+      Resourcesat: [],
+      Outras: [],
+    };
+    for (const layer of mapImageLayers) {
+      const low = `${layer.name} ${layer.title}`.toLowerCase();
+      if (low.includes('landsat')) groups.Landsat.push(layer);
+      else if (low.includes('sentinel')) groups.Sentinel.push(layer);
+      else if (low.includes('spot')) groups.SPOT.push(layer);
+      else if (low.includes('resourcesat')) groups.Resourcesat.push(layer);
+      else groups.Outras.push(layer);
+    }
+    Object.values(groups).forEach((arr) =>
+      arr.sort((a, b) => {
+        const y = parseYear(`${a.name} ${a.title}`) - parseYear(`${b.name} ${b.title}`);
+        if (y !== 0) return -y;
+        return a.name.localeCompare(b.name);
+      })
+    );
+    return groups;
+  }, [mapImageLayers]);
 
   // Custom components
   const CustomSelect = ({ label, icon: Icon, options, value, onChange }: any) => (
@@ -2269,11 +2316,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       }}
                       className="w-full bg-[#050b08] border border-white/10 rounded-lg text-xs text-slate-300 py-2 px-3 outline-none focus:border-emerald-500/50"
                     >
-                      {mapImageLayers.map((layer) => (
-                        <option key={layer.name} value={layer.name}>
-                          {layer.title} {layer.inferredYear ? `(${layer.inferredYear})` : ''}
-                        </option>
-                      ))}
+                      {Object.entries(groupedImageLayers).map(([groupName, layers]) =>
+                        layers.length ? (
+                          <optgroup key={groupName} label={groupName}>
+                            {layers.map((layer) => (
+                              <option key={layer.name} value={layer.name}>
+                                {layer.title} {layer.inferredYear ? `(${layer.inferredYear})` : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ) : null
+                      )}
                     </select>
                   </div>
                   <div>
@@ -2390,26 +2443,28 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       {mapLoading ? 'Carregando camadas do mapa...' : 'Carregando prévia WMS...'}
                     </div>
                   ) : mapPreviewDataUrl ? (
-                    <div className="relative h-full w-full bg-black/25">
-                      <img
-                        src={mapPreviewDataUrl}
-                        alt="Prévia WMS da área selecionada"
-                        className="h-full w-full object-cover"
-                      />
-                      {mapPolygonPoints && (
-                        <svg
-                          viewBox="0 0 100 100"
-                          preserveAspectRatio="none"
-                          className="absolute inset-0 h-full w-full pointer-events-none"
-                        >
-                          <polygon
-                            points={mapPolygonPoints}
-                            fill="rgba(239, 68, 68, 0.16)"
-                            stroke="rgba(239, 68, 68, 0.98)"
-                            strokeWidth="0.6"
-                          />
-                        </svg>
-                      )}
+                    <div className="h-full w-full bg-black/25 flex items-center justify-center p-2">
+                      <div className="relative max-h-full max-w-full">
+                        <img
+                          src={mapPreviewDataUrl}
+                          alt="Prévia WMS da área selecionada"
+                          className="max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain"
+                        />
+                        {mapPolygonPoints && (
+                          <svg
+                            viewBox="0 0 100 100"
+                            preserveAspectRatio="none"
+                            className="absolute inset-0 h-full w-full pointer-events-none"
+                          >
+                            <polygon
+                              points={mapPolygonPoints}
+                              fill="rgba(239, 68, 68, 0.16)"
+                              stroke="rgba(239, 68, 68, 0.98)"
+                              strokeWidth="0.6"
+                            />
+                          </svg>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm px-6 text-center">

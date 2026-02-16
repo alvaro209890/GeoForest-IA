@@ -278,6 +278,46 @@ async function startServer() {
     return [minX, minY, maxX, maxY] as [number, number, number, number];
   };
 
+  const parseShapefileFirstPolygon = (shpBuffer: Buffer) => {
+    // Returns first polygon ring found (lon/lat), limited to avoid oversized payloads.
+    if (shpBuffer.length < 120) return null;
+    const pointsLimit = 6000;
+    let offset = 100; // skip .shp header
+    while (offset + 12 <= shpBuffer.length) {
+      const contentLengthWords = shpBuffer.readInt32BE(offset + 4);
+      const contentLengthBytes = contentLengthWords * 2;
+      const recStart = offset + 8;
+      const recEnd = recStart + contentLengthBytes;
+      if (recEnd > shpBuffer.length || contentLengthBytes < 4) break;
+
+      const shapeType = shpBuffer.readInt32LE(recStart);
+      if ((shapeType === 5 || shapeType === 15) && contentLengthBytes >= 44) {
+        const numParts = shpBuffer.readInt32LE(recStart + 36);
+        const numPoints = shpBuffer.readInt32LE(recStart + 40);
+        if (numParts > 0 && numPoints > 2) {
+          const partsOffset = recStart + 44;
+          const pointsOffset = partsOffset + numParts * 4;
+          if (pointsOffset + numPoints * 16 <= recEnd) {
+            const partStart = shpBuffer.readInt32LE(partsOffset);
+            const partEnd = numParts > 1 ? shpBuffer.readInt32LE(partsOffset + 4) : numPoints;
+            const end = Math.min(partEnd, numPoints, partStart + pointsLimit);
+            const ring: Array<[number, number]> = [];
+            for (let i = partStart; i < end; i += 1) {
+              const pOff = pointsOffset + i * 16;
+              const x = shpBuffer.readDoubleLE(pOff);
+              const y = shpBuffer.readDoubleLE(pOff + 8);
+              if (Number.isFinite(x) && Number.isFinite(y)) ring.push([x, y]);
+            }
+            if (ring.length >= 3) return ring;
+          }
+        }
+      }
+
+      offset = recEnd;
+    }
+    return null;
+  };
+
   const extractZipEntries = (zipBuffer: Buffer) => {
     // Minimal ZIP parser for local file headers (supports "stored" and "deflate")
     const entries: Array<{ name: string; data: Buffer }> = [];
@@ -521,7 +561,13 @@ async function startServer() {
           res.status(400).json({ error: "Não foi possível extrair bbox do shapefile." });
           return;
         }
-        res.json({ bbox: [minX, minY, maxX, maxY], crs: "EPSG:4326", source: "shapefile_zip_header" });
+        const polygon = parseShapefileFirstPolygon(shp.data) || undefined;
+        res.json({
+          bbox: [minX, minY, maxX, maxY],
+          polygon,
+          crs: "EPSG:4326",
+          source: "shapefile_zip_header",
+        });
         return;
       }
 
