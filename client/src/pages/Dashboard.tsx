@@ -82,6 +82,65 @@ type ParsedGeometry = {
   polygon?: Array<[number, number]>;
 };
 
+const FALLBACK_WMS_IMAGE_LAYERS: MapLayerOption[] = [
+  'SEMAMT:ALOS_PALSAR_DEM',
+  'Geoportal:DECLIVIDADE_GEOPORTAL',
+  'Mosaicos:LANDSAT_5_1984',
+  'semamt:LANDSAT_5',
+  'Mosaicos:LANDSAT_5_1985',
+  'Mosaicos:LANDSAT_5_1986',
+  'Mosaicos:LANDSAT_5_1987',
+  'Mosaicos:LANDSAT_5_1988',
+  'Mosaicos:LANDSAT_5_1989',
+  'Mosaicos:LANDSAT_5_1990',
+  'Mosaicos:LANDSAT_5_1991',
+  'Mosaicos:LANDSAT_5_1992',
+  'Mosaicos:LANDSAT_5_1993',
+  'Mosaicos:LANDSAT_5_1994',
+  'Mosaicos:LANDSAT_5_1995',
+  'Mosaicos:LANDSAT_5_1996',
+  'Mosaicos:LANDSAT_5_1997',
+  'Mosaicos:LANDSAT_5_1998',
+  'Mosaicos:LANDSAT_5_1999',
+  'Mosaicos:LANDSAT_5_2000',
+  'Mosaicos:LANDSAT_5_2003',
+  'Mosaicos:LANDSAT_5_2004',
+  'Mosaicos:LANDSAT_5_2005',
+  'Mosaicos:LANDSAT_5_2006',
+  'Mosaicos:LANDSAT_5_2007',
+  'Mosaicos:LANDSAT_5_2008',
+  'Mosaicos:LANDSAT_5_2009',
+  'Mosaicos:LANDSAT_5_2010',
+  'Mosaicos:LANDSAT_5_2011',
+  'Mosaicos:LANDSAT_7_2002',
+  'Mosaicos:LANDSAT_8_2013',
+  'Mosaicos:LANDSAT_8_2014',
+  'Mosaicos:LANDSAT_8_2015',
+  'Mosaicos:LANDSAT_8_2016',
+  'Mosaicos:LANDSAT_8_2017',
+  'Mosaicos:LANDSAT_8_2018',
+  'Mosaicos:MOSAICO_SPOT_SEPLAN',
+  'Mosaicos:RESOURCESAT_2012',
+  'Mosaicos:SENTINEL_2_2016',
+  'Mosaicos:Geoportal_Sentinel_2_2016_NIR',
+  'Mosaicos:SENTINEL_2_2017',
+  'Mosaicos:Geoportal_Sentinel_2_2017_NIR',
+  'Mosaicos:SENTINEL_2_2018',
+  'Mosaicos:Geoportal_Sentinel_2_2018_NIR',
+  'Mosaicos:SENTINEL_2_2019',
+  'Mosaicos:SENTINEL_2_2020',
+  'Mosaicos:Geoportal_Sentinel_2_2020_NIR',
+  'Mosaicos:SENTINEL_2_2021',
+  'Mosaicos:Geoportal_Sentinel_2_2021_NIR',
+  'Mosaicos:SENTINEL_2_2022',
+  'Mosaicos:SENTINEL_2_2023',
+  'Mosaicos:SENTINEL_2_2024',
+].map((name) => ({
+  name,
+  title: name.split(':')[1] || name,
+  inferredYear: name.match(/\b(19|20)\d{2}\b/)?.[0],
+}));
+
 const SEMA_WMS_DIRECT_BASE =
   'https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&version=1.1.1&authkey=541085de-9a2e-454e-bdba-eb3d57a2f492&request=GetMap';
 
@@ -887,7 +946,8 @@ export default function Dashboard() {
         throw new Error(text || 'Falha ao carregar camadas de mapa');
       }
       const data = await res.json();
-      const imageLayers = (data?.imageLayers || data?.layers || []) as MapLayerOption[];
+      const imageLayersRaw = (data?.imageLayers || data?.layers || []) as MapLayerOption[];
+      const imageLayers = imageLayersRaw.length ? imageLayersRaw : FALLBACK_WMS_IMAGE_LAYERS;
       const shapeLayers = (data?.shapeLayers || []) as MapLayerOption[];
       setMapImageLayers(imageLayers);
       setMapShapeLayers(shapeLayers);
@@ -901,7 +961,15 @@ export default function Dashboard() {
         }, 0);
       }
     } catch (error: any) {
-      toast.error(error?.message || 'Erro ao abrir mapa');
+      const imageLayers = FALLBACK_WMS_IMAGE_LAYERS;
+      setMapImageLayers(imageLayers);
+      setMapShapeLayers([]);
+      const chosenLayer = selectedMapLayer || 'Mosaicos:LANDSAT_5_2008';
+      setSelectedMapLayer(chosenLayer);
+      setTimeout(() => {
+        refreshMapPreview(chosenLayer, mapBbox);
+      }, 0);
+      toast.error(error?.message || 'Falha ao carregar capabilities. Usando catálogo fixo.');
     } finally {
       setMapLoading(false);
     }
@@ -1546,81 +1614,35 @@ Arquivo de imagem previamente anexado pelo usuário.`;
   }, [mapPolygon, mapBbox]);
 
   const groupedImageLayers = useMemo(() => {
-    const preferredOrder = [
-      'SEMAMT:ALOS_PALSAR_DEM',
-      'Geoportal:DECLIVIDADE_GEOPORTAL',
-      'Mosaicos:LANDSAT_5_1984',
-      'semamt:LANDSAT_5',
-      'Mosaicos:LANDSAT_5_1985',
-      'Mosaicos:LANDSAT_5_1986',
-      'Mosaicos:LANDSAT_5_1987',
-      'Mosaicos:LANDSAT_5_1988',
-      'Mosaicos:LANDSAT_5_1989',
-      'Mosaicos:LANDSAT_5_1990',
-      'Mosaicos:LANDSAT_5_1991',
-      'Mosaicos:LANDSAT_5_1992',
-      'Mosaicos:LANDSAT_5_1993',
-      'Mosaicos:LANDSAT_5_1994',
-      'Mosaicos:LANDSAT_5_1995',
-      'Mosaicos:LANDSAT_5_1996',
-      'Mosaicos:LANDSAT_5_1997',
-      'Mosaicos:LANDSAT_5_1998',
-      'Mosaicos:LANDSAT_5_1999',
-      'Mosaicos:LANDSAT_5_2000',
-      'Mosaicos:LANDSAT_5_2003',
-      'Mosaicos:LANDSAT_5_2004',
-      'Mosaicos:LANDSAT_5_2005',
-      'Mosaicos:LANDSAT_5_2006',
-      'Mosaicos:LANDSAT_5_2007',
-      'Mosaicos:LANDSAT_5_2008',
-      'Mosaicos:LANDSAT_5_2009',
-      'Mosaicos:LANDSAT_5_2010',
-      'Mosaicos:LANDSAT_5_2011',
-      'Mosaicos:LANDSAT_7_2002',
-      'Mosaicos:LANDSAT_8_2013',
-      'Mosaicos:LANDSAT_8_2014',
-      'Mosaicos:LANDSAT_8_2015',
-      'Mosaicos:LANDSAT_8_2016',
-      'Mosaicos:LANDSAT_8_2017',
-      'Mosaicos:LANDSAT_8_2018',
-      'Mosaicos:MOSAICO_SPOT_SEPLAN',
-      'Mosaicos:RESOURCESAT_2012',
-      'Mosaicos:SENTINEL_2_2016',
-      'Mosaicos:Geoportal_Sentinel_2_2016_NIR',
-      'Mosaicos:SENTINEL_2_2017',
-      'Mosaicos:Geoportal_Sentinel_2_2017_NIR',
-      'Mosaicos:SENTINEL_2_2018',
-      'Mosaicos:Geoportal_Sentinel_2_2018_NIR',
-      'Mosaicos:SENTINEL_2_2019',
-      'Mosaicos:SENTINEL_2_2020',
-      'Mosaicos:Geoportal_Sentinel_2_2020_NIR',
-      'Mosaicos:SENTINEL_2_2021',
-      'Mosaicos:Geoportal_Sentinel_2_2021_NIR',
-      'Mosaicos:SENTINEL_2_2022',
-      'Mosaicos:SENTINEL_2_2023',
-      'Mosaicos:SENTINEL_2_2024',
-    ];
     const preferredOrderMap = new Map<string, number>();
-    preferredOrder.forEach((name, idx) => {
-      const key = name.toLowerCase();
+    FALLBACK_WMS_IMAGE_LAYERS.forEach((layer, idx) => {
+      const key = layer.name.toLowerCase();
       if (!preferredOrderMap.has(key)) preferredOrderMap.set(key, idx);
     });
     const parseYear = (text: string) => {
       const m = text.match(/\b(19|20)\d{2}\b/);
       return m ? Number(m[0]) : 0;
     };
-    const groups: Record<string, MapLayerOption[]> = {
-      SEMAMT: [],
-      Geoportal: [],
-      Mosaicos: [],
-      Outras: [],
+    const groups: Record<string, MapLayerOption[]> = {};
+    const pickGroup = (layer: MapLayerOption) => {
+      const nameLow = layer.name.toLowerCase();
+      if (nameLow.startsWith('mosaicos:landsat_5_')) return 'Mosaicos / Landsat / Landsat-5';
+      if (nameLow.startsWith('mosaicos:landsat_7_')) return 'Mosaicos / Landsat / Landsat-7';
+      if (nameLow.startsWith('mosaicos:landsat_8_')) return 'Mosaicos / Landsat / Landsat-8';
+      if (nameLow.startsWith('mosaicos:sentinel_2_') || nameLow.includes('geoportal_sentinel_2_')) {
+        return 'Mosaicos / Sentinel-2';
+      }
+      if (nameLow.includes('spot')) return 'Mosaicos / SPOT';
+      if (nameLow.includes('resourcesat')) return 'Mosaicos / Resourcesat';
+      if (nameLow.startsWith('semamt:')) return 'SEMAMT';
+      if (nameLow.startsWith('geoportal:')) return 'Geoportal';
+      if (nameLow.startsWith('mosaicos:')) return 'Mosaicos / Outras';
+      return 'Outras';
     };
     for (const layer of mapImageLayers) {
-      const ws = String(layer.name.split(':')[0] || '').toLowerCase();
-      if (ws === 'semamt') groups.SEMAMT.push(layer);
-      else if (ws === 'geoportal') groups.Geoportal.push(layer);
-      else if (ws === 'mosaicos') groups.Mosaicos.push(layer);
-      else groups.Outras.push(layer);
+      const groupName = pickGroup(layer);
+      if (!groups[groupName]) groups[groupName] = [];
+      groups[groupName].push(layer);
     }
     Object.values(groups).forEach((arr) =>
       arr.sort((a, b) => {
@@ -1638,6 +1660,27 @@ Arquivo de imagem previamente anexado pelo usuário.`;
     );
     return groups;
   }, [mapImageLayers]);
+  const groupedImageLayerEntries = useMemo(() => {
+    const order = [
+      'Mosaicos / Landsat / Landsat-5',
+      'Mosaicos / Landsat / Landsat-7',
+      'Mosaicos / Landsat / Landsat-8',
+      'Mosaicos / Sentinel-2',
+      'Mosaicos / SPOT',
+      'Mosaicos / Resourcesat',
+      'SEMAMT',
+      'Geoportal',
+      'Mosaicos / Outras',
+      'Outras',
+    ];
+    const rank = new Map(order.map((name, idx) => [name, idx]));
+    return Object.entries(groupedImageLayers).sort((a, b) => {
+      const ra = rank.get(a[0]) ?? 999;
+      const rb = rank.get(b[0]) ?? 999;
+      if (ra !== rb) return ra - rb;
+      return a[0].localeCompare(b[0]);
+    });
+  }, [groupedImageLayers]);
 
   // Custom components
   const CustomSelect = ({ label, icon: Icon, options, value, onChange }: any) => (
@@ -2380,7 +2423,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       }}
                       className="w-full bg-[#050b08] border border-white/10 rounded-lg text-xs text-slate-300 py-2 px-3 outline-none focus:border-emerald-500/50"
                     >
-                      {Object.entries(groupedImageLayers).map(([groupName, layers]) =>
+                      {groupedImageLayerEntries.map(([groupName, layers]) =>
                         layers.length ? (
                           <optgroup key={groupName} label={groupName}>
                             {layers.map((layer) => (

@@ -72,6 +72,67 @@ async function startServer() {
   const SEMA_WMS_AUTHKEY =
     process.env.SEMA_WMS_AUTHKEY ||
     "541085de-9a2e-454e-bdba-eb3d57a2f492";
+  const CURATED_IMAGERY_LAYER_NAMES = [
+    "SEMAMT:ALOS_PALSAR_DEM",
+    "Geoportal:DECLIVIDADE_GEOPORTAL",
+    "Mosaicos:LANDSAT_5_1984",
+    "semamt:LANDSAT_5",
+    "Mosaicos:LANDSAT_5_1985",
+    "Mosaicos:LANDSAT_5_1986",
+    "Mosaicos:LANDSAT_5_1987",
+    "Mosaicos:LANDSAT_5_1988",
+    "Mosaicos:LANDSAT_5_1989",
+    "Mosaicos:LANDSAT_5_1990",
+    "Mosaicos:LANDSAT_5_1991",
+    "Mosaicos:LANDSAT_5_1992",
+    "Mosaicos:LANDSAT_5_1993",
+    "Mosaicos:LANDSAT_5_1994",
+    "Mosaicos:LANDSAT_5_1995",
+    "Mosaicos:LANDSAT_5_1996",
+    "Mosaicos:LANDSAT_5_1997",
+    "Mosaicos:LANDSAT_5_1998",
+    "Mosaicos:LANDSAT_5_1999",
+    "Mosaicos:LANDSAT_5_2000",
+    "Mosaicos:LANDSAT_5_2003",
+    "Mosaicos:LANDSAT_5_2004",
+    "Mosaicos:LANDSAT_5_2005",
+    "Mosaicos:LANDSAT_5_2006",
+    "Mosaicos:LANDSAT_5_2007",
+    "Mosaicos:LANDSAT_5_2008",
+    "Mosaicos:LANDSAT_5_2009",
+    "Mosaicos:LANDSAT_5_2010",
+    "Mosaicos:LANDSAT_5_2011",
+    "Mosaicos:LANDSAT_7_2002",
+    "Mosaicos:LANDSAT_8_2013",
+    "Mosaicos:LANDSAT_8_2014",
+    "Mosaicos:LANDSAT_8_2015",
+    "Mosaicos:LANDSAT_8_2016",
+    "Mosaicos:LANDSAT_8_2017",
+    "Mosaicos:LANDSAT_8_2018",
+    "Mosaicos:MOSAICO_SPOT_SEPLAN",
+    "Mosaicos:RESOURCESAT_2012",
+    "Mosaicos:SENTINEL_2_2016",
+    "Mosaicos:Geoportal_Sentinel_2_2016_NIR",
+    "Mosaicos:SENTINEL_2_2017",
+    "Mosaicos:Geoportal_Sentinel_2_2017_NIR",
+    "Mosaicos:SENTINEL_2_2018",
+    "Mosaicos:Geoportal_Sentinel_2_2018_NIR",
+    "Mosaicos:SENTINEL_2_2019",
+    "Mosaicos:SENTINEL_2_2020",
+    "Mosaicos:Geoportal_Sentinel_2_2020_NIR",
+    "Mosaicos:SENTINEL_2_2021",
+    "Mosaicos:Geoportal_Sentinel_2_2021_NIR",
+    "Mosaicos:SENTINEL_2_2022",
+    "Mosaicos:SENTINEL_2_2023",
+    "Mosaicos:SENTINEL_2_2024",
+  ] as const;
+  const CURATED_IMAGERY_ORDER_MAP = new Map<string, number>();
+  for (const name of CURATED_IMAGERY_LAYER_NAMES) {
+    const key = name.toLowerCase();
+    if (!CURATED_IMAGERY_ORDER_MAP.has(key)) {
+      CURATED_IMAGERY_ORDER_MAP.set(key, CURATED_IMAGERY_ORDER_MAP.size);
+    }
+  }
 
   const parseLayersFromCapabilities = (xml: string) => {
     type Node = {
@@ -124,7 +185,8 @@ async function startServer() {
               ? "sentinel"
               : "other";
         const isLeaf = node.children === 0;
-        const isRenderable = !!name.includes(":") && isLeaf;
+        // Some servers publish requestable layers with children. Keep every named layer.
+        const isRenderable = !!name.includes(":");
         out.push({
           name,
           title,
@@ -159,67 +221,6 @@ async function startServer() {
   const toImageryLayers = (
     layers: ReturnType<typeof parseLayersFromCapabilities>
   ) => {
-    const preferredOrder = [
-      "SEMAMT:ALOS_PALSAR_DEM",
-      "Geoportal:DECLIVIDADE_GEOPORTAL",
-      "Mosaicos:LANDSAT_5_1984",
-      "semamt:LANDSAT_5",
-      "Mosaicos:LANDSAT_5_1985",
-      "Mosaicos:LANDSAT_5_1986",
-      "Mosaicos:LANDSAT_5_1987",
-      "Mosaicos:LANDSAT_5_1988",
-      "Mosaicos:LANDSAT_5_1989",
-      "Mosaicos:LANDSAT_5_1990",
-      "Mosaicos:LANDSAT_5_1991",
-      "Mosaicos:LANDSAT_5_1992",
-      "Mosaicos:LANDSAT_5_1993",
-      "Mosaicos:LANDSAT_5_1994",
-      "Mosaicos:LANDSAT_5_1995",
-      "Mosaicos:LANDSAT_5_1996",
-      "Mosaicos:LANDSAT_5_1997",
-      "Mosaicos:LANDSAT_5_1998",
-      "Mosaicos:LANDSAT_5_1999",
-      "Mosaicos:LANDSAT_5_2000",
-      "Mosaicos:LANDSAT_5_2003",
-      "Mosaicos:LANDSAT_5_2004",
-      "Mosaicos:LANDSAT_5_2005",
-      "Mosaicos:LANDSAT_5_2006",
-      "Mosaicos:LANDSAT_5_2007",
-      "Mosaicos:LANDSAT_5_2008",
-      "Mosaicos:LANDSAT_5_2009",
-      "Mosaicos:LANDSAT_5_2010",
-      "Mosaicos:LANDSAT_5_2011",
-      "Mosaicos:LANDSAT_7_2002",
-      "Mosaicos:LANDSAT_8_2013",
-      "Mosaicos:LANDSAT_8_2014",
-      "Mosaicos:LANDSAT_8_2015",
-      "Mosaicos:LANDSAT_8_2016",
-      "Mosaicos:LANDSAT_8_2017",
-      "Mosaicos:LANDSAT_8_2018",
-      "Mosaicos:MOSAICO_SPOT_SEPLAN",
-      "Mosaicos:RESOURCESAT_2012",
-      "Mosaicos:SENTINEL_2_2016",
-      "Mosaicos:Geoportal_Sentinel_2_2016_NIR",
-      "Mosaicos:SENTINEL_2_2017",
-      "Mosaicos:Geoportal_Sentinel_2_2017_NIR",
-      "Mosaicos:SENTINEL_2_2018",
-      "Mosaicos:Geoportal_Sentinel_2_2018_NIR",
-      "Mosaicos:SENTINEL_2_2019",
-      "Mosaicos:SENTINEL_2_2020",
-      "Mosaicos:Geoportal_Sentinel_2_2020_NIR",
-      "Mosaicos:SENTINEL_2_2021",
-      "Mosaicos:Geoportal_Sentinel_2_2021_NIR",
-      "Mosaicos:SENTINEL_2_2022",
-      "Mosaicos:SENTINEL_2_2023",
-      "Mosaicos:SENTINEL_2_2024",
-    ];
-    const preferredOrderMap = new Map<string, number>();
-    for (const name of preferredOrder) {
-      const key = name.toLowerCase();
-      if (!preferredOrderMap.has(key)) {
-        preferredOrderMap.set(key, preferredOrderMap.size);
-      }
-    }
     const workspaceRank = (name: string) => {
       const ws = name.split(":")[0]?.toLowerCase() || "";
       if (ws === "semamt") return 0;
@@ -239,8 +240,8 @@ async function startServer() {
         return /(landsat|sentinel|spot|resourcesat|mosaico|alos|palsar|dem|declividade)/.test(txt);
       })
       .sort((a, b) => {
-        const aOrder = preferredOrderMap.get(a.name.toLowerCase());
-        const bOrder = preferredOrderMap.get(b.name.toLowerCase());
+        const aOrder = CURATED_IMAGERY_ORDER_MAP.get(a.name.toLowerCase());
+        const bOrder = CURATED_IMAGERY_ORDER_MAP.get(b.name.toLowerCase());
         if (aOrder !== undefined || bOrder !== undefined) {
           if (aOrder === undefined) return 1;
           if (bOrder === undefined) return -1;
@@ -491,13 +492,37 @@ async function startServer() {
     try {
       const xml = await fetchSemamtCapabilitiesXml();
       const parsed = parseLayersFromCapabilities(xml);
-      const imagery = toImageryLayers(parsed).map((l) => ({
+      const parsedImagery = toImageryLayers(parsed).map((l) => ({
         name: l.name,
         title: l.title,
         crs: l.crs,
         inferredYear: l.inferredYear,
         group: l.group,
       }));
+      const byLowerName = new Map(parsedImagery.map((l) => [l.name.toLowerCase(), l]));
+      const curatedImagery = CURATED_IMAGERY_LAYER_NAMES.map((name) => {
+        const existing = byLowerName.get(name.toLowerCase());
+        if (existing) return existing;
+        return {
+          name,
+          title: name.split(":")[1] || name,
+          crs: ["EPSG:4326"],
+          inferredYear: String(name.match(/\b(19|20)\d{2}\b/)?.[0] || ""),
+          group: /landsat/i.test(name)
+            ? ("landsat" as const)
+            : /spot/i.test(name)
+              ? ("spot" as const)
+              : /sentinel/i.test(name)
+                ? ("sentinel" as const)
+                : ("other" as const),
+        };
+      });
+      const imagery = [...curatedImagery];
+      for (const layer of parsedImagery) {
+        if (!CURATED_IMAGERY_ORDER_MAP.has(layer.name.toLowerCase())) {
+          imagery.push(layer);
+        }
+      }
       const shapeLayers = toShapeLayers(parsed).map((l) => ({
         name: l.name,
         title: l.title,
@@ -566,8 +591,11 @@ async function startServer() {
       }
 
       if (availableImagery.length) {
-        const allowed = new Set(availableImagery.map((l) => l.name));
-        if (!allowed.has(layerName)) {
+        const allowed = new Set([
+          ...availableImagery.map((l) => l.name.toLowerCase()),
+          ...CURATED_IMAGERY_LAYER_NAMES.map((l) => l.toLowerCase()),
+        ]);
+        if (!allowed.has(layerName.toLowerCase())) {
           res.status(400).json({
             error: `Layer '${layerName}' não é uma camada de mosaico disponível.`,
             availableLayers: availableImagery.slice(0, 50).map((l) => l.name),
