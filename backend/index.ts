@@ -182,6 +182,13 @@ async function startServer() {
       });
   };
 
+  const toShapeLayers = (layers: ReturnType<typeof parseLayersFromCapabilities>) => {
+    return layers
+      .filter((l) => l.isRenderable)
+      .filter((l) => !l.name.toLowerCase().startsWith("mosaicos:"))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
   let cachedPdfParser: null | ((buffer: Buffer) => Promise<any>) = null;
   const getPdfParser = async () => {
     if (cachedPdfParser) return cachedPdfParser;
@@ -311,24 +318,33 @@ async function startServer() {
 
   app.get("/api/map/capabilities", async (_req, res) => {
     try {
-      const layers = (await fetchSemamtImageryLayers()).map((l) => ({
+      const xml = await fetchSemamtCapabilitiesXml();
+      const parsed = parseLayersFromCapabilities(xml);
+      const imagery = toImageryLayers(parsed).map((l) => ({
         name: l.name,
         title: l.title,
         crs: l.crs,
         inferredYear: l.inferredYear,
         group: l.group,
       }));
+      const shapeLayers = toShapeLayers(parsed).map((l) => ({
+        name: l.name,
+        title: l.title,
+        crs: l.crs,
+      }));
 
       const defaultLayer =
-        layers.find((l) => l.name === "Mosaicos:LANDSAT_5_2008")?.name ||
-        layers.find((l) => l.group === "landsat")?.name ||
-        layers.find((l) => l.group === "spot")?.name ||
-        layers.find((l) => l.group === "sentinel")?.name ||
-        layers[0]?.name;
+        imagery.find((l) => l.name === "Mosaicos:LANDSAT_5_2008")?.name ||
+        imagery.find((l) => l.group === "landsat")?.name ||
+        imagery.find((l) => l.group === "spot")?.name ||
+        imagery.find((l) => l.group === "sentinel")?.name ||
+        imagery[0]?.name;
 
       res.json({
         serviceTitle: "SEMA WMS",
-        layers,
+        layers: imagery,
+        imageLayers: imagery,
+        shapeLayers,
         defaultLayer,
         recommended: {
           legalMarco2008: "Mosaicos:LANDSAT_5_2008",
@@ -344,6 +360,7 @@ async function startServer() {
     try {
       const {
         layerName,
+        overlayLayers = [],
         bbox,
         crs = "EPSG:4326",
         width = 1200,
@@ -351,6 +368,7 @@ async function startServer() {
         format = "image/png",
       } = req.body as {
         layerName?: string;
+        overlayLayers?: string[];
         bbox?: [number, number, number, number];
         crs?: string;
         width?: number;
@@ -387,12 +405,17 @@ async function startServer() {
         }
       }
 
+      const safeOverlayLayers = Array.isArray(overlayLayers)
+        ? overlayLayers.filter((x) => typeof x === "string" && x.trim().length > 0).slice(0, 8)
+        : [];
+
       const mapUrl = new URL(SEMA_WMS_BASE);
       mapUrl.searchParams.set("service", "WMS");
       mapUrl.searchParams.set("request", "GetMap");
       mapUrl.searchParams.set("version", "1.1.1");
-      mapUrl.searchParams.set("layers", layerName);
-      mapUrl.searchParams.set("styles", "");
+      const allLayers = [layerName, ...safeOverlayLayers];
+      mapUrl.searchParams.set("layers", allLayers.join(","));
+      mapUrl.searchParams.set("styles", new Array(allLayers.length).fill("").join(","));
       mapUrl.searchParams.set("format", format);
       mapUrl.searchParams.set("transparent", "false");
       mapUrl.searchParams.set("srs", crs);

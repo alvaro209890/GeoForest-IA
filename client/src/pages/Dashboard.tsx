@@ -77,6 +77,11 @@ type MapLayerOption = {
   group?: 'spot' | 'landsat' | 'sentinel' | 'other';
 };
 
+type ParsedGeometry = {
+  bbox: [number, number, number, number];
+  polygon?: Array<[number, number]>;
+};
+
 const SEMA_WMS_DIRECT_BASE =
   'https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&version=1.1.1&authkey=541085de-9a2e-454e-bdba-eb3d57a2f492&request=GetMap';
 
@@ -270,7 +275,7 @@ const renderRichText = (text: string) => {
   });
 };
 
-const parseKmlBboxOnClient = (kmlText: string): [number, number, number, number] => {
+const parseKmlGeometryOnClient = (kmlText: string): ParsedGeometry => {
   const matches = [...kmlText.matchAll(/<coordinates>([\s\S]*?)<\/coordinates>/gi)];
   if (!matches.length) {
     throw new Error('KML sem coordenadas válidas.');
@@ -279,29 +284,67 @@ const parseKmlBboxOnClient = (kmlText: string): [number, number, number, number]
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
+  let bestPolygon: Array<[number, number]> | undefined;
   for (const m of matches) {
     const raw = String(m[1] || '').trim();
     const tuples = raw.split(/\s+/);
+    const polygon: Array<[number, number]> = [];
     for (const t of tuples) {
       const [xStr, yStr] = t.split(',');
       const x = Number(xStr);
       const y = Number(yStr);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      polygon.push([x, y]);
       minX = Math.min(minX, x);
       minY = Math.min(minY, y);
       maxX = Math.max(maxX, x);
       maxY = Math.max(maxY, y);
     }
+    if (polygon.length >= 3 && (!bestPolygon || polygon.length > bestPolygon.length)) {
+      bestPolygon = polygon;
+    }
   }
   if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
     throw new Error('Não foi possível extrair bbox do KML.');
   }
-  return [minX, minY, maxX, maxY];
+  return { bbox: [minX, minY, maxX, maxY], polygon: bestPolygon };
 };
 
-const parseZipShpBboxOnClient = async (file: File): Promise<[number, number, number, number]> => {
+const parseZipShpGeometryOnClient = async (file: File): Promise<ParsedGeometry> => {
   const arr = await file.arrayBuffer();
   const bytes = new Uint8Array(arr);
+  const parseShpPolygon = (dv: DataView, byteOffset: number, byteLength: number) => {
+    if (byteLength < 100) return undefined;
+    let off = 100;
+    while (off + 12 <= byteLength) {
+      const recContentBytes = dv.getInt32(off + 4, false) * 2;
+      const recStart = off + 8;
+      if (recStart + recContentBytes > byteLength) break;
+      const shapeType = dv.getInt32(recStart, true);
+      if ((shapeType === 5 || shapeType === 15) && recContentBytes >= 44) {
+        const numParts = dv.getInt32(recStart + 36, true);
+        const numPoints = dv.getInt32(recStart + 40, true);
+        if (numParts > 0 && numPoints > 2) {
+          const partsOffset = recStart + 44;
+          const pointsOffset = partsOffset + numParts * 4;
+          if (pointsOffset + numPoints * 16 <= recStart + recContentBytes) {
+            const firstPart = dv.getInt32(partsOffset, true);
+            const nextPart = numParts > 1 ? dv.getInt32(partsOffset + 4, true) : numPoints;
+            const end = Math.min(nextPart, numPoints);
+            const poly: Array<[number, number]> = [];
+            for (let i = firstPart; i < end; i += 1) {
+              const pOff = pointsOffset + i * 16;
+              poly.push([dv.getFloat64(pOff, true), dv.getFloat64(pOff + 8, true)]);
+            }
+            if (poly.length >= 3) return poly;
+          }
+        }
+      }
+      off = recStart + recContentBytes;
+    }
+    return undefined;
+  };
+
   let offset = 0;
   while (offset + 30 <= bytes.length) {
     const sig =
@@ -336,7 +379,8 @@ const parseZipShpBboxOnClient = async (file: File): Promise<[number, number, num
       if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
         throw new Error('Não foi possível extrair BBOX do shapefile.');
       }
-      return [minX, minY, maxX, maxY];
+      const polygon = parseShpPolygon(dv, dataStart, compressedSize);
+      return { bbox: [minX, minY, maxX, maxY], polygon };
     }
     offset = dataEnd;
   }
@@ -365,11 +409,14 @@ export default function Dashboard() {
   const [pendingMapContext, setPendingMapContext] = useState<ChatMessage['meta']['mapContext'] | undefined>(undefined);
   const [pendingMapImageUrl, setPendingMapImageUrl] = useState<string | null>(null);
   const [mapDialogOpen, setMapDialogOpen] = useState(false);
-  const [mapLayers, setMapLayers] = useState<MapLayerOption[]>([]);
+  const [mapImageLayers, setMapImageLayers] = useState<MapLayerOption[]>([]);
+  const [mapShapeLayers, setMapShapeLayers] = useState<MapLayerOption[]>([]);
+  const [selectedShapeLayers, setSelectedShapeLayers] = useState<string[]>([]);
   const [selectedMapLayer, setSelectedMapLayer] = useState('');
   const [mapLoading, setMapLoading] = useState(false);
   const [mapCapturing, setMapCapturing] = useState(false);
   const [mapBbox, setMapBbox] = useState<[number, number, number, number]>([-61, -18, -50, -8]);
+  const [mapPolygon, setMapPolygon] = useState<Array<[number, number]>>([]);
   const [mapPreviewDataUrl, setMapPreviewDataUrl] = useState('');
   const [mapPreviewLoading, setMapPreviewLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -840,11 +887,13 @@ export default function Dashboard() {
         throw new Error(text || 'Falha ao carregar camadas de mapa');
       }
       const data = await res.json();
-      const layers = (data?.layers || []) as MapLayerOption[];
-      setMapLayers(layers);
-      const layerNames = new Set(layers.map((l) => l.name));
+      const imageLayers = (data?.imageLayers || data?.layers || []) as MapLayerOption[];
+      const shapeLayers = (data?.shapeLayers || []) as MapLayerOption[];
+      setMapImageLayers(imageLayers);
+      setMapShapeLayers(shapeLayers);
+      const layerNames = new Set(imageLayers.map((l) => l.name));
       const preferred = selectedMapLayer && layerNames.has(selectedMapLayer) ? selectedMapLayer : '';
-      const chosenLayer = preferred || data?.defaultLayer || layers[0]?.name || '';
+      const chosenLayer = preferred || data?.defaultLayer || imageLayers[0]?.name || '';
       setSelectedMapLayer(chosenLayer);
       if (chosenLayer) {
         setTimeout(() => {
@@ -869,6 +918,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           layerName: effectiveLayer,
+          overlayLayers: selectedShapeLayers,
           bbox: effectiveBbox,
           crs: 'EPSG:4326',
           width: 1100,
@@ -921,6 +971,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           layerName: selectedMapLayer,
+          overlayLayers: selectedShapeLayers,
           bbox,
           crs: 'EPSG:4326',
           width: 1280,
@@ -980,17 +1031,27 @@ export default function Dashboard() {
     try {
       if (fileName.endsWith('.kml')) {
         const text = await file.text();
-        const bbox = parseKmlBboxOnClient(text);
-        setMapBbox(bbox);
-        await refreshMapPreview(undefined, bbox);
+        const geom = parseKmlGeometryOnClient(text);
+        setMapBbox(geom.bbox);
+        setMapPolygon(geom.polygon || []);
+        await refreshMapPreview(undefined, geom.bbox);
         toast.success('Área do KML carregada no frontend');
         return;
       }
       if (fileName.endsWith('.zip')) {
         try {
-          const bbox = await parseZipShpBboxOnClient(file);
-          setMapBbox(bbox);
-          await refreshMapPreview(undefined, bbox);
+          const geom = await parseZipShpGeometryOnClient(file);
+          setMapBbox(geom.bbox);
+          setMapPolygon(
+            geom.polygon || [
+              [geom.bbox[0], geom.bbox[1]],
+              [geom.bbox[2], geom.bbox[1]],
+              [geom.bbox[2], geom.bbox[3]],
+              [geom.bbox[0], geom.bbox[3]],
+              [geom.bbox[0], geom.bbox[1]],
+            ]
+          );
+          await refreshMapPreview(undefined, geom.bbox);
           toast.success('BBOX do shapefile ZIP carregada no frontend');
           return;
         } catch (localErr) {
@@ -1019,6 +1080,13 @@ export default function Dashboard() {
       const bbox = data?.bbox as [number, number, number, number];
       if (!bbox || bbox.length !== 4) throw new Error('BBox inválida retornada do arquivo');
       setMapBbox(bbox);
+      setMapPolygon([
+        [bbox[0], bbox[1]],
+        [bbox[2], bbox[1]],
+        [bbox[2], bbox[3]],
+        [bbox[0], bbox[3]],
+        [bbox[0], bbox[1]],
+      ]);
       await refreshMapPreview(undefined, bbox);
       toast.success('Área carregada do arquivo e aplicada no mapa');
     } catch (error: any) {
@@ -1443,6 +1511,22 @@ Arquivo de imagem previamente anexado pelo usuário.`;
     selectedModel === 'auto'
       ? 'Auto (Florestal)'
       : models.find((m) => m.id === selectedModel)?.label || selectedModel;
+
+  const mapPolygonPoints = useMemo(() => {
+    if (!mapPolygon.length) return '';
+    const [minX, minY, maxX, maxY] = mapBbox;
+    const dx = maxX - minX;
+    const dy = maxY - minY;
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || dx <= 0 || dy <= 0) return '';
+    const points = mapPolygon
+      .map(([x, y]) => {
+        const px = ((x - minX) / dx) * 100;
+        const py = ((maxY - y) / dy) * 100;
+        return `${Math.max(0, Math.min(100, px))},${Math.max(0, Math.min(100, py))}`;
+      })
+      .join(' ');
+    return points;
+  }, [mapPolygon, mapBbox]);
 
   // Custom components
   const CustomSelect = ({ label, icon: Icon, options, value, onChange }: any) => (
@@ -2185,12 +2269,36 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       }}
                       className="w-full bg-[#050b08] border border-white/10 rounded-lg text-xs text-slate-300 py-2 px-3 outline-none focus:border-emerald-500/50"
                     >
-                      {mapLayers.map((layer) => (
+                      {mapImageLayers.map((layer) => (
                         <option key={layer.name} value={layer.name}>
                           {layer.title} {layer.inferredYear ? `(${layer.inferredYear})` : ''}
                         </option>
                       ))}
                     </select>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Shapes (sobreposição)</p>
+                    <div className="max-h-36 overflow-auto rounded-lg border border-white/10 bg-[#050b08] p-2 space-y-1 custom-scrollbar">
+                      {mapShapeLayers.slice(0, 40).map((layer) => (
+                        <label key={layer.name} className="flex items-center gap-2 text-xs text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={selectedShapeLayers.includes(layer.name)}
+                            onChange={(e) => {
+                              const next = e.target.checked
+                                ? [...selectedShapeLayers, layer.name]
+                                : selectedShapeLayers.filter((x) => x !== layer.name);
+                              setSelectedShapeLayers(next);
+                              setTimeout(() => refreshMapPreview(undefined, mapBbox), 0);
+                            }}
+                          />
+                          <span className="truncate">{layer.title || layer.name}</span>
+                        </label>
+                      ))}
+                      {!mapShapeLayers.length && (
+                        <p className="text-[11px] text-slate-500">Nenhum shape disponível no serviço.</p>
+                      )}
+                    </div>
                   </div>
                   <div className="rounded-lg border border-white/10 bg-white/5 p-3">
                     <p className="text-[11px] text-slate-400 leading-relaxed">
@@ -2282,11 +2390,27 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       {mapLoading ? 'Carregando camadas do mapa...' : 'Carregando prévia WMS...'}
                     </div>
                   ) : mapPreviewDataUrl ? (
-                    <img
-                      src={mapPreviewDataUrl}
-                      alt="Prévia WMS da área selecionada"
-                      className="h-full w-full object-contain bg-black/25"
-                    />
+                    <div className="relative h-full w-full bg-black/25">
+                      <img
+                        src={mapPreviewDataUrl}
+                        alt="Prévia WMS da área selecionada"
+                        className="h-full w-full object-cover"
+                      />
+                      {mapPolygonPoints && (
+                        <svg
+                          viewBox="0 0 100 100"
+                          preserveAspectRatio="none"
+                          className="absolute inset-0 h-full w-full pointer-events-none"
+                        >
+                          <polygon
+                            points={mapPolygonPoints}
+                            fill="rgba(239, 68, 68, 0.16)"
+                            stroke="rgba(239, 68, 68, 0.98)"
+                            strokeWidth="0.6"
+                          />
+                        </svg>
+                      )}
+                    </div>
                   ) : (
                     <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm px-6 text-center">
                       Selecione uma camada e clique em “Atualizar Prévia WMS”.
