@@ -212,6 +212,12 @@ const REQUIRED_MODELS: Array<{ id: string; label: string; capabilities: string[]
     capabilities: ['text'],
     description: 'Modelo alternativo rápido para tarefas gerais e QA técnico.',
   },
+  {
+    id: 'openai/gpt-oss-120b',
+    label: 'GPT OSS 120B',
+    capabilities: ['text'],
+    description: 'Modelo grande para análises profundas, correlação de múltiplos anexos e síntese técnica longa.',
+  },
 ];
 
 type Conversation = {
@@ -483,6 +489,7 @@ export default function Dashboard() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [queuedFiles, setQueuedFiles] = useState<File[]>([]);
   const [pendingMapContext, setPendingMapContext] = useState<MapContext | undefined>(undefined);
   const [pendingMapImageUrl, setPendingMapImageUrl] = useState<string | null>(null);
   const [mapDialogOpen, setMapDialogOpen] = useState(false);
@@ -894,39 +901,41 @@ export default function Dashboard() {
     setImageFile(null);
     setImagePreview(null);
     setPdfFile(null);
+    setQueuedFiles([]);
     setPendingMapImageUrl(null);
     setPendingMapContext(undefined);
   };
 
-  const onPickAttachment = (file: File | null) => {
-    if (!file) {
+  const onPickAttachment = (files: File[]) => {
+    if (!files.length) {
       clearAttachments();
       return;
     }
-    const mime = (file.type || '').toLowerCase();
-    const name = (file.name || '').toLowerCase();
-    const isImage = mime.startsWith('image/');
-    const isPdf = mime === 'application/pdf' || name.endsWith('.pdf') || mime.includes('pdf');
+    const valid: File[] = [];
+    let invalidCount = 0;
+    for (const file of files) {
+      const mime = (file.type || '').toLowerCase();
+      const name = (file.name || '').toLowerCase();
+      const isImage = mime.startsWith('image/');
+      const isPdf = mime === 'application/pdf' || name.endsWith('.pdf') || mime.includes('pdf');
+      if (isImage || isPdf) valid.push(file);
+      else invalidCount += 1;
+    }
+    if (!valid.length) {
+      toast.error('Selecione imagem(s) e/ou PDF(s)');
+      return;
+    }
 
-    if (isImage) {
-      if (imagePreview) URL.revokeObjectURL(imagePreview);
-      setImageFile(file);
-      setImagePreview(URL.createObjectURL(file));
-      setPdfFile(null);
-      setPendingMapImageUrl(null);
-      setPendingMapContext(undefined);
-      return;
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImageFile(null);
+    setImagePreview(null);
+    setPdfFile(null);
+    setPendingMapImageUrl(null);
+    setPendingMapContext(undefined);
+    setQueuedFiles(valid.slice(0, 10));
+    if (invalidCount > 0) {
+      toast.error(`${invalidCount} arquivo(s) ignorado(s): formato não suportado.`);
     }
-    if (isPdf) {
-      if (imagePreview) URL.revokeObjectURL(imagePreview);
-      setImageFile(null);
-      setImagePreview(null);
-      setPdfFile(file);
-      setPendingMapImageUrl(null);
-      setPendingMapContext(undefined);
-      return;
-    }
-    toast.error('Selecione uma imagem ou PDF');
   };
 
   const downloadAttachment = (meta?: ChatMessage['meta']) => {
@@ -950,14 +959,12 @@ export default function Dashboard() {
     window.open(toFileProxyUrl(sourceUrl, fileName, 'download'), '_blank', 'noopener,noreferrer');
   };
 
-  const uploadImageIfNeeded = async (): Promise<string | null> => {
-    if (!imageFile) return null;
-
+  const uploadImageFile = async (file: File): Promise<string | null> => {
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result || ''));
       reader.onerror = () => reject(new Error('Falha ao ler a imagem.'));
-      reader.readAsDataURL(imageFile);
+      reader.readAsDataURL(file);
     });
 
     const res = await fetch('/api/upload-image', {
@@ -965,7 +972,7 @@ export default function Dashboard() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         dataUrl,
-        filename: imageFile.name,
+        filename: file.name,
       }),
     });
 
@@ -978,14 +985,14 @@ export default function Dashboard() {
     return data?.secure_url || null;
   };
 
-  const uploadPdfIfNeeded = async (): Promise<{ url: string; extractedText: string; downloadUrl: string; pages: number } | null> => {
-    if (!pdfFile) return null;
-
+  const uploadPdfFile = async (
+    file: File
+  ): Promise<{ url: string; extractedText: string; downloadUrl: string; pages: number } | null> => {
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result || ''));
       reader.onerror = () => reject(new Error('Falha ao ler o PDF.'));
-      reader.readAsDataURL(pdfFile);
+      reader.readAsDataURL(file);
     });
 
     const res = await fetch('/api/upload-file', {
@@ -993,7 +1000,7 @@ export default function Dashboard() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         dataUrl,
-        filename: pdfFile.name,
+        filename: file.name,
       }),
     });
 
@@ -1604,28 +1611,36 @@ export default function Dashboard() {
   };
 
   const handleSend = async () => {
-    if ((!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl) || sending) return;
+    if ((!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl && queuedFiles.length === 0) || sending) return;
     if (!activeConversationRef && conversationsRef) {
       await createConversation(conversationsRef.collection);
     }
 
     const userText = input.trim();
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const selectedImageFile = imageFile;
-    const selectedPdfFile = pdfFile;
+    const selectedQueuedFiles = [...queuedFiles];
+    const queuedImageFiles = selectedQueuedFiles.filter((f) => (f.type || '').toLowerCase().startsWith('image/'));
+    const queuedPdfFiles = selectedQueuedFiles.filter((f) => {
+      const mime = (f.type || '').toLowerCase();
+      const name = (f.name || '').toLowerCase();
+      return mime === 'application/pdf' || name.endsWith('.pdf') || mime.includes('pdf');
+    });
+    const selectedImageFiles = [...queuedImageFiles, ...(imageFile ? [imageFile] : [])];
+    const selectedPdfFiles = [...queuedPdfFiles, ...(pdfFile ? [pdfFile] : [])];
     const selectedMapImageUrl = pendingMapImageUrl;
+    const totalAttachments = selectedImageFiles.length + selectedPdfFiles.length + (selectedMapImageUrl ? 1 : 0);
     let localImagePreviewForChat: string | null = selectedMapImageUrl || null;
 
-    if (selectedImageFile) {
+    if (selectedImageFiles.length > 0) {
       try {
-        localImagePreviewForChat = await readFileAsDataUrl(selectedImageFile);
+        localImagePreviewForChat = await readFileAsDataUrl(selectedImageFiles[0]);
       } catch (error: any) {
         toast.error(error.message || 'Erro ao preparar prévia da imagem');
       }
     }
 
     let userPayloadText = userText;
-    if (selectedImageFile || selectedMapImageUrl) {
+    if (selectedImageFiles.length || selectedMapImageUrl) {
       const mapContextBlock = pendingMapContext
         ? [
             'Contexto técnico da imagem de mapa:',
@@ -1647,19 +1662,28 @@ export default function Dashboard() {
             .filter(Boolean)
             .join('\n')
         : '';
+      const attachmentList = [
+        ...selectedImageFiles.map((f) => `- Imagem: ${f.name}`),
+        ...selectedPdfFiles.map((f) => `- PDF: ${f.name}`),
+        ...(selectedMapImageUrl ? ['- Imagem de mapa WMS com demarcação de polígono'] : []),
+      ].join('\n');
       userPayloadText =
         `${userText || 'Analise a imagem anexada.'}
 
 ` +
         'Contexto: a imagem foi anexada pelo usuário para interpretação ambiental/florestal. ' +
         'Descreva achados objetivos, limitações e próximos dados necessários.' +
+        `\n\nTotal de anexos: ${totalAttachments}` +
+        (attachmentList ? `\nArquivos anexados:\n${attachmentList}` : '') +
         (mapContextBlock ? `\n\n${mapContextBlock}` : '');
-    } else if (selectedPdfFile) {
+    } else if (selectedPdfFiles.length) {
       userPayloadText =
         `${userText || 'Analise o PDF anexado.'}
 
 ` +
-        `Nome do arquivo: ${selectedPdfFile.name || 'documento.pdf'}
+        `Arquivos PDF: ${selectedPdfFiles.map((f) => f.name).join(', ') || 'documento.pdf'}
+` +
+        `Total de anexos: ${totalAttachments}
 ` +
         'O documento está em processamento. Faça análise preliminar e refine com o texto extraído quando disponível.';
     }
@@ -1667,19 +1691,29 @@ export default function Dashboard() {
     const userMessage: ChatMessage = {
       id: nanoid(),
       role: 'user',
-      text: userText || (selectedImageFile || selectedMapImageUrl ? 'Analise a imagem.' : 'Analise o PDF.'),
+      text: userText || (selectedImageFiles.length || selectedMapImageUrl ? 'Analise a imagem.' : 'Analise o PDF.'),
       time,
-      meta: selectedImageFile || selectedMapImageUrl
+      meta: selectedImageFiles.length || selectedMapImageUrl
         ? {
             fileType: 'image',
-            fileName: selectedImageFile?.name || 'mapa-wms.png',
+            fileName:
+              totalAttachments > 1
+                ? `${totalAttachments} arquivo(s) anexado(s)`
+                : selectedImageFiles[0]?.name || 'mapa-wms.png',
             uploadStatus: selectedMapImageUrl ? 'done' : 'uploading',
             imageUrl: localImagePreviewForChat || undefined,
             fileDownloadUrl: selectedMapImageUrl || undefined,
             mapContext: pendingMapContext,
           }
-        : selectedPdfFile
-        ? { fileType: 'pdf', fileName: selectedPdfFile?.name || 'documento.pdf', uploadStatus: 'uploading' }
+        : selectedPdfFiles.length
+        ? {
+            fileType: 'pdf',
+            fileName:
+              totalAttachments > 1
+                ? `${totalAttachments} arquivo(s) anexado(s)`
+                : selectedPdfFiles[0]?.name || 'documento.pdf',
+            uploadStatus: 'uploading',
+          }
         : undefined,
     };
 
@@ -1690,10 +1724,11 @@ export default function Dashboard() {
     setImageFile(null);
     setImagePreview(null);
     setPdfFile(null);
+    setQueuedFiles([]);
     setPendingMapImageUrl(null);
     setPendingMapContext(undefined);
     setSending(true);
-    setUploading(Boolean(selectedImageFile || selectedPdfFile));
+    setUploading(Boolean(selectedImageFiles.length || selectedPdfFiles.length));
     setAiThinking(true);
     const typingId = nanoid();
     setTypingMessageId(typingId);
@@ -1704,19 +1739,29 @@ export default function Dashboard() {
 
     const currentUserMessageId = userMessage.id;
 
-    const imageUploadPromise = selectedImageFile ? uploadImageIfNeeded() : Promise.resolve(selectedMapImageUrl || null);
-    const pdfUploadPromise = selectedPdfFile ? uploadPdfIfNeeded() : Promise.resolve(null);
+    const imageUploadPromise = Promise.all(
+      selectedImageFiles.map((file) => uploadImageFile(file).catch(() => null as string | null))
+    ).then((urls) => [
+      ...(selectedMapImageUrl ? [selectedMapImageUrl] : []),
+      ...urls.filter((u): u is string => Boolean(u)),
+    ]);
+    const pdfUploadPromise = Promise.all(
+      selectedPdfFiles.map((file) =>
+        uploadPdfFile(file).catch(() => null as Awaited<ReturnType<typeof uploadPdfFile>>)
+      )
+    ).then((docs) => docs.filter((d): d is NonNullable<typeof d> => Boolean(d)));
 
     Promise.allSettled([imageUploadPromise, pdfUploadPromise]).finally(() => setUploading(false));
 
     imageUploadPromise
-      .then(async (uploadedImageUrl) => {
-        if (!uploadedImageUrl) return;
+      .then(async (uploadedImageUrls) => {
+        if (!uploadedImageUrls.length) return;
+        const firstImage = uploadedImageUrls[0];
         await patchMessageMeta(
           currentUserMessageId,
           {
-            imageUrl: uploadedImageUrl,
-            fileDownloadUrl: toCloudinaryDownloadUrl(uploadedImageUrl),
+            imageUrl: firstImage,
+            fileDownloadUrl: firstImage.startsWith('data:') ? firstImage : toCloudinaryDownloadUrl(firstImage),
             uploadStatus: 'done',
           },
           userText || 'Nova conversa'
@@ -1727,13 +1772,14 @@ export default function Dashboard() {
       });
 
     pdfUploadPromise
-      .then(async (uploadedPdf) => {
-        if (!uploadedPdf) return;
+      .then(async (uploadedPdfs) => {
+        if (!uploadedPdfs.length) return;
+        const firstPdf = uploadedPdfs[0];
         await patchMessageMeta(
           currentUserMessageId,
           {
-            fileUrl: uploadedPdf.url,
-            fileDownloadUrl: uploadedPdf.downloadUrl,
+            fileUrl: firstPdf.url,
+            fileDownloadUrl: firstPdf.downloadUrl,
             uploadStatus: 'done',
           },
           userText || 'Nova conversa'
@@ -1743,9 +1789,25 @@ export default function Dashboard() {
         await patchMessageMeta(currentUserMessageId, { uploadStatus: 'error' }, userText || 'Nova conversa');
       });
 
-    let imageDataUrlForAi: string | null = localImagePreviewForChat;
-    let pdfDataUrlForAi: string | null = null;
-    const hasCurrentImage = Boolean(selectedImageFile || selectedMapImageUrl);
+    const imageDataUrlsForAi: string[] = [];
+    if (selectedMapImageUrl) imageDataUrlsForAi.push(selectedMapImageUrl);
+    for (const image of selectedImageFiles) {
+      try {
+        imageDataUrlsForAi.push(await readFileAsDataUrl(image));
+      } catch (error: any) {
+        toast.error(error.message || `Erro ao ler imagem ${image.name}`);
+      }
+    }
+    const pendingPdfsForAi: Array<{ dataUrl: string; filename: string }> = [];
+    for (const pdf of selectedPdfFiles) {
+      try {
+        const dataUrl = await readFileAsDataUrl(pdf);
+        pendingPdfsForAi.push({ dataUrl, filename: pdf.name });
+      } catch (error: any) {
+        toast.error(error.message || `Erro ao ler PDF ${pdf.name}`);
+      }
+    }
+    const hasCurrentImage = imageDataUrlsForAi.length > 0;
     const imageAnalysisSystemPrompt = hasCurrentImage
       ? {
           role: 'system',
@@ -1762,11 +1824,6 @@ export default function Dashboard() {
           ].join(' '),
         }
       : null;
-    try {
-      if (selectedPdfFile) pdfDataUrlForAi = await readFileAsDataUrl(selectedPdfFile);
-    } catch (error: any) {
-      toast.error(error.message || 'Erro ao ler arquivo anexado');
-    }
 
     const crossChatContext = buildCrossChatContext(activeConversationId, userText);
     const contextualMessages = nextMessages.slice(-40);
@@ -1775,8 +1832,13 @@ export default function Dashboard() {
       ...(imageAnalysisSystemPrompt ? [imageAnalysisSystemPrompt] : []),
       ...(crossChatContext ? [{ role: 'system', content: crossChatContext }] : []),
       ...contextualMessages.map((m) => {
-        if (m.role === 'user' && (m.meta?.imageUrl || (m.id === currentUserMessageId && imageDataUrlForAi))) {
-          const imageUrlForModel = m.id === currentUserMessageId ? imageDataUrlForAi || m.meta?.imageUrl : m.meta?.imageUrl;
+        if (m.role === 'user' && (m.meta?.imageUrl || (m.id === currentUserMessageId && imageDataUrlsForAi.length))) {
+          const imageUrlsForModel =
+            m.id === currentUserMessageId
+              ? imageDataUrlsForAi
+              : m.meta?.imageUrl
+                ? [m.meta.imageUrl]
+                : [];
           const promptText =
             m.id === currentUserMessageId
               ? userPayloadText
@@ -1787,7 +1849,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             role: 'user',
             content: [
               { type: 'text', text: promptText },
-              { type: 'image_url', image_url: { url: imageUrlForModel } },
+              ...imageUrlsForModel.map((url) => ({ type: 'image_url', image_url: { url } })),
             ],
           };
         }
@@ -1816,10 +1878,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         body: JSON.stringify({
           messages: apiMessages,
           model: selectedModel,
-          pendingPdf:
-            selectedPdfFile && pdfDataUrlForAi
-              ? { dataUrl: pdfDataUrlForAi, filename: selectedPdfFile.name }
-              : undefined,
+          pendingPdfs: pendingPdfsForAi.length ? pendingPdfsForAi : undefined,
         }),
       });
 
@@ -1828,7 +1887,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           const fallback = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages: apiMessages, model: selectedModel }),
+            body: JSON.stringify({
+              messages: apiMessages,
+              model: selectedModel,
+              pendingPdfs: pendingPdfsForAi.length ? pendingPdfsForAi : undefined,
+            }),
           });
           if (!fallback.ok) {
             const fallbackText = await fallback.text();
@@ -2452,20 +2515,36 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     rows={1}
                     style={{ height: input ? `${Math.min(input.split('\n').length * 24 + 32, 200)}px` : '60px' }}
                   />
-                  {(imageFile || pdfFile || pendingMapImageUrl) && (
+                  {(imageFile || pdfFile || pendingMapImageUrl || queuedFiles.length > 0) && (
                     <div className="px-4 pb-2">
                       <div className="inline-flex max-w-[320px] items-center gap-2 px-2.5 py-2 rounded-xl bg-[#0c1511] border border-white/10 text-xs text-slate-200 shadow-sm">
                         <div
                           className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${
-                            imageFile || pendingMapImageUrl ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'
+                            imageFile || pendingMapImageUrl || queuedFiles.some((f) => (f.type || '').toLowerCase().startsWith('image/'))
+                              ? 'bg-emerald-500/20 text-emerald-300'
+                              : 'bg-red-500/20 text-red-300'
                           }`}
                         >
-                          {imageFile || pendingMapImageUrl ? <ImagePlus size={13} /> : <FileText size={13} />}
+                          {imageFile ||
+                          pendingMapImageUrl ||
+                          queuedFiles.some((f) => (f.type || '').toLowerCase().startsWith('image/')) ? (
+                            <ImagePlus size={13} />
+                          ) : (
+                            <FileText size={13} />
+                          )}
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate font-medium">{imageFile?.name || pdfFile?.name || 'mapa-wms.png'}</p>
+                          <p className="truncate font-medium">
+                            {queuedFiles.length > 0
+                              ? `${queuedFiles.length} arquivo(s) selecionado(s)`
+                              : imageFile?.name || pdfFile?.name || 'mapa-wms.png'}
+                          </p>
                           <p className="text-[10px] text-slate-500">
-                            {imageFile || pendingMapImageUrl ? 'Imagem pronta para envio' : 'PDF pronto para envio'}
+                            {queuedFiles.length > 0
+                              ? 'Múltiplos anexos prontos para envio'
+                              : imageFile || pendingMapImageUrl
+                                ? 'Imagem pronta para envio'
+                                : 'PDF pronto para envio'}
                           </p>
                         </div>
                         <button
@@ -2486,9 +2565,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         <input
                           type="file"
                           accept="image/*,application/pdf"
+                          multiple
                           className="hidden"
                           onChange={(e) => {
-                            onPickAttachment(e.target.files?.[0] || null);
+                            onPickAttachment(Array.from(e.target.files || []));
                             e.currentTarget.value = '';
                           }}
                         />
@@ -2573,9 +2653,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <div className="h-4 w-[1px] bg-white/10 mx-1"></div>
                       <button
                         onClick={handleSend}
-                        disabled={!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl}
+                        disabled={!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl && queuedFiles.length === 0}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${
-                          input.trim() || imageFile || pdfFile || pendingMapImageUrl
+                          input.trim() || imageFile || pdfFile || pendingMapImageUrl || queuedFiles.length > 0
                             ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/25 hover:bg-emerald-400'
                             : 'bg-white/5 text-slate-500 cursor-not-allowed'
                         }`}

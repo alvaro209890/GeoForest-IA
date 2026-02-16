@@ -64,6 +64,11 @@ async function startServer() {
       label: "GPT-OSS 20B",
       capabilities: ["text"],
     },
+    {
+      id: "openai/gpt-oss-120b",
+      label: "GPT-OSS 120B",
+      capabilities: ["text"],
+    },
   ] as const;
 
   const MODEL_IDS = new Set(MODEL_CATALOG.map((model) => model.id));
@@ -764,9 +769,15 @@ async function startServer() {
       /(bbox|coordenad|epsg|wms|landsat|sentinel|declividade|demarca[cç][aã]o|pol[ií]gono)/.test(text);
     if (hasGeoCue) return "meta-llama/llama-4-maverick-17b-128e-instruct";
 
+    const hasHighComplexityCue =
+      /(an[aá]lise profunda|laudo|relat[oó]rio t[eé]cnico|multi[ -]?arquivo|muitos anexos|comparativo)/.test(
+        text
+      );
+    if (hasHighComplexityCue) return "openai/gpt-oss-120b";
+
     const hasDataCue =
       /(shapefile|shape|geojson|csv|xlsx|planilha|tabela|dados|estat[ií]stica|an[áa]lise)/.test(text);
-    if (hasDataCue) return "meta-llama/llama-3.3-70b-versatile";
+    if (hasDataCue) return "openai/gpt-oss-120b";
 
     return "meta-llama/llama-3.3-70b-versatile";
   };
@@ -805,27 +816,42 @@ async function startServer() {
 
   const injectPendingPdfContext = async (
     messages: Array<{ role: string; content: any }>,
-    pendingPdf?: { dataUrl?: string; filename?: string }
+    pendingPdfs?: Array<{ dataUrl?: string; filename?: string }>
   ) => {
-    if (!pendingPdf?.dataUrl || typeof pendingPdf.dataUrl !== "string") return messages;
-    const parts = pendingPdf.dataUrl.split(",");
-    if (parts.length !== 2) return messages;
+    const docs = Array.isArray(pendingPdfs)
+      ? pendingPdfs.filter((p) => p?.dataUrl && typeof p.dataUrl === "string")
+      : [];
+    if (!docs.length) return messages;
 
-    let extractedText = "";
-    try {
-      const raw = Buffer.from(parts[1], "base64");
-      const parsed = await parsePdfSafe(raw);
-      if (parsed?.text) {
-        extractedText = (parsed.text || "")
-          .replace(/\r/g, "\n")
-          .replace(/[ \t]+\n/g, "\n")
-          .replace(/\n{3,}/g, "\n\n")
-          .trim()
-          .slice(0, 25000);
+    const contexts: string[] = [];
+    for (const pendingPdf of docs) {
+      const parts = String(pendingPdf.dataUrl || "").split(",");
+      if (parts.length !== 2) continue;
+
+      let extractedText = "";
+      try {
+        const raw = Buffer.from(parts[1], "base64");
+        const parsed = await parsePdfSafe(raw);
+        if (parsed?.text) {
+          extractedText = (parsed.text || "")
+            .replace(/\r/g, "\n")
+            .replace(/[ \t]+\n/g, "\n")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim()
+            .slice(0, 25000);
+        }
+      } catch (err) {
+        console.warn("[/api/chat-stream] pendingPdf parse failed:", err);
       }
-    } catch (err) {
-      console.warn("[/api/chat-stream] pendingPdf parse failed:", err);
+
+      const context =
+        `Documento PDF anexado pelo usuário (${pendingPdf.filename || "documento.pdf"}).` +
+        (extractedText
+          ? `\nUse o conteúdo extraído abaixo como base:\n${extractedText}`
+          : "\nNão foi possível extrair texto automaticamente; informe essa limitação.");
+      contexts.push(context);
     }
+    if (!contexts.length) return messages;
 
     const next = [...messages];
     for (let i = next.length - 1; i >= 0; i -= 1) {
@@ -839,12 +865,7 @@ async function startServer() {
                 .map((part) => (part?.type === "text" ? String(part?.text || "") : ""))
                 .join("\n")
             : "";
-      const context =
-        `\n\nDocumento PDF anexado pelo usuário (${pendingPdf.filename || "documento.pdf"}).` +
-        (extractedText
-          ? `\nUse o conteúdo extraído abaixo como base:\n${extractedText}`
-          : "\nNão foi possível extrair texto automaticamente; informe essa limitação.");
-      next[i] = { ...msg, content: `${baseText}${context}`.trim() };
+      next[i] = { ...msg, content: `${baseText}\n\n${contexts.join("\n\n")}`.trim() };
       break;
     }
 
@@ -865,19 +886,26 @@ async function startServer() {
         return;
       }
 
-      const { messages, model, pendingPdf } = req.body as {
+      const { messages, model, pendingPdf, pendingPdfs } = req.body as {
         messages?: Array<{ role: string; content: any }>;
         model?: string;
         pendingPdf?: { dataUrl?: string; filename?: string };
+        pendingPdfs?: Array<{ dataUrl?: string; filename?: string }>;
       };
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         console.error("[/api/chat] invalid messages payload");
         res.status(400).json({ error: "Mensagens inválidas." });
         return;
       }
+      const normalizedPendingPdfs = Array.isArray(pendingPdfs)
+        ? pendingPdfs
+        : pendingPdf
+          ? [pendingPdf]
+          : [];
+      const messagesForModel = await injectPendingPdfContext(messages, normalizedPendingPdfs);
 
       const useAuto = model === "auto" || (!model && autoModel);
-      const resolvedModel = useAuto ? autoSelectModel(messages) : model || defaultModel;
+      const resolvedModel = useAuto ? autoSelectModel(messagesForModel) : model || defaultModel;
       if (!MODEL_IDS.has(resolvedModel)) {
         console.error("[/api/chat] model not allowed:", resolvedModel);
         res.status(400).json({ error: "Modelo não permitido." });
@@ -885,32 +913,46 @@ async function startServer() {
       }
 
       console.log("[/api/chat] model:", resolvedModel);
-
-      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: resolvedModel,
-          temperature,
-          max_tokens: maxTokens,
-          messages,
-        }),
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        console.error("[/api/chat] groq error:", response.status, text);
-        res.status(response.status).json({ error: text });
+      const fallbackOrder =
+        resolvedModel === "openai/gpt-oss-120b"
+          ? ["openai/gpt-oss-120b", "qwen/qwen3-32b", "meta-llama/llama-3.3-70b-versatile"]
+          : [resolvedModel, "openai/gpt-oss-120b", "qwen/qwen3-32b"];
+      let data: any = null;
+      let usedModel = resolvedModel;
+      let lastErr = "";
+      for (const candidate of fallbackOrder.filter((m, i, arr) => arr.indexOf(m) === i)) {
+        if (!MODEL_IDS.has(candidate)) continue;
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: candidate,
+            temperature,
+            max_tokens: maxTokens,
+            messages: messagesForModel,
+          }),
+        });
+        if (!response.ok) {
+          const text = await response.text();
+          lastErr = text || `Erro ${response.status}`;
+          console.warn(`[ /api/chat ] model fallback failed (${candidate}):`, response.status);
+          continue;
+        }
+        data = await response.json();
+        usedModel = candidate;
+        break;
+      }
+      if (!data) {
+        res.status(502).json({ error: lastErr || "Falha ao consultar IA." });
         return;
       }
 
-      const data = await response.json();
       const content = data?.choices?.[0]?.message?.content ?? "";
       console.log("[/api/chat] success");
-      res.json({ content, model: resolvedModel });
+      res.json({ content, model: usedModel });
     } catch (error: any) {
       console.error("Erro no /api/chat:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });
@@ -927,17 +969,23 @@ async function startServer() {
         return;
       }
 
-      const { messages, model, pendingPdf } = req.body as {
+      const { messages, model, pendingPdf, pendingPdfs } = req.body as {
         messages?: Array<{ role: string; content: any }>;
         model?: string;
         pendingPdf?: { dataUrl?: string; filename?: string };
+        pendingPdfs?: Array<{ dataUrl?: string; filename?: string }>;
       };
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         res.status(400).json({ error: "Mensagens inválidas." });
         return;
       }
 
-      const messagesForModel = await injectPendingPdfContext(messages, pendingPdf);
+      const normalizedPendingPdfs = Array.isArray(pendingPdfs)
+        ? pendingPdfs
+        : pendingPdf
+          ? [pendingPdf]
+          : [];
+      const messagesForModel = await injectPendingPdfContext(messages, normalizedPendingPdfs);
 
       const useAuto = model === "auto" || (!model && AUTO_MODEL);
       const resolvedModel = useAuto ? autoSelectModel(messagesForModel) : model || DEFAULT_MODEL;
@@ -965,9 +1013,11 @@ async function startServer() {
         ? [
             "meta-llama/llama-4-maverick-17b-128e-instruct",
             "meta-llama/llama-4-scout-17b-16e-instruct",
+            "openai/gpt-oss-120b",
             "qwen/qwen3-32b",
           ]
         : [
+            "openai/gpt-oss-120b",
             "meta-llama/llama-3.3-70b-versatile",
             "qwen/qwen3-32b",
             "moonshotai/kimi-k2-instruct-0905",
@@ -1043,7 +1093,22 @@ async function startServer() {
       };
 
       let continuationIndex = 0;
-      let finishReason = await streamModelSegment(continuationModels[0], messagesForModel);
+      let finishReason = "";
+      let started = false;
+      for (let i = 0; i < continuationModels.length; i += 1) {
+        const candidate = continuationModels[i];
+        try {
+          finishReason = await streamModelSegment(candidate, messagesForModel);
+          continuationIndex = i;
+          started = true;
+          break;
+        } catch (err) {
+          console.warn(`[ /api/chat-stream ] model fallback failed (${candidate})`, err);
+        }
+      }
+      if (!started) {
+        throw new Error("Nenhum modelo disponível para iniciar streaming.");
+      }
 
       while (finishReason === "length" && continuationIndex < MAX_CONTINUATIONS - 1) {
         continuationIndex += 1;
