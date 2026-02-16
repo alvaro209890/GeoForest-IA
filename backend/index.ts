@@ -534,13 +534,22 @@ async function startServer() {
       const data = await response.json();
       console.log("[/api/upload-file] success:", data?.public_id);
       const secureUrl = String(data?.secure_url || "");
+      const fallbackExt = String(data?.format || "pdf").toLowerCase();
+      const safeAttachmentName = String(filename || `arquivo.${fallbackExt}`).replace(
+        /[^a-zA-Z0-9._-]/g,
+        "_"
+      );
       const downloadUrl = secureUrl.includes("/upload/")
-        ? secureUrl.replace("/upload/", "/upload/fl_attachment/")
+        ? secureUrl.replace(
+            "/upload/",
+            `/upload/fl_attachment:${encodeURIComponent(safeAttachmentName)}/`
+          )
         : secureUrl;
       res.json({
         public_id: data.public_id,
         secure_url: secureUrl,
         download_url: downloadUrl,
+        original_filename: safeAttachmentName,
         format: data.format,
         bytes: data.bytes,
         pages: pageCount,
@@ -548,6 +557,48 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error("Erro no /api/upload-file:", error);
+      res.status(500).json({ error: error?.message || "Erro interno" });
+    }
+  });
+
+  app.get("/api/file-proxy", async (req, res) => {
+    try {
+      const mode = String(req.query.mode || "inline");
+      const remoteUrl = String(req.query.url || "");
+      const name = String(req.query.name || "arquivo.pdf").replace(/[^a-zA-Z0-9._-]/g, "_");
+
+      if (!remoteUrl || !remoteUrl.startsWith("https://res.cloudinary.com/da19dwpgk/")) {
+        res.status(400).json({ error: "URL de arquivo inválida." });
+        return;
+      }
+
+      const upstream = await fetch(remoteUrl);
+      if (!upstream.ok || !upstream.body) {
+        const text = await upstream.text();
+        res.status(upstream.status || 502).send(text || "Falha ao obter arquivo.");
+        return;
+      }
+
+      const isAttachment = mode === "download";
+      const contentType = name.toLowerCase().endsWith(".pdf")
+        ? "application/pdf"
+        : upstream.headers.get("content-type") || "application/octet-stream";
+      res.setHeader("Content-Type", contentType);
+      res.setHeader(
+        "Content-Disposition",
+        `${isAttachment ? "attachment" : "inline"}; filename="${name}"`
+      );
+      res.setHeader("Cache-Control", "private, max-age=300");
+
+      const reader = upstream.body.getReader();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+      res.end();
+    } catch (error: any) {
+      console.error("Erro no /api/file-proxy:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });
     }
   });

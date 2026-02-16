@@ -164,6 +164,70 @@ const sanitizeMessagesForFirestore = (msgs: ChatMessage[]) =>
     return clean;
   });
 
+const toCloudinaryDownloadUrl = (url?: string) => {
+  if (!url) return '';
+  if (url.includes('/upload/fl_attachment/')) return url;
+  if (url.includes('/upload/')) return url.replace('/upload/', '/upload/fl_attachment/');
+  return url;
+};
+
+const toFileProxyUrl = (url?: string, name?: string, mode: 'inline' | 'download' = 'inline') => {
+  if (!url) return '';
+  const safeName = (name || 'documento.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+  return `/api/file-proxy?mode=${mode}&url=${encodeURIComponent(url)}&name=${encodeURIComponent(safeName)}`;
+};
+
+const renderInlineRichText = (text: string) => {
+  const parts: React.ReactNode[] = [];
+  const tokenRegex = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  let idx = 0;
+
+  while ((match = tokenRegex.exec(text)) !== null) {
+    if (match.index > cursor) {
+      parts.push(<span key={`txt-${idx++}`}>{text.slice(cursor, match.index)}</span>);
+    }
+    const token = match[0];
+    if (token.startsWith('**') && token.endsWith('**')) {
+      parts.push(<strong key={`b-${idx++}`}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith('`') && token.endsWith('`')) {
+      parts.push(<code key={`c-${idx++}`}>{token.slice(1, -1)}</code>);
+    } else if (token.startsWith('*') && token.endsWith('*')) {
+      parts.push(<em key={`i-${idx++}`}>{token.slice(1, -1)}</em>);
+    } else {
+      parts.push(<span key={`u-${idx++}`}>{token}</span>);
+    }
+    cursor = match.index + token.length;
+  }
+
+  if (cursor < text.length) {
+    parts.push(<span key={`txt-${idx++}`}>{text.slice(cursor)}</span>);
+  }
+
+  return parts;
+};
+
+const renderRichText = (text: string) => {
+  const lines = text.split('\n');
+  return lines.map((line, i) => {
+    const bulletMatch = line.match(/^\s*[-*]\s+(.*)$/);
+    if (bulletMatch) {
+      return (
+        <div key={`line-${i}`} className="pl-2">
+          <span className="mr-2 text-emerald-300">•</span>
+          {renderInlineRichText(bulletMatch[1])}
+        </div>
+      );
+    }
+    return (
+      <div key={`line-${i}`}>
+        {line.length ? renderInlineRichText(line) : <span>&nbsp;</span>}
+      </div>
+    );
+  });
+};
+
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -194,6 +258,8 @@ export default function Dashboard() {
   const [typingMessageId, setTypingMessageId] = useState<string | null>(null);
   const [typingText, setTypingText] = useState('');
   const [liveThinkingText, setLiveThinkingText] = useState('');
+  const [liveThinkingTarget, setLiveThinkingTarget] = useState('');
+  const thinkingTypingTimerRef = useRef<number | null>(null);
   const [aiThinking, setAiThinking] = useState(false);
   const [processingHintIndex, setProcessingHintIndex] = useState(0);
   const processingTimerRef = useRef<number | null>(null);
@@ -290,6 +356,43 @@ export default function Dashboard() {
   }, [messages, activeView]);
 
   useEffect(() => {
+    if (thinkingTypingTimerRef.current) {
+      window.clearInterval(thinkingTypingTimerRef.current);
+      thinkingTypingTimerRef.current = null;
+    }
+
+    if (!liveThinkingTarget) {
+      setLiveThinkingText('');
+      return;
+    }
+
+    if (liveThinkingTarget.length < liveThinkingText.length) {
+      setLiveThinkingText(liveThinkingTarget);
+      return;
+    }
+
+    thinkingTypingTimerRef.current = window.setInterval(() => {
+      setLiveThinkingText((prev) => {
+        if (prev.length >= liveThinkingTarget.length) {
+          if (thinkingTypingTimerRef.current) {
+            window.clearInterval(thinkingTypingTimerRef.current);
+            thinkingTypingTimerRef.current = null;
+          }
+          return prev;
+        }
+        return liveThinkingTarget.slice(0, prev.length + 1);
+      });
+    }, 24);
+
+    return () => {
+      if (thinkingTypingTimerRef.current) {
+        window.clearInterval(thinkingTypingTimerRef.current);
+        thinkingTypingTimerRef.current = null;
+      }
+    };
+  }, [liveThinkingTarget, liveThinkingText.length]);
+
+  useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
 
@@ -355,9 +458,35 @@ export default function Dashboard() {
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       const data = snap.data() as { messages?: ChatMessage[]; title?: string };
-      setMessages(data.messages?.length ? data.messages : [DEFAULT_ASSISTANT_MESSAGE]);
+      const rawMessages = data.messages?.length ? data.messages : [DEFAULT_ASSISTANT_MESSAGE];
+      const normalizedMessages = rawMessages.map((msg) => {
+        if (msg.meta?.fileType !== 'pdf') return msg;
+        const downloadUrl = msg.meta.fileDownloadUrl || toCloudinaryDownloadUrl(msg.meta.fileUrl);
+        if (downloadUrl === msg.meta.fileDownloadUrl) return msg;
+        return {
+          ...msg,
+          meta: {
+            ...(msg.meta || {}),
+            fileDownloadUrl: downloadUrl,
+          },
+        };
+      });
+      setMessages(normalizedMessages);
+      messagesRef.current = normalizedMessages;
+
+      const hadLegacyPdfWithoutDownload = normalizedMessages.some(
+        (msg, idx) => msg.meta?.fileType === 'pdf' && normalizedMessages[idx].meta?.fileDownloadUrl !== rawMessages[idx]?.meta?.fileDownloadUrl
+      );
+      if (hadLegacyPdfWithoutDownload) {
+        await setDoc(
+          docRef,
+          { messages: sanitizeMessagesForFirestore(normalizedMessages), updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+      }
     } else {
       setMessages([DEFAULT_ASSISTANT_MESSAGE]);
+      messagesRef.current = [DEFAULT_ASSISTANT_MESSAGE];
     }
     setActiveConversationId(id);
     setActiveConversationRef(docRef);
@@ -430,7 +559,9 @@ export default function Dashboard() {
       return;
     }
     if (isPdf) {
-      clearAttachments();
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+      setImageFile(null);
+      setImagePreview(null);
       setPdfFile(file);
       return;
     }
@@ -641,6 +772,7 @@ export default function Dashboard() {
     setTypingMessageId(typingId);
     setTypingText('');
     setLiveThinkingText('');
+    setLiveThinkingTarget('');
     setProcessingHintIndex(0);
 
     const currentUserMessageId = userMessage.id;
@@ -767,7 +899,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           setTypingMessageId(null);
           setTypingText('');
           setLiveThinkingText('');
-          const updatedMessages = [...nextMessages, aiMessage];
+          setLiveThinkingTarget('');
+          const latestMessages = messagesRef.current.length ? messagesRef.current : nextMessages;
+          const updatedMessages = [...latestMessages.filter((m) => m.id !== typingId), aiMessage];
           setMessages(updatedMessages);
           messagesRef.current = updatedMessages;
           await updateConversationMeta(updatedMessages, userText || 'Nova conversa');
@@ -812,7 +946,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           }
           if (typeof chunk.thinkingText === 'string') {
             finalThinking = chunk.thinkingText;
-            setLiveThinkingText(chunk.thinkingText);
+            setLiveThinkingTarget(chunk.thinkingText);
           }
           if (typeof chunk.content === 'string') {
             finalContent = chunk.content;
@@ -832,7 +966,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             if (typeof chunk.model === 'string' && chunk.model) usedModel = chunk.model;
             if (typeof chunk.thinkingText === 'string') {
               finalThinking = chunk.thinkingText;
-              setLiveThinkingText(chunk.thinkingText);
+              setLiveThinkingTarget(chunk.thinkingText);
             }
             if (typeof chunk.content === 'string') {
               finalContent = chunk.content;
@@ -858,7 +992,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       setTypingMessageId(null);
       setTypingText('');
       setLiveThinkingText('');
-      const updatedMessages = [...nextMessages, aiMessage];
+      setLiveThinkingTarget('');
+      const latestMessages = messagesRef.current.length ? messagesRef.current : nextMessages;
+      const updatedMessages = [...latestMessages.filter((m) => m.id !== typingId), aiMessage];
       setMessages(updatedMessages);
       messagesRef.current = updatedMessages;
       await updateConversationMeta(updatedMessages, userText || 'Nova conversa');
@@ -868,6 +1004,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       setTypingMessageId(null);
       setTypingText('');
       setLiveThinkingText('');
+      setLiveThinkingTarget('');
     } finally {
       setSending(false);
     }
@@ -1129,16 +1266,44 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         }
                       `}
                     >
-                      {msg.meta?.fileType === 'pdf' && (
+                      {(msg.meta?.fileType === 'pdf' || msg.meta?.fileType === 'image') && (
                         <div
-                          className={`mb-2 inline-flex items-center gap-2 rounded-lg px-2.5 py-1 text-[11px] border ${
+                          role={msg.meta?.fileType === 'pdf' && msg.meta?.fileUrl ? 'button' : undefined}
+                          tabIndex={msg.meta?.fileType === 'pdf' && msg.meta?.fileUrl ? 0 : -1}
+                          onClick={() => {
+                            const pdfUrl = msg.meta?.fileUrl || msg.meta?.fileDownloadUrl;
+                            if (msg.meta?.fileType === 'pdf' && pdfUrl) {
+                              window.open(toFileProxyUrl(pdfUrl, msg.meta.fileName, 'inline'), '_blank', 'noopener,noreferrer');
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            const pdfUrl = msg.meta?.fileUrl || msg.meta?.fileDownloadUrl;
+                            if ((e.key === 'Enter' || e.key === ' ') && msg.meta?.fileType === 'pdf' && pdfUrl) {
+                              e.preventDefault();
+                              window.open(toFileProxyUrl(pdfUrl, msg.meta.fileName, 'inline'), '_blank', 'noopener,noreferrer');
+                            }
+                          }}
+                          className={`mb-2 inline-flex max-w-[260px] items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] border ${
                             msg.role === 'user'
-                              ? 'bg-emerald-700/50 border-emerald-300/30 text-emerald-50'
-                              : 'bg-white/5 border-white/10 text-slate-300'
-                          }`}
+                              ? 'bg-emerald-700/45 border-emerald-300/30 text-emerald-50'
+                              : 'bg-[#0f1713] border-white/10 text-slate-200'
+                          } ${msg.meta?.fileType === 'pdf' && (msg.meta?.fileUrl || msg.meta?.fileDownloadUrl) ? 'cursor-pointer hover:border-emerald-400/40' : ''}`}
                         >
-                          <FileText size={13} />
-                          <span className="truncate max-w-[220px]">{msg.meta.fileName || 'PDF anexado'}</span>
+                          <div
+                            className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${
+                              msg.meta?.fileType === 'pdf'
+                                ? 'bg-red-500/20 text-red-300'
+                                : 'bg-emerald-500/20 text-emerald-300'
+                            }`}
+                          >
+                            {msg.meta?.fileType === 'pdf' ? <FileText size={13} /> : <ImagePlus size={13} />}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{msg.meta?.fileName || (msg.meta?.fileType === 'pdf' ? 'Documento PDF' : 'Imagem anexada')}</p>
+                            <p className={`text-[10px] ${msg.role === 'user' ? 'text-emerald-100/80' : 'text-slate-500'}`}>
+                              {msg.meta?.fileType === 'pdf' ? 'Documento' : 'Imagem'}
+                            </p>
+                          </div>
                         </div>
                       )}
                       {msg.role === 'ai' && displayThinking && (
@@ -1164,20 +1329,49 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           )}
                         </div>
                       )}
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{displayText}</p>
-                      {msg.meta?.fileType === 'image' && msg.meta.imageUrl && (
-                        <img src={msg.meta.imageUrl} alt="Imagem" className="mt-3 rounded-lg max-h-48" />
+                      {msg.role === 'ai' ? (
+                        <div className="chat-markdown text-sm leading-relaxed">{renderRichText(displayText)}</div>
+                      ) : (
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap">{displayText}</p>
                       )}
-                      {msg.meta?.fileType === 'pdf' && msg.meta.fileUrl && (
-                        <a
-                          href={msg.meta.fileDownloadUrl || msg.meta.fileUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          download
-                          className="mt-3 inline-flex items-center gap-2 text-xs text-emerald-200 hover:text-emerald-100"
-                        >
-                          <FileText size={14} /> Baixar PDF
-                        </a>
+                      {msg.meta?.fileType === 'image' && msg.meta.imageUrl && (
+                        <img src={msg.meta.imageUrl} alt="Imagem" className="mt-3 rounded-xl max-h-52 border border-white/10" />
+                      )}
+                      {msg.meta?.fileType === 'pdf' && (
+                        <div className="mt-3 flex items-center gap-3">
+                          {(msg.meta.fileUrl || msg.meta.fileDownloadUrl) ? (
+                            <>
+                              {(() => {
+                                const pdfUrl = msg.meta.fileUrl || msg.meta.fileDownloadUrl!;
+                                return (
+                                  <>
+                              <a
+                                href={toFileProxyUrl(pdfUrl, msg.meta.fileName, 'inline')}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-2 text-xs text-emerald-200 hover:text-emerald-100"
+                              >
+                                <FileText size={14} /> Ler PDF
+                              </a>
+                              <a
+                                href={toFileProxyUrl(pdfUrl, msg.meta.fileName, 'download')}
+                                target="_blank"
+                                rel="noreferrer"
+                                download={msg.meta.fileName || 'documento.pdf'}
+                                className="inline-flex items-center gap-2 text-xs text-emerald-200/90 hover:text-emerald-100"
+                              >
+                                <FileDown size={14} /> Baixar
+                              </a>
+                                  </>
+                                );
+                              })()}
+                            </>
+                          ) : (
+                            <span className="inline-flex items-center gap-2 text-xs text-slate-400">
+                              <FileText size={14} /> Enviando PDF...
+                            </span>
+                          )}
+                        </div>
                       )}
                       <span
                         className={`text-[10px] absolute bottom-2 right-4 opacity-50 ${
@@ -1209,9 +1403,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             ][processingHintIndex]}
                         </p>
                       </div>
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap text-slate-200/95 min-h-5">
-                        {typingText || 'Gerando resposta...'}
-                      </p>
+                      <div className="chat-markdown text-sm leading-relaxed text-slate-200/95 min-h-5">
+                        {renderRichText(typingText || 'Gerando resposta...')}
+                      </div>
                       <div className="flex items-center gap-2 mt-2">
                         <span className="typing-dot"></span>
                         <span className="typing-dot"></span>
@@ -1239,20 +1433,22 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   />
                   {(imageFile || pdfFile) && (
                     <div className="px-4 pb-2">
-                      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs text-slate-300">
-                        {imageFile ? (
-                          <ImagePlus size={14} className="text-emerald-300" />
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-red-500/20 text-red-200 border border-red-400/20">
-                            <FileText size={13} className="text-red-300" />
-                            PDF
-                          </span>
-                        )}
-                        <span className="truncate max-w-[240px]">{imageFile?.name || pdfFile?.name}</span>
+                      <div className="inline-flex max-w-[320px] items-center gap-2 px-2.5 py-2 rounded-xl bg-[#0c1511] border border-white/10 text-xs text-slate-200 shadow-sm">
+                        <div
+                          className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${
+                            imageFile ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'
+                          }`}
+                        >
+                          {imageFile ? <ImagePlus size={13} /> : <FileText size={13} />}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{imageFile?.name || pdfFile?.name}</p>
+                          <p className="text-[10px] text-slate-500">{imageFile ? 'Imagem pronta para envio' : 'PDF pronto para envio'}</p>
+                        </div>
                         <button
                           type="button"
                           onClick={() => clearAttachments()}
-                          className="text-slate-500 hover:text-red-300 ml-1"
+                          className="ml-1 h-6 w-6 shrink-0 rounded-md text-slate-500 hover:text-red-300 hover:bg-red-500/10"
                         >
                           ✕
                         </button>
@@ -1268,7 +1464,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           type="file"
                           accept="image/*,application/pdf"
                           className="hidden"
-                          onChange={(e) => onPickAttachment(e.target.files?.[0] || null)}
+                          onChange={(e) => {
+                            onPickAttachment(e.target.files?.[0] || null);
+                            e.currentTarget.value = '';
+                          }}
                         />
                       </label>
                       <button className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs">
@@ -1601,6 +1800,38 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           @keyframes typing {
             0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
             40% { transform: scale(1); opacity: 1; }
+          }
+          .chat-markdown p {
+            margin: 0;
+            white-space: pre-wrap;
+          }
+          .chat-markdown p + p {
+            margin-top: 0.55rem;
+          }
+          .chat-markdown strong {
+            color: #e8fff2;
+            font-weight: 700;
+          }
+          .chat-markdown em {
+            color: #b6f3d0;
+          }
+          .chat-markdown ul, .chat-markdown ol {
+            margin: 0.45rem 0 0.2rem 1.05rem;
+            padding: 0;
+          }
+          .chat-markdown li + li {
+            margin-top: 0.2rem;
+          }
+          .chat-markdown code {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 0.08rem 0.35rem;
+            font-size: 0.82em;
+          }
+          .chat-markdown a {
+            color: #6ee7b7;
+            text-decoration: underline;
           }
         `}</style>
       </main>
