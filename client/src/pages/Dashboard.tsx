@@ -8,6 +8,7 @@ import {
   MessageSquare,
   Map as MapIcon,
   Zap,
+  Sparkles,
   Menu,
   User,
   ChevronDown,
@@ -19,6 +20,7 @@ import {
   LogOut,
   ImagePlus,
   FileText,
+  Trash2,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -29,6 +31,7 @@ import {
   getDocs,
   orderBy,
   query,
+  deleteDoc,
   setDoc,
   serverTimestamp,
   type DocumentReference,
@@ -50,8 +53,19 @@ type ChatMessage = {
     imageUrl?: string;
     fileUrl?: string;
     fileType?: 'image' | 'pdf';
+    thinkingText?: string;
   };
 };
+
+const REQUIRED_MODELS: Array<{ id: string; label: string; capabilities: string[] }> = [
+  { id: 'meta-llama/llama-3.3-70b-versatile', label: 'Llama 3.3 70B', capabilities: ['text'] },
+  { id: 'meta-llama/llama-4-maverick-17b-128e-instruct', label: 'Llama 4 Maverick', capabilities: ['text', 'vision'] },
+  { id: 'meta-llama/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout', capabilities: ['text', 'vision'] },
+  { id: 'meta-llama/llama-guard-4-12b', label: 'Llama Guard 4 12B', capabilities: ['text', 'vision'] },
+  { id: 'qwen/qwen3-32b', label: 'Qwen 3 32B', capabilities: ['text'] },
+  { id: 'moonshotai/kimi-k2-instruct-0905', label: 'Kimi K2 Instruct (0905)', capabilities: ['text'] },
+  { id: 'openai/gpt-oss-20b', label: 'GPT OSS 20B', capabilities: ['text'] },
+];
 
 type Conversation = {
   id: string;
@@ -123,8 +137,10 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  const [models, setModels] = useState<Array<{ id: string; label: string; capabilities: string[] }>>([]);
+  const [models] = useState<Array<{ id: string; label: string; capabilities: string[] }>>(REQUIRED_MODELS);
   const [selectedModel, setSelectedModel] = useState('auto');
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const modelMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -139,6 +155,10 @@ export default function Dashboard() {
   const [typingMessageId, setTypingMessageId] = useState<string | null>(null);
   const [typingText, setTypingText] = useState('');
   const typingTimerRef = useRef<number | null>(null);
+  const [aiThinking, setAiThinking] = useState(false);
+  const [processingHintIndex, setProcessingHintIndex] = useState(0);
+  const processingTimerRef = useRef<number | null>(null);
+  const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
 
   const [conversationsRef, setConversationsRef] = useState<{
@@ -214,19 +234,14 @@ export default function Dashboard() {
   }, [setLocation]);
 
   useEffect(() => {
-    const loadModels = async () => {
-      try {
-        const res = await fetch('/api/models');
-        if (!res.ok) return;
-        const data = await res.json();
-        if (Array.isArray(data.models)) {
-          setModels(data.models);
-        }
-      } catch {
-        // ignore
+    const onClickOutside = (event: MouseEvent) => {
+      if (!modelMenuRef.current) return;
+      if (!modelMenuRef.current.contains(event.target as Node)) {
+        setModelMenuOpen(false);
       }
     };
-    loadModels();
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
   }, []);
 
   useEffect(() => {
@@ -240,6 +255,28 @@ export default function Dashboard() {
       if (imagePreview) URL.revokeObjectURL(imagePreview);
     };
   }, [imagePreview]);
+
+  useEffect(() => {
+    if (aiThinking || typingMessageId) {
+      if (processingTimerRef.current) {
+        window.clearInterval(processingTimerRef.current);
+      }
+      processingTimerRef.current = window.setInterval(() => {
+        setProcessingHintIndex((prev) => (prev + 1) % 4);
+      }, 1300);
+    } else if (processingTimerRef.current) {
+      window.clearInterval(processingTimerRef.current);
+      processingTimerRef.current = null;
+      setProcessingHintIndex(0);
+    }
+
+    return () => {
+      if (processingTimerRef.current) {
+        window.clearInterval(processingTimerRef.current);
+        processingTimerRef.current = null;
+      }
+    };
+  }, [aiThinking, typingMessageId]);
 
   const createConversation = async (collRef?: ReturnType<typeof collection>) => {
     const ref = collRef || conversationsRef?.collection;
@@ -288,6 +325,28 @@ export default function Dashboard() {
   const onSelectConversation = async (id: string) => {
     if (!conversationsRef) return;
     await loadConversation(conversationsRef.collection, id);
+  };
+
+  const onDeleteConversation = async (id: string) => {
+    if (!conversationsRef) return;
+
+    try {
+      await deleteDoc(doc(conversationsRef.collection, id));
+      const remaining = conversations.filter((c) => c.id !== id);
+      setConversations(remaining);
+
+      if (activeConversationId === id) {
+        if (remaining.length > 0) {
+          await loadConversation(conversationsRef.collection, remaining[0].id);
+        } else {
+          await createConversation(conversationsRef.collection);
+        }
+      }
+
+      toast.success('Chat excluído');
+    } catch (error: any) {
+      toast.error(error?.message || 'Erro ao excluir chat');
+    }
   };
 
   const onLogout = async () => {
@@ -442,6 +501,20 @@ export default function Dashboard() {
     }
   };
 
+  const splitThinkContent = (raw: string) => {
+    const thinkRegex = /<think>([\s\S]*?)<\/think>/gi;
+    const thinkParts: string[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = thinkRegex.exec(raw)) !== null) {
+      thinkParts.push((match[1] || '').trim());
+    }
+    const cleanText = raw.replace(thinkRegex, '').trim();
+    return {
+      cleanText: cleanText || 'Desculpe, não consegui formular uma resposta.',
+      thinkingText: thinkParts.join('\n\n').trim(),
+    };
+  };
+
   const handleSend = async () => {
     if ((!input.trim() && !imageFile && !pdfFile) || sending) return;
     if (!activeConversationRef && conversationsRef) {
@@ -493,9 +566,11 @@ export default function Dashboard() {
     setImagePreview(null);
     setPdfFile(null);
     setSending(true);
+    setAiThinking(true);
     const typingId = nanoid();
     setTypingMessageId(typingId);
     setTypingText('');
+    setProcessingHintIndex(0);
 
     const currentUserMessageId = userMessage.id;
     const apiMessages = [
@@ -530,13 +605,18 @@ export default function Dashboard() {
 
       const data = await res.json();
       const reply = data?.content || 'Desculpe, não consegui responder agora.';
+      const parsed = splitThinkContent(reply);
       const usedModel = data?.model || selectedModel;
+      setAiThinking(false);
       const aiMessage: ChatMessage = {
         id: typingId,
         role: 'ai',
-        text: reply,
+        text: parsed.cleanText,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        meta: { model: usedModel },
+        meta: {
+          model: usedModel,
+          thinkingText: parsed.thinkingText || undefined,
+        },
       };
 
       // Typing animation
@@ -560,6 +640,9 @@ export default function Dashboard() {
       }, 18);
     } catch (error: any) {
       toast.error(error.message || 'Erro ao conversar com a IA');
+      setAiThinking(false);
+      setTypingMessageId(null);
+      setTypingText('');
     } finally {
       setSending(false);
     }
@@ -580,6 +663,11 @@ export default function Dashboard() {
   const filteredConversations = conversations.filter((c) =>
     c.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const selectedModelLabel =
+    selectedModel === 'auto'
+      ? 'Auto (Florestal)'
+      : models.find((m) => m.id === selectedModel)?.label || selectedModel;
 
   // Custom components
   const CustomSelect = ({ label, icon: Icon, options, value, onChange }: any) => (
@@ -697,26 +785,41 @@ export default function Dashboard() {
 
         <div className="flex-1 overflow-y-auto px-4 space-y-1 custom-scrollbar">
           {filteredConversations.map((conv) => (
-            <button
+            <div
               key={conv.id}
-              onClick={() => onSelectConversation(conv.id)}
-              className={`w-full text-left flex items-center gap-3 p-2.5 rounded-lg transition-colors group ${
+              className={`w-full flex items-center gap-2 p-2 rounded-lg transition-colors group ${
                 conv.id === activeConversationId ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-slate-400'
               }`}
             >
-              <MessageSquare
-                size={18}
-                className={conv.id === activeConversationId ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}
-              />
-              <div className="overflow-hidden xl:block lg:hidden">
-                <p className="text-sm text-slate-300 truncate group-hover:text-white transition-colors inline-flex items-center gap-2">
-                  {conv.lastAttachmentType === 'pdf' && <FileText size={12} className="text-emerald-300 shrink-0" />}
-                  {conv.lastAttachmentType === 'image' && <ImagePlus size={12} className="text-emerald-300 shrink-0" />}
-                  <span className="truncate">{conv.title}</span>
-                </p>
-                {conv.lastMessagePreview && <p className="text-[10px] text-slate-600 truncate">{conv.lastMessagePreview}</p>}
-              </div>
-            </button>
+              <button
+                onClick={() => onSelectConversation(conv.id)}
+                className="flex-1 min-w-0 text-left flex items-center gap-3"
+              >
+                <MessageSquare
+                  size={18}
+                  className={conv.id === activeConversationId ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}
+                />
+                <div className="overflow-hidden xl:block lg:hidden">
+                  <p className="text-sm text-slate-300 truncate group-hover:text-white transition-colors inline-flex items-center gap-2">
+                    {conv.lastAttachmentType === 'pdf' && <FileText size={12} className="text-emerald-300 shrink-0" />}
+                    {conv.lastAttachmentType === 'image' && <ImagePlus size={12} className="text-emerald-300 shrink-0" />}
+                    <span className="truncate">{conv.title}</span>
+                  </p>
+                  {conv.lastMessagePreview && <p className="text-[10px] text-slate-600 truncate">{conv.lastMessagePreview}</p>}
+                </div>
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteConversation(conv.id);
+                }}
+                className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition"
+                title="Excluir chat"
+                aria-label="Excluir chat"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
           ))}
         </div>
 
@@ -770,76 +873,18 @@ export default function Dashboard() {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {activeView === 'chat' && (
-              <div className="relative flex items-center">
-                <div className="relative">
-                  <select
-                    value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
-                    className="appearance-none bg-[#050b08] border border-white/10 rounded-lg text-xs text-slate-300 py-2 pl-3 pr-16 outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 cursor-pointer transition-all hover:border-emerald-500/30"
-                  >
-                    <option value="auto" className="bg-[#0e1612] text-slate-200 py-2">
-                      Auto (Florestal)
-                    </option>
-                    {models
-                      .filter((m) =>
-                        [
-                          'meta-llama/llama-3.3-70b-versatile',
-                          'meta-llama/llama-4-maverick-17b-128e-instruct',
-                          'qwen/qwen3-32b',
-                        ].includes(m.id)
-                      )
-                      .map((model) => (
-                        <option key={model.id} value={model.id} className="bg-[#0e1612] text-slate-200 py-2">
-                          {model.label}
-                        </option>
-                      ))}
-                  </select>
-                  <ChevronDown size={14} className="absolute right-8 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                  <div className="absolute right-1 top-1/2 -translate-y-1/2 group">
-                    <button
-                      type="button"
-                      className="px-2 py-1 text-[10px] rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:text-emerald-200"
-                    >
-                      +
-                    </button>
-                    <div className="absolute right-0 mt-2 w-56 rounded-xl bg-[#0e1612]/95 border border-white/10 shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all z-20">
-                      <div className="p-2 text-[10px] uppercase tracking-wider text-slate-500">Mais modelos</div>
-                      <div className="max-h-60 overflow-auto custom-scrollbar">
-                        {models
-                          .filter(
-                            (m) =>
-                              ![
-                                'meta-llama/llama-3.3-70b-versatile',
-                                'meta-llama/llama-4-maverick-17b-128e-instruct',
-                                'qwen/qwen3-32b',
-                              ].includes(m.id)
-                          )
-                          .map((model) => (
-                            <button
-                              key={model.id}
-                              onClick={() => setSelectedModel(model.id)}
-                              className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-white/5"
-                            >
-                              {model.label}
-                            </button>
-                          ))}
-                        {models.length === 0 && <div className="px-3 py-2 text-xs text-slate-500">Carregando...</div>}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <div className="flex items-center gap-2"></div>
         </header>
 
         {activeView === 'chat' ? (
           <>
-            <div className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth custom-scrollbar">
+            <div className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth custom-scrollbar relative z-0">
               <div className="max-w-3xl mx-auto space-y-6">
-                {messages.map((msg) => (
+                {messages.map((msg) => {
+                  const parsedFromText = splitThinkContent(msg.text || '');
+                  const displayThinking = msg.meta?.thinkingText || parsedFromText.thinkingText;
+                  const displayText = parsedFromText.cleanText;
+                  return (
                   <div key={msg.id} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-fade-in-up`}>
                     <div
                       className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
@@ -859,7 +904,30 @@ export default function Dashboard() {
                         }
                       `}
                     >
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                      {msg.role === 'ai' && displayThinking && (
+                        <div className="mb-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-[10px] uppercase tracking-wider text-emerald-300/80">
+                              Pensamento da IA
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedThinking((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))
+                              }
+                              className="text-[10px] text-emerald-300 hover:text-emerald-200"
+                            >
+                              {expandedThinking[msg.id] ? 'Ocultar' : 'Expandir'}
+                            </button>
+                          </div>
+                          {expandedThinking[msg.id] && (
+                            <p className="mt-2 text-xs leading-relaxed text-slate-300 whitespace-pre-wrap">
+                              {displayThinking}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{displayText}</p>
                       {msg.meta?.fileType === 'image' && msg.meta.imageUrl && (
                         <img src={msg.meta.imageUrl} alt="Imagem" className="mt-3 rounded-lg max-h-48" />
                       )}
@@ -882,22 +950,36 @@ export default function Dashboard() {
                       </span>
                     </div>
                   </div>
-                ))}
-                {typingMessageId && (
+                )})}
+                {(aiThinking || typingMessageId) && (
                   <div className="flex gap-4 animate-fade-in-up">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-gradient-to-br from-emerald-500 to-green-700 shadow-lg shadow-emerald-900/50">
-                      <Leaf size={14} className="text-white" />
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-[#203127] border border-emerald-500/20">
+                      <Sparkles size={14} className="text-emerald-300" />
                     </div>
-                    <div className="relative max-w-[85%] lg:max-w-[75%] p-4 rounded-2xl bg-[#131f18]/80 border border-emerald-500/10 text-slate-200 rounded-tl-sm">
-                      {typingText ? (
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap">{typingText}</p>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <span className="typing-dot"></span>
-                          <span className="typing-dot"></span>
-                          <span className="typing-dot"></span>
-                        </div>
-                      )}
+                    <div className="relative max-w-[85%] lg:max-w-[75%] p-4 rounded-2xl bg-[#0f1713]/90 border border-dashed border-emerald-500/35 text-slate-200">
+                      <div className="text-[10px] uppercase tracking-wider text-emerald-300/80 mb-1">
+                        Pensamento da IA
+                      </div>
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap text-slate-300/90">
+                        {(aiThinking
+                          ? [
+                              'Lendo sua solicitação',
+                              'Analisando contexto ambiental',
+                              'Selecionando estratégia de resposta',
+                              'Consolidando resultado',
+                            ]
+                          : [
+                              'Refinando a resposta',
+                              'Validando consistência',
+                              'Finalizando texto',
+                              'Preparando envio',
+                            ])[processingHintIndex]}
+                      </p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <span className="typing-dot"></span>
+                        <span className="typing-dot"></span>
+                        <span className="typing-dot"></span>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -905,10 +987,10 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="p-4 pb-6 w-full flex-shrink-0">
-              <div className="max-w-3xl mx-auto relative group">
+            <div className="p-4 pb-6 w-full flex-shrink-0 relative z-30">
+              <div className="max-w-3xl mx-auto relative group z-30">
                 <div className="absolute inset-0 bg-emerald-500/5 rounded-2xl blur-sm group-focus-within:bg-emerald-500/10 transition-all duration-500" />
-                <div className="relative bg-[#0e1612]/90 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/50 overflow-hidden focus-within:border-emerald-500/40 focus-within:ring-1 focus-within:ring-emerald-500/20 transition-all duration-300">
+                <div className="relative bg-[#0e1612]/90 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/50 overflow-visible focus-within:border-emerald-500/40 focus-within:ring-1 focus-within:ring-emerald-500/20 transition-all duration-300">
                   <textarea
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
@@ -949,6 +1031,68 @@ export default function Dashboard() {
                         <MapIcon size={16} className="text-emerald-300" />
                         Mapa
                       </button>
+                      <div className="relative z-40" ref={modelMenuRef}>
+                        <button
+                          type="button"
+                          onClick={() => setModelMenuOpen((v) => !v)}
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs"
+                        >
+                          <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.7)]"></span>
+                          <span className="max-w-[140px] truncate">{selectedModelLabel}</span>
+                          <ChevronDown
+                            size={13}
+                            className={`text-slate-400 transition-transform ${modelMenuOpen ? 'rotate-180' : ''}`}
+                          />
+                        </button>
+
+                        {modelMenuOpen && (
+                          <div className="absolute left-0 bottom-full mb-2 w-80 rounded-2xl bg-[#0d1612]/95 border border-white/10 shadow-2xl backdrop-blur-xl z-[120] overflow-hidden">
+                            <div className="px-4 py-3 border-b border-white/10">
+                              <p className="text-[10px] uppercase tracking-wider text-slate-500">Seleção de modelo</p>
+                              <p className="text-xs text-slate-300 mt-1">Escolha manualmente ou use Auto</p>
+                            </div>
+                            <div className="max-h-80 overflow-auto custom-scrollbar p-2 space-y-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedModel('auto');
+                                  setModelMenuOpen(false);
+                                }}
+                                className={`w-full text-left rounded-xl px-3 py-2 border transition-colors ${
+                                  selectedModel === 'auto'
+                                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200'
+                                    : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                                }`}
+                              >
+                                <div className="text-xs font-medium">Auto (Florestal)</div>
+                                <div className="text-[11px] text-slate-400 mt-0.5">
+                                  Seleção automática por contexto
+                                </div>
+                              </button>
+                              {models.map((model) => (
+                                <button
+                                  key={model.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedModel(model.id);
+                                    setModelMenuOpen(false);
+                                  }}
+                                  className={`w-full text-left rounded-xl px-3 py-2 border transition-colors ${
+                                    selectedModel === model.id
+                                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200'
+                                      : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                                  }`}
+                                >
+                                  <div className="text-xs font-medium">{model.label}</div>
+                                  <div className="text-[11px] text-slate-500 mt-0.5">
+                                    {model.capabilities?.join(' + ') || 'text'}
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center gap-3">
                       <div className="h-4 w-[1px] bg-white/10 mx-1"></div>
