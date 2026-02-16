@@ -43,7 +43,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
-import { MapView } from '@/components/Map';
 
 type ChatMessage = {
   id: string;
@@ -76,6 +75,29 @@ type MapLayerOption = {
   crs?: string[];
   inferredYear?: string;
   group?: 'spot' | 'landsat' | 'other';
+};
+
+const SEMA_WMS_DIRECT_BASE =
+  'https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&version=1.1.1&authkey=541085de-9a2e-454e-bdba-eb3d57a2f492&request=GetMap';
+
+const buildDirectWmsGetMapUrl = (
+  layerName: string,
+  bbox: [number, number, number, number],
+  width = 1100,
+  height = 700,
+  format = 'image/png'
+) => {
+  const params = new URLSearchParams({
+    layers: layerName,
+    styles: '',
+    format,
+    transparent: 'false',
+    srs: 'EPSG:4326',
+    bbox: bbox.join(','),
+    width: String(width),
+    height: String(height),
+  });
+  return `${SEMA_WMS_DIRECT_BASE}&${params.toString()}`;
 };
 
 const REQUIRED_MODELS: Array<{ id: string; label: string; capabilities: string[]; description: string }> = [
@@ -248,6 +270,79 @@ const renderRichText = (text: string) => {
   });
 };
 
+const parseKmlBboxOnClient = (kmlText: string): [number, number, number, number] => {
+  const matches = [...kmlText.matchAll(/<coordinates>([\s\S]*?)<\/coordinates>/gi)];
+  if (!matches.length) {
+    throw new Error('KML sem coordenadas válidas.');
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const m of matches) {
+    const raw = String(m[1] || '').trim();
+    const tuples = raw.split(/\s+/);
+    for (const t of tuples) {
+      const [xStr, yStr] = t.split(',');
+      const x = Number(xStr);
+      const y = Number(yStr);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
+    throw new Error('Não foi possível extrair bbox do KML.');
+  }
+  return [minX, minY, maxX, maxY];
+};
+
+const parseZipShpBboxOnClient = async (file: File): Promise<[number, number, number, number]> => {
+  const arr = await file.arrayBuffer();
+  const bytes = new Uint8Array(arr);
+  let offset = 0;
+  while (offset + 30 <= bytes.length) {
+    const sig =
+      bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24);
+    if (sig !== 0x04034b50) break;
+    const method = bytes[offset + 8] | (bytes[offset + 9] << 8);
+    const compressedSize =
+      bytes[offset + 18] |
+      (bytes[offset + 19] << 8) |
+      (bytes[offset + 20] << 16) |
+      (bytes[offset + 21] << 24);
+    const fileNameLength = bytes[offset + 26] | (bytes[offset + 27] << 8);
+    const extraLength = bytes[offset + 28] | (bytes[offset + 29] << 8);
+    const nameStart = offset + 30;
+    const nameEnd = nameStart + fileNameLength;
+    const name = new TextDecoder().decode(bytes.slice(nameStart, nameEnd)).toLowerCase();
+    const dataStart = nameEnd + extraLength;
+    const dataEnd = dataStart + compressedSize;
+    if (dataEnd > bytes.length) break;
+    if (name.endsWith('.shp')) {
+      if (method !== 0) {
+        throw new Error('ZIP com SHP comprimido não suportado no frontend. Refaça ZIP sem compressão ou use backend novo.');
+      }
+      const dv = new DataView(arr, dataStart, compressedSize);
+      const minX = dv.getFloat64(36, true);
+      const minY = dv.getFloat64(44, true);
+      const maxX = dv.getFloat64(52, true);
+      const maxY = dv.getFloat64(60, true);
+      if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
+        throw new Error('Não foi possível extrair BBOX do shapefile.');
+      }
+      return [minX, minY, maxX, maxY];
+    }
+    offset = dataEnd;
+  }
+  throw new Error('ZIP sem arquivo .shp encontrado.');
+};
+
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -268,12 +363,15 @@ export default function Dashboard() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pendingMapContext, setPendingMapContext] = useState<ChatMessage['meta']['mapContext'] | undefined>(undefined);
+  const [pendingMapImageUrl, setPendingMapImageUrl] = useState<string | null>(null);
   const [mapDialogOpen, setMapDialogOpen] = useState(false);
   const [mapLayers, setMapLayers] = useState<MapLayerOption[]>([]);
   const [selectedMapLayer, setSelectedMapLayer] = useState('');
   const [mapLoading, setMapLoading] = useState(false);
   const [mapCapturing, setMapCapturing] = useState(false);
-  const mapInstanceRef = useRef<google.maps.Map | null>(null);
+  const [mapBbox, setMapBbox] = useState<[number, number, number, number]>([-61, -18, -50, -8]);
+  const [mapPreviewDataUrl, setMapPreviewDataUrl] = useState('');
+  const [mapPreviewLoading, setMapPreviewLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
 
@@ -634,6 +732,7 @@ export default function Dashboard() {
     setImageFile(null);
     setImagePreview(null);
     setPdfFile(null);
+    setPendingMapImageUrl(null);
     setPendingMapContext(undefined);
   };
 
@@ -652,6 +751,7 @@ export default function Dashboard() {
       setImageFile(file);
       setImagePreview(URL.createObjectURL(file));
       setPdfFile(null);
+      setPendingMapImageUrl(null);
       setPendingMapContext(undefined);
       return;
     }
@@ -660,6 +760,7 @@ export default function Dashboard() {
       setImageFile(null);
       setImagePreview(null);
       setPdfFile(file);
+      setPendingMapImageUrl(null);
       setPendingMapContext(undefined);
       return;
     }
@@ -730,6 +831,7 @@ export default function Dashboard() {
 
   const openMapDialog = async () => {
     setMapDialogOpen(true);
+    setMapPreviewDataUrl('');
     setMapLoading(true);
     try {
       const res = await fetch('/api/map/capabilities');
@@ -740,7 +842,15 @@ export default function Dashboard() {
       const data = await res.json();
       const layers = (data?.layers || []) as MapLayerOption[];
       setMapLayers(layers);
-      setSelectedMapLayer((prev) => prev || data?.defaultLayer || layers[0]?.name || '');
+      const layerNames = new Set(layers.map((l) => l.name));
+      const preferred = selectedMapLayer && layerNames.has(selectedMapLayer) ? selectedMapLayer : '';
+      const chosenLayer = preferred || data?.defaultLayer || layers[0]?.name || '';
+      setSelectedMapLayer(chosenLayer);
+      if (chosenLayer) {
+        setTimeout(() => {
+          refreshMapPreview(chosenLayer, mapBbox);
+        }, 0);
+      }
     } catch (error: any) {
       toast.error(error?.message || 'Erro ao abrir mapa');
     } finally {
@@ -748,25 +858,61 @@ export default function Dashboard() {
     }
   };
 
-  const captureVisibleMapArea = async () => {
-    if (!mapInstanceRef.current) {
-      toast.error('Mapa ainda não está pronto');
-      return;
+  const refreshMapPreview = async (layerName?: string, bboxValue?: [number, number, number, number]) => {
+    const effectiveLayer = layerName || selectedMapLayer;
+    const effectiveBbox = bboxValue || mapBbox;
+    if (!effectiveLayer) return;
+    setMapPreviewLoading(true);
+    try {
+      const res = await fetch('/api/map/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          layerName: effectiveLayer,
+          bbox: effectiveBbox,
+          crs: 'EPSG:4326',
+          width: 1100,
+          height: 700,
+          format: 'image/png',
+        }),
+      });
+      if (!res.ok) {
+        let payload: any = null;
+        try {
+          payload = await res.json();
+        } catch {
+          const text = await res.text();
+          throw new Error(text || 'Falha ao carregar prévia do mapa');
+        }
+        if (payload?.availableLayers?.length) {
+          const fallbackLayer = String(payload.availableLayers[0] || '');
+          if (fallbackLayer) {
+            setSelectedMapLayer(fallbackLayer);
+            toast.error(`Layer inválida. Usando '${fallbackLayer}'.`);
+            await refreshMapPreview(fallbackLayer, effectiveBbox);
+            return;
+          }
+        }
+        throw new Error(payload?.error || 'Falha ao carregar prévia do mapa');
+      }
+      const data = await res.json();
+      setMapPreviewDataUrl(String(data?.dataUrl || ''));
+    } catch (error: any) {
+      const directUrl = buildDirectWmsGetMapUrl(effectiveLayer, effectiveBbox, 1100, 700, 'image/png');
+      setMapPreviewDataUrl(directUrl);
+      toast.error('WMS via backend falhou. Usando prévia direta do WMS.');
+    } finally {
+      setMapPreviewLoading(false);
     }
+  };
+
+  const captureVisibleMapArea = async () => {
     if (!selectedMapLayer) {
       toast.error('Selecione uma camada');
       return;
     }
 
-    const bounds = mapInstanceRef.current.getBounds();
-    if (!bounds) {
-      toast.error('Não foi possível obter a área visível');
-      return;
-    }
-
-    const ne = bounds.getNorthEast();
-    const sw = bounds.getSouthWest();
-    const bbox: [number, number, number, number] = [sw.lng(), sw.lat(), ne.lng(), ne.lat()];
+    const bbox: [number, number, number, number] = mapBbox;
 
     setMapCapturing(true);
     try {
@@ -803,9 +949,80 @@ export default function Dashboard() {
       setMapDialogOpen(false);
       toast.success('Área do mapa anexada ao chat');
     } catch (error: any) {
-      toast.error(error?.message || 'Erro ao capturar área do mapa');
+      const directUrl = buildDirectWmsGetMapUrl(selectedMapLayer, bbox, 1280, 960, 'image/png');
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+      setImageFile(null);
+      setImagePreview(null);
+      setPdfFile(null);
+      setPendingMapImageUrl(directUrl);
+      setPendingMapContext({
+        layerName: selectedMapLayer,
+        bbox,
+        crs: 'EPSG:4326',
+        source: 'SEMA_WMS',
+        width: 1280,
+        height: 960,
+      });
+      setMapDialogOpen(false);
+      toast.error('Captura via backend falhou. Usando URL direta do WMS no anexo.');
     } finally {
       setMapCapturing(false);
+    }
+  };
+
+  const onPickAreaFile = async (file: File | null) => {
+    if (!file) return;
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.kml') && !fileName.endsWith('.zip')) {
+      toast.error('Envie um arquivo .kml ou .zip (shapefile)');
+      return;
+    }
+    try {
+      if (fileName.endsWith('.kml')) {
+        const text = await file.text();
+        const bbox = parseKmlBboxOnClient(text);
+        setMapBbox(bbox);
+        await refreshMapPreview(undefined, bbox);
+        toast.success('Área do KML carregada no frontend');
+        return;
+      }
+      if (fileName.endsWith('.zip')) {
+        try {
+          const bbox = await parseZipShpBboxOnClient(file);
+          setMapBbox(bbox);
+          await refreshMapPreview(undefined, bbox);
+          toast.success('BBOX do shapefile ZIP carregada no frontend');
+          return;
+        } catch (localErr) {
+          // Fallback to backend parser if frontend parser can't handle this zip flavor.
+        }
+      }
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('Falha ao ler arquivo de área'));
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch('/api/geometry/bbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl, filename: file.name }),
+      });
+      if (!res.ok) {
+        if (res.status === 404) {
+          throw new Error('Endpoint /api/geometry/bbox não encontrado. Atualize o backend na Render.');
+        }
+        const text = await res.text();
+        throw new Error(text || 'Falha ao processar arquivo de área');
+      }
+      const data = await res.json();
+      const bbox = data?.bbox as [number, number, number, number];
+      if (!bbox || bbox.length !== 4) throw new Error('BBox inválida retornada do arquivo');
+      setMapBbox(bbox);
+      await refreshMapPreview(undefined, bbox);
+      toast.success('Área carregada do arquivo e aplicada no mapa');
+    } catch (error: any) {
+      toast.error(error?.message || 'Erro ao carregar arquivo de área');
     }
   };
 
@@ -897,7 +1114,7 @@ export default function Dashboard() {
   };
 
   const handleSend = async () => {
-    if ((!input.trim() && !imageFile && !pdfFile) || sending) return;
+    if ((!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl) || sending) return;
     if (!activeConversationRef && conversationsRef) {
       await createConversation(conversationsRef.collection);
     }
@@ -906,9 +1123,10 @@ export default function Dashboard() {
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const selectedImageFile = imageFile;
     const selectedPdfFile = pdfFile;
+    const selectedMapImageUrl = pendingMapImageUrl;
 
     let userPayloadText = userText;
-    if (selectedImageFile) {
+    if (selectedImageFile || selectedMapImageUrl) {
       userPayloadText =
         `${userText || 'Analise a imagem anexada.'}
 
@@ -933,13 +1151,14 @@ export default function Dashboard() {
     const userMessage: ChatMessage = {
       id: nanoid(),
       role: 'user',
-      text: userText || (selectedImageFile ? 'Analise a imagem.' : 'Analise o PDF.'),
+      text: userText || (selectedImageFile || selectedMapImageUrl ? 'Analise a imagem.' : 'Analise o PDF.'),
       time,
-      meta: selectedImageFile
+      meta: selectedImageFile || selectedMapImageUrl
         ? {
             fileType: 'image',
-            fileName: selectedImageFile?.name || 'imagem',
-            uploadStatus: 'uploading',
+            fileName: selectedImageFile?.name || 'mapa-wms.png',
+            uploadStatus: selectedMapImageUrl ? 'done' : 'uploading',
+            imageUrl: selectedMapImageUrl || undefined,
             mapContext: pendingMapContext,
           }
         : selectedPdfFile
@@ -954,6 +1173,7 @@ export default function Dashboard() {
     setImageFile(null);
     setImagePreview(null);
     setPdfFile(null);
+    setPendingMapImageUrl(null);
     setPendingMapContext(undefined);
     setSending(true);
     setUploading(Boolean(selectedImageFile || selectedPdfFile));
@@ -967,7 +1187,7 @@ export default function Dashboard() {
 
     const currentUserMessageId = userMessage.id;
 
-    const imageUploadPromise = selectedImageFile ? uploadImageIfNeeded() : Promise.resolve(null);
+    const imageUploadPromise = selectedImageFile ? uploadImageIfNeeded() : Promise.resolve(selectedMapImageUrl || null);
     const pdfUploadPromise = selectedPdfFile ? uploadPdfIfNeeded() : Promise.resolve(null);
 
     Promise.allSettled([imageUploadPromise, pdfUploadPromise]).finally(() => setUploading(false));
@@ -1410,7 +1630,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col relative z-10 h-full w-full overflow-hidden">
+      <main
+        className={`flex-1 flex flex-col relative h-full w-full overflow-hidden ${
+          mapDialogOpen ? 'z-[220]' : 'z-10'
+        }`}
+      >
         <header className="h-16 flex-shrink-0 flex items-center justify-between px-6 border-b border-white/5 bg-[#050b08]/50 backdrop-blur-md">
           <div className="flex items-center gap-3">
             <button
@@ -1598,19 +1822,21 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     rows={1}
                     style={{ height: input ? `${Math.min(input.split('\n').length * 24 + 32, 200)}px` : '60px' }}
                   />
-                  {(imageFile || pdfFile) && (
+                  {(imageFile || pdfFile || pendingMapImageUrl) && (
                     <div className="px-4 pb-2">
                       <div className="inline-flex max-w-[320px] items-center gap-2 px-2.5 py-2 rounded-xl bg-[#0c1511] border border-white/10 text-xs text-slate-200 shadow-sm">
                         <div
                           className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${
-                            imageFile ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'
+                            imageFile || pendingMapImageUrl ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'
                           }`}
                         >
-                          {imageFile ? <ImagePlus size={13} /> : <FileText size={13} />}
+                          {imageFile || pendingMapImageUrl ? <ImagePlus size={13} /> : <FileText size={13} />}
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate font-medium">{imageFile?.name || pdfFile?.name}</p>
-                          <p className="text-[10px] text-slate-500">{imageFile ? 'Imagem pronta para envio' : 'PDF pronto para envio'}</p>
+                          <p className="truncate font-medium">{imageFile?.name || pdfFile?.name || 'mapa-wms.png'}</p>
+                          <p className="text-[10px] text-slate-500">
+                            {imageFile || pendingMapImageUrl ? 'Imagem pronta para envio' : 'PDF pronto para envio'}
+                          </p>
                         </div>
                         <button
                           type="button"
@@ -1717,9 +1943,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <div className="h-4 w-[1px] bg-white/10 mx-1"></div>
                       <button
                         onClick={handleSend}
-                        disabled={!input.trim() && !imageFile && !pdfFile}
+                        disabled={!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${
-                          input.trim() || imageFile || pdfFile
+                          input.trim() || imageFile || pdfFile || pendingMapImageUrl
                             ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/25 hover:bg-emerald-400'
                             : 'bg-white/5 text-slate-500 cursor-not-allowed'
                         }`}
@@ -1952,7 +2178,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Camada WMS (SEMA)</p>
                     <select
                       value={selectedMapLayer}
-                      onChange={(e) => setSelectedMapLayer(e.target.value)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSelectedMapLayer(v);
+                        refreshMapPreview(v, mapBbox);
+                      }}
                       className="w-full bg-[#050b08] border border-white/10 rounded-lg text-xs text-slate-300 py-2 px-3 outline-none focus:border-emerald-500/50"
                     >
                       {mapLayers.map((layer) => (
@@ -1964,10 +2194,75 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
                   <div className="rounded-lg border border-white/10 bg-white/5 p-3">
                     <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Ajuste o zoom e arraste o mapa até a área de interesse. O sistema captura a área visível e
-                      envia para a IA.
+                      Selecione a BBOX da área de interesse. A prévia e o snapshot são carregados direto do WMS da
+                      SEMA.
                     </p>
                   </div>
+                  <label className="inline-flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs cursor-pointer">
+                    <FileText size={14} className="text-emerald-300" />
+                    Importar área (.kml/.zip)
+                    <input
+                      type="file"
+                      accept=".kml,.zip,application/vnd.google-earth.kml+xml,application/zip"
+                      className="hidden"
+                      onChange={(e) => {
+                        onPickAreaFile(e.target.files?.[0] || null);
+                        e.currentTarget.value = '';
+                      }}
+                    />
+                  </label>
+                  <div className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-2">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">BBox (fallback manual)</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="number"
+                        step="0.000001"
+                        value={mapBbox[0]}
+                        onChange={(e) => setMapBbox([Number(e.target.value), mapBbox[1], mapBbox[2], mapBbox[3]])}
+                        className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300"
+                        placeholder="minX"
+                      />
+                      <input
+                        type="number"
+                        step="0.000001"
+                        value={mapBbox[1]}
+                        onChange={(e) => setMapBbox([mapBbox[0], Number(e.target.value), mapBbox[2], mapBbox[3]])}
+                        className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300"
+                        placeholder="minY"
+                      />
+                      <input
+                        type="number"
+                        step="0.000001"
+                        value={mapBbox[2]}
+                        onChange={(e) => setMapBbox([mapBbox[0], mapBbox[1], Number(e.target.value), mapBbox[3]])}
+                        className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300"
+                        placeholder="maxX"
+                      />
+                      <input
+                        type="number"
+                        step="0.000001"
+                        value={mapBbox[3]}
+                        onChange={(e) => setMapBbox([mapBbox[0], mapBbox[1], mapBbox[2], Number(e.target.value)])}
+                        className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300"
+                        placeholder="maxY"
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-500">
+                      Coordenadas em EPSG:4326 (longitude/latitude).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => refreshMapPreview()}
+                    disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
+                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${
+                      mapLoading || mapPreviewLoading || !selectedMapLayer
+                        ? 'bg-white/10 text-slate-500 cursor-not-allowed'
+                        : 'bg-white/10 text-slate-200 hover:bg-white/20'
+                    }`}
+                  >
+                    {mapPreviewLoading ? 'Atualizando prévia...' : 'Atualizar Prévia WMS'}
+                  </button>
                   <button
                     type="button"
                     onClick={captureVisibleMapArea}
@@ -1982,19 +2277,20 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </button>
                 </div>
                 <div className="relative min-h-0">
-                  {mapLoading ? (
+                  {mapLoading || mapPreviewLoading ? (
                     <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm">
-                      Carregando camadas do mapa...
+                      {mapLoading ? 'Carregando camadas do mapa...' : 'Carregando prévia WMS...'}
                     </div>
-                  ) : (
-                    <MapView
-                      className="h-full w-full"
-                      initialCenter={{ lat: -13.2, lng: -55.7 }}
-                      initialZoom={6}
-                      onMapReady={(map) => {
-                        mapInstanceRef.current = map;
-                      }}
+                  ) : mapPreviewDataUrl ? (
+                    <img
+                      src={mapPreviewDataUrl}
+                      alt="Prévia WMS da área selecionada"
+                      className="h-full w-full object-contain bg-black/25"
                     />
+                  ) : (
+                    <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm px-6 text-center">
+                      Selecione uma camada e clique em “Atualizar Prévia WMS”.
+                    </div>
                   )}
                 </div>
               </div>

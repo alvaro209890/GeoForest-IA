@@ -22,6 +22,10 @@ SEMA_WMS_AUTHKEY=SEU_AUTHKEY_SEMA
 - POST /api/map/snapshot
   - body: { layerName, bbox:[minX,minY,maxX,maxY], crs, width, height, format }
   - resposta: { dataUrl, mimeType, sourceUrl, mapContext }
+- POST /api/geometry/bbox
+  - body: { dataUrl, filename }
+  - aceita: `.kml` e `.zip` (shapefile com `.shp`)
+  - resposta: { bbox:[minX,minY,maxX,maxY], crs, source }
 - POST /api/upload-image
   - body: { dataUrl: "data:image/png;base64,...", filename?: "arquivo.png" }
 - GET /api/health

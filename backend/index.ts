@@ -2,6 +2,7 @@ import express from "express";
 import { createServer } from "http";
 import path from "path";
 import crypto from "crypto";
+import { inflateRawSync } from "zlib";
 import { fileURLToPath } from "url";
 import pdfParse from "pdf-parse";
 
@@ -92,6 +93,9 @@ async function startServer() {
       if (!nameMatch) continue;
       const rawName = (nameMatch[1] || "").trim();
       if (!rawName) continue;
+      if (/^(spot|landsat|mosaico|satelite|satelite|imagem)$/i.test(rawName)) {
+        continue;
+      }
 
       const titleMatch = block.match(titleRegex);
       const title = (titleMatch?.[1] || rawName).trim();
@@ -130,6 +134,77 @@ async function startServer() {
       };
       return score(b) - score(a) || a.name.localeCompare(b.name);
     });
+  };
+
+  const decodeDataUrl = (dataUrl: string) => {
+    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) throw new Error("dataUrl inválido.");
+    const mimeType = match[1] || "application/octet-stream";
+    const payload = match[2];
+    return { mimeType, buffer: Buffer.from(payload, "base64") };
+  };
+
+  const parseKmlBbox = (kml: string) => {
+    const coordBlocks = [...kml.matchAll(/<coordinates>([\s\S]*?)<\/coordinates>/gi)];
+    if (!coordBlocks.length) {
+      throw new Error("KML sem bloco <coordinates>.");
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const block of coordBlocks) {
+      const raw = String(block[1] || "").trim();
+      if (!raw) continue;
+      const tuples = raw.split(/\s+/);
+      for (const t of tuples) {
+        const [xStr, yStr] = t.split(",");
+        const x = Number(xStr);
+        const y = Number(yStr);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+    if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
+      throw new Error("Não foi possível extrair coordenadas válidas do KML.");
+    }
+    return [minX, minY, maxX, maxY] as [number, number, number, number];
+  };
+
+  const extractZipEntries = (zipBuffer: Buffer) => {
+    // Minimal ZIP parser for local file headers (supports "stored" and "deflate")
+    const entries: Array<{ name: string; data: Buffer }> = [];
+    let offset = 0;
+    while (offset + 30 <= zipBuffer.length) {
+      const signature = zipBuffer.readUInt32LE(offset);
+      if (signature !== 0x04034b50) break;
+      const method = zipBuffer.readUInt16LE(offset + 8);
+      const compressedSize = zipBuffer.readUInt32LE(offset + 18);
+      const fileNameLength = zipBuffer.readUInt16LE(offset + 26);
+      const extraLength = zipBuffer.readUInt16LE(offset + 28);
+      const nameStart = offset + 30;
+      const nameEnd = nameStart + fileNameLength;
+      const fileName = zipBuffer.subarray(nameStart, nameEnd).toString("utf8");
+      const dataStart = nameEnd + extraLength;
+      const dataEnd = dataStart + compressedSize;
+      if (dataEnd > zipBuffer.length) break;
+      const compressed = zipBuffer.subarray(dataStart, dataEnd);
+      let data: Buffer;
+      if (method === 0) {
+        data = Buffer.from(compressed);
+      } else if (method === 8) {
+        data = Buffer.from(inflateRawSync(compressed));
+      } else {
+        offset = dataEnd;
+        continue;
+      }
+      entries.push({ name: fileName, data });
+      offset = dataEnd;
+    }
+    return entries;
   };
 
   app.get("/api/models", (_req, res) => {
@@ -241,6 +316,22 @@ async function startServer() {
       const contentType = response.headers.get("content-type") || "image/png";
       if (!contentType.includes("image")) {
         const text = await response.text();
+        const layerNotDefined = /LayerNotDefined|Could not find layer/i.test(text);
+        if (layerNotDefined) {
+          const capUrl = new URL(SEMA_WMS_BASE);
+          capUrl.searchParams.set("service", "WMS");
+          capUrl.searchParams.set("request", "GetCapabilities");
+          capUrl.searchParams.set("version", "1.3.0");
+          if (SEMA_WMS_AUTHKEY) capUrl.searchParams.set("authkey", SEMA_WMS_AUTHKEY);
+          const capRes = await fetch(capUrl.toString());
+          const capText = capRes.ok ? await capRes.text() : "";
+          const available = parseLayersFromCapabilities(capText).slice(0, 12).map((l) => l.name);
+          res.status(400).json({
+            error: `Layer '${layerName}' não existe no WMS da SEMA.`,
+            availableLayers: available,
+          });
+          return;
+        }
         res.status(502).json({
           error: "Resposta do WMS não retornou imagem.",
           details: text.slice(0, 500),
@@ -267,6 +358,60 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error("Erro no /api/map/snapshot:", error);
+      res.status(500).json({ error: error?.message || "Erro interno" });
+    }
+  });
+
+  app.post("/api/geometry/bbox", async (req, res) => {
+    try {
+      const { dataUrl, filename } = req.body as { dataUrl?: string; filename?: string };
+      if (!dataUrl || typeof dataUrl !== "string") {
+        res.status(400).json({ error: "dataUrl é obrigatório." });
+        return;
+      }
+      const name = String(filename || "").toLowerCase();
+      const { mimeType, buffer } = decodeDataUrl(dataUrl);
+
+      if (name.endsWith(".kml") || mimeType.includes("kml") || mimeType.includes("xml")) {
+        const text = buffer.toString("utf8");
+        const bbox = parseKmlBbox(text);
+        res.json({ bbox, crs: "EPSG:4326", source: "kml" });
+        return;
+      }
+
+      if (name.endsWith(".zip") || mimeType.includes("zip")) {
+        const entries = extractZipEntries(buffer);
+        const shp = entries.find((e) => e.name.toLowerCase().endsWith(".shp"));
+        if (!shp) {
+          const kmlInside = entries.find((e) => e.name.toLowerCase().endsWith(".kml"));
+          if (kmlInside) {
+            const bbox = parseKmlBbox(kmlInside.data.toString("utf8"));
+            res.json({ bbox, crs: "EPSG:4326", source: "kml_zip" });
+            return;
+          }
+          res.status(400).json({ error: "ZIP sem .shp ou .kml." });
+          return;
+        }
+        if (shp.data.length < 100) {
+          res.status(400).json({ error: "Arquivo .shp inválido." });
+          return;
+        }
+        // Shapefile main header bbox (bytes 36..67 little endian)
+        const minX = shp.data.readDoubleLE(36);
+        const minY = shp.data.readDoubleLE(44);
+        const maxX = shp.data.readDoubleLE(52);
+        const maxY = shp.data.readDoubleLE(60);
+        if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
+          res.status(400).json({ error: "Não foi possível extrair bbox do shapefile." });
+          return;
+        }
+        res.json({ bbox: [minX, minY, maxX, maxY], crs: "EPSG:4326", source: "shapefile_zip_header" });
+        return;
+      }
+
+      res.status(400).json({ error: "Formato não suportado. Envie .kml ou .zip (shapefile)." });
+    } catch (error: any) {
+      console.error("Erro no /api/geometry/bbox:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });
     }
   });
