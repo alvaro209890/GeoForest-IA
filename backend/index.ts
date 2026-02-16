@@ -68,6 +68,21 @@ async function startServer() {
       label: "GPT-OSS Safeguard 20B (segurança)",
       capabilities: ["text"],
     },
+    {
+      id: "llama-3.2-90b-vision-preview",
+      label: "Llama 3.2 90B (visão)",
+      capabilities: ["text", "vision"],
+    },
+    {
+      id: "llama-3.2-11b-vision-preview",
+      label: "Llama 3.2 11B (visão leve)",
+      capabilities: ["text", "vision"],
+    },
+    {
+      id: "mixtral-8x7b-32768",
+      label: "Mixtral 8x7B (texto)",
+      capabilities: ["text"],
+    },
   ] as const;
 
   const MODEL_IDS = new Set(MODEL_CATALOG.map((model) => model.id));
@@ -108,13 +123,18 @@ async function startServer() {
     return "llama-3.3-70b-versatile";
   };
 
+  const DEFAULT_MODEL = "llama-3.3-70b-versatile";
+  const TEMPERATURE = 0.1;
+  const MAX_TOKENS = 800;
+  const AUTO_MODEL = true;
+
   app.post("/api/chat", async (req, res) => {
     try {
       const apiKey = process.env.GROQ_API_KEY;
-      const defaultModel = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-      const temperature = Number(process.env.GROQ_TEMPERATURE ?? "0.2");
-      const maxTokens = Number(process.env.GROQ_MAX_TOKENS ?? "800");
-      const autoModel = process.env.GROQ_AUTO_MODEL === "true";
+      const defaultModel = DEFAULT_MODEL;
+      const temperature = TEMPERATURE;
+      const maxTokens = MAX_TOKENS;
+      const autoModel = AUTO_MODEL;
       if (!apiKey) {
         res.status(500).json({ error: "GROQ_API_KEY não configurada no servidor." });
         return;
@@ -170,12 +190,12 @@ async function startServer() {
 
   app.post("/api/upload-image", async (req, res) => {
     try {
-      const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+      const cloudName = "da19dwpgk";
       const apiKey = process.env.CLOUDINARY_API_KEY;
       const apiSecret = process.env.CLOUDINARY_API_SECRET;
       const folder = process.env.CLOUDINARY_FOLDER;
 
-      if (!cloudName || !apiKey || !apiSecret) {
+      if (!apiKey || !apiSecret) {
         res.status(500).json({ error: "Cloudinary não configurado." });
         return;
       }
