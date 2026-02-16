@@ -21,9 +21,10 @@ import {
   ImagePlus,
   FileText,
   Trash2,
+  X,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
 import {
   collection,
   doc,
@@ -42,6 +43,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
+import { MapView } from '@/components/Map';
 
 type ChatMessage = {
   id: string;
@@ -57,7 +59,23 @@ type ChatMessage = {
     uploadStatus?: 'uploading' | 'done' | 'error';
     fileType?: 'image' | 'pdf';
     thinkingText?: string;
+    mapContext?: {
+      layerName: string;
+      bbox: [number, number, number, number];
+      crs: string;
+      source: 'SEMA_WMS';
+      width?: number;
+      height?: number;
+    };
   };
+};
+
+type MapLayerOption = {
+  name: string;
+  title: string;
+  crs?: string[];
+  inferredYear?: string;
+  group?: 'spot' | 'landsat' | 'other';
 };
 
 const REQUIRED_MODELS: Array<{ id: string; label: string; capabilities: string[]; description: string }> = [
@@ -134,6 +152,7 @@ type UserSettings = {
   alertProcessing: boolean;
   alertNewFeatures: boolean;
   alertFires: boolean;
+  twoFactorEnabled: boolean;
 };
 
 const DEFAULT_SETTINGS: UserSettings = {
@@ -149,6 +168,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   alertProcessing: true,
   alertNewFeatures: false,
   alertFires: true,
+  twoFactorEnabled: true,
 };
 
 const sanitizeMessagesForFirestore = (msgs: ChatMessage[]) =>
@@ -247,6 +267,13 @@ export default function Dashboard() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pendingMapContext, setPendingMapContext] = useState<ChatMessage['meta']['mapContext'] | undefined>(undefined);
+  const [mapDialogOpen, setMapDialogOpen] = useState(false);
+  const [mapLayers, setMapLayers] = useState<MapLayerOption[]>([]);
+  const [selectedMapLayer, setSelectedMapLayer] = useState('');
+  const [mapLoading, setMapLoading] = useState(false);
+  const [mapCapturing, setMapCapturing] = useState(false);
+  const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
 
@@ -276,10 +303,37 @@ export default function Dashboard() {
     () => ({
       role: 'system',
       content:
-        'Você é uma IA especializada em engenharia florestal e análise ambiental. Responda em português do Brasil, com foco técnico, conciso e orientado a ações. Se não tiver certeza, diga claramente o que falta e peça os dados necessários. Não invente normas, números ou conclusões.',
+        [
+          'Você é uma IA especializada em engenharia florestal e análise ambiental.',
+          `Usuário atual: ${userProfile?.fullName || 'Usuário'}.`,
+          'Responda em português do Brasil, com foco técnico, claro e orientado a ação.',
+          'Considere o contexto da conversa atual como prioridade.',
+          'Se faltarem dados, diga exatamente quais dados faltam.',
+          'Não invente normas, números, fontes ou conclusões.',
+        ].join(' '),
     }),
-    []
+    [userProfile?.fullName]
   );
+
+  const shouldUseCrossChatContext = (text: string) =>
+    /(como falei|conforme falamos|outro chat|conversa anterior|continue|continuar|retome|retomar|lembr|mesmo assunto|igual ao anterior)/i.test(
+      text
+    );
+
+  const buildCrossChatContext = (activeId: string | null, text: string) => {
+    if (!shouldUseCrossChatContext(text)) return '';
+    const others = conversations
+      .filter((c) => c.id !== activeId)
+      .slice(0, 4)
+      .map((c, i) => {
+        const preview = (c.lastMessagePreview || '').trim();
+        if (!preview) return '';
+        return `${i + 1}. ${c.title}: ${preview}`;
+      })
+      .filter(Boolean);
+    if (!others.length) return '';
+    return `Contexto de conversas anteriores (use apenas se ajudar na resposta atual):\n${others.join('\n')}`;
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -354,6 +408,19 @@ export default function Dashboard() {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, activeView]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const body = document.body;
+
+    root.style.setProperty('--app-font-size', settings.fontSize === 'Pequeno' ? '14px' : settings.fontSize === 'Grande' ? '17px' : '15px');
+
+    if (settings.theme === 'Claro (Dia)') {
+      body.classList.add('theme-light');
+    } else {
+      body.classList.remove('theme-light');
+    }
+  }, [settings.theme, settings.fontSize]);
 
   useEffect(() => {
     if (thinkingTypingTimerRef.current) {
@@ -534,11 +601,40 @@ export default function Dashboard() {
     }
   };
 
+  const onEditProfileName = async () => {
+    const current = userProfile?.fullName || '';
+    const next = window.prompt('Digite seu nome:', current)?.trim();
+    if (!next || next === current || !auth.currentUser) return;
+    try {
+      const userDocRef = doc(db, 'users', auth.currentUser.uid);
+      await setDoc(userDocRef, { fullName: next, updatedAt: serverTimestamp() }, { merge: true });
+      setUserProfile((prev) => (prev ? { ...prev, fullName: next } : prev));
+      toast.success('Nome atualizado');
+    } catch (error: any) {
+      toast.error(error?.message || 'Erro ao atualizar nome');
+    }
+  };
+
+  const onResetPassword = async () => {
+    const email = auth.currentUser?.email || userProfile?.email;
+    if (!email) {
+      toast.error('Email não encontrado para redefinição de senha');
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      toast.success(`Email de redefinição enviado para ${email}`);
+    } catch (error: any) {
+      toast.error(error?.message || 'Erro ao enviar email de redefinição');
+    }
+  };
+
   const clearAttachments = () => {
     if (imagePreview) URL.revokeObjectURL(imagePreview);
     setImageFile(null);
     setImagePreview(null);
     setPdfFile(null);
+    setPendingMapContext(undefined);
   };
 
   const onPickAttachment = (file: File | null) => {
@@ -556,6 +652,7 @@ export default function Dashboard() {
       setImageFile(file);
       setImagePreview(URL.createObjectURL(file));
       setPdfFile(null);
+      setPendingMapContext(undefined);
       return;
     }
     if (isPdf) {
@@ -563,6 +660,7 @@ export default function Dashboard() {
       setImageFile(null);
       setImagePreview(null);
       setPdfFile(file);
+      setPendingMapContext(undefined);
       return;
     }
     toast.error('Selecione uma imagem ou PDF');
@@ -628,6 +726,87 @@ export default function Dashboard() {
       downloadUrl: (data.download_url as string) || (data.secure_url as string),
       pages: Number(data.pages || 0),
     };
+  };
+
+  const openMapDialog = async () => {
+    setMapDialogOpen(true);
+    setMapLoading(true);
+    try {
+      const res = await fetch('/api/map/capabilities');
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Falha ao carregar camadas de mapa');
+      }
+      const data = await res.json();
+      const layers = (data?.layers || []) as MapLayerOption[];
+      setMapLayers(layers);
+      setSelectedMapLayer((prev) => prev || data?.defaultLayer || layers[0]?.name || '');
+    } catch (error: any) {
+      toast.error(error?.message || 'Erro ao abrir mapa');
+    } finally {
+      setMapLoading(false);
+    }
+  };
+
+  const captureVisibleMapArea = async () => {
+    if (!mapInstanceRef.current) {
+      toast.error('Mapa ainda não está pronto');
+      return;
+    }
+    if (!selectedMapLayer) {
+      toast.error('Selecione uma camada');
+      return;
+    }
+
+    const bounds = mapInstanceRef.current.getBounds();
+    if (!bounds) {
+      toast.error('Não foi possível obter a área visível');
+      return;
+    }
+
+    const ne = bounds.getNorthEast();
+    const sw = bounds.getSouthWest();
+    const bbox: [number, number, number, number] = [sw.lng(), sw.lat(), ne.lng(), ne.lat()];
+
+    setMapCapturing(true);
+    try {
+      const res = await fetch('/api/map/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          layerName: selectedMapLayer,
+          bbox,
+          crs: 'EPSG:4326',
+          width: 1280,
+          height: 960,
+          format: 'image/png',
+        }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Falha ao capturar imagem do mapa');
+      }
+
+      const data = await res.json();
+      const dataUrl = String(data?.dataUrl || '');
+      if (!dataUrl) throw new Error('Imagem do mapa não retornou dataUrl');
+
+      const blob = await fetch(dataUrl).then((r) => r.blob());
+      const file = new File([blob], `mapa-${Date.now()}.png`, { type: blob.type || 'image/png' });
+
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+      setImageFile(file);
+      setImagePreview(URL.createObjectURL(file));
+      setPdfFile(null);
+      setPendingMapContext((data?.mapContext as ChatMessage['meta']['mapContext']) || undefined);
+      setMapDialogOpen(false);
+      toast.success('Área do mapa anexada ao chat');
+    } catch (error: any) {
+      toast.error(error?.message || 'Erro ao capturar área do mapa');
+    } finally {
+      setMapCapturing(false);
+    }
   };
 
   const updateConversationMeta = async (updatedMessages: ChatMessage[], lastUserText: string) => {
@@ -735,7 +914,12 @@ export default function Dashboard() {
 
 ` +
         'Contexto: a imagem foi anexada pelo usuário para interpretação ambiental/florestal. ' +
-        'Descreva achados objetivos, limitações e próximos dados necessários.';
+        'Descreva achados objetivos, limitações e próximos dados necessários.' +
+        (pendingMapContext
+          ? `\n\nContexto do mapa: camada=${pendingMapContext.layerName}; bbox=${pendingMapContext.bbox.join(
+              ','
+            )}; crs=${pendingMapContext.crs}; fonte=${pendingMapContext.source}.`
+          : '');
     } else if (selectedPdfFile) {
       userPayloadText =
         `${userText || 'Analise o PDF anexado.'}
@@ -752,7 +936,12 @@ export default function Dashboard() {
       text: userText || (selectedImageFile ? 'Analise a imagem.' : 'Analise o PDF.'),
       time,
       meta: selectedImageFile
-        ? { fileType: 'image', fileName: selectedImageFile?.name || 'imagem', uploadStatus: 'uploading' }
+        ? {
+            fileType: 'image',
+            fileName: selectedImageFile?.name || 'imagem',
+            uploadStatus: 'uploading',
+            mapContext: pendingMapContext,
+          }
         : selectedPdfFile
         ? { fileType: 'pdf', fileName: selectedPdfFile?.name || 'documento.pdf', uploadStatus: 'uploading' }
         : undefined,
@@ -765,6 +954,7 @@ export default function Dashboard() {
     setImageFile(null);
     setImagePreview(null);
     setPdfFile(null);
+    setPendingMapContext(undefined);
     setSending(true);
     setUploading(Boolean(selectedImageFile || selectedPdfFile));
     setAiThinking(true);
@@ -821,9 +1011,12 @@ export default function Dashboard() {
       toast.error(error.message || 'Erro ao ler arquivo anexado');
     }
 
+    const crossChatContext = buildCrossChatContext(activeConversationId, userText);
+    const contextualMessages = nextMessages.slice(-40);
     const apiMessages = [
       systemPrompt,
-      ...nextMessages.map((m) => {
+      ...(crossChatContext ? [{ role: 'system', content: crossChatContext }] : []),
+      ...contextualMessages.map((m) => {
         if (m.role === 'user' && (m.meta?.imageUrl || (m.id === currentUserMessageId && imageDataUrlForAi))) {
           const imageUrlForModel = m.id === currentUserMessageId ? imageDataUrlForAi || m.meta?.imageUrl : m.meta?.imageUrl;
           const promptText =
@@ -1087,7 +1280,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
   }
 
   return (
-    <div className="flex h-screen w-full bg-[#050b08] text-slate-200 overflow-hidden font-sans selection:bg-emerald-500/30">
+    <div
+      className="flex h-screen w-full bg-[#050b08] text-slate-200 overflow-hidden font-sans selection:bg-emerald-500/30 transition-colors duration-300"
+      style={{ fontSize: 'var(--app-font-size, 15px)' }}
+    >
       <div className="fixed inset-0 z-0 pointer-events-none">
         <div
           className="absolute top-[-10%] left-[-10%] w-[50vw] h-[50vw] bg-emerald-900/20 rounded-full blur-[120px] mix-blend-screen animate-pulse"
@@ -1273,14 +1469,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           onClick={() => {
                             const pdfUrl = msg.meta?.fileUrl || msg.meta?.fileDownloadUrl;
                             if (msg.meta?.fileType === 'pdf' && pdfUrl) {
-                              window.open(toFileProxyUrl(pdfUrl, msg.meta.fileName, 'inline'), '_blank', 'noopener,noreferrer');
+                              window.open(toFileProxyUrl(pdfUrl, msg.meta.fileName, 'download'), '_blank', 'noopener,noreferrer');
                             }
                           }}
                           onKeyDown={(e) => {
                             const pdfUrl = msg.meta?.fileUrl || msg.meta?.fileDownloadUrl;
                             if ((e.key === 'Enter' || e.key === ' ') && msg.meta?.fileType === 'pdf' && pdfUrl) {
                               e.preventDefault();
-                              window.open(toFileProxyUrl(pdfUrl, msg.meta.fileName, 'inline'), '_blank', 'noopener,noreferrer');
+                              window.open(toFileProxyUrl(pdfUrl, msg.meta.fileName, 'download'), '_blank', 'noopener,noreferrer');
                             }
                           }}
                           className={`mb-2 inline-flex max-w-[260px] items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] border ${
@@ -1337,40 +1533,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       {msg.meta?.fileType === 'image' && msg.meta.imageUrl && (
                         <img src={msg.meta.imageUrl} alt="Imagem" className="mt-3 rounded-xl max-h-52 border border-white/10" />
                       )}
-                      {msg.meta?.fileType === 'pdf' && (
-                        <div className="mt-3 flex items-center gap-3">
-                          {(msg.meta.fileUrl || msg.meta.fileDownloadUrl) ? (
-                            <>
-                              {(() => {
-                                const pdfUrl = msg.meta.fileUrl || msg.meta.fileDownloadUrl!;
-                                return (
-                                  <>
-                              <a
-                                href={toFileProxyUrl(pdfUrl, msg.meta.fileName, 'inline')}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-2 text-xs text-emerald-200 hover:text-emerald-100"
-                              >
-                                <FileText size={14} /> Ler PDF
-                              </a>
-                              <a
-                                href={toFileProxyUrl(pdfUrl, msg.meta.fileName, 'download')}
-                                target="_blank"
-                                rel="noreferrer"
-                                download={msg.meta.fileName || 'documento.pdf'}
-                                className="inline-flex items-center gap-2 text-xs text-emerald-200/90 hover:text-emerald-100"
-                              >
-                                <FileDown size={14} /> Baixar
-                              </a>
-                                  </>
-                                );
-                              })()}
-                            </>
-                          ) : (
-                            <span className="inline-flex items-center gap-2 text-xs text-slate-400">
-                              <FileText size={14} /> Enviando PDF...
-                            </span>
-                          )}
+                      {msg.meta?.fileType === 'pdf' && !msg.meta?.fileUrl && !msg.meta?.fileDownloadUrl && (
+                        <div className="mt-3">
+                          <span className="inline-flex items-center gap-2 text-xs text-slate-400">
+                            <FileText size={14} /> Enviando PDF...
+                          </span>
                         </div>
                       )}
                       <span
@@ -1470,7 +1637,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           }}
                         />
                       </label>
-                      <button className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs">
+                      <button
+                        type="button"
+                        onClick={openMapDialog}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs"
+                      >
                         <MapIcon size={16} className="text-emerald-300" />
                         Mapa
                       </button>
@@ -1596,7 +1767,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                   </div>
                   <div className="flex gap-3">
-                    <button className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm text-slate-200 transition-all">
+                    <button
+                      onClick={onEditProfileName}
+                      className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm text-slate-200 transition-all"
+                    >
                       Editar Perfil
                     </button>
                   </div>
@@ -1611,57 +1785,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                     <h3 className="font-semibold text-lg text-slate-200">Interface Geral</h3>
                   </div>
-                  <div className="space-y-1">
-                    <CustomSelect
-                      label="Tema"
-                      value={settings.theme}
-                      onChange={(value: string) => updateSettings({ theme: value })}
-                      options={['Escuro (Floresta)', 'Claro (Dia)', 'Alto Contraste', 'Sistema']}
-                    />
-                    <CustomSelect
-                      label="Idioma"
-                      value={settings.language}
-                      onChange={(value: string) => updateSettings({ language: value })}
-                      options={['Português (BR)', 'English', 'Español']}
-                    />
-                    <CustomSelect
-                      label="Tamanho da Fonte"
-                      value={settings.fontSize}
-                      onChange={(value: string) => updateSettings({ fontSize: value })}
-                      options={['Pequeno', 'Padrão', 'Grande']}
-                    />
-                  </div>
-                </div>
-
-                <div className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6 space-y-4">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400">
-                      <MapIcon size={20} />
-                    </div>
-                    <h3 className="font-semibold text-lg text-slate-200">Mapas e Dados</h3>
-                  </div>
-                  <div className="space-y-1">
-                    <CustomSelect
-                      label="Sistema de Coordenadas"
-                      icon={MapIcon}
-                      value={settings.coordSystem}
-                      onChange={(value: string) => updateSettings({ coordSystem: value })}
-                      options={['SIRGAS 2000 (Brasil)', 'WGS 84 (Global)', 'SAD 69']}
-                    />
-                    <CustomSelect
-                      label="Unidade de Medida"
-                      value={settings.unit}
-                      onChange={(value: string) => updateSettings({ unit: value })}
-                      options={['Hectares (ha)', 'Metros Quadrados (m²)', 'Alqueires Paulistas', 'Alqueires Mineiros']}
-                    />
-                    <CustomSelect
-                      label="Camada Padrão"
-                      icon={Layers}
-                      value={settings.defaultLayer}
-                      onChange={(value: string) => updateSettings({ defaultLayer: value })}
-                      options={['Satélite (Alta Res.)', 'Topográfico', 'Híbrido', 'Biomassa']}
-                    />
-                  </div>
+                  <p className="text-sm text-slate-400">
+                    Preferências visuais (tema, fonte e idioma) foram removidas desta versão.
+                  </p>
                 </div>
 
                 <div className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6 space-y-4">
@@ -1731,14 +1857,22 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-3">
-                      <button className="w-full flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group">
+                      <button
+                        onClick={onResetPassword}
+                        className="w-full flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
+                      >
                         <span className="text-sm text-slate-300">Alterar Senha</span>
                         <ChevronDown size={16} className="text-slate-500 -rotate-90 group-hover:text-white transition-colors" />
                       </button>
-                      <button className="w-full flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group">
+                      <button
+                        onClick={() => updateSettings({ twoFactorEnabled: !settings.twoFactorEnabled })}
+                        className="w-full flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
+                      >
                         <div className="flex flex-col text-left">
                           <span className="text-sm text-slate-300">Autenticação em 2 Etapas</span>
-                          <span className="text-[10px] text-emerald-400 flex items-center gap-1">Ativado</span>
+                          <span className="text-[10px] text-emerald-400 flex items-center gap-1">
+                            {settings.twoFactorEnabled ? 'Ativado' : 'Desativado'}
+                          </span>
                         </div>
                         <ChevronDown size={16} className="text-slate-500 -rotate-90 group-hover:text-white transition-colors" />
                       </button>
@@ -1761,6 +1895,108 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                   </div>
                 </div>
+
+                <div className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6 space-y-4 md:col-span-2">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                      <FileDown size={20} />
+                    </div>
+                    <h3 className="font-semibold text-lg text-slate-200">Créditos</h3>
+                  </div>
+                  <p className="text-sm text-slate-400">
+                    Plataforma desenvolvida para apoio técnico em engenharia florestal e análise ambiental.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="text-xs uppercase tracking-wider text-slate-500">Frontend</p>
+                      <p className="text-sm text-slate-200 mt-1">React + Vite + Tailwind</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="text-xs uppercase tracking-wider text-slate-500">Backend</p>
+                      <p className="text-sm text-slate-200 mt-1">Node + Express + Firebase + Cloudinary</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="text-xs uppercase tracking-wider text-slate-500">Modelos de IA</p>
+                      <p className="text-sm text-slate-200 mt-1">Groq API (modo automático e manual)</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <p className="text-xs uppercase tracking-wider text-slate-500">Conta atual</p>
+                      <p className="text-sm text-slate-200 mt-1">{userProfile?.email || 'Usuário autenticado'}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mapDialogOpen && (
+          <div className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-6xl h-[82vh] rounded-2xl border border-white/10 bg-[#0b120f] shadow-2xl overflow-hidden flex flex-col">
+              <div className="h-14 px-4 border-b border-white/10 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <MapIcon size={16} className="text-emerald-300" />
+                  <span className="text-sm text-white font-medium">Selecionar Área no Mapa</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMapDialogOpen(false)}
+                  className="h-8 w-8 rounded-md text-slate-400 hover:text-white hover:bg-white/10"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] min-h-0 flex-1">
+                <div className="border-r border-white/10 p-4 space-y-4 overflow-auto custom-scrollbar">
+                  <div>
+                    <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Camada WMS (SEMA)</p>
+                    <select
+                      value={selectedMapLayer}
+                      onChange={(e) => setSelectedMapLayer(e.target.value)}
+                      className="w-full bg-[#050b08] border border-white/10 rounded-lg text-xs text-slate-300 py-2 px-3 outline-none focus:border-emerald-500/50"
+                    >
+                      {mapLayers.map((layer) => (
+                        <option key={layer.name} value={layer.name}>
+                          {layer.title} {layer.inferredYear ? `(${layer.inferredYear})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Ajuste o zoom e arraste o mapa até a área de interesse. O sistema captura a área visível e
+                      envia para a IA.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={captureVisibleMapArea}
+                    disabled={mapLoading || mapCapturing || !selectedMapLayer}
+                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${
+                      mapLoading || mapCapturing || !selectedMapLayer
+                        ? 'bg-white/10 text-slate-500 cursor-not-allowed'
+                        : 'bg-emerald-500 text-white hover:bg-emerald-400'
+                    }`}
+                  >
+                    {mapCapturing ? 'Capturando...' : 'Capturar Área Visível'}
+                  </button>
+                </div>
+                <div className="relative min-h-0">
+                  {mapLoading ? (
+                    <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm">
+                      Carregando camadas do mapa...
+                    </div>
+                  ) : (
+                    <MapView
+                      className="h-full w-full"
+                      initialCenter={{ lat: -13.2, lng: -55.7 }}
+                      initialZoom={6}
+                      onMapReady={(map) => {
+                        mapInstanceRef.current = map;
+                      }}
+                    />
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1781,11 +2017,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             background: rgba(16, 185, 129, 0.4);
           }
           @keyframes fade-in-up {
-            from { opacity: 0; transform: translateY(10px); }
+            from { opacity: 0; transform: translateY(12px) scale(0.995); }
             to { opacity: 1; transform: translateY(0); }
           }
           .animate-fade-in-up {
-            animation: fade-in-up 0.4s ease-out forwards;
+            animation: fade-in-up 0.48s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
           }
           .typing-dot {
             width: 6px;
@@ -1832,6 +2068,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           .chat-markdown a {
             color: #6ee7b7;
             text-decoration: underline;
+          }
+          body.theme-light {
+            background: #edf7f1;
+          }
+          body.theme-light #root {
+            filter: saturate(0.95);
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .animate-fade-in-up, .typing-dot {
+              animation: none !important;
+            }
           }
         `}</style>
       </main>

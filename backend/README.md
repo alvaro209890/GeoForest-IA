@@ -9,12 +9,19 @@ CLOUDINARY_API_SECRET=SEU_API_SECRET
 CLOUDINARY_FOLDER=geoforest
 KEEP_ALIVE_URL=https://SEU_SERVICO.onrender.com/api/health
 KEEP_ALIVE_INTERVAL_MS=840000
+SEMA_WMS_BASE_URL=https://geo.sema.mt.gov.br/geoserver/ows
+SEMA_WMS_AUTHKEY=SEU_AUTHKEY_SEMA
 
 ## Endpoints
 - POST /api/chat
   - body: { messages: [{ role: "system|user|assistant", content: "..." }], model?: "..." }
 - GET /api/models
   - resposta: { models: [...], defaultModel: "..." }
+- GET /api/map/capabilities
+  - resposta: { serviceTitle, layers: [{ name, title, crs, inferredYear, group }], defaultLayer }
+- POST /api/map/snapshot
+  - body: { layerName, bbox:[minX,minY,maxX,maxY], crs, width, height, format }
+  - resposta: { dataUrl, mimeType, sourceUrl, mapContext }
 - POST /api/upload-image
   - body: { dataUrl: "data:image/png;base64,...", filename?: "arquivo.png" }
 - GET /api/health

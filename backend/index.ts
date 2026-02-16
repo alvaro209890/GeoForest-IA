@@ -67,10 +67,208 @@ async function startServer() {
   ] as const;
 
   const MODEL_IDS = new Set(MODEL_CATALOG.map((model) => model.id));
+  const SEMA_WMS_BASE =
+    process.env.SEMA_WMS_BASE_URL || "https://geo.sema.mt.gov.br/geoserver/ows";
+  const SEMA_WMS_AUTHKEY =
+    process.env.SEMA_WMS_AUTHKEY ||
+    "541085de-9a2e-454e-bdba-eb3d57a2f492";
+
+  const parseLayersFromCapabilities = (xml: string) => {
+    const layerRegex = /<Layer\b[\s\S]*?<\/Layer>/g;
+    const nameRegex = /<Name>\s*([^<]+)\s*<\/Name>/i;
+    const titleRegex = /<Title>\s*([^<]+)\s*<\/Title>/i;
+    const crsRegex = /<(?:CRS|SRS)>\s*([^<]+)\s*<\/(?:CRS|SRS)>/gi;
+    const out: Array<{
+      name: string;
+      title: string;
+      crs: string[];
+      inferredYear?: string;
+      group: "spot" | "landsat" | "other";
+    }> = [];
+
+    const blocks = xml.match(layerRegex) || [];
+    for (const block of blocks) {
+      const nameMatch = block.match(nameRegex);
+      if (!nameMatch) continue;
+      const rawName = (nameMatch[1] || "").trim();
+      if (!rawName) continue;
+
+      const titleMatch = block.match(titleRegex);
+      const title = (titleMatch?.[1] || rawName).trim();
+
+      const crs: string[] = [];
+      let m: RegExpExecArray | null;
+      while ((m = crsRegex.exec(block)) !== null) {
+        const code = String(m[1] || "").trim();
+        if (code && !crs.includes(code)) crs.push(code);
+      }
+
+      const combined = `${rawName} ${title}`.toLowerCase();
+      const yearMatch = combined.match(/\b(19|20)\d{2}\b/);
+      const inferredYear = yearMatch?.[0];
+      const group = /spot/.test(combined)
+        ? "spot"
+        : /landsat/.test(combined)
+          ? "landsat"
+          : "other";
+
+      out.push({ name: rawName, title, crs, inferredYear, group });
+    }
+
+    const uniq = new Map<string, (typeof out)[number]>();
+    for (const item of out) {
+      if (!uniq.has(item.name)) uniq.set(item.name, item);
+    }
+
+    return [...uniq.values()].sort((a, b) => {
+      const score = (x: typeof a) => {
+        let s = 0;
+        if (x.group === "spot") s += 50;
+        if (x.group === "landsat") s += 40;
+        if (x.inferredYear === "2008") s += 100;
+        return s;
+      };
+      return score(b) - score(a) || a.name.localeCompare(b.name);
+    });
+  };
 
   app.get("/api/models", (_req, res) => {
     const defaultModel = process.env.GROQ_MODEL || "meta-llama/llama-3.3-70b-versatile";
     res.json({ models: MODEL_CATALOG, defaultModel });
+  });
+
+  app.get("/api/map/capabilities", async (_req, res) => {
+    try {
+      const capUrl = new URL(SEMA_WMS_BASE);
+      capUrl.searchParams.set("service", "WMS");
+      capUrl.searchParams.set("request", "GetCapabilities");
+      capUrl.searchParams.set("version", "1.3.0");
+      if (SEMA_WMS_AUTHKEY) {
+        capUrl.searchParams.set("authkey", SEMA_WMS_AUTHKEY);
+      }
+
+      const response = await fetch(capUrl.toString());
+      if (!response.ok) {
+        const text = await response.text();
+        res.status(response.status).json({
+          error: "Falha ao carregar capabilities da SEMA.",
+          details: text.slice(0, 500),
+        });
+        return;
+      }
+
+      const xml = await response.text();
+      const layers = parseLayersFromCapabilities(xml).map((l) => ({
+        name: l.name,
+        title: l.title,
+        crs: l.crs,
+        inferredYear: l.inferredYear,
+        group: l.group,
+      }));
+
+      const defaultLayer =
+        layers.find((l) => l.group === "spot" && l.inferredYear === "2008")?.name ||
+        layers.find((l) => l.group === "spot")?.name ||
+        layers.find((l) => l.group === "landsat")?.name ||
+        layers[0]?.name;
+
+      res.json({
+        serviceTitle: "SEMA WMS",
+        layers,
+        defaultLayer,
+      });
+    } catch (error: any) {
+      console.error("Erro no /api/map/capabilities:", error);
+      res.status(500).json({ error: error?.message || "Erro interno" });
+    }
+  });
+
+  app.post("/api/map/snapshot", async (req, res) => {
+    try {
+      const {
+        layerName,
+        bbox,
+        crs = "EPSG:4326",
+        width = 1200,
+        height = 800,
+        format = "image/png",
+      } = req.body as {
+        layerName?: string;
+        bbox?: [number, number, number, number];
+        crs?: string;
+        width?: number;
+        height?: number;
+        format?: "image/png" | "image/jpeg";
+      };
+
+      if (!layerName || !bbox || !Array.isArray(bbox) || bbox.length !== 4) {
+        res.status(400).json({ error: "Parâmetros inválidos para snapshot de mapa." });
+        return;
+      }
+
+      const [minX, minY, maxX, maxY] = bbox.map(Number);
+      if (![minX, minY, maxX, maxY].every(Number.isFinite) || minX >= maxX || minY >= maxY) {
+        res.status(400).json({ error: "BBox inválida." });
+        return;
+      }
+
+      const mapUrl = new URL(SEMA_WMS_BASE);
+      mapUrl.searchParams.set("service", "WMS");
+      mapUrl.searchParams.set("request", "GetMap");
+      mapUrl.searchParams.set("version", "1.1.1");
+      mapUrl.searchParams.set("layers", layerName);
+      mapUrl.searchParams.set("styles", "");
+      mapUrl.searchParams.set("format", format);
+      mapUrl.searchParams.set("transparent", "false");
+      mapUrl.searchParams.set("srs", crs);
+      mapUrl.searchParams.set("bbox", `${minX},${minY},${maxX},${maxY}`);
+      mapUrl.searchParams.set("width", String(Math.max(256, Math.min(4096, Math.floor(width)))));
+      mapUrl.searchParams.set("height", String(Math.max(256, Math.min(4096, Math.floor(height)))));
+      if (SEMA_WMS_AUTHKEY) {
+        mapUrl.searchParams.set("authkey", SEMA_WMS_AUTHKEY);
+      }
+
+      const response = await fetch(mapUrl.toString());
+      if (!response.ok) {
+        const text = await response.text();
+        res.status(response.status).json({
+          error: "Falha ao obter imagem WMS da SEMA.",
+          details: text.slice(0, 500),
+        });
+        return;
+      }
+
+      const contentType = response.headers.get("content-type") || "image/png";
+      if (!contentType.includes("image")) {
+        const text = await response.text();
+        res.status(502).json({
+          error: "Resposta do WMS não retornou imagem.",
+          details: text.slice(0, 500),
+        });
+        return;
+      }
+
+      const arr = await response.arrayBuffer();
+      const base64 = Buffer.from(arr).toString("base64");
+      const dataUrl = `data:${contentType};base64,${base64}`;
+
+      res.json({
+        dataUrl,
+        mimeType: contentType,
+        sourceUrl: mapUrl.toString(),
+        mapContext: {
+          layerName,
+          bbox: [minX, minY, maxX, maxY],
+          crs,
+          width,
+          height,
+          source: "SEMA_WMS",
+        },
+      });
+    } catch (error: any) {
+      console.error("Erro no /api/map/snapshot:", error);
+      res.status(500).json({ error: error?.message || "Erro interno" });
+    }
   });
 
   const autoSelectModel = (messages: Array<{ role: string; content: any }>) => {
