@@ -760,6 +760,9 @@ async function startServer() {
     const hasVisionCue =
       /(imagem|foto|sat[eé]lite|ortomosaico|drone|a[eé]reo|mapa|png|jpg|jpeg|tif|tiff)/.test(text);
     if (hasImage || hasVisionCue) return "meta-llama/llama-4-maverick-17b-128e-instruct";
+    const hasGeoCue =
+      /(bbox|coordenad|epsg|wms|landsat|sentinel|declividade|demarca[cç][aã]o|pol[ií]gono)/.test(text);
+    if (hasGeoCue) return "meta-llama/llama-4-maverick-17b-128e-instruct";
 
     const hasDataCue =
       /(shapefile|shape|geojson|csv|xlsx|planilha|tabela|dados|estat[ií]stica|an[áa]lise)/.test(text);
@@ -769,8 +772,8 @@ async function startServer() {
   };
 
   const DEFAULT_MODEL = "meta-llama/llama-3.3-70b-versatile";
-  const TEMPERATURE = 0.1;
-  const MAX_TOKENS = 800;
+  const TEMPERATURE = 0.05;
+  const MAX_TOKENS = 1400;
   const AUTO_MODEL = true;
   const splitThinkProgress = (raw: string) => {
     let visible = "";
@@ -943,96 +946,128 @@ async function startServer() {
         return;
       }
 
-      const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: resolvedModel,
-          temperature: TEMPERATURE,
-          max_tokens: MAX_TOKENS,
-          stream: true,
-          messages: messagesForModel,
-        }),
-      });
-
-      if (!upstream.ok || !upstream.body) {
-        const text = await upstream.text();
-        console.error("[/api/chat-stream] groq error:", upstream.status, text);
-        res.status(upstream.status || 500).json({ error: text || "Erro no streaming da IA." });
-        return;
-      }
-
       res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
-
-      const encoder = new TextEncoder();
-      const decoder = new TextDecoder();
-      const reader = upstream.body.getReader();
 
       const writeChunk = (payload: Record<string, any>) => {
         res.write(`${JSON.stringify(payload)}\n`);
       };
 
       let rawModelText = "";
-      let buffer = "";
+      const clientModel = resolvedModel;
+      const hasImageInput = messagesForModel.some(
+        (m) =>
+          Array.isArray(m?.content) &&
+          m.content.some((part: any) => part?.type === "image_url" && part?.image_url?.url)
+      );
+      const continuationPool = hasImageInput
+        ? [
+            "meta-llama/llama-4-maverick-17b-128e-instruct",
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "qwen/qwen3-32b",
+          ]
+        : [
+            "meta-llama/llama-3.3-70b-versatile",
+            "qwen/qwen3-32b",
+            "moonshotai/kimi-k2-instruct-0905",
+          ];
+      const continuationModels = [resolvedModel, ...continuationPool.filter((m) => m !== resolvedModel)];
+      const MAX_CONTINUATIONS = 3;
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+      const streamModelSegment = async (segmentModel: string, segmentMessages: Array<{ role: string; content: any }>) => {
+        const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: segmentModel,
+            temperature: TEMPERATURE,
+            max_tokens: MAX_TOKENS,
+            stream: true,
+            messages: segmentMessages,
+          }),
+        });
 
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+        if (!upstream.ok || !upstream.body) {
+          const text = await upstream.text();
+          throw new Error(`groq ${segmentModel} ${upstream.status}: ${text.slice(0, 500)}`);
+        }
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const data = trimmed.slice(5).trim();
-          if (!data) continue;
-          if (data === "[DONE]") {
-            const finalSplit = splitThinkProgress(rawModelText);
-            writeChunk({
-              type: "done",
-              model: resolvedModel,
-              thinkingText: finalSplit.thinkingText,
-              content: finalSplit.answerText,
-            });
-            res.end();
-            return;
-          }
-          try {
-            const parsed = JSON.parse(data);
-            const delta = parsed?.choices?.[0]?.delta?.content;
-            if (typeof delta === "string" && delta.length > 0) {
-              rawModelText += delta;
-              const split = splitThinkProgress(rawModelText);
-              writeChunk({
-                type: "delta",
-                model: resolvedModel,
-                thinkingText: split.thinkingText,
-                content: split.answerText,
-              });
+        const decoder = new TextDecoder();
+        const reader = upstream.body.getReader();
+        let buffer = "";
+        let finishReason = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const data = trimmed.slice(5).trim();
+            if (!data) continue;
+            if (data === "[DONE]") {
+              return finishReason || "stop";
             }
-          } catch {
-            // Ignore malformed data chunks from upstream
+            try {
+              const parsed = JSON.parse(data);
+              const choice = parsed?.choices?.[0];
+              const delta = choice?.delta?.content;
+              const fr = choice?.finish_reason;
+              if (typeof fr === "string" && fr) finishReason = fr;
+              if (typeof delta === "string" && delta.length > 0) {
+                rawModelText += delta;
+                const split = splitThinkProgress(rawModelText);
+                writeChunk({
+                  type: "delta",
+                  model: clientModel,
+                  thinkingText: split.thinkingText,
+                  content: split.answerText,
+                });
+              }
+            } catch {
+              // Ignore malformed data chunks from upstream
+            }
           }
         }
+
+        return finishReason || "stop";
+      };
+
+      let continuationIndex = 0;
+      let finishReason = await streamModelSegment(continuationModels[0], messagesForModel);
+
+      while (finishReason === "length" && continuationIndex < MAX_CONTINUATIONS - 1) {
+        continuationIndex += 1;
+        const nextModel = continuationModels[Math.min(continuationIndex, continuationModels.length - 1)];
+        const partialAnswer = splitThinkProgress(rawModelText).answerText || rawModelText;
+        const continuationInstruction =
+          "Continue exatamente da última frase da sua resposta anterior, sem repetir conteúdo. " +
+          "Mantenha o mesmo idioma, estrutura e contexto técnico. Entregue somente a continuação.";
+        const continuationMessages = [
+          ...messagesForModel,
+          { role: "assistant", content: partialAnswer },
+          { role: "user", content: continuationInstruction },
+        ];
+        finishReason = await streamModelSegment(nextModel, continuationMessages);
       }
 
       const finalSplit = splitThinkProgress(rawModelText);
       res.write(
-        encoder.encode(
-          `${JSON.stringify({
-            type: "done",
-            model: resolvedModel,
-            thinkingText: finalSplit.thinkingText,
-            content: finalSplit.answerText,
-          })}\n`
-        )
+        `${JSON.stringify({
+          type: "done",
+          model: clientModel,
+          thinkingText: finalSplit.thinkingText,
+          content: finalSplit.answerText,
+        })}\n`
       );
       res.end();
     } catch (error: any) {

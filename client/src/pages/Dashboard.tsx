@@ -65,6 +65,10 @@ type ChatMessage = {
       source: 'SEMA_WMS';
       width?: number;
       height?: number;
+      layerTitle?: string;
+      layerGroup?: string;
+      inferredYear?: string;
+      capturedAtIso?: string;
     };
   };
 };
@@ -81,6 +85,7 @@ type ParsedGeometry = {
   bbox: [number, number, number, number];
   polygon?: Array<[number, number]>;
 };
+type MapContext = NonNullable<NonNullable<ChatMessage['meta']>['mapContext']>;
 
 const FALLBACK_WMS_IMAGE_LAYERS: MapLayerOption[] = [
   'SEMAMT:ALOS_PALSAR_DEM',
@@ -283,6 +288,19 @@ const toFileProxyUrl = (url?: string, name?: string, mode: 'inline' | 'download'
   return `/api/file-proxy?mode=${mode}&url=${encodeURIComponent(url)}&name=${encodeURIComponent(safeName)}`;
 };
 
+const inferMapLayerGroup = (layerName: string) => {
+  const low = layerName.toLowerCase();
+  if (low.startsWith('mosaicos:landsat_5_')) return 'Mosaicos / Landsat / Landsat-5';
+  if (low.startsWith('mosaicos:landsat_7_')) return 'Mosaicos / Landsat / Landsat-7';
+  if (low.startsWith('mosaicos:landsat_8_')) return 'Mosaicos / Landsat / Landsat-8';
+  if (low.includes('sentinel')) return 'Mosaicos / Sentinel-2';
+  if (low.includes('spot')) return 'Mosaicos / SPOT';
+  if (low.includes('resourcesat')) return 'Mosaicos / Resourcesat';
+  if (low.startsWith('semamt:')) return 'SEMAMT';
+  if (low.startsWith('geoportal:')) return 'Geoportal';
+  return 'Outras';
+};
+
 const renderInlineRichText = (text: string) => {
   const parts: React.ReactNode[] = [];
   const tokenRegex = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g;
@@ -465,19 +483,45 @@ export default function Dashboard() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
-  const [pendingMapContext, setPendingMapContext] = useState<ChatMessage['meta']['mapContext'] | undefined>(undefined);
+  const [pendingMapContext, setPendingMapContext] = useState<MapContext | undefined>(undefined);
   const [pendingMapImageUrl, setPendingMapImageUrl] = useState<string | null>(null);
   const [mapDialogOpen, setMapDialogOpen] = useState(false);
   const [mapImageLayers, setMapImageLayers] = useState<MapLayerOption[]>([]);
-  const [mapShapeLayers, setMapShapeLayers] = useState<MapLayerOption[]>([]);
-  const [selectedShapeLayers, setSelectedShapeLayers] = useState<string[]>([]);
   const [selectedMapLayer, setSelectedMapLayer] = useState('');
   const [mapLoading, setMapLoading] = useState(false);
   const [mapCapturing, setMapCapturing] = useState(false);
   const [mapBbox, setMapBbox] = useState<[number, number, number, number]>([-61, -18, -50, -8]);
+  const [mapOriginalPolygonBbox, setMapOriginalPolygonBbox] = useState<
+    [number, number, number, number] | null
+  >(null);
   const [mapPolygon, setMapPolygon] = useState<Array<[number, number]>>([]);
   const [mapPreviewDataUrl, setMapPreviewDataUrl] = useState('');
   const [mapPreviewLoading, setMapPreviewLoading] = useState(false);
+  const [mapDragging, setMapDragging] = useState(false);
+  const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
+  const [mapRectSelection, setMapRectSelection] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const mapPreviewViewportRef = useRef<HTMLDivElement | null>(null);
+  const mapPreviewImageRef = useRef<HTMLImageElement | null>(null);
+  const mapDragStateRef = useRef<{
+    startX: number;
+    startY: number;
+    startBbox: [number, number, number, number];
+  } | null>(null);
+  const mapRectStateRef = useRef<{
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    imageRect: DOMRect;
+    startBbox: [number, number, number, number];
+  } | null>(null);
+  const mapDraggedBboxRef = useRef<[number, number, number, number] | null>(null);
+  const mapWheelDebounceRef = useRef<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
 
@@ -513,6 +557,9 @@ export default function Dashboard() {
           'Responda em português do Brasil, com foco técnico, claro e orientado a ação.',
           'Considere o contexto da conversa atual como prioridade.',
           'Se faltarem dados, diga exatamente quais dados faltam.',
+          'Quando houver imagem, faça leitura visual disciplinada: evidências observáveis, interpretação e limitações.',
+          'Não confunda hipótese com fato observado; marque nível de confiança (alto/médio/baixo).',
+          'Para mapa/satélite, use BBOX/CRS/camada/ano informados para contextualizar a análise.',
           'Não invente normas, números, fontes ou conclusões.',
         ].join(' '),
     }),
@@ -672,6 +719,15 @@ export default function Dashboard() {
       if (imagePreview) URL.revokeObjectURL(imagePreview);
     };
   }, [imagePreview]);
+
+  useEffect(() => {
+    return () => {
+      if (mapWheelDebounceRef.current) {
+        window.clearTimeout(mapWheelDebounceRef.current);
+        mapWheelDebounceRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (aiThinking || typingMessageId) {
@@ -873,6 +929,27 @@ export default function Dashboard() {
     toast.error('Selecione uma imagem ou PDF');
   };
 
+  const downloadAttachment = (meta?: ChatMessage['meta']) => {
+    if (!meta) return;
+    const isImage = meta.fileType === 'image';
+    const fileName = meta.fileName || (isImage ? 'imagem-anexada.png' : 'documento.pdf');
+    const sourceUrl = isImage ? meta.imageUrl || meta.fileDownloadUrl : meta.fileDownloadUrl || meta.fileUrl;
+    if (!sourceUrl) return;
+
+    if (sourceUrl.startsWith('data:')) {
+      const a = document.createElement('a');
+      a.href = sourceUrl;
+      a.download = fileName;
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return;
+    }
+
+    window.open(toFileProxyUrl(sourceUrl, fileName, 'download'), '_blank', 'noopener,noreferrer');
+  };
+
   const uploadImageIfNeeded = async (): Promise<string | null> => {
     if (!imageFile) return null;
 
@@ -948,9 +1025,7 @@ export default function Dashboard() {
       const data = await res.json();
       const imageLayersRaw = (data?.imageLayers || data?.layers || []) as MapLayerOption[];
       const imageLayers = imageLayersRaw.length ? imageLayersRaw : FALLBACK_WMS_IMAGE_LAYERS;
-      const shapeLayers = (data?.shapeLayers || []) as MapLayerOption[];
       setMapImageLayers(imageLayers);
-      setMapShapeLayers(shapeLayers);
       const layerNames = new Set(imageLayers.map((l) => l.name));
       const preferred = selectedMapLayer && layerNames.has(selectedMapLayer) ? selectedMapLayer : '';
       const chosenLayer = preferred || data?.defaultLayer || imageLayers[0]?.name || '';
@@ -963,7 +1038,6 @@ export default function Dashboard() {
     } catch (error: any) {
       const imageLayers = FALLBACK_WMS_IMAGE_LAYERS;
       setMapImageLayers(imageLayers);
-      setMapShapeLayers([]);
       const chosenLayer = selectedMapLayer || 'Mosaicos:LANDSAT_5_2008';
       setSelectedMapLayer(chosenLayer);
       setTimeout(() => {
@@ -986,7 +1060,6 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           layerName: effectiveLayer,
-          overlayLayers: selectedShapeLayers,
           bbox: effectiveBbox,
           crs: 'EPSG:4326',
           width: 1100,
@@ -1024,6 +1097,248 @@ export default function Dashboard() {
     }
   };
 
+  const blobToDataUrl = (blob: Blob) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Falha ao converter blob para dataUrl.'));
+      reader.readAsDataURL(blob);
+    });
+
+  const loadImageElement = (src: string) =>
+    new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Falha ao carregar imagem para anotação.'));
+      img.src = src;
+    });
+
+  const renderAnnotatedMapImage = async (
+    sourceDataUrl: string,
+    bbox: [number, number, number, number],
+    polygon: Array<[number, number]>
+  ) => {
+    const srcImage = await loadImageElement(sourceDataUrl);
+    const canvas = document.createElement('canvas');
+    canvas.width = srcImage.naturalWidth || srcImage.width || 1280;
+    canvas.height = srcImage.naturalHeight || srcImage.height || 960;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Falha ao obter contexto do canvas.');
+
+    ctx.drawImage(srcImage, 0, 0, canvas.width, canvas.height);
+
+    if (polygon.length >= 3) {
+      const [minX, minY, maxX, maxY] = bbox;
+      const spanX = maxX - minX;
+      const spanY = maxY - minY;
+      if (spanX > 0 && spanY > 0) {
+        ctx.beginPath();
+        polygon.forEach(([x, y], idx) => {
+          const px = ((x - minX) / spanX) * canvas.width;
+          const py = ((maxY - y) / spanY) * canvas.height;
+          if (idx === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.closePath();
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
+        ctx.lineWidth = Math.max(2, Math.round(canvas.width / 400));
+        ctx.stroke();
+      }
+    }
+
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((b) => {
+        if (!b) {
+          reject(new Error('Falha ao gerar imagem anotada.'));
+          return;
+        }
+        resolve(b);
+      }, 'image/png');
+    });
+    return blob;
+  };
+
+  const createAnnotatedMapFile = async (
+    source: string,
+    bbox: [number, number, number, number],
+    polygon: Array<[number, number]>,
+    fileName: string
+  ) => {
+    const sourceBlob = source.startsWith('data:')
+      ? await fetch(source).then((r) => r.blob())
+      : await fetch(source).then((r) => {
+          if (!r.ok) throw new Error('Falha ao baixar imagem do mapa.');
+          return r.blob();
+        });
+    const sourceDataUrl = await blobToDataUrl(sourceBlob);
+    const annotated = await renderAnnotatedMapImage(sourceDataUrl, bbox, polygon);
+    return new File([annotated], fileName, { type: 'image/png' });
+  };
+
+  const applyMapZoomFromWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!selectedMapLayer || mapRectZoomMode) return;
+    event.preventDefault();
+    const el = mapPreviewViewportRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    const ratioX = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const ratioY = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    const [minX, minY, maxX, maxY] = mapBbox;
+    const spanX = maxX - minX;
+    const spanY = maxY - minY;
+    if (spanX <= 0 || spanY <= 0) return;
+
+    const zoomFactor = event.deltaY < 0 ? 0.85 : 1.18;
+    const nextSpanX = Math.max(0.000001, spanX * zoomFactor);
+    const nextSpanY = Math.max(0.000001, spanY * zoomFactor);
+
+    const centerX = minX + ratioX * spanX;
+    const centerY = maxY - ratioY * spanY;
+    const nextBbox: [number, number, number, number] = [
+      centerX - ratioX * nextSpanX,
+      centerY - (1 - ratioY) * nextSpanY,
+      centerX + (1 - ratioX) * nextSpanX,
+      centerY + ratioY * nextSpanY,
+    ];
+    setMapBbox(nextBbox);
+
+    if (mapWheelDebounceRef.current) {
+      window.clearTimeout(mapWheelDebounceRef.current);
+    }
+    mapWheelDebounceRef.current = window.setTimeout(() => {
+      refreshMapPreview(undefined, nextBbox);
+    }, 150);
+  };
+
+  const startMapDrag = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !selectedMapLayer) return;
+    event.preventDefault();
+    if (mapRectZoomMode) {
+      const imageRect = mapPreviewImageRef.current?.getBoundingClientRect();
+      if (!imageRect || imageRect.width <= 1 || imageRect.height <= 1) return;
+      if (
+        event.clientX < imageRect.left ||
+        event.clientX > imageRect.right ||
+        event.clientY < imageRect.top ||
+        event.clientY > imageRect.bottom
+      ) {
+        return;
+      }
+      mapRectStateRef.current = {
+        startX: event.clientX,
+        startY: event.clientY,
+        currentX: event.clientX,
+        currentY: event.clientY,
+        imageRect,
+        startBbox: mapBbox,
+      };
+      setMapRectSelection({ left: event.clientX, top: event.clientY, width: 0, height: 0 });
+      return;
+    }
+    mapDragStateRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      startBbox: mapBbox,
+    };
+    mapDraggedBboxRef.current = mapBbox;
+    setMapDragging(true);
+  };
+
+  useEffect(() => {
+    const onMouseMove = (event: MouseEvent) => {
+      const rectZoom = mapRectStateRef.current;
+      if (rectZoom) {
+        const clampedX = Math.max(rectZoom.imageRect.left, Math.min(rectZoom.imageRect.right, event.clientX));
+        const clampedY = Math.max(rectZoom.imageRect.top, Math.min(rectZoom.imageRect.bottom, event.clientY));
+        rectZoom.currentX = clampedX;
+        rectZoom.currentY = clampedY;
+        const left = Math.min(rectZoom.startX, clampedX);
+        const top = Math.min(rectZoom.startY, clampedY);
+        const width = Math.abs(clampedX - rectZoom.startX);
+        const height = Math.abs(clampedY - rectZoom.startY);
+        setMapRectSelection({ left, top, width, height });
+        return;
+      }
+
+      const drag = mapDragStateRef.current;
+      const el = mapPreviewViewportRef.current;
+      if (!drag || !el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
+      const dxPx = event.clientX - drag.startX;
+      const dyPx = event.clientY - drag.startY;
+      const [startMinX, startMinY, startMaxX, startMaxY] = drag.startBbox;
+      const spanX = startMaxX - startMinX;
+      const spanY = startMaxY - startMinY;
+      if (spanX <= 0 || spanY <= 0) return;
+
+      const deltaX = (-dxPx / rect.width) * spanX;
+      const deltaY = (-dyPx / rect.height) * spanY;
+      const nextBbox: [number, number, number, number] = [
+        startMinX + deltaX,
+        startMinY + deltaY,
+        startMaxX + deltaX,
+        startMaxY + deltaY,
+      ];
+      mapDraggedBboxRef.current = nextBbox;
+      setMapBbox(nextBbox);
+    };
+
+    const onMouseUp = () => {
+      const rectZoom = mapRectStateRef.current;
+      if (rectZoom) {
+        const left = Math.min(rectZoom.startX, rectZoom.currentX);
+        const right = Math.max(rectZoom.startX, rectZoom.currentX);
+        const top = Math.min(rectZoom.startY, rectZoom.currentY);
+        const bottom = Math.max(rectZoom.startY, rectZoom.currentY);
+        const widthPx = right - left;
+        const heightPx = bottom - top;
+        mapRectStateRef.current = null;
+        setMapRectSelection(null);
+
+        if (widthPx >= 8 && heightPx >= 8) {
+          const imageRect = rectZoom.imageRect;
+          const x0 = (left - imageRect.left) / imageRect.width;
+          const x1 = (right - imageRect.left) / imageRect.width;
+          const y0 = (top - imageRect.top) / imageRect.height;
+          const y1 = (bottom - imageRect.top) / imageRect.height;
+          const [minX, minY, maxX, maxY] = rectZoom.startBbox;
+          const spanX = maxX - minX;
+          const spanY = maxY - minY;
+          if (spanX > 0 && spanY > 0) {
+            const nextBbox: [number, number, number, number] = [
+              minX + x0 * spanX,
+              maxY - y1 * spanY,
+              minX + x1 * spanX,
+              maxY - y0 * spanY,
+            ];
+            setMapBbox(nextBbox);
+            setMapRectZoomMode(false);
+            refreshMapPreview(undefined, nextBbox);
+          }
+        }
+        return;
+      }
+
+      if (!mapDragStateRef.current) return;
+      const nextBbox = mapDraggedBboxRef.current || mapDragStateRef.current.startBbox;
+      mapDragStateRef.current = null;
+      mapDraggedBboxRef.current = null;
+      setMapDragging(false);
+      refreshMapPreview(undefined, nextBbox);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [selectedMapLayer, refreshMapPreview, mapRectZoomMode]);
+
   const captureVisibleMapArea = async () => {
     if (!selectedMapLayer) {
       toast.error('Selecione uma camada');
@@ -1031,6 +1346,21 @@ export default function Dashboard() {
     }
 
     const bbox: [number, number, number, number] = mapBbox;
+    const selectedLayerMeta = mapImageLayers.find((l) => l.name === selectedMapLayer);
+    const inferredYearFromName =
+      selectedMapLayer.match(/\b(19|20)\d{2}\b/)?.[0] || selectedLayerMeta?.inferredYear || '';
+    const baseMapContext: MapContext = {
+      layerName: selectedMapLayer,
+      layerTitle: selectedLayerMeta?.title || selectedMapLayer,
+      layerGroup: inferMapLayerGroup(selectedMapLayer),
+      inferredYear: inferredYearFromName || undefined,
+      bbox,
+      crs: 'EPSG:4326',
+      source: 'SEMA_WMS',
+      width: 1280,
+      height: 960,
+      capturedAtIso: new Date().toISOString(),
+    };
 
     setMapCapturing(true);
     try {
@@ -1039,7 +1369,6 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           layerName: selectedMapLayer,
-          overlayLayers: selectedShapeLayers,
           bbox,
           crs: 'EPSG:4326',
           width: 1280,
@@ -1057,33 +1386,46 @@ export default function Dashboard() {
       const dataUrl = String(data?.dataUrl || '');
       if (!dataUrl) throw new Error('Imagem do mapa não retornou dataUrl');
 
-      const blob = await fetch(dataUrl).then((r) => r.blob());
-      const file = new File([blob], `mapa-${Date.now()}.png`, { type: blob.type || 'image/png' });
+      const file = await createAnnotatedMapFile(dataUrl, bbox, mapPolygon, `mapa-${Date.now()}.png`);
 
       if (imagePreview) URL.revokeObjectURL(imagePreview);
       setImageFile(file);
       setImagePreview(URL.createObjectURL(file));
       setPdfFile(null);
-      setPendingMapContext((data?.mapContext as ChatMessage['meta']['mapContext']) || undefined);
-      setMapDialogOpen(false);
-      toast.success('Área do mapa anexada ao chat');
-    } catch (error: any) {
-      const directUrl = buildDirectWmsGetMapUrl(selectedMapLayer, bbox, 1280, 960, 'image/png');
-      if (imagePreview) URL.revokeObjectURL(imagePreview);
-      setImageFile(null);
-      setImagePreview(null);
-      setPdfFile(null);
-      setPendingMapImageUrl(directUrl);
+      setPendingMapImageUrl(null);
       setPendingMapContext({
-        layerName: selectedMapLayer,
-        bbox,
-        crs: 'EPSG:4326',
-        source: 'SEMA_WMS',
-        width: 1280,
-        height: 960,
+        ...baseMapContext,
+        ...((data?.mapContext as MapContext) || {}),
+        layerTitle: baseMapContext.layerTitle,
+        layerGroup: baseMapContext.layerGroup,
+        inferredYear: baseMapContext.inferredYear,
+        capturedAtIso: baseMapContext.capturedAtIso,
       });
       setMapDialogOpen(false);
-      toast.error('Captura via backend falhou. Usando URL direta do WMS no anexo.');
+      toast.success('Área do mapa anexada ao chat com demarcação do polígono');
+    } catch (error: any) {
+      const directUrl = buildDirectWmsGetMapUrl(selectedMapLayer, bbox, 1280, 960, 'image/png');
+      try {
+        const source = mapPreviewDataUrl || directUrl;
+        const file = await createAnnotatedMapFile(source, bbox, mapPolygon, `mapa-${Date.now()}.png`);
+        if (imagePreview) URL.revokeObjectURL(imagePreview);
+        setImageFile(file);
+        setImagePreview(URL.createObjectURL(file));
+        setPdfFile(null);
+        setPendingMapImageUrl(null);
+        setPendingMapContext(baseMapContext);
+        setMapDialogOpen(false);
+        toast.error('Captura backend falhou, mas a imagem com demarcação foi gerada via fallback.');
+      } catch {
+        if (imagePreview) URL.revokeObjectURL(imagePreview);
+        setImageFile(null);
+        setImagePreview(null);
+        setPdfFile(null);
+        setPendingMapImageUrl(directUrl);
+        setPendingMapContext(baseMapContext);
+        setMapDialogOpen(false);
+        toast.error('Não foi possível rasterizar a demarcação no fallback. URL direta mantida.');
+      }
     } finally {
       setMapCapturing(false);
     }
@@ -1101,6 +1443,7 @@ export default function Dashboard() {
         const text = await file.text();
         const geom = parseKmlGeometryOnClient(text);
         setMapBbox(geom.bbox);
+        setMapOriginalPolygonBbox(geom.bbox);
         setMapPolygon(geom.polygon || []);
         await refreshMapPreview(undefined, geom.bbox);
         toast.success('Área do KML carregada no frontend');
@@ -1110,6 +1453,7 @@ export default function Dashboard() {
         try {
           const geom = await parseZipShpGeometryOnClient(file);
           setMapBbox(geom.bbox);
+          setMapOriginalPolygonBbox(geom.bbox);
           setMapPolygon(
             geom.polygon || [
               [geom.bbox[0], geom.bbox[1]],
@@ -1153,6 +1497,7 @@ export default function Dashboard() {
           )
         : [];
       setMapBbox(bbox);
+      setMapOriginalPolygonBbox(bbox);
       setMapPolygon(
         poly.length >= 3
           ? poly
@@ -1281,17 +1626,34 @@ export default function Dashboard() {
 
     let userPayloadText = userText;
     if (selectedImageFile || selectedMapImageUrl) {
+      const mapContextBlock = pendingMapContext
+        ? [
+            'Contexto técnico da imagem de mapa:',
+            `- Camada WMS: ${pendingMapContext.layerName}`,
+            pendingMapContext.layerTitle ? `- Título da camada: ${pendingMapContext.layerTitle}` : '',
+            pendingMapContext.layerGroup ? `- Grupo: ${pendingMapContext.layerGroup}` : '',
+            pendingMapContext.inferredYear ? `- Ano da imagem: ${pendingMapContext.inferredYear}` : '',
+            `- BBOX (minX,minY,maxX,maxY): ${pendingMapContext.bbox.join(', ')}`,
+            `- CRS: ${pendingMapContext.crs}`,
+            `- Fonte: ${pendingMapContext.source}`,
+            pendingMapContext.width && pendingMapContext.height
+              ? `- Resolução de captura: ${pendingMapContext.width}x${pendingMapContext.height} px`
+              : '',
+            pendingMapContext.capturedAtIso
+              ? `- Data/hora de captura (ISO): ${pendingMapContext.capturedAtIso}`
+              : '',
+            '- Observação: a imagem pode conter demarcação vetorial da área de interesse.',
+          ]
+            .filter(Boolean)
+            .join('\n')
+        : '';
       userPayloadText =
         `${userText || 'Analise a imagem anexada.'}
 
 ` +
         'Contexto: a imagem foi anexada pelo usuário para interpretação ambiental/florestal. ' +
         'Descreva achados objetivos, limitações e próximos dados necessários.' +
-        (pendingMapContext
-          ? `\n\nContexto do mapa: camada=${pendingMapContext.layerName}; bbox=${pendingMapContext.bbox.join(
-              ','
-            )}; crs=${pendingMapContext.crs}; fonte=${pendingMapContext.source}.`
-          : '');
+        (mapContextBlock ? `\n\n${mapContextBlock}` : '');
     } else if (selectedPdfFile) {
       userPayloadText =
         `${userText || 'Analise o PDF anexado.'}
@@ -1313,6 +1675,7 @@ export default function Dashboard() {
             fileName: selectedImageFile?.name || 'mapa-wms.png',
             uploadStatus: selectedMapImageUrl ? 'done' : 'uploading',
             imageUrl: localImagePreviewForChat || undefined,
+            fileDownloadUrl: selectedMapImageUrl || undefined,
             mapContext: pendingMapContext,
           }
         : selectedPdfFile
@@ -1351,7 +1714,11 @@ export default function Dashboard() {
         if (!uploadedImageUrl) return;
         await patchMessageMeta(
           currentUserMessageId,
-          { imageUrl: uploadedImageUrl, uploadStatus: 'done' },
+          {
+            imageUrl: uploadedImageUrl,
+            fileDownloadUrl: toCloudinaryDownloadUrl(uploadedImageUrl),
+            uploadStatus: 'done',
+          },
           userText || 'Nova conversa'
         );
       })
@@ -1378,6 +1745,23 @@ export default function Dashboard() {
 
     let imageDataUrlForAi: string | null = localImagePreviewForChat;
     let pdfDataUrlForAi: string | null = null;
+    const hasCurrentImage = Boolean(selectedImageFile || selectedMapImageUrl);
+    const imageAnalysisSystemPrompt = hasCurrentImage
+      ? {
+          role: 'system',
+          content: [
+            'Modo de análise visual avançada ativado.',
+            'Siga esta ordem na resposta:',
+            '1) Leitura objetiva da cena (o que está visível).',
+            '2) Achados técnicos priorizados com evidências visuais.',
+            '3) Interpretação ambiental/florestal com nível de confiança por achado.',
+            '4) Incertezas e o que falta para fechar diagnóstico.',
+            '5) Próximas ações práticas (curto prazo).',
+            'Se houver contexto geoespacial (BBOX/CRS/camada/ano), use explicitamente no raciocínio.',
+            'Evite afirmações categóricas sem suporte visual direto.',
+          ].join(' '),
+        }
+      : null;
     try {
       if (selectedPdfFile) pdfDataUrlForAi = await readFileAsDataUrl(selectedPdfFile);
     } catch (error: any) {
@@ -1388,6 +1772,7 @@ export default function Dashboard() {
     const contextualMessages = nextMessages.slice(-40);
     const apiMessages = [
       systemPrompt,
+      ...(imageAnalysisSystemPrompt ? [imageAnalysisSystemPrompt] : []),
       ...(crossChatContext ? [{ role: 'system', content: crossChatContext }] : []),
       ...contextualMessages.map((m) => {
         if (m.role === 'user' && (m.meta?.imageUrl || (m.id === currentUserMessageId && imageDataUrlForAi))) {
@@ -1612,6 +1997,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       .join(' ');
     return points;
   }, [mapPolygon, mapBbox]);
+  const mapRectSelectionStyle = useMemo(() => {
+    if (!mapRectSelection || !mapPreviewViewportRef.current) return null;
+    const viewport = mapPreviewViewportRef.current.getBoundingClientRect();
+    return {
+      left: mapRectSelection.left - viewport.left,
+      top: mapRectSelection.top - viewport.top,
+      width: mapRectSelection.width,
+      height: mapRectSelection.height,
+    };
+  }, [mapRectSelection]);
 
   const groupedImageLayers = useMemo(() => {
     const preferredOrderMap = new Map<string, number>();
@@ -1926,26 +2321,22 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     >
                       {(msg.meta?.fileType === 'pdf' || msg.meta?.fileType === 'image') && (
                         <div
-                          role={msg.meta?.fileType === 'pdf' && msg.meta?.fileUrl ? 'button' : undefined}
-                          tabIndex={msg.meta?.fileType === 'pdf' && msg.meta?.fileUrl ? 0 : -1}
+                          role="button"
+                          tabIndex={0}
                           onClick={() => {
-                            const pdfUrl = msg.meta?.fileUrl || msg.meta?.fileDownloadUrl;
-                            if (msg.meta?.fileType === 'pdf' && pdfUrl) {
-                              window.open(toFileProxyUrl(pdfUrl, msg.meta.fileName, 'download'), '_blank', 'noopener,noreferrer');
-                            }
+                            downloadAttachment(msg.meta);
                           }}
                           onKeyDown={(e) => {
-                            const pdfUrl = msg.meta?.fileUrl || msg.meta?.fileDownloadUrl;
-                            if ((e.key === 'Enter' || e.key === ' ') && msg.meta?.fileType === 'pdf' && pdfUrl) {
+                            if (e.key === 'Enter' || e.key === ' ') {
                               e.preventDefault();
-                              window.open(toFileProxyUrl(pdfUrl, msg.meta.fileName, 'download'), '_blank', 'noopener,noreferrer');
+                              downloadAttachment(msg.meta);
                             }
                           }}
                           className={`mb-2 inline-flex max-w-[260px] items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] border ${
                             msg.role === 'user'
                               ? 'bg-emerald-700/45 border-emerald-300/30 text-emerald-50'
                               : 'bg-[#0f1713] border-white/10 text-slate-200'
-                          } ${msg.meta?.fileType === 'pdf' && (msg.meta?.fileUrl || msg.meta?.fileDownloadUrl) ? 'cursor-pointer hover:border-emerald-400/40' : ''}`}
+                          } cursor-pointer hover:border-emerald-400/40`}
                         >
                           <div
                             className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${
@@ -1959,9 +2350,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           <div className="min-w-0">
                             <p className="truncate font-medium">{msg.meta?.fileName || (msg.meta?.fileType === 'pdf' ? 'Documento PDF' : 'Imagem anexada')}</p>
                             <p className={`text-[10px] ${msg.role === 'user' ? 'text-emerald-100/80' : 'text-slate-500'}`}>
-                              {msg.meta?.fileType === 'pdf' ? 'Documento' : 'Imagem'}
+                              {msg.meta?.fileType === 'pdf' ? 'Documento (clique para baixar)' : 'Imagem (clique para baixar)'}
                             </p>
                           </div>
+                          <FileDown size={13} className={msg.role === 'user' ? 'text-emerald-100/80' : 'text-emerald-300'} />
                         </div>
                       )}
                       {msg.role === 'ai' && displayThinking && (
@@ -2436,34 +2828,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       )}
                     </select>
                   </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Shapes (sobreposição)</p>
-                    <div className="max-h-36 overflow-auto rounded-lg border border-white/10 bg-[#050b08] p-2 space-y-1 custom-scrollbar">
-                      {mapShapeLayers.slice(0, 40).map((layer) => (
-                        <label key={layer.name} className="flex items-center gap-2 text-xs text-slate-300">
-                          <input
-                            type="checkbox"
-                            checked={selectedShapeLayers.includes(layer.name)}
-                            onChange={(e) => {
-                              const next = e.target.checked
-                                ? [...selectedShapeLayers, layer.name]
-                                : selectedShapeLayers.filter((x) => x !== layer.name);
-                              setSelectedShapeLayers(next);
-                              setTimeout(() => refreshMapPreview(undefined, mapBbox), 0);
-                            }}
-                          />
-                          <span className="truncate">{layer.title || layer.name}</span>
-                        </label>
-                      ))}
-                      {!mapShapeLayers.length && (
-                        <p className="text-[11px] text-slate-500">Nenhum shape disponível no serviço.</p>
-                      )}
-                    </div>
-                  </div>
                   <div className="rounded-lg border border-white/10 bg-white/5 p-3">
                     <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Selecione a BBOX da área de interesse. A prévia e o snapshot são carregados direto do WMS da
-                      SEMA.
+                      Navegação por mouse: arraste para mover o mapa e use a roda para zoom. A prévia e o snapshot
+                      são carregados direto do WMS da SEMA.
                     </p>
                   </div>
                   <label className="inline-flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs cursor-pointer">
@@ -2533,6 +2901,43 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </button>
                   <button
                     type="button"
+                    onClick={() => {
+                      if (!mapOriginalPolygonBbox) return;
+                      setMapBbox(mapOriginalPolygonBbox);
+                      setMapRectZoomMode(false);
+                      setMapRectSelection(null);
+                      mapRectStateRef.current = null;
+                      refreshMapPreview(undefined, mapOriginalPolygonBbox);
+                    }}
+                    disabled={mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox}
+                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${
+                      mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox
+                        ? 'bg-white/10 text-slate-500 cursor-not-allowed'
+                        : 'bg-white/10 text-slate-200 hover:bg-white/20'
+                    }`}
+                  >
+                    Voltar ao Zoom Original
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMapRectZoomMode((prev) => !prev);
+                      setMapRectSelection(null);
+                      mapRectStateRef.current = null;
+                    }}
+                    disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
+                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${
+                      mapLoading || mapPreviewLoading || !selectedMapLayer
+                        ? 'bg-white/10 text-slate-500 cursor-not-allowed'
+                        : mapRectZoomMode
+                          ? 'bg-amber-500/30 text-amber-100 border border-amber-400/40'
+                          : 'bg-white/10 text-slate-200 hover:bg-white/20'
+                    }`}
+                  >
+                    {mapRectZoomMode ? 'Cancelar Zoom por Retângulo' : 'Zoom por Retângulo'}
+                  </button>
+                  <button
+                    type="button"
                     onClick={captureVisibleMapArea}
                     disabled={mapLoading || mapCapturing || !selectedMapLayer}
                     className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${
@@ -2550,12 +2955,21 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       {mapLoading ? 'Carregando camadas do mapa...' : 'Carregando prévia WMS...'}
                     </div>
                   ) : mapPreviewDataUrl ? (
-                    <div className="h-full w-full bg-black/25 flex items-center justify-center p-2">
+                    <div
+                      ref={mapPreviewViewportRef}
+                      onWheel={applyMapZoomFromWheel}
+                      onMouseDown={startMapDrag}
+                      className={`h-full w-full bg-black/25 flex items-center justify-center p-2 select-none ${
+                        mapRectZoomMode ? 'cursor-crosshair' : mapDragging ? 'cursor-grabbing' : 'cursor-grab'
+                      }`}
+                    >
                       <div className="relative max-h-full max-w-full">
                         <img
+                          ref={mapPreviewImageRef}
                           src={mapPreviewDataUrl}
                           alt="Prévia WMS da área selecionada"
-                          className="max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain"
+                          className="max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain pointer-events-none"
+                          draggable={false}
                         />
                         {mapPolygonPoints && (
                           <svg
@@ -2565,13 +2979,24 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           >
                             <polygon
                               points={mapPolygonPoints}
-                              fill="rgba(239, 68, 68, 0.16)"
+                              fill="none"
                               stroke="rgba(239, 68, 68, 0.98)"
                               strokeWidth="0.6"
                             />
                           </svg>
                         )}
                       </div>
+                      {mapRectSelectionStyle && (
+                        <div
+                          className="pointer-events-none absolute border-2 border-amber-300 bg-amber-300/15"
+                          style={{
+                            left: `${mapRectSelectionStyle.left}px`,
+                            top: `${mapRectSelectionStyle.top}px`,
+                            width: `${mapRectSelectionStyle.width}px`,
+                            height: `${mapRectSelectionStyle.height}px`,
+                          }}
+                        />
+                      )}
                     </div>
                   ) : (
                     <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm px-6 text-center">
