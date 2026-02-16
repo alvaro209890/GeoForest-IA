@@ -258,9 +258,10 @@ async function startServer() {
         return;
       }
 
-      const { messages, model } = req.body as {
+      const { messages, model, pendingPdf } = req.body as {
         messages?: Array<{ role: string; content: any }>;
         model?: string;
+        pendingPdf?: { dataUrl?: string; filename?: string };
       };
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         res.status(400).json({ error: "Mensagens inválidas." });
