@@ -34,16 +34,6 @@ async function startServer() {
       capabilities: ["text"],
     },
     {
-      id: "openai/gpt-oss-120b",
-      label: "GPT-OSS 120B (texto)",
-      capabilities: ["text"],
-    },
-    {
-      id: "openai/gpt-oss-20b",
-      label: "GPT-OSS 20B (texto)",
-      capabilities: ["text"],
-    },
-    {
       id: "meta-llama/llama-4-scout-17b-16e-instruct",
       label: "Llama 4 Scout 17B (visão)",
       capabilities: ["text", "vision"],
@@ -51,31 +41,6 @@ async function startServer() {
     {
       id: "meta-llama/llama-4-maverick-17b-128e-instruct",
       label: "Llama 4 Maverick 17B (visão)",
-      capabilities: ["text", "vision"],
-    },
-    {
-      id: "groq/compound",
-      label: "Compound (sistema)",
-      capabilities: ["text"],
-    },
-    {
-      id: "groq/compound-mini",
-      label: "Compound Mini (sistema)",
-      capabilities: ["text"],
-    },
-    {
-      id: "openai/gpt-oss-safeguard-20b",
-      label: "GPT-OSS Safeguard 20B (segurança)",
-      capabilities: ["text"],
-    },
-    {
-      id: "llama-3.2-90b-vision-preview",
-      label: "Llama 3.2 90B (visão)",
-      capabilities: ["text", "vision"],
-    },
-    {
-      id: "llama-3.2-11b-vision-preview",
-      label: "Llama 3.2 11B (visão leve)",
       capabilities: ["text", "vision"],
     },
     {
@@ -265,6 +230,78 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error("Erro no /api/upload-image:", error);
+      res.status(500).json({ error: error?.message || "Erro interno" });
+    }
+  });
+
+  app.post("/api/upload-file", async (req, res) => {
+    try {
+      console.log("[/api/upload-file] request received");
+      const cloudName = "da19dwpgk";
+      const apiKey = process.env.CLOUDINARY_API_KEY;
+      const apiSecret = process.env.CLOUDINARY_API_SECRET;
+      const folder = process.env.CLOUDINARY_FOLDER;
+
+      if (!apiKey || !apiSecret) {
+        console.error("[/api/upload-file] Cloudinary missing keys");
+        res.status(500).json({ error: "Cloudinary não configurado." });
+        return;
+      }
+
+      const { dataUrl, filename } = req.body as { dataUrl?: string; filename?: string };
+      if (!dataUrl || typeof dataUrl !== "string") {
+        console.error("[/api/upload-file] dataUrl missing");
+        res.status(400).json({ error: "dataUrl é obrigatório." });
+        return;
+      }
+
+      const timestamp = Math.floor(Date.now() / 1000);
+      const publicId = filename
+        ? `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_")
+        : undefined;
+
+      const paramsToSign: Record<string, string> = { timestamp: String(timestamp) };
+      if (folder) paramsToSign.folder = folder;
+      if (publicId) paramsToSign.public_id = publicId;
+
+      const signatureBase = Object.keys(paramsToSign)
+        .sort()
+        .map((key) => `${key}=${paramsToSign[key]}`)
+        .join("&");
+      const signature = crypto
+        .createHash("sha1")
+        .update(signatureBase + apiSecret)
+        .digest("hex");
+
+      const form = new FormData();
+      form.append("file", dataUrl);
+      form.append("api_key", apiKey);
+      form.append("timestamp", String(timestamp));
+      form.append("signature", signature);
+      form.append("resource_type", "raw");
+      if (folder) form.append("folder", folder);
+      if (publicId) form.append("public_id", publicId);
+
+      const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`;
+      const response = await fetch(uploadUrl, { method: "POST", body: form });
+
+      if (!response.ok) {
+        const text = await response.text();
+        console.error("[/api/upload-file] cloudinary error:", response.status, text);
+        res.status(response.status).json({ error: text });
+        return;
+      }
+
+      const data = await response.json();
+      console.log("[/api/upload-file] success:", data?.public_id);
+      res.json({
+        public_id: data.public_id,
+        secure_url: data.secure_url,
+        format: data.format,
+        bytes: data.bytes,
+      });
+    } catch (error: any) {
+      console.error("Erro no /api/upload-file:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });
     }
   });
