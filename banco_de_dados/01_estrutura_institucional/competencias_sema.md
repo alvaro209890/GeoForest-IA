@@ -4,37 +4,84 @@ tags: `SEMA-MT` `superintendências` `CONSEMA` `CEHIDRO` `unidades regionais` `e
 
 ## Resumo
 
-A SEMA-MT é o órgão responsável pelo licenciamento ambiental no estado. As LCs 214/2005 e 522/2013 reorganizaram a secretaria e criaram superintendências temáticas. O CONSEMA e o CEHIDRO compõem o sistema colegiado de decisões.
-
-## Estrutura Administrativa
-
-A LC 214/2005 extinguiu a Fundação Estadual do Meio Ambiente e criou a SEMA/MT, reestruturada pela LC 522/2013.
-
-### 10 Superintendências
-
-1. Relacionamento e Atendimento ao Cidadão
-2. Normas do Meio Ambiente
-3. Infraestrutura, Mineração, Indústria e Serviços
-4. Recursos Hídricos
-5. Fiscalização
-6. Mudanças Climáticas e Biodiversidade
-7. Educação Ambiental
-8. Geoinformação e Monitoramento Ambiental
-9. Regularização Ambiental
-10. Base Florestal
-
-Cada superintendência possui coordenadorias e gerências que tratam de processos de licenciamento por tipo de atividade.
-
-## Conselhos
-
-- **CONSEMA** — Estabelece normas, delibera sobre padrões de qualidade ambiental e julga processos que exijam EIA/RIMA.
-- **CEHIDRO** — Delibera sobre outorga e gestão de recursos hídricos.
-
-## Unidades Regionais
-
-11 unidades: Alta Floresta, Aripuanã, Barra do Garças, Cáceres, Guarantã do Norte, Juara, Juína, Rondonópolis, Sinop, Tangará da Serra e Vila Rica.
+A SEMA-MT é o órgão executor da política ambiental do estado de Mato Grosso, responsável pelo licenciamento ambiental, monitoramento e fiscalização. Criada pela LC 214/2005 (que extinguiu a antiga FEMA) e reestruturada pela LC 522/2013.
 
 ## Base Legal
 
-- LC 214/2005 — Criação da SEMA-MT
-- LC 522/2013 — Reestruturação administrativa
+- **LC 214/2005** — Criação da SEMA-MT (substituiu a FEMA)
+- **LC 522/2013** — Reestruturação administrativa com criação de superintendências temáticas
+- **LC 38/1995** — Código Ambiental de MT (define SEMA como órgão coordenador do SISEM)
+
+## Estrutura Administrativa
+
+### 10 Superintendências
+
+| Nº | Superintendência | Competências Principais |
+|----|-----------------|------------------------|
+| 1 | Relacionamento e Atendimento ao Cidadão | Protocolo, atendimento, ouvidoria |
+| 2 | Normas do Meio Ambiente | Elaboração de INs, Portarias, pareceres jurídicos |
+| 3 | Infraestrutura, Mineração, Indústria e Serviços | Licenciamento de empreendimentos industriais e minerários |
+| 4 | Recursos Hídricos | Outorga de uso da água, monitoramento hídrico |
+| 5 | Fiscalização | Autuações, embargos, operações de campo |
+| 6 | Mudanças Climáticas e Biodiversidade | REDD+, inventários de GEE, fauna |
+| 7 | Educação Ambiental | Programas educativos, capacitação |
+| 8 | **Geoinformação e Monitoramento Ambiental** | Sensoriamento remoto, base cartográfica, PRODES/DETER estadual |
+| 9 | **Regularização Ambiental** | CAR, PRA, ASV, APP, RL — principal para engenharia florestal |
+| 10 | **Base Florestal** | PMFS, AUTEX, DOF, reposição florestal, produtos florestais |
+
+> As superintendências **8, 9 e 10** são as mais relevantes para a engenharia florestal.
+
+Cada superintendência possui **coordenadorias** e **gerências** que tratam de processos específicos por tipo de atividade e região.
+
+## Conselhos
+
+### CONSEMA (Conselho Estadual de Meio Ambiente)
+- Órgão deliberativo e consultivo do SISEM
+- Composição: governo, sociedade civil, setor produtivo, academia
+- **Atribuições**:
+  - Estabelecer normas e padrões de qualidade ambiental
+  - Deliberar sobre processos que exijam EIA/RIMA
+  - Julgar recursos de decisões técnicas da SEMA
+  - Aprovar Deliberações Normativas (DN) que definem porte e potencial poluidor
+
+### CEHIDRO (Conselho Estadual de Recursos Hídricos)
+- Delibera sobre outorga e gestão de recursos hídricos
+- Aprova planos de bacias hidrográficas
+- Arbitra conflitos de uso da água
+
+## Unidades Regionais
+
+A SEMA possui **11 unidades regionais** para descentralizar o atendimento:
+
+| Unidade Regional | Região de Abrangência |
+|------------------|----------------------|
+| Alta Floresta | Extremo norte (Amazônia) |
+| Aripuanã | Noroeste |
+| Barra do Garças | Leste (Araguaia) |
+| Cáceres | Sudoeste (Pantanal) |
+| Guarantã do Norte | Norte |
+| Juara | Centro-norte |
+| Juína | Noroeste (Aripuanã) |
+| Rondonópolis | Sul |
+| Sinop | Médio-norte |
+| Tangará da Serra | Centro-oeste |
+| Vila Rica | Nordeste (Xingu) |
+
+> As unidades regionais podem receber protocolos, realizar vistorias e emitir pareceres, mas processos complexos (PMFS Pleno, EIA/RIMA) são analisados na sede em Cuiabá.
+
+## Interação entre Órgãos
+
+| Órgão | Papel | Interação com SEMA |
+|-------|-------|--------------------|
+| **IBAMA** | Licenciamento federal, SINAFLOR | Integração DOF/SINAFLOR, fiscalização conjunta |
+| **INCRA** | Regularização fundiária | Cruzamento CAR × SIGEF, assentamentos |
+| **FUNAI** | Terras Indígenas | Consulta obrigatória se licenciamento afeta TI |
+| **ICMBio** | Gestão de UCs federais | Anuência para atividades em zona de amortecimento |
+| **Corpo de Bombeiros** | Prevenção de incêndios | Autorização de queima controlada |
+
+## Competência para Licenciamento Florestal
+
+A SEMA-MT é competente para licenciar atividades florestais em todo o estado, **exceto**:
+- Atividades em áreas federais (UCs federais → ICMBio/IBAMA)
+- Empreendimentos de impacto interestadual ou nacional (IBAMA)
+- Atividades em Terras Indígenas (FUNAI + IBAMA)

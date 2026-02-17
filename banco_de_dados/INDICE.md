@@ -39,6 +39,19 @@ Base de conhecimento para IA sobre licenciamento florestal, legislação e proce
 - [Fluxograma de Licenciamento](05_matrizes_decisao/fluxograma_licenciamento.md)
 - [Checklists e Erros Recorrentes](05_matrizes_decisao/checklists_erros.md)
 
+### 06 — Sensoriamento Remoto
+- [Landsat (Série Histórica)](06_sensoriamento_remoto/landsat.md)
+- [Sentinel-2 (Alta Resolução)](06_sensoriamento_remoto/sentinel.md)
+- [CBERS (Sino-Brasileiro)](06_sensoriamento_remoto/cbers.md)
+- [Satélites de Alta Resolução (SPOT/Planet)](06_sensoriamento_remoto/spot_pleiades_planet.md)
+- [Índices de Vegetação (NDVI/EVI)](06_sensoriamento_remoto/indices_vegetacao.md)
+
+### 07 — Geoprocessamento
+- [Shapefiles e Vetores](07_geoprocessamento/shapefile_vetores.md)
+- [Sistemas de Coordenadas (SIRGAS 2000)](07_geoprocessamento/sistemas_coordenadas.md)
+- [Precisão Cartográfica e Escala](07_geoprocessamento/precisao_cartografica.md)
+- [Bases Cartográficas Oficiais](07_geoprocessamento/bases_cartograficas.md)
+
 ## Convenções
 
 - Cada arquivo cobre **um tópico específico** para carregamento seletivo

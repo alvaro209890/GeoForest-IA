@@ -15,3 +15,21 @@
 [2026-02-17T13:25:12.986Z] {"timestamp":1771334658331,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
 [2026-02-17T13:25:12.986Z] {"timestamp":1771334662478,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
 [2026-02-17T13:25:12.986Z] {"timestamp":1771334662479,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-02-17T13:34:51.774Z] {"timestamp":1771335290260,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
+[2026-02-17T13:34:51.774Z] {"timestamp":1771335290260,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-02-17T13:36:35.774Z] {"timestamp":1771335394593,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
+[2026-02-17T13:36:35.774Z] {"timestamp":1771335394594,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-02-17T13:36:41.775Z] {"timestamp":1771335400394,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
+[2026-02-17T13:36:41.775Z] {"timestamp":1771335400394,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-02-17T13:36:45.985Z] {"timestamp":1771335403185,"level":"DEBUG","args":["[Manus] Debug collector initialized (no rrweb, UI events only)"],"stack":null}
+[2026-02-17T13:36:45.985Z] {"timestamp":1771335403208,"level":"DEBUG","args":["[vite] connected."],"stack":null}
+[2026-02-17T13:36:45.985Z] {"timestamp":1771335403349,"level":"INFO","args":["%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools","font-weight:bold"],"stack":null}
+[2026-02-17T13:36:47.985Z] {"timestamp":1771335407952,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
+[2026-02-17T13:36:47.985Z] {"timestamp":1771335407952,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-02-17T13:40:07.188Z] {"timestamp":1771335605438,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
+[2026-02-17T13:40:07.188Z] {"timestamp":1771335605438,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-02-17T13:45:33.187Z] {"timestamp":1771335932437,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
+[2026-02-17T13:45:33.187Z] {"timestamp":1771335932437,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-02-17T13:45:41.188Z] {"timestamp":1771335939992,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
+[2026-02-17T13:45:41.188Z] {"timestamp":1771335939992,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-02-17T13:50:21.188Z] {"timestamp":1771336219659,"level":"ERROR","args":[{"type":"UnhandledRejection","reason":"Function setDoc() called with invalid data. Unsupported field value: undefined (found in document users/SEpXduD7LWaEgyHkhSwmNDatblb2/conversations/KURYIWv4YVEkvAb1DzwlF)","stack":"FirebaseError: Function setDoc() called with invalid data. Unsupported field value: undefined (found in document users/SEpXduD7LWaEgyHkhSwmNDatblb2/conversations/KURYIWv4YVEkvAb1DzwlF)"}],"stack":"FirebaseError: Function setDoc() called with invalid data. Unsupported field value: undefined (found in document users/SEpXduD7LWaEgyHkhSwmNDatblb2/conversations/KURYIWv4YVEkvAb1DzwlF)"}

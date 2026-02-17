@@ -123,7 +123,6 @@ const FALLBACK_WMS_IMAGE_LAYERS: MapLayerOption[] = [
   'Mosaicos:LANDSAT_8_2015',
   'Mosaicos:LANDSAT_8_2016',
   'Mosaicos:LANDSAT_8_2017',
-  'Mosaicos:LANDSAT_8_2018',
   'Mosaicos:MOSAICO_SPOT_SEPLAN',
   'Mosaicos:RESOURCESAT_2012',
   'Mosaicos:SENTINEL_2_2016',
@@ -508,6 +507,7 @@ export default function Dashboard() {
   const mapPreviewAbortRef = useRef<AbortController | null>(null);
   const MAX_MAP_PREVIEW_CACHE = 24;
   const [mapDragging, setMapDragging] = useState(false);
+  const [mapDragOffset, setMapDragOffset] = useState({ x: 0, y: 0 });
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
   const [mapRectSelection, setMapRectSelection] = useState<{
     left: number;
@@ -565,11 +565,13 @@ export default function Dashboard() {
           'Você é uma IA especializada em engenharia florestal e análise ambiental.',
           `Usuário atual: ${userProfile?.fullName || 'Usuário'}.`,
           'Responda em português do Brasil, com foco técnico, claro e orientado a ação.',
+          'Respostas curtas e objetivas. Só aprofunde se o usuário pedir análise completa.',
           'Considere o contexto da conversa atual como prioridade.',
           'Se faltarem dados, diga exatamente quais dados faltam.',
           'Quando houver imagem, faça leitura visual disciplinada: evidências observáveis, interpretação e limitações.',
           'Não confunda hipótese com fato observado; marque nível de confiança (alto/médio/baixo).',
           'Para mapa/satélite, use BBOX/CRS/camada/ano informados para contextualizar a análise.',
+          'Se houver evidência clara de desmatamento anterior a 22/07/2008, trate como área consolidada e cite a base legal quando aplicável.',
           'Não invente normas, números, fontes ou conclusões.',
         ].join(' '),
     }),
@@ -1352,6 +1354,7 @@ export default function Dashboard() {
       ];
       mapDraggedBboxRef.current = nextBbox;
       setMapBbox(nextBbox);
+      setMapDragOffset({ x: dxPx, y: dyPx });
     };
 
     const onMouseUp = () => {
@@ -1395,6 +1398,7 @@ export default function Dashboard() {
       mapDragStateRef.current = null;
       mapDraggedBboxRef.current = null;
       setMapDragging(false);
+      setMapDragOffset({ x: 0, y: 0 });
       refreshMapPreview(undefined, nextBbox);
     };
 
@@ -1519,6 +1523,11 @@ export default function Dashboard() {
       if (fileName.endsWith('.zip')) {
         try {
           const geom = await parseZipShpGeometryOnClient(file);
+          const [minX, minY, maxX, maxY] = geom.bbox;
+          const looksLatLon = minX >= -180 && maxX <= 180 && minY >= -90 && maxY <= 90;
+          if (!looksLatLon) {
+            throw new Error('Shapefile em coordenadas projetadas; usando parser do servidor.');
+          }
           setMapBbox(geom.bbox);
           setMapOriginalPolygonBbox(geom.bbox);
           setMapPolygon(
@@ -1531,10 +1540,10 @@ export default function Dashboard() {
             ]
           );
           await refreshMapPreview(undefined, geom.bbox);
-          toast.success('BBOX do shapefile ZIP carregada no frontend');
+          toast.success('Área do shapefile ZIP carregada no frontend');
           return;
         } catch (localErr) {
-          // Fallback to backend parser if frontend parser can't handle this zip flavor.
+          // Fallback to backend parser if frontend parser can't handle this zip flavor or CRS.
         }
       }
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -1880,7 +1889,9 @@ export default function Dashboard() {
             '4) Incertezas e o que falta para fechar diagnóstico.',
             '5) Próximas ações práticas (curto prazo).',
             'Se houver contexto geoespacial (BBOX/CRS/camada/ano), use explicitamente no raciocínio.',
+            'Se houver evidência clara de desmatamento anterior a 22/07/2008, trate como área consolidada (indique confiança).',
             'Evite afirmações categóricas sem suporte visual direto.',
+            'Mantenha a resposta curta e objetiva.',
           ].join(' '),
         }
       : null;
@@ -3104,11 +3115,25 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       }`}
                     >
                       <div className="relative max-h-full max-w-full">
+                        {mapPreviewDataUrl && mapDragging && (
+                          <img
+                            src={mapPreviewDataUrl}
+                            alt=""
+                            aria-hidden="true"
+                            className="absolute inset-0 max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain opacity-30 blur-[1px] pointer-events-none"
+                            draggable={false}
+                          />
+                        )}
                         <img
                           ref={mapPreviewImageRef}
                           src={mapPreviewDataUrl}
                           alt="Prévia WMS da área selecionada"
                           className="max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain pointer-events-none"
+                          style={
+                            mapDragging
+                              ? { transform: `translate(${mapDragOffset.x}px, ${mapDragOffset.y}px)` }
+                              : undefined
+                          }
                           draggable={false}
                         />
                         {mapPolygonPoints && (

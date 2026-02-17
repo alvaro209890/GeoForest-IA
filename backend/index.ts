@@ -2,6 +2,8 @@ import express from "express";
 import { createServer } from "http";
 import path from "path";
 import crypto from "crypto";
+import fs from "fs";
+import proj4 from "proj4";
 import { inflateRawSync } from "zlib";
 import { fileURLToPath } from "url";
 
@@ -72,6 +74,169 @@ async function startServer() {
   ] as const;
 
   const MODEL_IDS = new Set(MODEL_CATALOG.map((model) => model.id));
+  const IMAGE_ANALYSIS_MODEL =
+    process.env.IMAGE_ANALYSIS_MODEL || "openai/gpt-oss-120b";
+  const IMAGE_ANALYSIS_FALLBACKS = (
+    process.env.IMAGE_ANALYSIS_FALLBACKS ||
+    "qwen/qwen3-32b,meta-llama/llama-4-maverick-17b-128e-instruct"
+  )
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
+  const DB_SUMMARY_MODEL =
+    process.env.DB_SUMMARY_MODEL || "openai/gpt-oss-20b";
+  const DB_SUMMARY_MAX_TOKENS = Number(process.env.DB_SUMMARY_MAX_TOKENS ?? "350");
+  const DB_SUMMARY_ENABLED = String(process.env.DB_SUMMARY_ENABLED ?? "true") !== "false";
+  const DB_ROOT = path.resolve(__dirname, "..", "banco_de_dados");
+  const STOPWORDS = new Set([
+    "a","o","os","as","um","uma","uns","umas","de","da","do","das","dos","em","no","na","nos","nas","por","para","com","sem",
+    "e","ou","que","como","qual","quais","quando","onde","porque","porquê","por que","se","ao","aos","à","às","dos","das","no","na",
+    "é","ser","são","foi","era","sua","seu","suas","seus","me","minha","meu","meus","minhas","você","vocês","nosso","nossa","nossos",
+    "nossas","também","mais","menos","muito","pouco","já","ainda","até","sobre","entre","dentro","fora","cada","todo","toda","todos",
+    "todas","isso","isto","essa","esse","aquele","aquela","aquilo","seja","há"
+  ]);
+  type DbDoc = {
+    id: string;
+    relPath: string;
+    title: string;
+    text: string;
+    textLower: string;
+  };
+  let DB_DOCS: DbDoc[] = [];
+  const DB_INDEX = new Map<string, { tf: Map<string, number>; len: number }>();
+  let DB_DF = new Map<string, number>();
+  let DB_AVG_LEN = 0;
+
+  const normalizeText = (value: string) =>
+    value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+
+  const tokenize = (value: string) => {
+    const normalized = normalizeText(value).replace(/[^a-z0-9\s]/g, " ");
+    return normalized
+      .split(/\s+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
+  };
+
+  const readMarkdownFiles = (dir: string, baseDir: string, out: DbDoc[]) => {
+    if (!fs.existsSync(dir)) return;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        readMarkdownFiles(fullPath, baseDir, out);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      const raw = fs.readFileSync(fullPath, "utf-8");
+      const relPath = path.relative(baseDir, fullPath).replace(/\\/g, "/");
+      const firstHeading = raw.split("\n").find((line) => line.trim().startsWith("#")) || "";
+      const title = firstHeading.replace(/^#+\s*/, "").trim() || relPath;
+      out.push({
+        id: relPath,
+        relPath,
+        title,
+        text: raw,
+        textLower: normalizeText(raw),
+      });
+    }
+  };
+
+  const loadDatabaseDocs = () => {
+    try {
+      const docs: DbDoc[] = [];
+      readMarkdownFiles(DB_ROOT, DB_ROOT, docs);
+      DB_DOCS = docs;
+      DB_INDEX.clear();
+      DB_DF = new Map();
+      let totalLen = 0;
+      for (const doc of DB_DOCS) {
+        const tokens = tokenize(`${doc.title}\n${doc.text}`);
+        const tf = new Map<string, number>();
+        const seen = new Set<string>();
+        for (const t of tokens) {
+          tf.set(t, (tf.get(t) || 0) + 1);
+          if (!seen.has(t)) {
+            DB_DF.set(t, (DB_DF.get(t) || 0) + 1);
+            seen.add(t);
+          }
+        }
+        totalLen += tokens.length;
+        DB_INDEX.set(doc.id, { tf, len: tokens.length });
+      }
+      DB_AVG_LEN = DB_DOCS.length ? totalLen / DB_DOCS.length : 0;
+      console.log(`Banco de dados carregado: ${DB_DOCS.length} arquivos`);
+    } catch (err) {
+      console.warn("Falha ao carregar banco_de_dados:", err);
+      DB_DOCS = [];
+      DB_INDEX.clear();
+      DB_DF = new Map();
+      DB_AVG_LEN = 0;
+    }
+  };
+  loadDatabaseDocs();
+
+  const isLatLonBbox = (bbox: [number, number, number, number]) => {
+    const [minX, minY, maxX, maxY] = bbox;
+    return (
+      Number.isFinite(minX) &&
+      Number.isFinite(minY) &&
+      Number.isFinite(maxX) &&
+      Number.isFinite(maxY) &&
+      minX >= -180 &&
+      maxX <= 180 &&
+      minY >= -90 &&
+      maxY <= 90
+    );
+  };
+
+  const detectUtmProj = (prjText: string) => {
+    const upper = prjText.toUpperCase();
+    const zoneMatch =
+      upper.match(/UTM[^0-9]*ZONE[^0-9]*(\d{1,2})\s*([NS])?/) ||
+      upper.match(/ZONE[_\s]*(\d{1,2})\s*([NS])?/);
+    if (!zoneMatch) return null;
+    const zone = Number(zoneMatch[1]);
+    if (!Number.isFinite(zone) || zone <= 0 || zone > 60) return null;
+    const hemisphere =
+      zoneMatch[2] ||
+      (upper.includes("SOUTH") || upper.includes("SUL") ? "S" : "N");
+    const south = hemisphere === "S";
+    const proj = `+proj=utm +zone=${zone} ${south ? "+south " : ""}+datum=WGS84 +units=m +no_defs`;
+    return proj.trim();
+  };
+
+  const reprojectPolygon = (polygon: Array<[number, number]>, projDef: string) => {
+    const points: Array<[number, number]> = [];
+    for (const [x, y] of polygon) {
+      const [lon, lat] = proj4(projDef, "EPSG:4326", [x, y]) as [number, number];
+      if (Number.isFinite(lon) && Number.isFinite(lat)) points.push([lon, lat]);
+    }
+    return points;
+  };
+
+  const reprojectBbox = (bbox: [number, number, number, number], projDef: string) => {
+    const [minX, minY, maxX, maxY] = bbox;
+    const corners: Array<[number, number]> = [
+      [minX, minY],
+      [minX, maxY],
+      [maxX, minY],
+      [maxX, maxY],
+    ];
+    const reprojected = corners.map(([x, y]) => proj4(projDef, "EPSG:4326", [x, y]) as [number, number]);
+    const xs = reprojected.map((p) => p[0]).filter(Number.isFinite);
+    const ys = reprojected.map((p) => p[1]).filter(Number.isFinite);
+    if (!xs.length || !ys.length) return bbox;
+    return [
+      Math.min(...xs),
+      Math.min(...ys),
+      Math.max(...xs),
+      Math.max(...ys),
+    ] as [number, number, number, number];
+  };
   const SEMA_WMS_BASE =
     process.env.SEMA_WMS_BASE_URL || "https://geo.sema.mt.gov.br/geoserver/ows";
   const SEMA_WMS_AUTHKEY =
@@ -113,7 +278,6 @@ async function startServer() {
     "Mosaicos:LANDSAT_8_2015",
     "Mosaicos:LANDSAT_8_2016",
     "Mosaicos:LANDSAT_8_2017",
-    "Mosaicos:LANDSAT_8_2018",
     "Mosaicos:MOSAICO_SPOT_SEPLAN",
     "Mosaicos:RESOURCESAT_2012",
     "Mosaicos:SENTINEL_2_2016",
@@ -702,6 +866,7 @@ async function startServer() {
       if (name.endsWith(".zip") || mimeType.includes("zip")) {
         const entries = extractZipEntries(buffer);
         const shp = entries.find((e) => e.name.toLowerCase().endsWith(".shp"));
+        const prj = entries.find((e) => e.name.toLowerCase().endsWith(".prj"));
         if (!shp) {
           const kmlInside = entries.find((e) => e.name.toLowerCase().endsWith(".kml"));
           if (kmlInside) {
@@ -726,10 +891,23 @@ async function startServer() {
           return;
         }
         const polygon = parseShapefileFirstPolygon(shp.data) || undefined;
+        let bbox: [number, number, number, number] = [minX, minY, maxX, maxY];
+        let polygonOut = polygon;
+        let crs = "EPSG:4326";
+        if (!isLatLonBbox(bbox) && prj?.data) {
+          const projDef = detectUtmProj(prj.data.toString("utf8"));
+          if (projDef) {
+            bbox = reprojectBbox(bbox, projDef);
+            if (polygonOut) {
+              polygonOut = reprojectPolygon(polygonOut, projDef);
+            }
+            crs = "EPSG:4326";
+          }
+        }
         res.json({
-          bbox: [minX, minY, maxX, maxY],
-          polygon,
-          crs: "EPSG:4326",
+          bbox,
+          polygon: polygonOut,
+          crs,
           source: "shapefile_zip_header",
         });
         return;
@@ -872,6 +1050,192 @@ async function startServer() {
     return next;
   };
 
+  const extractLatestUserText = (messages: Array<{ role: string; content: any }>) => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const msg = messages[i];
+      if (msg?.role !== "user") continue;
+      if (typeof msg.content === "string") return msg.content;
+      if (Array.isArray(msg.content)) {
+        return msg.content
+          .map((part: any) => (part?.type === "text" ? String(part?.text || "") : ""))
+          .join("\n");
+      }
+    }
+    return "";
+  };
+
+  const buildDbSummaryMessage = () => {
+    const indexDoc = DB_DOCS.find((doc) => doc.relPath.toLowerCase() === "indice.md");
+    if (!indexDoc) return null;
+    const lines = indexDoc.text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith("###") || l.startsWith("- ["));
+    const summary = lines.slice(0, 24).join("\n").slice(0, 1200);
+    if (!summary) return null;
+    return {
+      role: "system" as const,
+      content:
+        "Resumo do Banco de Conhecimento (use para orientar resposta curta e objetiva):\n" +
+        summary,
+    };
+  };
+
+  const scoreDocsBm25 = (terms: string[]) => {
+    const N = DB_DOCS.length || 1;
+    const k1 = 1.2;
+    const b = 0.75;
+    const uniqueTerms = Array.from(new Set(terms));
+    return DB_DOCS.map((doc) => {
+      const idx = DB_INDEX.get(doc.id);
+      if (!idx) return { doc, score: 0 };
+      let score = 0;
+      for (const term of uniqueTerms) {
+        const tf = idx.tf.get(term) || 0;
+        if (!tf) continue;
+        const df = DB_DF.get(term) || 0;
+        const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
+        const denom = tf + k1 * (1 - b + b * (idx.len / (DB_AVG_LEN || 1)));
+        score += idf * ((tf * (k1 + 1)) / denom);
+      }
+      if (doc.title.toLowerCase().includes(uniqueTerms[0] || "")) score += 0.8;
+      if (doc.relPath.toLowerCase().includes(uniqueTerms[0] || "")) score += 0.4;
+      return { doc, score };
+    })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+  };
+
+  const selectDbExcerpts = (messages: Array<{ role: string; content: any }>) => {
+    if (!DB_DOCS.length) return null;
+    const queryText = extractLatestUserText(messages);
+    const terms = tokenize(queryText);
+    if (!terms.length) return null;
+
+    const scored = scoreDocsBm25(terms).slice(0, 4);
+    if (!scored.length) return null;
+
+    const maxExcerptChars = 380;
+    const contextParts: string[] = [];
+    for (const { doc } of scored) {
+      const paragraphs = doc.text
+        .split(/\n\s*\n+/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+      let best = "";
+      let bestScore = -1;
+      for (const p of paragraphs) {
+        const pLower = normalizeText(p);
+        let pScore = 0;
+        for (const term of terms) {
+          if (pLower.includes(term)) pScore += 1;
+        }
+        if (pScore > bestScore) {
+          bestScore = pScore;
+          best = p;
+        }
+      }
+      const excerpt = (best || paragraphs[0] || doc.text).slice(0, maxExcerptChars);
+      contextParts.push(`Fonte: ${doc.relPath}\n${excerpt}`.trim());
+    }
+
+    return { contextParts, queryText };
+  };
+
+  const buildDbContextMessage = (contextParts: string[]) => {
+    if (!contextParts.length) return null;
+    const contextText = contextParts.join("\n\n");
+    return {
+      role: "system",
+      content:
+        "Use apenas a Base de Conhecimento a seguir para responder de forma objetiva e curta. " +
+        "Se houver base legal, cite a lei/norma com número e ano. " +
+        "Se não houver base suficiente, diga o que falta. " +
+        "Cite a fonte usando [arquivo].\n\n" +
+        "Base de Conhecimento:\n" +
+        contextText,
+    };
+  };
+
+  const insertSystemContext = (
+    messages: Array<{ role: string; content: any }>,
+    systemMessage: { role: "system"; content: string }
+  ) => {
+    let idx = 0;
+    while (idx < messages.length && messages[idx]?.role === "system") idx += 1;
+    return [...messages.slice(0, idx), systemMessage, ...messages.slice(idx)];
+  };
+
+  const callGroqChat = async (
+    apiKey: string,
+    model: string,
+    messages: Array<{ role: string; content: any }>,
+    maxTokens: number,
+    temperature: number
+  ) => {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature,
+        max_tokens: maxTokens,
+        messages,
+      }),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `Erro ${response.status}`);
+    }
+    const data = await response.json();
+    return String(data?.choices?.[0]?.message?.content || "");
+  };
+
+  const buildDbSummaryFromExcerpts = async (
+    apiKey: string,
+    queryText: string,
+    contextParts: string[]
+  ) => {
+    if (!DB_SUMMARY_ENABLED) return null;
+    if (!contextParts.length) return null;
+    const summaryPrompt = [
+      "Resuma de forma curta, técnica e objetiva.",
+      "Use apenas o conteúdo fornecido.",
+      "Cite as fontes no formato [arquivo].",
+      "Se faltar base legal, diga explicitamente.",
+    ].join(" ");
+    const summaryMessages = [
+      { role: "system", content: summaryPrompt },
+      {
+        role: "user",
+        content:
+          `Pergunta do usuário: ${queryText}\n\n` +
+          "Excertos da base:\n" +
+          contextParts.join("\n\n"),
+      },
+    ];
+    try {
+      const summary = await callGroqChat(
+        apiKey,
+        DB_SUMMARY_MODEL,
+        summaryMessages,
+        DB_SUMMARY_MAX_TOKENS,
+        0.1
+      );
+      if (!summary.trim()) return null;
+      return {
+        role: "system" as const,
+        content: "Resumo guiado da Base de Conhecimento:\n" + summary.trim(),
+      };
+    } catch (err) {
+      console.warn("Falha ao gerar resumo do banco:", err);
+      return null;
+    }
+  };
+
   app.post("/api/chat", async (req, res) => {
     try {
       console.log("[/api/chat] request received");
@@ -902,10 +1266,37 @@ async function startServer() {
         : pendingPdf
           ? [pendingPdf]
           : [];
-      const messagesForModel = await injectPendingPdfContext(messages, normalizedPendingPdfs);
+      let messagesForModel = await injectPendingPdfContext(messages, normalizedPendingPdfs);
+      const dbSelection = selectDbExcerpts(messagesForModel);
+      if (dbSelection) {
+        const dbContextMessage = buildDbContextMessage(dbSelection.contextParts);
+        if (dbContextMessage) {
+          messagesForModel = insertSystemContext(messagesForModel, dbContextMessage);
+        }
+        const guidedSummary = await buildDbSummaryFromExcerpts(
+          apiKey,
+          dbSelection.queryText,
+          dbSelection.contextParts
+        );
+        if (guidedSummary) {
+          messagesForModel = insertSystemContext(messagesForModel, guidedSummary);
+        }
+      } else {
+        const dbSummary = buildDbSummaryMessage();
+        if (dbSummary) messagesForModel = insertSystemContext(messagesForModel, dbSummary);
+      }
 
       const useAuto = model === "auto" || (!model && autoModel);
-      const resolvedModel = useAuto ? autoSelectModel(messagesForModel) : model || defaultModel;
+      const hasImageInput = messagesForModel.some(
+        (m) =>
+          Array.isArray(m?.content) &&
+          m.content.some((part: any) => part?.type === "image_url" && part?.image_url?.url)
+      );
+      const resolvedModel = hasImageInput
+        ? IMAGE_ANALYSIS_MODEL
+        : useAuto
+          ? autoSelectModel(messagesForModel)
+          : model || defaultModel;
       if (!MODEL_IDS.has(resolvedModel)) {
         console.error("[/api/chat] model not allowed:", resolvedModel);
         res.status(400).json({ error: "Modelo não permitido." });
@@ -913,8 +1304,9 @@ async function startServer() {
       }
 
       console.log("[/api/chat] model:", resolvedModel);
-      const fallbackOrder =
-        resolvedModel === "openai/gpt-oss-120b"
+      const fallbackOrder = hasImageInput
+        ? [IMAGE_ANALYSIS_MODEL, ...IMAGE_ANALYSIS_FALLBACKS]
+        : resolvedModel === "openai/gpt-oss-120b"
           ? ["openai/gpt-oss-120b", "qwen/qwen3-32b", "meta-llama/llama-3.3-70b-versatile"]
           : [resolvedModel, "openai/gpt-oss-120b", "qwen/qwen3-32b"];
       let data: any = null;
@@ -985,10 +1377,37 @@ async function startServer() {
         : pendingPdf
           ? [pendingPdf]
           : [];
-      const messagesForModel = await injectPendingPdfContext(messages, normalizedPendingPdfs);
+      let messagesForModel = await injectPendingPdfContext(messages, normalizedPendingPdfs);
+      const dbSelection = selectDbExcerpts(messagesForModel);
+      if (dbSelection) {
+        const dbContextMessage = buildDbContextMessage(dbSelection.contextParts);
+        if (dbContextMessage) {
+          messagesForModel = insertSystemContext(messagesForModel, dbContextMessage);
+        }
+        const guidedSummary = await buildDbSummaryFromExcerpts(
+          apiKey,
+          dbSelection.queryText,
+          dbSelection.contextParts
+        );
+        if (guidedSummary) {
+          messagesForModel = insertSystemContext(messagesForModel, guidedSummary);
+        }
+      } else {
+        const dbSummary = buildDbSummaryMessage();
+        if (dbSummary) messagesForModel = insertSystemContext(messagesForModel, dbSummary);
+      }
 
       const useAuto = model === "auto" || (!model && AUTO_MODEL);
-      const resolvedModel = useAuto ? autoSelectModel(messagesForModel) : model || DEFAULT_MODEL;
+      const hasImageInput = messagesForModel.some(
+        (m) =>
+          Array.isArray(m?.content) &&
+          m.content.some((part: any) => part?.type === "image_url" && part?.image_url?.url)
+      );
+      const resolvedModel = hasImageInput
+        ? IMAGE_ANALYSIS_MODEL
+        : useAuto
+          ? autoSelectModel(messagesForModel)
+          : model || DEFAULT_MODEL;
       if (!MODEL_IDS.has(resolvedModel)) {
         res.status(400).json({ error: "Modelo não permitido." });
         return;
@@ -1011,10 +1430,8 @@ async function startServer() {
       );
       const continuationPool = hasImageInput
         ? [
-            "meta-llama/llama-4-maverick-17b-128e-instruct",
+            ...IMAGE_ANALYSIS_FALLBACKS,
             "meta-llama/llama-4-scout-17b-16e-instruct",
-            "openai/gpt-oss-120b",
-            "qwen/qwen3-32b",
           ]
         : [
             "openai/gpt-oss-120b",
