@@ -504,6 +504,9 @@ export default function Dashboard() {
   const [mapPolygon, setMapPolygon] = useState<Array<[number, number]>>([]);
   const [mapPreviewDataUrl, setMapPreviewDataUrl] = useState('');
   const [mapPreviewLoading, setMapPreviewLoading] = useState(false);
+  const mapPreviewCacheRef = useRef<Map<string, string>>(new Map());
+  const mapPreviewAbortRef = useRef<AbortController | null>(null);
+  const MAX_MAP_PREVIEW_CACHE = 24;
   const [mapDragging, setMapDragging] = useState(false);
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
   const [mapRectSelection, setMapRectSelection] = useState<{
@@ -1056,22 +1059,68 @@ export default function Dashboard() {
     }
   };
 
+  const buildMapPreviewKey = (
+    layer: string,
+    bbox: [number, number, number, number],
+    width: number,
+    height: number,
+    format: string,
+    crs: string
+  ) => `${layer}|${bbox.join(',')}|${crs}|${width}x${height}|${format}`;
+
+  const storeMapPreviewCache = (key: string, dataUrl: string) => {
+    const cache = mapPreviewCacheRef.current;
+    if (cache.has(key)) {
+      cache.delete(key);
+    }
+    cache.set(key, dataUrl);
+    if (cache.size > MAX_MAP_PREVIEW_CACHE) {
+      const oldestKey = cache.keys().next().value;
+      if (oldestKey) cache.delete(oldestKey);
+    }
+  };
+
+  const preloadImage = (src: string) =>
+    new Promise<void>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('Falha ao pré-carregar imagem.'));
+      img.src = src;
+    });
+
   const refreshMapPreview = async (layerName?: string, bboxValue?: [number, number, number, number]) => {
     const effectiveLayer = layerName || selectedMapLayer;
     const effectiveBbox = bboxValue || mapBbox;
     if (!effectiveLayer) return;
+    const width = 1100;
+    const height = 700;
+    const format = 'image/png';
+    const crs = 'EPSG:4326';
+    const cacheKey = buildMapPreviewKey(effectiveLayer, effectiveBbox, width, height, format, crs);
+    const cached = mapPreviewCacheRef.current.get(cacheKey);
+    if (cached) {
+      setMapPreviewDataUrl(cached);
+      return;
+    }
+
     setMapPreviewLoading(true);
+    if (mapPreviewAbortRef.current) {
+      mapPreviewAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    mapPreviewAbortRef.current = controller;
     try {
       const res = await fetch('/api/map/snapshot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           layerName: effectiveLayer,
           bbox: effectiveBbox,
-          crs: 'EPSG:4326',
-          width: 1100,
-          height: 700,
-          format: 'image/png',
+          crs,
+          width,
+          height,
+          format,
         }),
       });
       if (!res.ok) {
@@ -1094,9 +1143,20 @@ export default function Dashboard() {
         throw new Error(payload?.error || 'Falha ao carregar prévia do mapa');
       }
       const data = await res.json();
-      setMapPreviewDataUrl(String(data?.dataUrl || ''));
+      const dataUrl = String(data?.dataUrl || '');
+      if (!dataUrl) throw new Error('Prévia do mapa não retornou imagem.');
+      await preloadImage(dataUrl);
+      storeMapPreviewCache(cacheKey, dataUrl);
+      setMapPreviewDataUrl(dataUrl);
     } catch (error: any) {
+      if (error?.name === 'AbortError') return;
       const directUrl = buildDirectWmsGetMapUrl(effectiveLayer, effectiveBbox, 1100, 700, 'image/png');
+      try {
+        await preloadImage(directUrl);
+      } catch {
+        // ignore preload errors
+      }
+      storeMapPreviewCache(cacheKey, directUrl);
       setMapPreviewDataUrl(directUrl);
       toast.error('WMS via backend falhou. Usando prévia direta do WMS.');
     } finally {
@@ -1216,7 +1276,7 @@ export default function Dashboard() {
     }
     mapWheelDebounceRef.current = window.setTimeout(() => {
       refreshMapPreview(undefined, nextBbox);
-    }, 150);
+    }, 300);
   };
 
   const startMapDrag = (event: React.MouseEvent<HTMLDivElement>) => {

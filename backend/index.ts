@@ -1414,15 +1414,26 @@ async function startServer() {
   });
 
   const keepAliveUrl = process.env.KEEP_ALIVE_URL;
-  const keepAliveInterval = Number(process.env.KEEP_ALIVE_INTERVAL_MS ?? "840000"); // 14 min
+  const keepAliveInterval = Number(process.env.KEEP_ALIVE_INTERVAL_MS ?? "300000"); // 5 min
   if (keepAliveUrl) {
-    setInterval(async () => {
+    const ping = async () => {
       try {
-        await fetch(keepAliveUrl, { method: "GET" });
+        const res = await fetch(keepAliveUrl, { method: "GET" });
+        if (!res.ok) {
+          console.warn(`Keep-alive respondeu ${res.status} ${res.statusText}`);
+        } else {
+          console.log(`Keep-alive ok (${res.status}) em ${new Date().toISOString()}`);
+        }
       } catch (err) {
         console.warn("Keep-alive falhou:", err);
       }
-    }, keepAliveInterval).unref();
+    };
+
+    console.log(`Keep-alive ativo: ${keepAliveUrl} a cada ${keepAliveInterval}ms`);
+    ping().catch(() => undefined);
+    setInterval(ping, keepAliveInterval).unref();
+  } else {
+    console.warn("Keep-alive desativado: defina KEEP_ALIVE_URL.");
   }
 }
 

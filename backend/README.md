@@ -8,7 +8,7 @@ CLOUDINARY_API_SECRET=SEU_API_SECRET
 ## Variaveis opcionais (Render)
 CLOUDINARY_FOLDER=geoforest
 KEEP_ALIVE_URL=https://SEU_SERVICO.onrender.com/api/health
-KEEP_ALIVE_INTERVAL_MS=840000
+KEEP_ALIVE_INTERVAL_MS=300000
 SEMA_WMS_BASE_URL=https://geo.sema.mt.gov.br/geoserver/ows
 SEMA_WMS_AUTHKEY=SEU_AUTHKEY_SEMA
 
@@ -36,7 +36,7 @@ SEMA_WMS_AUTHKEY=SEU_AUTHKEY_SEMA
 - CLOUDINARY_API_SECRET: api secret do Cloudinary. Obrigatoria.
 - CLOUDINARY_FOLDER: pasta de destino no Cloudinary. Opcional.
 - KEEP_ALIVE_URL: URL que o backend pinga periodicamente para nao dormir (use /api/health). Opcional.
-- KEEP_ALIVE_INTERVAL_MS: intervalo do keep-alive em ms (ex: 840000 = 14 min). Opcional.
+- KEEP_ALIVE_INTERVAL_MS: intervalo do keep-alive em ms (ex: 300000 = 5 min). Opcional.
 
 ## Observacoes
 - Nao coloque chaves no codigo.
