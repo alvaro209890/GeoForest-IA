@@ -510,6 +510,8 @@ export default function Dashboard() {
   const [mapDragOffset, setMapDragOffset] = useState({ x: 0, y: 0 });
   const [simcarDigitalLayers, setSimcarDigitalLayers] = useState<{ name: string; title: string }[]>([]);
   const [selectedSimcarOverlays, setSelectedSimcarOverlays] = useState<string[]>([]);
+  const [mapSectionOpen, setMapSectionOpen] = useState<Record<string, boolean>>({ imagery: true, simcar: true, advanced: false });
+  const [simcarSearchFilter, setSimcarSearchFilter] = useState('');
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
   const [mapRectSelection, setMapRectSelection] = useState<{
     left: number;
@@ -2951,183 +2953,271 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </button>
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] min-h-0 flex-1">
-                <div className="border-r border-white/10 p-4 space-y-4 overflow-auto custom-scrollbar">
-                  <div>
-                    <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Camada WMS (SEMA)</p>
-                    <select
-                      value={selectedMapLayer}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setSelectedMapLayer(v);
-                        refreshMapPreview(v, mapBbox);
-                      }}
-                      className="w-full bg-[#050b08] border border-white/10 rounded-lg text-xs text-slate-300 py-2 px-3 outline-none focus:border-emerald-500/50"
+                <div className="border-r border-white/10 overflow-auto custom-scrollbar flex flex-col">
+                  {/* ── Section: Camada Base (Imagery) ── */}
+                  <div className="border-b border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setMapSectionOpen((s) => ({ ...s, imagery: !s.imagery }))}
+                      className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
                     >
-                      {groupedImageLayerEntries.map(([groupName, layers]) =>
-                        layers.length ? (
-                          <optgroup key={groupName} label={groupName}>
-                            {layers.map((layer) => (
-                              <option key={layer.name} value={layer.name}>
-                                {layer.title} {layer.inferredYear ? `(${layer.inferredYear})` : ''}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ) : null
-                      )}
-                    </select>
-                  </div>
-                  {simcarDigitalLayers.length > 0 && (
-                    <div>
-                      <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Camadas SIMCAR Digital (Overlay)</p>
-                      <div className="max-h-48 overflow-auto custom-scrollbar rounded-lg border border-white/10 bg-white/5 p-2 space-y-1">
-                        {simcarDigitalLayers.map((layer) => (
-                          <label key={layer.name} className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 hover:text-emerald-200 py-0.5">
-                            <input
-                              type="checkbox"
-                              checked={selectedSimcarOverlays.includes(layer.name)}
-                              onChange={(e) => {
-                                const next = e.target.checked
-                                  ? [...selectedSimcarOverlays, layer.name]
-                                  : selectedSimcarOverlays.filter((n) => n !== layer.name);
-                                setSelectedSimcarOverlays(next);
-                                refreshMapPreview(undefined, undefined, next);
-                              }}
-                              className="accent-emerald-500 w-3.5 h-3.5"
-                            />
-                            {layer.title}
-                          </label>
-                        ))}
+                      <div className="flex items-center gap-2">
+                        <Layers size={14} className="text-emerald-400" />
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Camada Base</span>
                       </div>
-                      {selectedSimcarOverlays.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedSimcarOverlays([]);
-                            refreshMapPreview(undefined, undefined, []);
-                          }}
-                          className="mt-1 text-[10px] text-slate-500 hover:text-emerald-300 underline"
-                        >
-                          Limpar overlays ({selectedSimcarOverlays.length})
-                        </button>
+                      <div className="flex items-center gap-2">
+                        {selectedMapLayer && (
+                          <span className="text-[10px] text-emerald-400/80 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                            {mapImageLayers.find((l) => l.name === selectedMapLayer)?.inferredYear || '1'}
+                          </span>
+                        )}
+                        <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.imagery ? '' : '-rotate-90'}`} />
+                      </div>
+                    </button>
+                    {mapSectionOpen.imagery && (
+                      <div className="px-3 pb-3 space-y-1">
+                        {groupedImageLayerEntries.map(([groupName, layers]) => {
+                          if (!layers.length) return null;
+                          return (
+                            <div key={groupName}>
+                              <p className="text-[10px] uppercase tracking-wider text-slate-500 font-medium px-1 pt-2 pb-1">{groupName}</p>
+                              <div className="space-y-0.5">
+                                {layers.map((layer) => {
+                                  const isActive = selectedMapLayer === layer.name;
+                                  return (
+                                    <button
+                                      key={layer.name}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedMapLayer(layer.name);
+                                        refreshMapPreview(layer.name, mapBbox);
+                                      }}
+                                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition-all ${isActive
+                                          ? 'bg-emerald-500/15 text-emerald-200 border border-emerald-500/30'
+                                          : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+                                        }`}
+                                    >
+                                      <div className={`w-2.5 h-2.5 rounded-full border-2 flex-shrink-0 transition-colors ${isActive ? 'border-emerald-400 bg-emerald-400' : 'border-slate-600'
+                                        }`} />
+                                      <span className="truncate flex-1">{layer.title}</span>
+                                      {layer.inferredYear && (
+                                        <span className={`text-[10px] flex-shrink-0 ${isActive ? 'text-emerald-300' : 'text-slate-600'}`}>{layer.inferredYear}</span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── Section: SIMCAR Digital Overlays ── */}
+                  {simcarDigitalLayers.length > 0 && (
+                    <div className="border-b border-white/10">
+                      <button
+                        type="button"
+                        onClick={() => setMapSectionOpen((s) => ({ ...s, simcar: !s.simcar }))}
+                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Shield size={14} className="text-amber-400" />
+                          <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Overlays SIMCAR</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {selectedSimcarOverlays.length > 0 && (
+                            <span className="text-[10px] text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded font-medium">
+                              {selectedSimcarOverlays.length}
+                            </span>
+                          )}
+                          <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.simcar ? '' : '-rotate-90'}`} />
+                        </div>
+                      </button>
+                      {mapSectionOpen.simcar && (
+                        <div className="px-3 pb-3 space-y-2">
+                          {/* Search input */}
+                          <div className="relative">
+                            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+                            <input
+                              type="text"
+                              value={simcarSearchFilter}
+                              onChange={(e) => setSimcarSearchFilter(e.target.value)}
+                              placeholder="Buscar camada..."
+                              className="w-full bg-[#050b08] border border-white/10 rounded-md text-xs text-slate-300 py-1.5 pl-7 pr-2 outline-none focus:border-emerald-500/50 placeholder:text-slate-600"
+                            />
+                          </div>
+                          {/* Select all / Clear all */}
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const filtered = simcarDigitalLayers
+                                  .filter((l) => !simcarSearchFilter || l.title.toLowerCase().includes(simcarSearchFilter.toLowerCase()))
+                                  .map((l) => l.name);
+                                const merged = [...new Set([...selectedSimcarOverlays, ...filtered])];
+                                setSelectedSimcarOverlays(merged);
+                                refreshMapPreview(undefined, undefined, merged);
+                              }}
+                              className="text-[10px] text-slate-500 hover:text-emerald-300 transition-colors"
+                            >
+                              Selecionar todos
+                            </button>
+                            <span className="text-slate-700">|</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedSimcarOverlays([]);
+                                refreshMapPreview(undefined, undefined, []);
+                              }}
+                              className="text-[10px] text-slate-500 hover:text-red-300 transition-colors"
+                            >
+                              Limpar todos
+                            </button>
+                          </div>
+                          {/* Layer list */}
+                          <div className="max-h-52 overflow-auto custom-scrollbar space-y-0.5">
+                            {simcarDigitalLayers
+                              .filter((l) => !simcarSearchFilter || l.title.toLowerCase().includes(simcarSearchFilter.toLowerCase()))
+                              .map((layer) => {
+                                const isChecked = selectedSimcarOverlays.includes(layer.name);
+                                return (
+                                  <label key={layer.name} className={`flex items-center gap-2 cursor-pointer text-xs py-1.5 px-2 rounded-md transition-all ${isChecked ? 'bg-amber-500/10 text-amber-200' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+                                    }`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={(e) => {
+                                        const next = e.target.checked
+                                          ? [...selectedSimcarOverlays, layer.name]
+                                          : selectedSimcarOverlays.filter((n) => n !== layer.name);
+                                        setSelectedSimcarOverlays(next);
+                                        refreshMapPreview(undefined, undefined, next);
+                                      }}
+                                      className="accent-amber-500 w-3.5 h-3.5 flex-shrink-0"
+                                    />
+                                    <span className="truncate">{layer.title}</span>
+                                  </label>
+                                );
+                              })}
+                          </div>
+                        </div>
                       )}
                     </div>
                   )}
-                  <div className="rounded-lg border border-white/10 bg-white/5 p-3">
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Navegação por mouse: arraste para mover o mapa e use a roda para zoom. A prévia e o snapshot
-                      são carregados direto do WMS da SEMA.
+
+                  {/* ── Section: Advanced / Tools ── */}
+                  <div className="border-b border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setMapSectionOpen((s) => ({ ...s, advanced: !s.advanced }))}
+                      className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Settings size={14} className="text-slate-400" />
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Avançado</span>
+                      </div>
+                      <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.advanced ? '' : '-rotate-90'}`} />
+                    </button>
+                    {mapSectionOpen.advanced && (
+                      <div className="px-3 pb-3 space-y-3">
+                        <label className="inline-flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs cursor-pointer">
+                          <FileText size={14} className="text-emerald-300" />
+                          Importar área (.kml/.zip)
+                          <input
+                            type="file"
+                            accept=".kml,.zip,application/vnd.google-earth.kml+xml,application/zip"
+                            className="hidden"
+                            onChange={(e) => {
+                              onPickAreaFile(e.target.files?.[0] || null);
+                              e.currentTarget.value = '';
+                            }}
+                          />
+                        </label>
+                        <div className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-2">
+                          <p className="text-[10px] uppercase tracking-wider text-slate-500">BBox (fallback manual)</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <input type="number" step="0.000001" value={mapBbox[0]} onChange={(e) => setMapBbox([Number(e.target.value), mapBbox[1], mapBbox[2], mapBbox[3]])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="minX" />
+                            <input type="number" step="0.000001" value={mapBbox[1]} onChange={(e) => setMapBbox([mapBbox[0], Number(e.target.value), mapBbox[2], mapBbox[3]])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="minY" />
+                            <input type="number" step="0.000001" value={mapBbox[2]} onChange={(e) => setMapBbox([mapBbox[0], mapBbox[1], Number(e.target.value), mapBbox[3]])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="maxX" />
+                            <input type="number" step="0.000001" value={mapBbox[3]} onChange={(e) => setMapBbox([mapBbox[0], mapBbox[1], mapBbox[2], Number(e.target.value)])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="maxY" />
+                          </div>
+                          <p className="text-[10px] text-slate-500">Coordenadas em EPSG:4326 (longitude/latitude).</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── Hint ── */}
+                  <div className="px-4 py-3">
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      🖱️ Arraste para mover, roda para zoom. Prévia e snapshot carregados via WMS SEMA.
                     </p>
                   </div>
-                  <label className="inline-flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs cursor-pointer">
-                    <FileText size={14} className="text-emerald-300" />
-                    Importar área (.kml/.zip)
-                    <input
-                      type="file"
-                      accept=".kml,.zip,application/vnd.google-earth.kml+xml,application/zip"
-                      className="hidden"
-                      onChange={(e) => {
-                        onPickAreaFile(e.target.files?.[0] || null);
-                        e.currentTarget.value = '';
-                      }}
-                    />
-                  </label>
-                  <div className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-2">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">BBox (fallback manual)</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="number"
-                        step="0.000001"
-                        value={mapBbox[0]}
-                        onChange={(e) => setMapBbox([Number(e.target.value), mapBbox[1], mapBbox[2], mapBbox[3]])}
-                        className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300"
-                        placeholder="minX"
-                      />
-                      <input
-                        type="number"
-                        step="0.000001"
-                        value={mapBbox[1]}
-                        onChange={(e) => setMapBbox([mapBbox[0], Number(e.target.value), mapBbox[2], mapBbox[3]])}
-                        className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300"
-                        placeholder="minY"
-                      />
-                      <input
-                        type="number"
-                        step="0.000001"
-                        value={mapBbox[2]}
-                        onChange={(e) => setMapBbox([mapBbox[0], mapBbox[1], Number(e.target.value), mapBbox[3]])}
-                        className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300"
-                        placeholder="maxX"
-                      />
-                      <input
-                        type="number"
-                        step="0.000001"
-                        value={mapBbox[3]}
-                        onChange={(e) => setMapBbox([mapBbox[0], mapBbox[1], mapBbox[2], Number(e.target.value)])}
-                        className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300"
-                        placeholder="maxY"
-                      />
+
+                  {/* ── Action Buttons ── */}
+                  <div className="mt-auto px-3 pb-3 space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => refreshMapPreview()}
+                      disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
+                      className={`w-full py-2 rounded-lg text-xs font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer
+                        ? 'bg-white/5 text-slate-600 cursor-not-allowed'
+                        : 'bg-white/10 text-slate-300 hover:bg-white/15'
+                        }`}
+                    >
+                      {mapPreviewLoading ? 'Atualizando prévia...' : 'Atualizar Prévia'}
+                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!mapOriginalPolygonBbox) return;
+                          setMapBbox(mapOriginalPolygonBbox);
+                          setMapRectZoomMode(false);
+                          setMapRectSelection(null);
+                          mapRectStateRef.current = null;
+                          refreshMapPreview(undefined, mapOriginalPolygonBbox);
+                        }}
+                        disabled={mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox}
+                        className={`flex-1 py-2 rounded-lg text-xs font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox
+                          ? 'bg-white/5 text-slate-600 cursor-not-allowed'
+                          : 'bg-white/10 text-slate-300 hover:bg-white/15'
+                          }`}
+                      >
+                        Zoom Original
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMapRectZoomMode((prev) => !prev);
+                          setMapRectSelection(null);
+                          mapRectStateRef.current = null;
+                        }}
+                        disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
+                        className={`flex-1 py-2 rounded-lg text-xs font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer
+                          ? 'bg-white/5 text-slate-600 cursor-not-allowed'
+                          : mapRectZoomMode
+                            ? 'bg-amber-500/25 text-amber-200 border border-amber-400/30'
+                            : 'bg-white/10 text-slate-300 hover:bg-white/15'
+                          }`}
+                      >
+                        {mapRectZoomMode ? 'Cancelar Zoom' : 'Zoom Retângulo'}
+                      </button>
                     </div>
-                    <p className="text-[10px] text-slate-500">
-                      Coordenadas em EPSG:4326 (longitude/latitude).
-                    </p>
+                    <button
+                      type="button"
+                      onClick={captureVisibleMapArea}
+                      disabled={mapLoading || mapCapturing || !selectedMapLayer}
+                      className={`w-full py-2.5 rounded-lg text-sm font-semibold transition ${mapLoading || mapCapturing || !selectedMapLayer
+                        ? 'bg-white/5 text-slate-600 cursor-not-allowed'
+                        : 'bg-emerald-500 text-white hover:bg-emerald-400 shadow-lg shadow-emerald-500/20'
+                        }`}
+                    >
+                      {mapCapturing ? 'Capturando...' : '📸 Capturar Área Visível'}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => refreshMapPreview()}
-                    disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
-                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer
-                      ? 'bg-white/10 text-slate-500 cursor-not-allowed'
-                      : 'bg-white/10 text-slate-200 hover:bg-white/20'
-                      }`}
-                  >
-                    {mapPreviewLoading ? 'Atualizando prévia...' : 'Atualizar Prévia WMS'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!mapOriginalPolygonBbox) return;
-                      setMapBbox(mapOriginalPolygonBbox);
-                      setMapRectZoomMode(false);
-                      setMapRectSelection(null);
-                      mapRectStateRef.current = null;
-                      refreshMapPreview(undefined, mapOriginalPolygonBbox);
-                    }}
-                    disabled={mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox}
-                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox
-                      ? 'bg-white/10 text-slate-500 cursor-not-allowed'
-                      : 'bg-white/10 text-slate-200 hover:bg-white/20'
-                      }`}
-                  >
-                    Voltar ao Zoom Original
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMapRectZoomMode((prev) => !prev);
-                      setMapRectSelection(null);
-                      mapRectStateRef.current = null;
-                    }}
-                    disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
-                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer
-                      ? 'bg-white/10 text-slate-500 cursor-not-allowed'
-                      : mapRectZoomMode
-                        ? 'bg-amber-500/30 text-amber-100 border border-amber-400/40'
-                        : 'bg-white/10 text-slate-200 hover:bg-white/20'
-                      }`}
-                  >
-                    {mapRectZoomMode ? 'Cancelar Zoom por Retângulo' : 'Zoom por Retângulo'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={captureVisibleMapArea}
-                    disabled={mapLoading || mapCapturing || !selectedMapLayer}
-                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${mapLoading || mapCapturing || !selectedMapLayer
-                      ? 'bg-white/10 text-slate-500 cursor-not-allowed'
-                      : 'bg-emerald-500 text-white hover:bg-emerald-400'
-                      }`}
-                  >
-                    {mapCapturing ? 'Capturando...' : 'Capturar Área Visível'}
-                  </button>
                 </div>
                 <div className="relative min-h-0">
                   {mapLoading || mapPreviewLoading ? (

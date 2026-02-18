@@ -492,14 +492,32 @@ async function startServer() {
       capUrl.searchParams.set("authkey", SEMA_WMS_AUTHKEY);
     }
 
-    const response = await fetch(capUrl.toString());
+    const finalUrl = capUrl.toString();
+    console.log("[WMS] Fetching capabilities from:", finalUrl.replace(SEMA_WMS_AUTHKEY, "***"));
+    const t0 = Date.now();
+
+    let response: Response;
+    try {
+      response = await fetch(finalUrl);
+    } catch (fetchErr: any) {
+      console.error("[WMS] Network error fetching capabilities:", fetchErr?.message || fetchErr);
+      throw new Error(`Erro de rede ao buscar capabilities: ${fetchErr?.message}`);
+    }
+
+    const elapsed = Date.now() - t0;
+    console.log(`[WMS] Capabilities response: status=${response.status}, time=${elapsed}ms`);
+
     if (!response.ok) {
       const text = await response.text();
+      console.error(`[WMS] Capabilities HTTP error ${response.status}:`, text.slice(0, 300));
       throw new Error(
         `Falha ao carregar capabilities da SEMA (${response.status}): ${text.slice(0, 220)}`
       );
     }
-    return response.text();
+
+    const xml = await response.text();
+    console.log(`[WMS] Capabilities XML received: ${xml.length} chars`);
+    return xml;
   };
 
   const fetchSemamtImageryLayers = async () => {
@@ -671,8 +689,11 @@ async function startServer() {
 
   app.get("/api/map/capabilities", async (_req, res) => {
     try {
+      console.log("[API] GET /api/map/capabilities — iniciando...");
       const xml = await fetchSemamtCapabilitiesXml();
       const parsed = parseLayersFromCapabilities(xml);
+      console.log(`[API] Capabilities parsed: ${parsed.length} layers total`);
+
       const parsedImagery = toImageryLayers(parsed).map((l) => ({
         name: l.name,
         title: l.title,
@@ -680,6 +701,8 @@ async function startServer() {
         inferredYear: l.inferredYear,
         group: l.group,
       }));
+      console.log(`[API] Imagery layers: ${parsedImagery.length}`);
+
       const byLowerName = new Map(parsedImagery.map((l) => [l.name.toLowerCase(), l]));
       const curatedImagery = CURATED_IMAGERY_LAYER_NAMES.map((name) => {
         const existing = byLowerName.get(name.toLowerCase());
@@ -704,13 +727,17 @@ async function startServer() {
           imagery.push(layer);
         }
       }
+      console.log(`[API] Final imagery count: ${imagery.length}`);
+
       const shapeLayers = toShapeLayers(parsed).map((l) => ({
         name: l.name,
         title: l.title,
         crs: l.crs,
       }));
+      console.log(`[API] Shape layers: ${shapeLayers.length}`);
 
       const simcarDigitalLayers = toSimcarDigitalLayers(parsed);
+      console.log(`[API] SIMCAR Digital layers: ${simcarDigitalLayers.length}`, simcarDigitalLayers.map((l) => l.name));
 
       const defaultLayer =
         imagery.find((l) => l.name === "Mosaicos:LANDSAT_5_2008")?.name ||
@@ -718,6 +745,9 @@ async function startServer() {
         imagery.find((l) => l.group === "spot")?.name ||
         imagery.find((l) => l.group === "sentinel")?.name ||
         imagery[0]?.name;
+
+      console.log(`[API] Default layer: ${defaultLayer}`);
+      console.log("[API] GET /api/map/capabilities — sucesso");
 
       res.json({
         serviceTitle: "SEMA WMS",
@@ -731,7 +761,8 @@ async function startServer() {
         },
       });
     } catch (error: any) {
-      console.error("Erro no /api/map/capabilities:", error);
+      console.error("Erro no /api/map/capabilities:", error?.message || error);
+      console.error("Stack:", error?.stack);
       res.status(500).json({ error: error?.message || "Erro interno" });
     }
   });
@@ -755,6 +786,8 @@ async function startServer() {
         height?: number;
         format?: "image/png" | "image/jpeg";
       };
+
+      console.log(`[API] POST /api/map/snapshot — layer=${layerName}, bbox=${JSON.stringify(bbox)}, overlays=${JSON.stringify(overlayLayers)}, size=${width}x${height}`);
 
       if (!layerName || !bbox || !Array.isArray(bbox) || bbox.length !== 4) {
         res.status(400).json({ error: "Parâmetros inválidos para snapshot de mapa." });
