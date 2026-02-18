@@ -2963,7 +2963,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     >
                       <div className="flex items-center gap-2">
                         <Layers size={14} className="text-emerald-400" />
-                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Camada Base</span>
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Imagens de Satélite</span>
                       </div>
                       <div className="flex items-center gap-2">
                         {selectedMapLayer && (

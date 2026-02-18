@@ -311,8 +311,9 @@ async function startServer() {
       children: number;
     };
     const tokenRegex =
-      /<Layer\b[^>]*>|<\/Layer>|<Name>\s*([^<]+)\s*<\/Name>|<Title>\s*([^<]+)\s*<\/Title>|<(?:CRS|SRS)>\s*([^<]+)\s*<\/(?:CRS|SRS)>/gi;
+      /<Layer\b[^>]*>|<\/Layer>|<Style\b[^>]*>|<\/Style>|<Name>\s*([^<]+)\s*<\/Name>|<Title>\s*([^<]+)\s*<\/Title>|<(?:CRS|SRS)>\s*([^<]+)\s*<\/(?:CRS|SRS)>/gi;
     const stack: Node[] = [];
+    let insideStyle = 0;
     const out: Array<{
       name: string;
       title: string;
@@ -327,6 +328,16 @@ async function startServer() {
     let match: RegExpExecArray | null;
     while ((match = tokenRegex.exec(xml)) !== null) {
       const token = match[0];
+      if (/^<Style\b/i.test(token)) {
+        insideStyle += 1;
+        continue;
+      }
+      if (/^<\/Style>/i.test(token)) {
+        insideStyle = Math.max(0, insideStyle - 1);
+        continue;
+      }
+      if (insideStyle > 0) continue; // skip everything inside <Style>
+
       if (/^<Layer\b/i.test(token)) {
         const parent = stack[stack.length - 1];
         if (parent) parent.children += 1;
@@ -354,7 +365,6 @@ async function startServer() {
               ? "sentinel"
               : "other";
         const isLeaf = node.children === 0;
-        // Some servers publish requestable layers with children. Keep every named layer.
         const isRenderable = !!name.includes(":");
         out.push({
           name,
@@ -371,9 +381,10 @@ async function startServer() {
       const current = stack[stack.length - 1];
       if (!current) continue;
       if (match[1]) {
-        current.name = String(match[1] || "").trim();
+        // Only set name on FIRST <Name> encounter (layer name, not style name)
+        if (!current.name) current.name = String(match[1] || "").trim();
       } else if (match[2]) {
-        current.title = String(match[2] || "").trim();
+        if (!current.title) current.title = String(match[2] || "").trim();
       } else if (match[3]) {
         const code = String(match[3] || "").trim();
         if (code && !current.crs.includes(code)) current.crs.push(code);
