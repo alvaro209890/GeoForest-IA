@@ -3243,7 +3243,31 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       {clip.layersWithData}/{clip.totalLayers} camadas • {clip.totalFeatures} feições
                     </p>
                   </div>
-                  <Download size={14} className="text-slate-500 group-hover:text-emerald-400 transition-colors shrink-0 xl:block lg:hidden" />
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // Delete from Cloudinary + remove from state
+                      const imageUrls = (clip.analysisImages || []).map((img) => img.url);
+                      fetch(`/api/simcar/clip/${clip.jobId}`, {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ imageUrls }),
+                      }).catch(() => { });
+                      setSimcarClipHistory((prev) => prev.filter((c) => c.id !== clip.id));
+                      // Clear active clip if it was this one
+                      if (simcarClipJobId === clip.jobId) {
+                        setSimcarClipJobId(null);
+                        setSimcarClipDownloadUrl(null);
+                        setSimcarClipSummary(null);
+                        setSimcarAnalysisImages([]);
+                        setSimcarAnalysisMessages([]);
+                      }
+                    }}
+                    className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition xl:block lg:hidden"
+                    title="Excluir recorte"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               ))
             ) : (

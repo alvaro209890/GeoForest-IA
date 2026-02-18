@@ -1274,6 +1274,41 @@ async function uploadToCloudinary(dataUrl: string, filename: string): Promise<st
     return ((await response.json()) as { secure_url: string }).secure_url;
 }
 
+/** Extract Cloudinary public_id from a secure_url. */
+function extractCloudinaryPublicId(url: string): string | null {
+    // e.g. https://res.cloudinary.com/da19dwpgk/image/upload/v123/folder/public_id.ext
+    //   or https://res.cloudinary.com/da19dwpgk/raw/upload/v123/folder/public_id.zip
+    const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.[^.]+)?$/);
+    return match ? match[1] : null;
+}
+
+/** Delete a resource from Cloudinary by its secure_url. */
+async function deleteFromCloudinary(secureUrl: string, resourceType: "image" | "raw" = "image"): Promise<void> {
+    const apiKey = process.env.CLOUDINARY_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    if (!apiKey || !apiSecret) return;
+
+    const publicId = extractCloudinaryPublicId(secureUrl);
+    if (!publicId) return;
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    const params: Record<string, string> = { public_id: publicId, timestamp: String(timestamp) };
+    const signature = cloudinarySign(params);
+
+    const form = new FormData();
+    form.append("public_id", publicId);
+    form.append("api_key", apiKey);
+    form.append("timestamp", String(timestamp));
+    form.append("signature", signature);
+
+    const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/${resourceType}/destroy`;
+    try {
+        await fetch(url, { method: "POST", body: form });
+    } catch (err: any) {
+        console.warn(`[CLOUDINARY DELETE] Failed for ${publicId}: ${err.message}`);
+    }
+}
+
 /** Upload a raw Buffer (ZIP etc.) to Cloudinary. Returns secure_url. */
 async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promise<string> {
     const apiKey = process.env.CLOUDINARY_API_KEY;
@@ -1440,6 +1475,7 @@ function buildAnalysisPrompt(
 ): string {
     const acSummary = layerSummaries.find((l) => l.name === "AREA_CONSOLIDADA");
     const avnSummary = layerSummaries.find((l) => l.name === "AVN");
+    const atpSummary = layerSummaries.find((l) => l.name === "ATP");
 
     // Build detailed quantitative table
     const quantRows = layerSummaries
@@ -1449,60 +1485,129 @@ function buildAnalysisPrompt(
             return `| ${l.name} | ${l.features} | ${l.areaHa?.toFixed(2) ?? '-'} ha | ${pct}% |`;
         });
 
-    const selectedInfo = selectedLayers && selectedLayers.length > 0
-        ? `Imagens enviadas dos satélites: ${selectedLayers.map((k) => SATELLITE_LAYERS[k]?.label || k).join(", ")}.`
-        : "Imagens SPOT 2008 enviadas.";
+    const validLayers = (selectedLayers || []).filter((k) => SATELLITE_LAYERS[k]);
+    const isMultiYear = validLayers.length > 1;
+    const layerLabels = validLayers.map((k) => SATELLITE_LAYERS[k]?.label || k);
+    const layerYears = validLayers.map((k) => SATELLITE_LAYERS[k]?.year || 0).sort();
 
-    return [
-        "Você é a GeoForest IA, um sistema especializado em análise ambiental para imóveis rurais em Mato Grosso.",
+    // Satellite-specific image descriptions
+    const satDescriptions = validLayers.map((k, i) => {
+        const sat = SATELLITE_LAYERS[k];
+        const imgBase = i * 3 + 1;
+        const sensor = k.startsWith("landsat") ? "Landsat 5 TM (30m de resolução espacial)" : "SPOT (2.5m de resolução espacial)";
+        return [
+            `#### ${sat.label} — ${sensor}`,
+            `- Imagem ${imgBase}: Visão Geral — base ${sat.label} + contorno vermelho (propriedade) + Área Consolidada (roxo semi-transparente) + AVN (amarelo semi-transparente)`,
+            `- Imagem ${imgBase + 1}: Área Consolidada — base ${sat.label} + contorno vermelho (propriedade) + somente AC (roxo)`,
+            `- Imagem ${imgBase + 2}: AVN — base ${sat.label} + contorno vermelho (propriedade) + somente AVN (amarelo)`,
+        ].join("\n");
+    }).join("\n\n");
+
+    const parts: string[] = [
+        "Você é a **GeoForest IA**, uma inteligência artificial especialista em sensoriamento remoto e análise ambiental para imóveis rurais no Estado de Mato Grosso.",
+        "Sua função é realizar uma análise técnica detalhada comparando os dados vetoriais do CAR (Cadastro Ambiental Rural) com as imagens de satélite fornecidas.",
         "",
-        "## Contexto do Imóvel",
-        `- Área total do imóvel: **${areaHa.toFixed(2)} hectares**`,
-        `- Área Consolidada (AC): ${acSummary?.features ?? 0} feições, ${acSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((acSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%)`,
-        `- Área de Vegetação Nativa (AVN): ${avnSummary?.features ?? 0} feições, ${avnSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((avnSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%)`,
+        "---",
         "",
-        "### Dados quantitativos completos do recorte SIMCAR",
+        "## 1. Contexto do Imóvel Rural",
+        "",
+        `| Parâmetro | Valor |`,
+        `|-----------|-------|`,
+        `| Área Total da Propriedade (ATP) | **${areaHa.toFixed(2)} ha** |`,
+        `| Área Consolidada (AC) | ${acSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((acSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) — ${acSummary?.features ?? 0} feições |`,
+        `| Vegetação Nativa (AVN) | ${avnSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((avnSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) — ${avnSummary?.features ?? 0} feições |`,
+        atpSummary ? `| ATP (polígono declarado) | ${atpSummary.areaHa?.toFixed(2) ?? '-'} ha |` : "",
+        "",
+        "### Quantitativos completos (SIMCAR Digital)",
         "| Camada | Feições | Área | % do Imóvel |",
-        "|--------|---------|------|-------------||",
+        "|--------|---------|------|-----------|",
         ...quantRows,
         "",
-        "## Imagens enviadas",
-        selectedInfo,
-        "Para cada satélite, foram geradas 3 imagens:",
-        "1. **Visão Geral**: imagem base + Propriedade (contorno vermelho) + Área Consolidada (roxo) + AVN (amarelo)",
-        "2. **Área Consolidada**: imagem base + Propriedade + somente AC",
-        "3. **AVN**: imagem base + Propriedade + somente AVN",
+        "---",
         "",
-        "O polígono vermelho é a PROPRIEDADE RURAL (ATP). O roxo é ÁREA CONSOLIDADA. O amarelo é VEGETAÇÃO NATIVA.",
+        "## 2. Imagens Fornecidas",
         "",
-        "## Sua Tarefa",
-        "Analise TODAS as imagens e forneça:",
+        `Foram geradas imagens de **${layerLabels.join(", ")}**${isMultiYear ? ` (cobrindo o período ${layerYears[0]}–${layerYears[layerYears.length - 1]})` : ""}.`,
         "",
-        "### 1. Análise da Área Consolidada",
-        "- A classificação AC coincide com áreas de uso antropizado (agricultura, pastagem, solo exposto, edificações)?",
-        "- Há trechos AC que parecem ter vegetação nativa? Descreva localização aproximada.",
+        "**Legenda dos polígonos sobrepostos:**",
+        "- 🟥 **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
+        "- 🟪 **Semi-transparente roxo**: ÁREA CONSOLIDADA (AC) — área de uso antropizado declarada no CAR",
+        "- 🟨 **Semi-transparente amarelo**: ÁREA DE VEGETAÇÃO NATIVA (AVN) — área de vegetação nativa declarada",
         "",
-        "### 2. Análise da AVN",
-        "- A classificação AVN coincide com cobertura de vegetação nativa (floresta, cerrado, mata ciliar)?",
-        "- Há trechos AVN que parecem já antropizados? Descreva.",
+        satDescriptions,
         "",
-        selectedLayers && selectedLayers.length > 1
-            ? "### 3. Análise Temporal Multi-Imagem\n" +
-            "- Compare as imagens de diferentes anos/sensores. Houve mudança visível na cobertura entre os anos?\n" +
-            "- Identifique áreas que mudaram de vegetação nativa para uso antrópico (ou vice-versa) entre as datas.\n"
-            : "",
-        `### ${selectedLayers && selectedLayers.length > 1 ? '4' : '3'}. Pontos de concordância e discordância`,
-        "- Liste onde a classificação CONCORDA com a imagem.",
-        "- Liste onde a classificação DISCORDA do observado.",
+        "---",
         "",
-        `### ${selectedLayers && selectedLayers.length > 1 ? '5' : '4'}. Nível de Confiança`,
-        "Classifique: [ALTA], [MÉDIA] ou [BAIXA]. Justifique.",
+        "## 3. Instruções de Análise",
         "",
-        `### ${selectedLayers && selectedLayers.length > 1 ? '6' : '5'}. Recomendações`,
-        "Forneça recomendações técnicas ao analista ambiental.",
+        "### 3.1 Análise da Área Consolidada (AC)",
+        "Para cada imagem de satélite:",
+        "- Verifique se as áreas classificadas como AC (roxo) correspondem visualmente a **uso antrópico** (pastagem, agricultura, solo exposto, construções, estradas).",
+        "- Identifique eventuais **trechos de AC que apresentam textura e cor de vegetação nativa** (copa de árvores, mata densa, vegetação de cerrado).",
+        "- Descreva a localização aproximada de trechos discordantes (ex: 'porção norte', 'borda leste junto ao curso d'água').",
         "",
-        "Responda em português de forma detalhada e técnica.",
-    ].join("\n");
+        "### 3.2 Análise da Área de Vegetação Nativa (AVN)",
+        "Para cada imagem de satélite:",
+        "- Verifique se as áreas classificadas como AVN (amarelo) correspondem a **vegetação nativa** (floresta ombrófila, cerradão, cerrado stricto sensu, mata ciliar, veredas).",
+        "- Identifique eventuais **trechos de AVN que parecem já antropizados** (pastagem degradada, talhes de desmatamento, queimadas).",
+        "- Avalie a **integridade e conectividade** da vegetação nativa.",
+        "",
+    ];
+
+    if (isMultiYear) {
+        parts.push(
+            "### 3.3 Análise Temporal (Multi-período)",
+            `Você recebeu imagens de **${layerLabels.join(" e ")}**. Esta é a parte MAIS IMPORTANTE da sua análise.`,
+            "",
+            "**Compare sistematicamente as imagens dos diferentes anos:**",
+            "",
+            "#### a) Mudanças na cobertura vegetal",
+            "- Identifique áreas onde houve **supressão de vegetação** (mata → solo exposto / pastagem) entre os anos.",
+            "- Identifique áreas onde houve **regeneração** (solo exposto → vegetação secundária).",
+            "- Estime a área aproximada das mudanças (em hectares, com base na proporção visual).",
+            "",
+            "#### b) Consistência da classificação do CAR vs. histórico",
+            "- A classificação AC reflete corretamente o uso antrópico que JÁ EXISTIA na imagem mais antiga?",
+            "- Alguma área classificada como AC mostra vegetação nativa na imagem mais antiga (possível desmatamento posterior ao marco temporal)?",
+            "- Alguma área classificada como AVN já estava antropizada na imagem mais antiga?",
+            "",
+            "#### c) Marco temporal do Art. 68 da Lei 12.651/2012",
+            "- O Art. 68 do Código Florestal protege áreas de uso consolidado existentes em 22/07/2008.",
+            "- Com base nas imagens, as áreas de AC já estavam consolidadas antes de julho de 2008?",
+            "- Houve expansão agrícola/pecuária sobre vegetação nativa após 2008?",
+            "",
+            "#### d) Diferenças entre sensores",
+            "- Note que Landsat 5 TM tem resolução de 30m e SPOT tem 2.5m. Pequenos talhes podem não ser visíveis no Landsat.",
+            "- Não confunda diferença de resolução com mudança real de cobertura.",
+            "",
+        );
+    }
+
+    const nextSection = isMultiYear ? 4 : 3;
+    parts.push(
+        `### 3.${nextSection} Concordâncias e Discordâncias`,
+        "Organize em formato de lista:",
+        "- **✅ CONCORDA**: descreva \u00e1reas onde classificação coincide com a imagem.",
+        "- **❌ DISCORDA**: descreva \u00e1reas onde classificação não condiz com o observado. Indique qual seria a classificação mais apropriada.",
+        "",
+        `### 3.${nextSection + 1} Nível de Confiança`,
+        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]**.",
+        "Justifique considerando: resolução das imagens, presença de nuvens/sombras, nitidez, consistência entre sensores.",
+        "",
+        `### 3.${nextSection + 2} Recomendações ao Analista`,
+        "- Sugira ações práticas: vistoria em campo, solicitação de imagens complementares, retificação de polígonos no CAR.",
+        "- Se aplicável, cite artigos relevantes do Código Florestal (Lei 12.651/2012).",
+        "",
+        "---",
+        "",
+        "## Formato de Resposta",
+        "- Use markdown com seções e sub-seções.",
+        "- Seja detalhado e técnico, mas acessível.",
+        "- Refira-se às imagens pelo número (Imagem 1, 2, 3...) e nome do satélite.",
+        "- Responda inteiramente em **português**.",
+    );
+
+    return parts.join("\n");
 }
 
 /**
@@ -1795,5 +1900,36 @@ export function registerSimcarClipRoutes(app: Express) {
                 category: DIRECT_COPY_LAYERS.has(name) ? "property" : "wfs",
             })),
         });
+    });
+
+    // Delete clip endpoint: removes Cloudinary resources + cache
+    app.delete("/api/simcar/clip/:jobId", async (req: Request, res: Response) => {
+        const { jobId } = req.params;
+        const { imageUrls } = req.body as { imageUrls?: string[] };
+
+        try {
+            const cached = jobCache.get(jobId);
+            const deletions: Promise<void>[] = [];
+
+            // Delete ZIPs from Cloudinary (raw type)
+            if (cached?.inputZipUrl) deletions.push(deleteFromCloudinary(cached.inputZipUrl, "raw"));
+            if (cached?.outputZipUrl) deletions.push(deleteFromCloudinary(cached.outputZipUrl, "raw"));
+
+            // Delete analysis images from Cloudinary (image type)
+            if (Array.isArray(imageUrls)) {
+                for (const url of imageUrls) {
+                    deletions.push(deleteFromCloudinary(url, "image"));
+                }
+            }
+
+            await Promise.allSettled(deletions);
+            jobCache.delete(jobId);
+
+            console.log(`[SIMCAR CLIP] Deleted job ${jobId} + ${deletions.length} Cloudinary resources`);
+            res.json({ ok: true, deleted: deletions.length });
+        } catch (err: any) {
+            console.error("[SIMCAR CLIP DELETE] Error:", err);
+            res.status(500).json({ error: err.message });
+        }
     });
 }
