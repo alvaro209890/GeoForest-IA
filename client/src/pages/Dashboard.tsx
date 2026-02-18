@@ -508,6 +508,8 @@ export default function Dashboard() {
   const MAX_MAP_PREVIEW_CACHE = 24;
   const [mapDragging, setMapDragging] = useState(false);
   const [mapDragOffset, setMapDragOffset] = useState({ x: 0, y: 0 });
+  const [simcarDigitalLayers, setSimcarDigitalLayers] = useState<{ name: string; title: string }[]>([]);
+  const [selectedSimcarOverlays, setSelectedSimcarOverlays] = useState<string[]>([]);
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
   const [mapRectSelection, setMapRectSelection] = useState<{
     left: number;
@@ -1038,6 +1040,8 @@ export default function Dashboard() {
       const imageLayersRaw = (data?.imageLayers || data?.layers || []) as MapLayerOption[];
       const imageLayers = imageLayersRaw.length ? imageLayersRaw : FALLBACK_WMS_IMAGE_LAYERS;
       setMapImageLayers(imageLayers);
+      const simcarRaw = (data?.simcarDigitalLayers || []) as { name: string; title: string }[];
+      setSimcarDigitalLayers(simcarRaw);
       const layerNames = new Set(imageLayers.map((l) => l.name));
       const preferred = selectedMapLayer && layerNames.has(selectedMapLayer) ? selectedMapLayer : '';
       const chosenLayer = preferred || data?.defaultLayer || imageLayers[0]?.name || '';
@@ -1067,8 +1071,9 @@ export default function Dashboard() {
     width: number,
     height: number,
     format: string,
-    crs: string
-  ) => `${layer}|${bbox.join(',')}|${crs}|${width}x${height}|${format}`;
+    crs: string,
+    overlays?: string[]
+  ) => `${layer}|${bbox.join(',')}|${crs}|${width}x${height}|${format}|${(overlays || []).sort().join(',')}`;
 
   const storeMapPreviewCache = (key: string, dataUrl: string) => {
     const cache = mapPreviewCacheRef.current;
@@ -1090,7 +1095,7 @@ export default function Dashboard() {
       img.src = src;
     });
 
-  const refreshMapPreview = async (layerName?: string, bboxValue?: [number, number, number, number]) => {
+  const refreshMapPreview = async (layerName?: string, bboxValue?: [number, number, number, number], overlays?: string[]) => {
     const effectiveLayer = layerName || selectedMapLayer;
     const effectiveBbox = bboxValue || mapBbox;
     if (!effectiveLayer) return;
@@ -1098,7 +1103,8 @@ export default function Dashboard() {
     const height = 700;
     const format = 'image/png';
     const crs = 'EPSG:4326';
-    const cacheKey = buildMapPreviewKey(effectiveLayer, effectiveBbox, width, height, format, crs);
+    const currentOverlays = overlays !== undefined ? overlays : selectedSimcarOverlays;
+    const cacheKey = buildMapPreviewKey(effectiveLayer, effectiveBbox, width, height, format, crs, currentOverlays);
     const cached = mapPreviewCacheRef.current.get(cacheKey);
     if (cached) {
       setMapPreviewDataUrl(cached);
@@ -1123,6 +1129,7 @@ export default function Dashboard() {
           width,
           height,
           format,
+          ...(currentOverlays.length ? { overlayLayers: currentOverlays } : {}),
         }),
       });
       if (!res.ok) {
@@ -1236,9 +1243,9 @@ export default function Dashboard() {
     const sourceBlob = source.startsWith('data:')
       ? await fetch(source).then((r) => r.blob())
       : await fetch(source).then((r) => {
-          if (!r.ok) throw new Error('Falha ao baixar imagem do mapa.');
-          return r.blob();
-        });
+        if (!r.ok) throw new Error('Falha ao baixar imagem do mapa.');
+        return r.blob();
+      });
     const sourceDataUrl = await blobToDataUrl(sourceBlob);
     const annotated = await renderAnnotatedMapImage(sourceDataUrl, bbox, polygon);
     return new File([annotated], fileName, { type: 'image/png' });
@@ -1445,6 +1452,7 @@ export default function Dashboard() {
           width: 1280,
           height: 960,
           format: 'image/png',
+          ...(selectedSimcarOverlays.length ? { overlayLayers: selectedSimcarOverlays } : {}),
         }),
       });
 
@@ -1569,8 +1577,8 @@ export default function Dashboard() {
       if (!bbox || bbox.length !== 4) throw new Error('BBox inválida retornada do arquivo');
       const poly = Array.isArray(data?.polygon)
         ? (data.polygon as Array<[number, number]>).filter(
-            (p) => Array.isArray(p) && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]))
-          )
+          (p) => Array.isArray(p) && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]))
+        )
         : [];
       setMapBbox(bbox);
       setMapOriginalPolygonBbox(bbox);
@@ -1578,12 +1586,12 @@ export default function Dashboard() {
         poly.length >= 3
           ? poly
           : [
-              [bbox[0], bbox[1]],
-              [bbox[2], bbox[1]],
-              [bbox[2], bbox[3]],
-              [bbox[0], bbox[3]],
-              [bbox[0], bbox[1]],
-            ]
+            [bbox[0], bbox[1]],
+            [bbox[2], bbox[1]],
+            [bbox[2], bbox[3]],
+            [bbox[0], bbox[3]],
+            [bbox[0], bbox[1]],
+          ]
       );
       await refreshMapPreview(undefined, bbox);
       toast.success('Área carregada do arquivo e aplicada no mapa');
@@ -1621,11 +1629,11 @@ export default function Dashboard() {
         .map((c) =>
           c.id === activeConversationId
             ? {
-                ...c,
-                title: nextTitle,
-                lastMessagePreview: lastUserText.slice(0, 120),
-                lastAttachmentType: lastAttachmentType,
-              }
+              ...c,
+              title: nextTitle,
+              lastMessagePreview: lastUserText.slice(0, 120),
+              lastAttachmentType: lastAttachmentType,
+            }
             : c
         )
         .sort((a, b) => (a.id === activeConversationId ? -1 : b.id === activeConversationId ? 1 : 0))
@@ -1666,12 +1674,12 @@ export default function Dashboard() {
     const updatedMessages = messagesRef.current.map((msg) =>
       msg.id === messageId
         ? {
-            ...msg,
-            meta: {
-              ...(msg.meta || {}),
-              ...patch,
-            },
-          }
+          ...msg,
+          meta: {
+            ...(msg.meta || {}),
+            ...patch,
+          },
+        }
         : msg
     );
     messagesRef.current = updatedMessages;
@@ -1712,24 +1720,24 @@ export default function Dashboard() {
     if (selectedImageFiles.length || selectedMapImageUrl) {
       const mapContextBlock = pendingMapContext
         ? [
-            'Contexto técnico da imagem de mapa:',
-            `- Camada WMS: ${pendingMapContext.layerName}`,
-            pendingMapContext.layerTitle ? `- Título da camada: ${pendingMapContext.layerTitle}` : '',
-            pendingMapContext.layerGroup ? `- Grupo: ${pendingMapContext.layerGroup}` : '',
-            pendingMapContext.inferredYear ? `- Ano da imagem: ${pendingMapContext.inferredYear}` : '',
-            `- BBOX (minX,minY,maxX,maxY): ${pendingMapContext.bbox.join(', ')}`,
-            `- CRS: ${pendingMapContext.crs}`,
-            `- Fonte: ${pendingMapContext.source}`,
-            pendingMapContext.width && pendingMapContext.height
-              ? `- Resolução de captura: ${pendingMapContext.width}x${pendingMapContext.height} px`
-              : '',
-            pendingMapContext.capturedAtIso
-              ? `- Data/hora de captura (ISO): ${pendingMapContext.capturedAtIso}`
-              : '',
-            '- Observação: a imagem pode conter demarcação vetorial da área de interesse.',
-          ]
-            .filter(Boolean)
-            .join('\n')
+          'Contexto técnico da imagem de mapa:',
+          `- Camada WMS: ${pendingMapContext.layerName}`,
+          pendingMapContext.layerTitle ? `- Título da camada: ${pendingMapContext.layerTitle}` : '',
+          pendingMapContext.layerGroup ? `- Grupo: ${pendingMapContext.layerGroup}` : '',
+          pendingMapContext.inferredYear ? `- Ano da imagem: ${pendingMapContext.inferredYear}` : '',
+          `- BBOX (minX,minY,maxX,maxY): ${pendingMapContext.bbox.join(', ')}`,
+          `- CRS: ${pendingMapContext.crs}`,
+          `- Fonte: ${pendingMapContext.source}`,
+          pendingMapContext.width && pendingMapContext.height
+            ? `- Resolução de captura: ${pendingMapContext.width}x${pendingMapContext.height} px`
+            : '',
+          pendingMapContext.capturedAtIso
+            ? `- Data/hora de captura (ISO): ${pendingMapContext.capturedAtIso}`
+            : '',
+          '- Observação: a imagem pode conter demarcação vetorial da área de interesse.',
+        ]
+          .filter(Boolean)
+          .join('\n')
         : '';
       const attachmentList = [
         ...selectedImageFiles.map((f) => `- Imagem: ${f.name}`),
@@ -1764,18 +1772,18 @@ export default function Dashboard() {
       time,
       meta: selectedImageFiles.length || selectedMapImageUrl
         ? {
-            fileType: 'image',
-            fileName:
-              totalAttachments > 1
-                ? `${totalAttachments} arquivo(s) anexado(s)`
-                : selectedImageFiles[0]?.name || 'mapa-wms.png',
-            uploadStatus: selectedMapImageUrl ? 'done' : 'uploading',
-            imageUrl: localImagePreviewForChat || undefined,
-            fileDownloadUrl: selectedMapImageUrl || undefined,
-            mapContext: pendingMapContext,
-          }
+          fileType: 'image',
+          fileName:
+            totalAttachments > 1
+              ? `${totalAttachments} arquivo(s) anexado(s)`
+              : selectedImageFiles[0]?.name || 'mapa-wms.png',
+          uploadStatus: selectedMapImageUrl ? 'done' : 'uploading',
+          imageUrl: localImagePreviewForChat || undefined,
+          fileDownloadUrl: selectedMapImageUrl || undefined,
+          mapContext: pendingMapContext,
+        }
         : selectedPdfFiles.length
-        ? {
+          ? {
             fileType: 'pdf',
             fileName:
               totalAttachments > 1
@@ -1783,7 +1791,7 @@ export default function Dashboard() {
                 : selectedPdfFiles[0]?.name || 'documento.pdf',
             uploadStatus: 'uploading',
           }
-        : undefined,
+          : undefined,
     };
 
     const nextMessages = [...messages, userMessage];
@@ -1879,21 +1887,21 @@ export default function Dashboard() {
     const hasCurrentImage = imageDataUrlsForAi.length > 0;
     const imageAnalysisSystemPrompt = hasCurrentImage
       ? {
-          role: 'system',
-          content: [
-            'Modo de análise visual avançada ativado.',
-            'Siga esta ordem na resposta:',
-            '1) Leitura objetiva da cena (o que está visível).',
-            '2) Achados técnicos priorizados com evidências visuais.',
-            '3) Interpretação ambiental/florestal com nível de confiança por achado.',
-            '4) Incertezas e o que falta para fechar diagnóstico.',
-            '5) Próximas ações práticas (curto prazo).',
-            'Se houver contexto geoespacial (BBOX/CRS/camada/ano), use explicitamente no raciocínio.',
-            'Se houver evidência clara de desmatamento anterior a 22/07/2008, trate como área consolidada (indique confiança).',
-            'Evite afirmações categóricas sem suporte visual direto.',
-            'Mantenha a resposta curta e objetiva.',
-          ].join(' '),
-        }
+        role: 'system',
+        content: [
+          'Modo de análise visual avançada ativado.',
+          'Siga esta ordem na resposta:',
+          '1) Leitura objetiva da cena (o que está visível).',
+          '2) Achados técnicos priorizados com evidências visuais.',
+          '3) Interpretação ambiental/florestal com nível de confiança por achado.',
+          '4) Incertezas e o que falta para fechar diagnóstico.',
+          '5) Próximas ações práticas (curto prazo).',
+          'Se houver contexto geoespacial (BBOX/CRS/camada/ano), use explicitamente no raciocínio.',
+          'Se houver evidência clara de desmatamento anterior a 22/07/2008, trate como área consolidada (indique confiança).',
+          'Evite afirmações categóricas sem suporte visual direto.',
+          'Mantenha a resposta curta e objetiva.',
+        ].join(' '),
+      }
       : null;
 
     const crossChatContext = buildCrossChatContext(activeConversationId, userText);
@@ -2245,14 +2253,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         {sub && <span className="text-slate-500 text-[10px]">{sub}</span>}
       </div>
       <div
-        className={`w-10 h-5 rounded-full relative transition-colors ${
-          isActive ? 'bg-emerald-600 shadow-lg shadow-emerald-500/20' : 'bg-slate-700'
-        }`}
+        className={`w-10 h-5 rounded-full relative transition-colors ${isActive ? 'bg-emerald-600 shadow-lg shadow-emerald-500/20' : 'bg-slate-700'
+          }`}
       >
         <div
-          className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all duration-300 ${
-            isActive ? 'left-6' : 'left-1'
-          }`}
+          className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all duration-300 ${isActive ? 'left-6' : 'left-1'
+            }`}
         />
       </div>
     </div>
@@ -2332,9 +2338,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           {filteredConversations.map((conv) => (
             <div
               key={conv.id}
-              className={`w-full flex items-center gap-2 p-2 rounded-lg transition-colors group ${
-                conv.id === activeConversationId ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-slate-400'
-              }`}
+              className={`w-full flex items-center gap-2 p-2 rounded-lg transition-colors group ${conv.id === activeConversationId ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-slate-400'
+                }`}
             >
               <button
                 onClick={() => onSelectConversation(conv.id)}
@@ -2398,9 +2403,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       </aside>
 
       <main
-        className={`flex-1 flex flex-col relative h-full w-full overflow-hidden ${
-          mapDialogOpen ? 'z-[220]' : 'z-10'
-        }`}
+        className={`flex-1 flex flex-col relative h-full w-full overflow-hidden ${mapDialogOpen ? 'z-[220]' : 'z-10'
+          }`}
       >
         <header className="h-16 flex-shrink-0 flex items-center justify-between px-6 border-b border-white/5 bg-[#050b08]/50 backdrop-blur-md">
           <div className="flex items-center gap-3">
@@ -2434,110 +2438,107 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   const displayThinking = msg.meta?.thinkingText || parsedFromText.thinkingText;
                   const displayText = parsedFromText.cleanText;
                   return (
-                  <div key={msg.id} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-fade-in-up`}>
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                        msg.role === 'ai'
+                    <div key={msg.id} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-fade-in-up`}>
+                      <div
+                        className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${msg.role === 'ai'
                           ? 'bg-gradient-to-br from-emerald-500 to-green-700 shadow-lg shadow-emerald-900/50'
                           : 'bg-slate-700'
-                      }`}
-                    >
-                      {msg.role === 'ai' ? <Leaf size={14} className="text-white" /> : <User size={14} className="text-slate-300" />}
-                    </div>
-                    <div
-                      className={`
+                          }`}
+                      >
+                        {msg.role === 'ai' ? <Leaf size={14} className="text-white" /> : <User size={14} className="text-slate-300" />}
+                      </div>
+                      <div
+                        className={`
                         relative max-w-[85%] lg:max-w-[75%] p-4 rounded-2xl
                         ${msg.role === 'ai'
-                          ? 'bg-[#131f18]/80 border border-emerald-500/10 text-slate-200 rounded-tl-sm'
-                          : 'bg-emerald-600 text-white rounded-tr-sm shadow-md shadow-emerald-900/20'
-                        }
+                            ? 'bg-[#131f18]/80 border border-emerald-500/10 text-slate-200 rounded-tl-sm'
+                            : 'bg-emerald-600 text-white rounded-tr-sm shadow-md shadow-emerald-900/20'
+                          }
                       `}
-                    >
-                      {(msg.meta?.fileType === 'pdf' || msg.meta?.fileType === 'image') && (
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => {
-                            downloadAttachment(msg.meta);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
+                      >
+                        {(msg.meta?.fileType === 'pdf' || msg.meta?.fileType === 'image') && (
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => {
                               downloadAttachment(msg.meta);
-                            }
-                          }}
-                          className={`mb-2 inline-flex max-w-[260px] items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] border ${
-                            msg.role === 'user'
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                downloadAttachment(msg.meta);
+                              }
+                            }}
+                            className={`mb-2 inline-flex max-w-[260px] items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] border ${msg.role === 'user'
                               ? 'bg-emerald-700/45 border-emerald-300/30 text-emerald-50'
                               : 'bg-[#0f1713] border-white/10 text-slate-200'
-                          } cursor-pointer hover:border-emerald-400/40`}
-                        >
-                          <div
-                            className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${
-                              msg.meta?.fileType === 'pdf'
+                              } cursor-pointer hover:border-emerald-400/40`}
+                          >
+                            <div
+                              className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${msg.meta?.fileType === 'pdf'
                                 ? 'bg-red-500/20 text-red-300'
                                 : 'bg-emerald-500/20 text-emerald-300'
-                            }`}
-                          >
-                            {msg.meta?.fileType === 'pdf' ? <FileText size={13} /> : <ImagePlus size={13} />}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="truncate font-medium">{msg.meta?.fileName || (msg.meta?.fileType === 'pdf' ? 'Documento PDF' : 'Imagem anexada')}</p>
-                            <p className={`text-[10px] ${msg.role === 'user' ? 'text-emerald-100/80' : 'text-slate-500'}`}>
-                              {msg.meta?.fileType === 'pdf' ? 'Documento (clique para baixar)' : 'Imagem (clique para baixar)'}
-                            </p>
-                          </div>
-                          <FileDown size={13} className={msg.role === 'user' ? 'text-emerald-100/80' : 'text-emerald-300'} />
-                        </div>
-                      )}
-                      {msg.role === 'ai' && displayThinking && (
-                        <div className="mb-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-[10px] uppercase tracking-wider text-emerald-300/80">
-                              Pensamento da IA
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setExpandedThinking((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))
-                              }
-                              className="text-[10px] text-emerald-300 hover:text-emerald-200"
+                                }`}
                             >
-                              {expandedThinking[msg.id] ? 'Ocultar' : 'Expandir'}
-                            </button>
+                              {msg.meta?.fileType === 'pdf' ? <FileText size={13} /> : <ImagePlus size={13} />}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate font-medium">{msg.meta?.fileName || (msg.meta?.fileType === 'pdf' ? 'Documento PDF' : 'Imagem anexada')}</p>
+                              <p className={`text-[10px] ${msg.role === 'user' ? 'text-emerald-100/80' : 'text-slate-500'}`}>
+                                {msg.meta?.fileType === 'pdf' ? 'Documento (clique para baixar)' : 'Imagem (clique para baixar)'}
+                              </p>
+                            </div>
+                            <FileDown size={13} className={msg.role === 'user' ? 'text-emerald-100/80' : 'text-emerald-300'} />
                           </div>
-                          {expandedThinking[msg.id] && (
-                            <p className="mt-2 text-xs leading-relaxed text-slate-300 whitespace-pre-wrap">
-                              {displayThinking}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                      {msg.role === 'ai' ? (
-                        <div className="chat-markdown text-sm leading-relaxed">{renderRichText(displayText)}</div>
-                      ) : (
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap">{displayText}</p>
-                      )}
-                      {msg.meta?.fileType === 'image' && msg.meta.imageUrl && (
-                        <img src={msg.meta.imageUrl} alt="Imagem" className="mt-3 rounded-xl max-h-52 border border-white/10" />
-                      )}
-                      {msg.meta?.fileType === 'pdf' && !msg.meta?.fileUrl && !msg.meta?.fileDownloadUrl && (
-                        <div className="mt-3">
-                          <span className="inline-flex items-center gap-2 text-xs text-slate-400">
-                            <FileText size={14} /> Enviando PDF...
-                          </span>
-                        </div>
-                      )}
-                      <span
-                        className={`text-[10px] absolute bottom-2 right-4 opacity-50 ${
-                          msg.role === 'user' ? 'text-emerald-100' : 'text-slate-500'
-                        }`}
-                      >
-                        {msg.time}
-                      </span>
+                        )}
+                        {msg.role === 'ai' && displayThinking && (
+                          <div className="mb-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-[10px] uppercase tracking-wider text-emerald-300/80">
+                                Pensamento da IA
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedThinking((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))
+                                }
+                                className="text-[10px] text-emerald-300 hover:text-emerald-200"
+                              >
+                                {expandedThinking[msg.id] ? 'Ocultar' : 'Expandir'}
+                              </button>
+                            </div>
+                            {expandedThinking[msg.id] && (
+                              <p className="mt-2 text-xs leading-relaxed text-slate-300 whitespace-pre-wrap">
+                                {displayThinking}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {msg.role === 'ai' ? (
+                          <div className="chat-markdown text-sm leading-relaxed">{renderRichText(displayText)}</div>
+                        ) : (
+                          <p className="text-sm leading-relaxed whitespace-pre-wrap">{displayText}</p>
+                        )}
+                        {msg.meta?.fileType === 'image' && msg.meta.imageUrl && (
+                          <img src={msg.meta.imageUrl} alt="Imagem" className="mt-3 rounded-xl max-h-52 border border-white/10" />
+                        )}
+                        {msg.meta?.fileType === 'pdf' && !msg.meta?.fileUrl && !msg.meta?.fileDownloadUrl && (
+                          <div className="mt-3">
+                            <span className="inline-flex items-center gap-2 text-xs text-slate-400">
+                              <FileText size={14} /> Enviando PDF...
+                            </span>
+                          </div>
+                        )}
+                        <span
+                          className={`text-[10px] absolute bottom-2 right-4 opacity-50 ${msg.role === 'user' ? 'text-emerald-100' : 'text-slate-500'
+                            }`}
+                        >
+                          {msg.time}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                )})}
+                  )
+                })}
                 {(typingMessageId || aiThinking) && (
                   <div className="flex gap-4 animate-fade-in-up">
                     <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-[#203127] border border-emerald-500/20">
@@ -2590,15 +2591,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <div className="px-4 pb-2">
                       <div className="inline-flex max-w-[320px] items-center gap-2 px-2.5 py-2 rounded-xl bg-[#0c1511] border border-white/10 text-xs text-slate-200 shadow-sm">
                         <div
-                          className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${
-                            imageFile || pendingMapImageUrl || queuedFiles.some((f) => (f.type || '').toLowerCase().startsWith('image/'))
-                              ? 'bg-emerald-500/20 text-emerald-300'
-                              : 'bg-red-500/20 text-red-300'
-                          }`}
+                          className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${imageFile || pendingMapImageUrl || queuedFiles.some((f) => (f.type || '').toLowerCase().startsWith('image/'))
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : 'bg-red-500/20 text-red-300'
+                            }`}
                         >
                           {imageFile ||
-                          pendingMapImageUrl ||
-                          queuedFiles.some((f) => (f.type || '').toLowerCase().startsWith('image/')) ? (
+                            pendingMapImageUrl ||
+                            queuedFiles.some((f) => (f.type || '').toLowerCase().startsWith('image/')) ? (
                             <ImagePlus size={13} />
                           ) : (
                             <FileText size={13} />
@@ -2679,11 +2679,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                   setSelectedModel('auto');
                                   setModelMenuOpen(false);
                                 }}
-                                className={`w-full text-left rounded-xl px-3 py-2 border transition-colors ${
-                                  selectedModel === 'auto'
-                                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200'
-                                    : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
-                                }`}
+                                className={`w-full text-left rounded-xl px-3 py-2 border transition-colors ${selectedModel === 'auto'
+                                  ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200'
+                                  : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                                  }`}
                               >
                                 <div className="text-xs font-medium">Auto (Florestal)</div>
                                 <div className="text-[11px] text-slate-400 mt-0.5">
@@ -2698,11 +2697,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     setSelectedModel(model.id);
                                     setModelMenuOpen(false);
                                   }}
-                                  className={`w-full text-left rounded-xl px-3 py-2 border transition-colors ${
-                                    selectedModel === model.id
-                                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200'
-                                      : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
-                                  }`}
+                                  className={`w-full text-left rounded-xl px-3 py-2 border transition-colors ${selectedModel === model.id
+                                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200'
+                                    : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                                    }`}
                                 >
                                   <div className="flex items-center justify-between gap-2">
                                     <div className="text-xs font-medium">{model.label}</div>
@@ -2725,11 +2723,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <button
                         onClick={handleSend}
                         disabled={!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl && queuedFiles.length === 0}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${
-                          input.trim() || imageFile || pdfFile || pendingMapImageUrl || queuedFiles.length > 0
-                            ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/25 hover:bg-emerald-400'
-                            : 'bg-white/5 text-slate-500 cursor-not-allowed'
-                        }`}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${input.trim() || imageFile || pdfFile || pendingMapImageUrl || queuedFiles.length > 0
+                          ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/25 hover:bg-emerald-400'
+                          : 'bg-white/5 text-slate-500 cursor-not-allowed'
+                          }`}
                       >
                         <span>{sending || uploading ? 'Enviando...' : 'Enviar'}</span>
                         <Send size={14} className={input.trim() ? 'fill-current' : ''} />
@@ -2979,6 +2976,42 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       )}
                     </select>
                   </div>
+                  {simcarDigitalLayers.length > 0 && (
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Camadas SIMCAR Digital (Overlay)</p>
+                      <div className="max-h-48 overflow-auto custom-scrollbar rounded-lg border border-white/10 bg-white/5 p-2 space-y-1">
+                        {simcarDigitalLayers.map((layer) => (
+                          <label key={layer.name} className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 hover:text-emerald-200 py-0.5">
+                            <input
+                              type="checkbox"
+                              checked={selectedSimcarOverlays.includes(layer.name)}
+                              onChange={(e) => {
+                                const next = e.target.checked
+                                  ? [...selectedSimcarOverlays, layer.name]
+                                  : selectedSimcarOverlays.filter((n) => n !== layer.name);
+                                setSelectedSimcarOverlays(next);
+                                refreshMapPreview(undefined, undefined, next);
+                              }}
+                              className="accent-emerald-500 w-3.5 h-3.5"
+                            />
+                            {layer.title}
+                          </label>
+                        ))}
+                      </div>
+                      {selectedSimcarOverlays.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedSimcarOverlays([]);
+                            refreshMapPreview(undefined, undefined, []);
+                          }}
+                          className="mt-1 text-[10px] text-slate-500 hover:text-emerald-300 underline"
+                        >
+                          Limpar overlays ({selectedSimcarOverlays.length})
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <div className="rounded-lg border border-white/10 bg-white/5 p-3">
                     <p className="text-[11px] text-slate-400 leading-relaxed">
                       Navegação por mouse: arraste para mover o mapa e use a roda para zoom. A prévia e o snapshot
@@ -3042,11 +3075,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     type="button"
                     onClick={() => refreshMapPreview()}
                     disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
-                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${
-                      mapLoading || mapPreviewLoading || !selectedMapLayer
-                        ? 'bg-white/10 text-slate-500 cursor-not-allowed'
-                        : 'bg-white/10 text-slate-200 hover:bg-white/20'
-                    }`}
+                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer
+                      ? 'bg-white/10 text-slate-500 cursor-not-allowed'
+                      : 'bg-white/10 text-slate-200 hover:bg-white/20'
+                      }`}
                   >
                     {mapPreviewLoading ? 'Atualizando prévia...' : 'Atualizar Prévia WMS'}
                   </button>
@@ -3061,11 +3093,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       refreshMapPreview(undefined, mapOriginalPolygonBbox);
                     }}
                     disabled={mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox}
-                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${
-                      mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox
-                        ? 'bg-white/10 text-slate-500 cursor-not-allowed'
-                        : 'bg-white/10 text-slate-200 hover:bg-white/20'
-                    }`}
+                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox
+                      ? 'bg-white/10 text-slate-500 cursor-not-allowed'
+                      : 'bg-white/10 text-slate-200 hover:bg-white/20'
+                      }`}
                   >
                     Voltar ao Zoom Original
                   </button>
@@ -3077,13 +3108,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       mapRectStateRef.current = null;
                     }}
                     disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
-                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${
-                      mapLoading || mapPreviewLoading || !selectedMapLayer
-                        ? 'bg-white/10 text-slate-500 cursor-not-allowed'
-                        : mapRectZoomMode
-                          ? 'bg-amber-500/30 text-amber-100 border border-amber-400/40'
-                          : 'bg-white/10 text-slate-200 hover:bg-white/20'
-                    }`}
+                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer
+                      ? 'bg-white/10 text-slate-500 cursor-not-allowed'
+                      : mapRectZoomMode
+                        ? 'bg-amber-500/30 text-amber-100 border border-amber-400/40'
+                        : 'bg-white/10 text-slate-200 hover:bg-white/20'
+                      }`}
                   >
                     {mapRectZoomMode ? 'Cancelar Zoom por Retângulo' : 'Zoom por Retângulo'}
                   </button>
@@ -3091,11 +3121,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     type="button"
                     onClick={captureVisibleMapArea}
                     disabled={mapLoading || mapCapturing || !selectedMapLayer}
-                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${
-                      mapLoading || mapCapturing || !selectedMapLayer
-                        ? 'bg-white/10 text-slate-500 cursor-not-allowed'
-                        : 'bg-emerald-500 text-white hover:bg-emerald-400'
-                    }`}
+                    className={`w-full py-2.5 rounded-lg text-sm font-medium transition ${mapLoading || mapCapturing || !selectedMapLayer
+                      ? 'bg-white/10 text-slate-500 cursor-not-allowed'
+                      : 'bg-emerald-500 text-white hover:bg-emerald-400'
+                      }`}
                   >
                     {mapCapturing ? 'Capturando...' : 'Capturar Área Visível'}
                   </button>
@@ -3110,9 +3139,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       ref={mapPreviewViewportRef}
                       onWheel={applyMapZoomFromWheel}
                       onMouseDown={startMapDrag}
-                      className={`h-full w-full bg-black/25 flex items-center justify-center p-2 select-none ${
-                        mapRectZoomMode ? 'cursor-crosshair' : mapDragging ? 'cursor-grabbing' : 'cursor-grab'
-                      }`}
+                      className={`h-full w-full bg-black/25 flex items-center justify-center p-2 select-none ${mapRectZoomMode ? 'cursor-crosshair' : mapDragging ? 'cursor-grabbing' : 'cursor-grab'
+                        }`}
                     >
                       <div className="relative max-h-full max-w-full">
                         {mapPreviewDataUrl && mapDragging && (

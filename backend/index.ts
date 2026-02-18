@@ -73,7 +73,7 @@ async function startServer() {
     },
   ] as const;
 
-  const MODEL_IDS = new Set(MODEL_CATALOG.map((model) => model.id));
+  const MODEL_IDS = new Set<string>(MODEL_CATALOG.map((model) => model.id));
   const IMAGE_ANALYSIS_MODEL =
     process.env.IMAGE_ANALYSIS_MODEL || "openai/gpt-oss-120b";
   const IMAGE_ANALYSIS_FALLBACKS = (
@@ -89,11 +89,11 @@ async function startServer() {
   const DB_SUMMARY_ENABLED = String(process.env.DB_SUMMARY_ENABLED ?? "true") !== "false";
   const DB_ROOT = path.resolve(__dirname, "..", "banco_de_dados");
   const STOPWORDS = new Set([
-    "a","o","os","as","um","uma","uns","umas","de","da","do","das","dos","em","no","na","nos","nas","por","para","com","sem",
-    "e","ou","que","como","qual","quais","quando","onde","porque","porquê","por que","se","ao","aos","à","às","dos","das","no","na",
-    "é","ser","são","foi","era","sua","seu","suas","seus","me","minha","meu","meus","minhas","você","vocês","nosso","nossa","nossos",
-    "nossas","também","mais","menos","muito","pouco","já","ainda","até","sobre","entre","dentro","fora","cada","todo","toda","todos",
-    "todas","isso","isto","essa","esse","aquele","aquela","aquilo","seja","há"
+    "a", "o", "os", "as", "um", "uma", "uns", "umas", "de", "da", "do", "das", "dos", "em", "no", "na", "nos", "nas", "por", "para", "com", "sem",
+    "e", "ou", "que", "como", "qual", "quais", "quando", "onde", "porque", "porquê", "por que", "se", "ao", "aos", "à", "às", "dos", "das", "no", "na",
+    "é", "ser", "são", "foi", "era", "sua", "seu", "suas", "seus", "me", "minha", "meu", "meus", "minhas", "você", "vocês", "nosso", "nossa", "nossos",
+    "nossas", "também", "mais", "menos", "muito", "pouco", "já", "ainda", "até", "sobre", "entre", "dentro", "fora", "cada", "todo", "toda", "todos",
+    "todas", "isso", "isto", "essa", "esse", "aquele", "aquela", "aquilo", "seja", "há"
   ]);
   type DbDoc = {
     id: string;
@@ -445,6 +445,18 @@ async function startServer() {
       .sort((a, b) => a.name.localeCompare(b.name));
   };
 
+  const toSimcarDigitalLayers = (layers: ReturnType<typeof parseLayersFromCapabilities>) => {
+    return layers
+      .filter((l) => l.isRenderable)
+      .filter((l) => l.name.toLowerCase().startsWith("geoportal:simcar_d_"))
+      .map((l) => ({
+        name: l.name,
+        title: l.title,
+        crs: l.crs,
+      }))
+      .sort((a, b) => a.title.localeCompare(b.title));
+  };
+
   let cachedPdfParser: null | ((buffer: Buffer) => Promise<any>) = null;
   const getPdfParser = async () => {
     if (cachedPdfParser) return cachedPdfParser;
@@ -698,6 +710,8 @@ async function startServer() {
         crs: l.crs,
       }));
 
+      const simcarDigitalLayers = toSimcarDigitalLayers(parsed);
+
       const defaultLayer =
         imagery.find((l) => l.name === "Mosaicos:LANDSAT_5_2008")?.name ||
         imagery.find((l) => l.group === "landsat")?.name ||
@@ -710,6 +724,7 @@ async function startServer() {
         layers: imagery,
         imageLayers: imagery,
         shapeLayers,
+        simcarDigitalLayers,
         defaultLayer,
         recommended: {
           legalMarco2008: "Mosaicos:LANDSAT_5_2008",
@@ -760,13 +775,17 @@ async function startServer() {
       }
 
       if (availableImagery.length) {
+        const xml = await fetchSemamtCapabilitiesXml();
+        const allParsed = parseLayersFromCapabilities(xml);
+        const simcarNames = toSimcarDigitalLayers(allParsed).map((l) => l.name.toLowerCase());
         const allowed = new Set([
           ...availableImagery.map((l) => l.name.toLowerCase()),
           ...CURATED_IMAGERY_LAYER_NAMES.map((l) => l.toLowerCase()),
+          ...simcarNames,
         ]);
         if (!allowed.has(layerName.toLowerCase())) {
           res.status(400).json({
-            error: `Layer '${layerName}' não é uma camada de mosaico disponível.`,
+            error: `Layer '${layerName}' não é uma camada disponível.`,
             availableLayers: availableImagery.slice(0, 50).map((l) => l.name),
           });
           return;
@@ -1040,8 +1059,8 @@ async function startServer() {
           ? msg.content
           : Array.isArray(msg.content)
             ? msg.content
-                .map((part) => (part?.type === "text" ? String(part?.text || "") : ""))
-                .join("\n")
+              .map((part) => (part?.type === "text" ? String(part?.text || "") : ""))
+              .join("\n")
             : "";
       next[i] = { ...msg, content: `${baseText}\n\n${contexts.join("\n\n")}`.trim() };
       break;
@@ -1146,7 +1165,7 @@ async function startServer() {
     if (!contextParts.length) return null;
     const contextText = contextParts.join("\n\n");
     return {
-      role: "system",
+      role: "system" as const,
       content:
         "Use apenas a Base de Conhecimento a seguir para responder de forma objetiva e curta. " +
         "Se houver base legal, cite a lei/norma com número e ano. " +
@@ -1423,22 +1442,18 @@ async function startServer() {
 
       let rawModelText = "";
       const clientModel = resolvedModel;
-      const hasImageInput = messagesForModel.some(
-        (m) =>
-          Array.isArray(m?.content) &&
-          m.content.some((part: any) => part?.type === "image_url" && part?.image_url?.url)
-      );
+
       const continuationPool = hasImageInput
         ? [
-            ...IMAGE_ANALYSIS_FALLBACKS,
-            "meta-llama/llama-4-scout-17b-16e-instruct",
-          ]
+          ...IMAGE_ANALYSIS_FALLBACKS,
+          "meta-llama/llama-4-scout-17b-16e-instruct",
+        ]
         : [
-            "openai/gpt-oss-120b",
-            "meta-llama/llama-3.3-70b-versatile",
-            "qwen/qwen3-32b",
-            "moonshotai/kimi-k2-instruct-0905",
-          ];
+          "openai/gpt-oss-120b",
+          "meta-llama/llama-3.3-70b-versatile",
+          "qwen/qwen3-32b",
+          "moonshotai/kimi-k2-instruct-0905",
+        ];
       const continuationModels = [resolvedModel, ...continuationPool.filter((m) => m !== resolvedModel)];
       const MAX_CONTINUATIONS = 3;
 
@@ -1748,9 +1763,9 @@ async function startServer() {
       );
       const downloadUrl = secureUrl.includes("/upload/")
         ? secureUrl.replace(
-            "/upload/",
-            `/upload/fl_attachment:${encodeURIComponent(safeAttachmentName)}/`
-          )
+          "/upload/",
+          `/upload/fl_attachment:${encodeURIComponent(safeAttachmentName)}/`
+        )
         : secureUrl;
       res.json({
         public_id: data.public_id,
