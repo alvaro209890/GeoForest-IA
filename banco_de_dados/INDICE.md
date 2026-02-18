@@ -52,9 +52,16 @@ Base de conhecimento para IA sobre licenciamento florestal, legislação e proce
 - [Precisão Cartográfica e Escala](07_geoprocessamento/precisao_cartografica.md)
 - [Bases Cartográficas Oficiais](07_geoprocessamento/bases_cartograficas.md)
 
+### 08 — Termos de Referência SEMA-MT (Atualizados)
+- [Documentação do Empreendedor e Empreendimento (TR 01)](08_termos_referencia_sema/documentacao_empreendedor.md)
+- [Geoprocessamento e Padrões de Mapas](08_termos_referencia_sema/geoprocessamento_mapas.md)
+- [Manejo e Exploração Florestal (PMFS/PEF/PCF)](08_termos_referencia_sema/manejo_exploracao_florestal.md)
+- [Queima Controlada e Monitoramento (AQC/TAC)](08_termos_referencia_sema/queima_monitoramento.md)
+
 ## Convenções
 
 - Cada arquivo cobre **um tópico específico** para carregamento seletivo
 - Arquivos marcados com `[PENDENTE]` precisam de conteúdo
 - Tags no cabeçalho de cada arquivo para busca semântica
 - Formato Markdown para máxima eficiência de tokens
+- **Importante**: Este banco de dados utiliza os Termos de Referência atualizados (2024). Documentos marcados como "Antigo" nos arquivos originais foram descartados.

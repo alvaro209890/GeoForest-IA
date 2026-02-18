@@ -88,6 +88,23 @@ type ParsedGeometry = {
 };
 type MapContext = NonNullable<NonNullable<ChatMessage['meta']>['mapContext']>;
 
+type IntersectionStatus = 'ok' | 'not_in_wfs' | 'no_intersection' | 'invalid_layer' | 'error';
+type IntersectionResult = {
+  layerName: string;
+  status: IntersectionStatus;
+  matchedFeatures: number;
+  intersectionHa: number;
+  coveragePercentOfPolygon: number;
+  warnings: string[];
+};
+type IntersectionResponse = {
+  ok: boolean;
+  wfsSource: string;
+  polygonAreaHa: number;
+  computedAtIso: string;
+  results: IntersectionResult[];
+};
+
 const FALLBACK_WMS_IMAGE_LAYERS: MapLayerOption[] = [
   'SEMAMT:ALOS_PALSAR_DEM',
   'Geoportal:DECLIVIDADE_GEOPORTAL',
@@ -307,6 +324,40 @@ const inferMapLayerGroup = (layerName: string) => {
   return 'Outras';
 };
 
+const intersectionStatusLabel = (status: IntersectionStatus) => {
+  switch (status) {
+    case 'ok':
+      return 'OK';
+    case 'no_intersection':
+      return 'Sem interseção';
+    case 'not_in_wfs':
+      return 'Fora do WFS';
+    case 'invalid_layer':
+      return 'Camada inválida';
+    case 'error':
+      return 'Erro';
+    default:
+      return status;
+  }
+};
+
+const intersectionStatusClass = (status: IntersectionStatus) => {
+  switch (status) {
+    case 'ok':
+      return 'text-emerald-300';
+    case 'no_intersection':
+      return 'text-slate-300';
+    case 'not_in_wfs':
+      return 'text-amber-300';
+    case 'invalid_layer':
+      return 'text-amber-300';
+    case 'error':
+      return 'text-rose-300';
+    default:
+      return 'text-slate-300';
+  }
+};
+
 const renderInlineRichText = (text: string) => {
   const parts: React.ReactNode[] = [];
   const tokenRegex = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g;
@@ -511,6 +562,13 @@ export default function Dashboard() {
   const [mapDragOffset, setMapDragOffset] = useState({ x: 0, y: 0 });
   const [simcarDigitalLayers, setSimcarDigitalLayers] = useState<{ name: string; title: string }[]>([]);
   const [selectedSimcarOverlays, setSelectedSimcarOverlays] = useState<string[]>([]);
+  const [intersectionLoading, setIntersectionLoading] = useState(false);
+  const [intersectionError, setIntersectionError] = useState<string | null>(null);
+  const [intersectionResults, setIntersectionResults] = useState<IntersectionResult[]>([]);
+  const [polygonAreaHa, setPolygonAreaHa] = useState<number | null>(null);
+  const [lastIntersectionRequestKey, setLastIntersectionRequestKey] = useState('');
+  const intersectionAbortRef = useRef<AbortController | null>(null);
+  const intersectionDebounceRef = useRef<number | null>(null);
   const [mapSectionOpen, setMapSectionOpen] = useState<Record<string, boolean>>({ imagery: true, simcar: true, advanced: false });
   const [simcarSearchFilter, setSimcarSearchFilter] = useState('');
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
@@ -1210,6 +1268,153 @@ export default function Dashboard() {
       setMapPreviewLoading(false);
     }
   };
+
+  const buildIntersectionPolygonPayload = useCallback(() => {
+    if (mapPolygon.length < 3) return null;
+    const ring = mapPolygon
+      .filter(
+        (point) =>
+          Array.isArray(point) &&
+          point.length >= 2 &&
+          Number.isFinite(Number(point[0])) &&
+          Number.isFinite(Number(point[1]))
+      )
+      .map((point) => [Number(point[0]), Number(point[1])]);
+    if (ring.length < 3) return null;
+    const first = ring[0];
+    const last = ring[ring.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+      ring.push([first[0], first[1]]);
+    }
+    if (ring.length < 4) return null;
+    return {
+      type: 'Polygon' as const,
+      coordinates: [ring],
+    };
+  }, [mapPolygon]);
+
+  const runIntersectionCalculation = useCallback(
+    async (overrides?: string[]) => {
+      const polygon = buildIntersectionPolygonPayload();
+      if (!polygon) {
+        setIntersectionLoading(false);
+        setIntersectionError(null);
+        setIntersectionResults([]);
+        setPolygonAreaHa(null);
+        setLastIntersectionRequestKey('');
+        return;
+      }
+
+      const overlayNames = [...new Set((overrides ?? selectedSimcarOverlays).filter(Boolean))];
+      if (!overlayNames.length) {
+        setIntersectionLoading(false);
+        setIntersectionError(null);
+        setIntersectionResults([]);
+        setPolygonAreaHa(null);
+        setLastIntersectionRequestKey('');
+        return;
+      }
+
+      const requestKey = `${polygon.coordinates[0].map((p) => `${p[0]},${p[1]}`).join('|')}::${overlayNames
+        .slice()
+        .sort()
+        .join(',')}`;
+      if (requestKey === lastIntersectionRequestKey) return;
+
+      if (intersectionAbortRef.current) {
+        intersectionAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      intersectionAbortRef.current = controller;
+      setIntersectionLoading(true);
+      setIntersectionError(null);
+
+      try {
+        const res = await fetch('/api/map/intersection-hectares', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            polygon,
+            layerNames: overlayNames,
+            crs: 'EPSG:4326',
+          }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || 'Falha ao calcular interseção das camadas.');
+        }
+        const data = (await res.json()) as Partial<IntersectionResponse>;
+        const backendResults = Array.isArray(data.results) ? data.results : [];
+        const byLayer = new Map(backendResults.map((item) => [item.layerName, item]));
+        const orderedResults: IntersectionResult[] = overlayNames.map((layerName) => {
+          const item = byLayer.get(layerName);
+          if (!item) {
+            return {
+              layerName,
+              status: 'not_in_wfs',
+              matchedFeatures: 0,
+              intersectionHa: 0,
+              coveragePercentOfPolygon: 0,
+              warnings: ['Camada não encontrada na resposta do WFS.'],
+            };
+          }
+          return {
+            layerName: item.layerName,
+            status: item.status,
+            matchedFeatures: Number(item.matchedFeatures || 0),
+            intersectionHa: Number(item.intersectionHa || 0),
+            coveragePercentOfPolygon: Number(item.coveragePercentOfPolygon || 0),
+            warnings: Array.isArray(item.warnings) ? item.warnings : [],
+          };
+        });
+        setIntersectionResults(orderedResults);
+        setPolygonAreaHa(Number(data.polygonAreaHa || 0));
+        setLastIntersectionRequestKey(requestKey);
+      } catch (error: any) {
+        if (error?.name === 'AbortError') return;
+        setIntersectionResults([]);
+        setPolygonAreaHa(null);
+        setLastIntersectionRequestKey('');
+        setIntersectionError(error?.message || 'Erro ao calcular interseção das camadas.');
+      } finally {
+        if (intersectionAbortRef.current === controller) {
+          intersectionAbortRef.current = null;
+          setIntersectionLoading(false);
+        }
+      }
+    },
+    [buildIntersectionPolygonPayload, lastIntersectionRequestKey, selectedSimcarOverlays]
+  );
+
+  useEffect(() => {
+    if (!mapDialogOpen) {
+      if (intersectionDebounceRef.current) {
+        window.clearTimeout(intersectionDebounceRef.current);
+        intersectionDebounceRef.current = null;
+      }
+      if (intersectionAbortRef.current) {
+        intersectionAbortRef.current.abort();
+        intersectionAbortRef.current = null;
+      }
+      return;
+    }
+
+    if (intersectionDebounceRef.current) {
+      window.clearTimeout(intersectionDebounceRef.current);
+      intersectionDebounceRef.current = null;
+    }
+    intersectionDebounceRef.current = window.setTimeout(() => {
+      void runIntersectionCalculation();
+    }, 350);
+
+    return () => {
+      if (intersectionDebounceRef.current) {
+        window.clearTimeout(intersectionDebounceRef.current);
+        intersectionDebounceRef.current = null;
+      }
+    };
+  }, [mapDialogOpen, mapPolygon, selectedSimcarOverlays, runIntersectionCalculation]);
 
   const blobToDataUrl = (blob: Blob) =>
     new Promise<string>((resolve, reject) => {
@@ -3187,6 +3392,88 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       )}
                     </div>
                   )}
+
+                  {/* ── Section: WFS Intersection ── */}
+                  <div className="border-b border-white/10">
+                    <div className="px-4 py-3 flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                        Interseção WFS (ha)
+                      </span>
+                      {intersectionLoading ? (
+                        <span className="text-[10px] text-emerald-300">calculando...</span>
+                      ) : null}
+                    </div>
+                    <div className="px-3 pb-3 space-y-2">
+                      {mapPolygon.length < 3 ? (
+                        <p className="text-[11px] text-slate-500">
+                          Importe um polígono (.kml/.zip) para calcular interseção por camada.
+                        </p>
+                      ) : selectedSimcarOverlays.length === 0 ? (
+                        <p className="text-[11px] text-slate-500">
+                          Selecione ao menos um overlay SIMCAR para calcular.
+                        </p>
+                      ) : intersectionError ? (
+                        <p className="text-[11px] text-rose-300">{intersectionError}</p>
+                      ) : (
+                        <>
+                          {polygonAreaHa !== null && (
+                            <p className="text-[11px] text-slate-400">
+                              Área do polígono: <span className="text-slate-200 font-medium">{polygonAreaHa.toFixed(4)} ha</span>
+                            </p>
+                          )}
+                          <div className="max-h-48 overflow-auto custom-scrollbar rounded-lg border border-white/10">
+                            <table className="w-full text-[11px]">
+                              <thead className="bg-white/5 text-slate-400">
+                                <tr>
+                                  <th className="text-left px-2 py-1.5 font-medium">Camada</th>
+                                  <th className="text-right px-2 py-1.5 font-medium">Interseção (ha)</th>
+                                  <th className="text-right px-2 py-1.5 font-medium">% polígono</th>
+                                  <th className="text-left px-2 py-1.5 font-medium">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {intersectionResults.map((row) => {
+                                  const layerTitle =
+                                    simcarDigitalLayers.find((l) => l.name === row.layerName)?.title ||
+                                    row.layerName;
+                                  return (
+                                    <tr key={row.layerName} className="border-t border-white/5 text-slate-300">
+                                      <td className="px-2 py-1.5">
+                                        <div className="truncate" title={`${layerTitle} (${row.layerName})`}>
+                                          {layerTitle}
+                                        </div>
+                                      </td>
+                                      <td className="px-2 py-1.5 text-right tabular-nums">
+                                        {row.intersectionHa.toFixed(4)}
+                                      </td>
+                                      <td className="px-2 py-1.5 text-right tabular-nums">
+                                        {row.coveragePercentOfPolygon.toFixed(4)}%
+                                      </td>
+                                      <td className={`px-2 py-1.5 ${intersectionStatusClass(row.status)}`}>
+                                        {intersectionStatusLabel(row.status)}
+                                        {row.warnings.length > 0 ? (
+                                          <span className="ml-1 text-[10px] text-amber-300" title={row.warnings.join('\n')}>
+                                            ⚠
+                                          </span>
+                                        ) : null}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                                {!intersectionLoading && intersectionResults.length === 0 && (
+                                  <tr>
+                                    <td colSpan={4} className="px-2 py-2 text-slate-500">
+                                      Nenhum resultado para exibir.
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
 
                   {/* ── Section: Advanced / Tools ── */}
                   <div className="border-b border-white/10">

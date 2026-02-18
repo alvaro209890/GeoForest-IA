@@ -1,11 +1,12 @@
-import express from "express";
+﻿import express from "express";
 import { createServer } from "http";
 import path from "path";
 import crypto from "crypto";
-import fs from "fs";
 import proj4 from "proj4";
 import { inflateRawSync } from "zlib";
 import { fileURLToPath } from "url";
+import { registerWfsIntersectionRoutes } from "./wfs-intersection";
+import { createKnowledgeBase } from "./knowledge-base";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,6 +30,8 @@ async function startServer() {
     }
     next();
   });
+
+  registerWfsIntersectionRoutes(app);
 
   const MODEL_CATALOG = [
     {
@@ -83,101 +86,13 @@ async function startServer() {
     .split(",")
     .map((m) => m.trim())
     .filter(Boolean);
-  const DB_SUMMARY_MODEL =
-    process.env.DB_SUMMARY_MODEL || "openai/gpt-oss-20b";
-  const DB_SUMMARY_MAX_TOKENS = Number(process.env.DB_SUMMARY_MAX_TOKENS ?? "350");
-  const DB_SUMMARY_ENABLED = String(process.env.DB_SUMMARY_ENABLED ?? "true") !== "false";
-  const DB_ROOT = path.resolve(__dirname, "..", "banco_de_dados");
-  const STOPWORDS = new Set([
-    "a", "o", "os", "as", "um", "uma", "uns", "umas", "de", "da", "do", "das", "dos", "em", "no", "na", "nos", "nas", "por", "para", "com", "sem",
-    "e", "ou", "que", "como", "qual", "quais", "quando", "onde", "porque", "porquê", "por que", "se", "ao", "aos", "à", "às", "dos", "das", "no", "na",
-    "é", "ser", "são", "foi", "era", "sua", "seu", "suas", "seus", "me", "minha", "meu", "meus", "minhas", "você", "vocês", "nosso", "nossa", "nossos",
-    "nossas", "também", "mais", "menos", "muito", "pouco", "já", "ainda", "até", "sobre", "entre", "dentro", "fora", "cada", "todo", "toda", "todos",
-    "todas", "isso", "isto", "essa", "esse", "aquele", "aquela", "aquilo", "seja", "há"
-  ]);
-  type DbDoc = {
-    id: string;
-    relPath: string;
-    title: string;
-    text: string;
-    textLower: string;
-  };
-  let DB_DOCS: DbDoc[] = [];
-  const DB_INDEX = new Map<string, { tf: Map<string, number>; len: number }>();
-  let DB_DF = new Map<string, number>();
-  let DB_AVG_LEN = 0;
-
-  const normalizeText = (value: string) =>
-    value
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase();
-
-  const tokenize = (value: string) => {
-    const normalized = normalizeText(value).replace(/[^a-z0-9\s]/g, " ");
-    return normalized
-      .split(/\s+/)
-      .map((t) => t.trim())
-      .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
-  };
-
-  const readMarkdownFiles = (dir: string, baseDir: string, out: DbDoc[]) => {
-    if (!fs.existsSync(dir)) return;
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        readMarkdownFiles(fullPath, baseDir, out);
-        continue;
-      }
-      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-      const raw = fs.readFileSync(fullPath, "utf-8");
-      const relPath = path.relative(baseDir, fullPath).replace(/\\/g, "/");
-      const firstHeading = raw.split("\n").find((line) => line.trim().startsWith("#")) || "";
-      const title = firstHeading.replace(/^#+\s*/, "").trim() || relPath;
-      out.push({
-        id: relPath,
-        relPath,
-        title,
-        text: raw,
-        textLower: normalizeText(raw),
-      });
-    }
-  };
-
-  const loadDatabaseDocs = () => {
-    try {
-      const docs: DbDoc[] = [];
-      readMarkdownFiles(DB_ROOT, DB_ROOT, docs);
-      DB_DOCS = docs;
-      DB_INDEX.clear();
-      DB_DF = new Map();
-      let totalLen = 0;
-      for (const doc of DB_DOCS) {
-        const tokens = tokenize(`${doc.title}\n${doc.text}`);
-        const tf = new Map<string, number>();
-        const seen = new Set<string>();
-        for (const t of tokens) {
-          tf.set(t, (tf.get(t) || 0) + 1);
-          if (!seen.has(t)) {
-            DB_DF.set(t, (DB_DF.get(t) || 0) + 1);
-            seen.add(t);
-          }
-        }
-        totalLen += tokens.length;
-        DB_INDEX.set(doc.id, { tf, len: tokens.length });
-      }
-      DB_AVG_LEN = DB_DOCS.length ? totalLen / DB_DOCS.length : 0;
-      console.log(`Banco de dados carregado: ${DB_DOCS.length} arquivos`);
-    } catch (err) {
-      console.warn("Falha ao carregar banco_de_dados:", err);
-      DB_DOCS = [];
-      DB_INDEX.clear();
-      DB_DF = new Map();
-      DB_AVG_LEN = 0;
-    }
-  };
-  loadDatabaseDocs();
+  const knowledgeBase = createKnowledgeBase({
+    dbRoot: path.resolve(__dirname, "..", "banco_de_dados"),
+    zipPath: path.resolve(__dirname, "..", "banco_de_dados", "banco_de_dados_melhorado.zip"),
+    summaryModel: process.env.DB_SUMMARY_MODEL || "openai/gpt-oss-20b",
+    summaryMaxTokens: Number(process.env.DB_SUMMARY_MAX_TOKENS ?? "220"),
+    summaryEnabled: String(process.env.DB_SUMMARY_ENABLED ?? "true") !== "false",
+  });
 
   const isLatLonBbox = (bbox: [number, number, number, number]) => {
     const [minX, minY, maxX, maxY] = bbox;
@@ -545,7 +460,7 @@ async function startServer() {
 
   const decodeDataUrl = (dataUrl: string) => {
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (!match) throw new Error("dataUrl inválido.");
+    if (!match) throw new Error("dataUrl invÃ¡lido.");
     const mimeType = match[1] || "application/octet-stream";
     const payload = match[2];
     return { mimeType, buffer: Buffer.from(payload, "base64") };
@@ -576,7 +491,7 @@ async function startServer() {
       }
     }
     if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
-      throw new Error("Não foi possível extrair coordenadas válidas do KML.");
+      throw new Error("NÃ£o foi possÃ­vel extrair coordenadas vÃ¡lidas do KML.");
     }
     return [minX, minY, maxX, maxY] as [number, number, number, number];
   };
@@ -706,7 +621,7 @@ async function startServer() {
 
   app.get("/api/map/capabilities", async (_req, res) => {
     try {
-      console.log("[API] GET /api/map/capabilities — iniciando...");
+      console.log("[API] GET /api/map/capabilities â€” iniciando...");
       const xml = await fetchSemamtCapabilitiesXml();
       const parsed = parseLayersFromCapabilities(xml);
       console.log(`[API] Capabilities parsed: ${parsed.length} layers total`);
@@ -764,7 +679,7 @@ async function startServer() {
         imagery[0]?.name;
 
       console.log(`[API] Default layer: ${defaultLayer}`);
-      console.log("[API] GET /api/map/capabilities — sucesso");
+      console.log("[API] GET /api/map/capabilities â€” sucesso");
 
       res.json({
         serviceTitle: "SEMA WMS",
@@ -804,16 +719,16 @@ async function startServer() {
         format?: "image/png" | "image/jpeg";
       };
 
-      console.log(`[API] POST /api/map/snapshot — layer=${layerName}, bbox=${JSON.stringify(bbox)}, overlays=${JSON.stringify(overlayLayers)}, size=${width}x${height}`);
+      console.log(`[API] POST /api/map/snapshot â€” layer=${layerName}, bbox=${JSON.stringify(bbox)}, overlays=${JSON.stringify(overlayLayers)}, size=${width}x${height}`);
 
       if (!layerName || !bbox || !Array.isArray(bbox) || bbox.length !== 4) {
-        res.status(400).json({ error: "Parâmetros inválidos para snapshot de mapa." });
+        res.status(400).json({ error: "ParÃ¢metros invÃ¡lidos para snapshot de mapa." });
         return;
       }
 
       const [minX, minY, maxX, maxY] = bbox.map(Number);
       if (![minX, minY, maxX, maxY].every(Number.isFinite) || minX >= maxX || minY >= maxY) {
-        res.status(400).json({ error: "BBox inválida." });
+        res.status(400).json({ error: "BBox invÃ¡lida." });
         return;
       }
 
@@ -835,7 +750,7 @@ async function startServer() {
         ]);
         if (!allowed.has(layerName.toLowerCase())) {
           res.status(400).json({
-            error: `Layer '${layerName}' não é uma camada disponível.`,
+            error: `Layer '${layerName}' nÃ£o Ã© uma camada disponÃ­vel.`,
             availableLayers: availableImagery.slice(0, 50).map((l) => l.name),
           });
           return;
@@ -880,13 +795,13 @@ async function startServer() {
         if (layerNotDefined) {
           const available = availableImagery.slice(0, 50).map((l) => l.name);
           res.status(400).json({
-            error: `Layer '${layerName}' não existe no WMS da SEMA.`,
+            error: `Layer '${layerName}' nÃ£o existe no WMS da SEMA.`,
             availableLayers: available,
           });
           return;
         }
         res.status(502).json({
-          error: "Resposta do WMS não retornou imagem.",
+          error: "Resposta do WMS nÃ£o retornou imagem.",
           details: text.slice(0, 500),
         });
         return;
@@ -919,7 +834,7 @@ async function startServer() {
     try {
       const { dataUrl, filename } = req.body as { dataUrl?: string; filename?: string };
       if (!dataUrl || typeof dataUrl !== "string") {
-        res.status(400).json({ error: "dataUrl é obrigatório." });
+        res.status(400).json({ error: "dataUrl Ã© obrigatÃ³rio." });
         return;
       }
       const name = String(filename || "").toLowerCase();
@@ -947,7 +862,7 @@ async function startServer() {
           return;
         }
         if (shp.data.length < 100) {
-          res.status(400).json({ error: "Arquivo .shp inválido." });
+          res.status(400).json({ error: "Arquivo .shp invÃ¡lido." });
           return;
         }
         // Shapefile main header bbox (bytes 36..67 little endian)
@@ -956,7 +871,7 @@ async function startServer() {
         const maxX = shp.data.readDoubleLE(52);
         const maxY = shp.data.readDoubleLE(60);
         if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
-          res.status(400).json({ error: "Não foi possível extrair bbox do shapefile." });
+          res.status(400).json({ error: "NÃ£o foi possÃ­vel extrair bbox do shapefile." });
           return;
         }
         const polygon = parseShapefileFirstPolygon(shp.data) || undefined;
@@ -982,7 +897,7 @@ async function startServer() {
         return;
       }
 
-      res.status(400).json({ error: "Formato não suportado. Envie .kml ou .zip (shapefile)." });
+      res.status(400).json({ error: "Formato nÃ£o suportado. Envie .kml ou .zip (shapefile)." });
     } catch (error: any) {
       console.error("Erro no /api/geometry/bbox:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });
@@ -1010,20 +925,20 @@ async function startServer() {
       .toLowerCase();
 
     const hasVisionCue =
-      /(imagem|foto|sat[eé]lite|ortomosaico|drone|a[eé]reo|mapa|png|jpg|jpeg|tif|tiff)/.test(text);
+      /(imagem|foto|sat[eÃ©]lite|ortomosaico|drone|a[eÃ©]reo|mapa|png|jpg|jpeg|tif|tiff)/.test(text);
     if (hasImage || hasVisionCue) return "meta-llama/llama-4-maverick-17b-128e-instruct";
     const hasGeoCue =
-      /(bbox|coordenad|epsg|wms|landsat|sentinel|declividade|demarca[cç][aã]o|pol[ií]gono)/.test(text);
+      /(bbox|coordenad|epsg|wms|landsat|sentinel|declividade|demarca[cÃ§][aÃ£]o|pol[iÃ­]gono)/.test(text);
     if (hasGeoCue) return "meta-llama/llama-4-maverick-17b-128e-instruct";
 
     const hasHighComplexityCue =
-      /(an[aá]lise profunda|laudo|relat[oó]rio t[eé]cnico|multi[ -]?arquivo|muitos anexos|comparativo)/.test(
+      /(an[aÃ¡]lise profunda|laudo|relat[oÃ³]rio t[eÃ©]cnico|multi[ -]?arquivo|muitos anexos|comparativo)/.test(
         text
       );
     if (hasHighComplexityCue) return "openai/gpt-oss-120b";
 
     const hasDataCue =
-      /(shapefile|shape|geojson|csv|xlsx|planilha|tabela|dados|estat[ií]stica|an[áa]lise)/.test(text);
+      /(shapefile|shape|geojson|csv|xlsx|planilha|tabela|dados|estat[iÃ­]stica|an[Ã¡a]lise)/.test(text);
     if (hasDataCue) return "openai/gpt-oss-120b";
 
     return "meta-llama/llama-3.3-70b-versatile";
@@ -1115,10 +1030,10 @@ async function startServer() {
       }
 
       const context =
-        `Documento PDF anexado pelo usuário (${pendingPdf.filename || "documento.pdf"}).` +
+        `Documento PDF anexado pelo usuÃ¡rio (${pendingPdf.filename || "documento.pdf"}).` +
         (extractedText
-          ? `\nUse o conteúdo extraído abaixo como base:\n${extractedText}`
-          : "\nNão foi possível extrair texto automaticamente; informe essa limitação.");
+          ? `\nUse o conteÃºdo extraÃ­do abaixo como base:\n${extractedText}`
+          : "\nNÃ£o foi possÃ­vel extrair texto automaticamente; informe essa limitaÃ§Ã£o.");
       contexts.push(context);
     }
     if (!contexts.length) return messages;
@@ -1142,119 +1057,6 @@ async function startServer() {
     return next;
   };
 
-  const extractLatestUserText = (messages: Array<{ role: string; content: any }>) => {
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const msg = messages[i];
-      if (msg?.role !== "user") continue;
-      if (typeof msg.content === "string") return msg.content;
-      if (Array.isArray(msg.content)) {
-        return msg.content
-          .map((part: any) => (part?.type === "text" ? String(part?.text || "") : ""))
-          .join("\n");
-      }
-    }
-    return "";
-  };
-
-  const buildDbSummaryMessage = () => {
-    const indexDoc = DB_DOCS.find((doc) => doc.relPath.toLowerCase() === "indice.md");
-    if (!indexDoc) return null;
-    const lines = indexDoc.text
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.startsWith("###") || l.startsWith("- ["));
-    const summary = lines.slice(0, 24).join("\n").slice(0, 1200);
-    if (!summary) return null;
-    return {
-      role: "system" as const,
-      content:
-        "Índice do Banco de Conhecimento disponível (estes tópicos podem ser consultados em perguntas futuras):\n" +
-        summary +
-        "\n\nNOTA: Este é apenas o índice. Se o usuário perguntar sobre algo deste índice, os excertos relevantes serão carregados automaticamente. " +
-        "NÃO invente conteúdo que poderia estar nestes documentos — diga que pode pesquisar na base se necessário.",
-    };
-  };
-
-  const scoreDocsBm25 = (terms: string[]) => {
-    const N = DB_DOCS.length || 1;
-    const k1 = 1.2;
-    const b = 0.75;
-    const uniqueTerms = Array.from(new Set(terms));
-    return DB_DOCS.map((doc) => {
-      const idx = DB_INDEX.get(doc.id);
-      if (!idx) return { doc, score: 0 };
-      let score = 0;
-      for (const term of uniqueTerms) {
-        const tf = idx.tf.get(term) || 0;
-        if (!tf) continue;
-        const df = DB_DF.get(term) || 0;
-        const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
-        const denom = tf + k1 * (1 - b + b * (idx.len / (DB_AVG_LEN || 1)));
-        score += idf * ((tf * (k1 + 1)) / denom);
-      }
-      if (doc.title.toLowerCase().includes(uniqueTerms[0] || "")) score += 0.8;
-      if (doc.relPath.toLowerCase().includes(uniqueTerms[0] || "")) score += 0.4;
-      return { doc, score };
-    })
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score);
-  };
-
-  const selectDbExcerpts = (messages: Array<{ role: string; content: any }>) => {
-    if (!DB_DOCS.length) return null;
-    const queryText = extractLatestUserText(messages);
-    const terms = tokenize(queryText);
-    if (!terms.length) return null;
-
-    const scored = scoreDocsBm25(terms).slice(0, 6);
-    if (!scored.length) return null;
-
-    const maxExcerptChars = 600;
-    const contextParts: string[] = [];
-    for (const { doc } of scored) {
-      const paragraphs = doc.text
-        .split(/\n\s*\n+/)
-        .map((p) => p.trim())
-        .filter(Boolean);
-      const scoredParagraphs = paragraphs.map((p) => {
-        const pLower = normalizeText(p);
-        let pScore = 0;
-        for (const term of terms) {
-          if (pLower.includes(term)) pScore += 1;
-        }
-        return { text: p, score: pScore };
-      }).sort((a, b) => b.score - a.score);
-      const topParagraphs = scoredParagraphs.filter((p) => p.score > 0).slice(0, 2);
-      if (!topParagraphs.length && paragraphs.length) {
-        topParagraphs.push({ text: paragraphs[0], score: 0 });
-      }
-      const excerpt = topParagraphs.map((p) => p.text).join("\n\n").slice(0, maxExcerptChars);
-      contextParts.push(`Fonte: ${doc.relPath}\n${excerpt}`.trim());
-    }
-
-    return { contextParts, queryText };
-  };
-
-  const buildDbContextMessage = (contextParts: string[]) => {
-    if (!contextParts.length) return null;
-    const contextText = contextParts.join("\n\n");
-    return {
-      role: "system" as const,
-      content:
-        "## BASE DE CONHECIMENTO (FONTE PRIMÁRIA)\n" +
-        "Você DEVE usar os excertos abaixo como fonte principal para sua resposta.\n\n" +
-        "REGRAS OBRIGATÓRIAS:\n" +
-        "1. Baseie sua resposta EXCLUSIVAMENTE no conteúdo dos excertos fornecidos abaixo.\n" +
-        "2. Cite a fonte de cada informação no formato [nome_arquivo.md].\n" +
-        "3. Se a base NÃO contiver informação suficiente, diga: \"A base de conhecimento não contém informação suficiente sobre [tópico]. Recomendo consultar [fonte específica].\"\n" +
-        "4. NÃO invente artigos de lei, portarias, INs ou resoluções que não estejam nos excertos.\n" +
-        "5. Se houver base legal nos excertos, cite com número e ano exatos conforme aparecem no texto.\n" +
-        "6. Quando a informação for parcial, indique o que está confirmado e o que precisa ser verificado.\n\n" +
-        "Excertos:\n" +
-        contextText,
-    };
-  };
-
   const insertSystemContext = (
     messages: Array<{ role: string; content: any }>,
     systemMessage: { role: "system"; content: string }
@@ -1267,13 +1069,13 @@ async function startServer() {
   const GUARDRAIL_SYSTEM_MESSAGE = {
     role: "system" as const,
     content: [
-      "## VERIFICAÇÃO FINAL ANTES DE RESPONDER",
-      "Antes de entregar sua resposta, verifique cada afirmação:",
-      "- Cada lei/norma citada tem número e ano corretos? Se não tem certeza, remova ou diga 'verificar na legislação vigente'.",
-      "- Cada dado numérico (área, percentual, coordenada) veio do usuário ou da Base de Conhecimento? Se não, remova.",
-      "- Cada fonte citada [arquivo.md] existe nos excertos fornecidos? Se não, remova a citação.",
-      "- Há afirmações categóricas sem evidência? Reformule como hipótese com nível de confiança.",
-      "- Se você não tem informação suficiente, é MELHOR dizer 'não sei / preciso de mais dados' do que inventar uma resposta plausível.",
+      "## VERIFICAÃ‡ÃƒO FINAL ANTES DE RESPONDER",
+      "Antes de entregar sua resposta, verifique cada afirmaÃ§Ã£o:",
+      "- Cada lei/norma citada tem nÃºmero e ano corretos? Se nÃ£o tem certeza, remova ou diga 'verificar na legislaÃ§Ã£o vigente'.",
+      "- Cada dado numÃ©rico (Ã¡rea, percentual, coordenada) veio do usuÃ¡rio ou da Base de Conhecimento? Se nÃ£o, remova.",
+      "- Cada fonte citada [arquivo.md] existe nos excertos fornecidos? Se nÃ£o, remova a citaÃ§Ã£o.",
+      "- HÃ¡ afirmaÃ§Ãµes categÃ³ricas sem evidÃªncia? Reformule como hipÃ³tese com nÃ­vel de confianÃ§a.",
+      "- Se vocÃª nÃ£o tem informaÃ§Ã£o suficiente, Ã© MELHOR dizer 'nÃ£o sei / preciso de mais dados' do que inventar uma resposta plausÃ­vel.",
     ].join("\n"),
   };
 
@@ -1305,51 +1107,6 @@ async function startServer() {
     return String(data?.choices?.[0]?.message?.content || "");
   };
 
-  const buildDbSummaryFromExcerpts = async (
-    apiKey: string,
-    queryText: string,
-    contextParts: string[]
-  ) => {
-    if (!DB_SUMMARY_ENABLED) return null;
-    if (!contextParts.length) return null;
-    const summaryPrompt = [
-      "Você é um assistente de sumarização técnica. Sua tarefa é resumir os excertos fornecidos.",
-      "REGRAS OBRIGATÓRIAS:",
-      "- Use APENAS informação presente nos excertos. NÃO adicione conhecimento externo.",
-      "- Cite as fontes no formato [arquivo.md].",
-      "- Se os excertos NÃO contêm informação para responder a pergunta, diga: 'Os excertos não contêm informação direta sobre este tópico.'",
-      "- NÃO invente artigos de lei, números de portarias ou dados que não estejam nos excertos.",
-      "- Seja curto, técnico e objetivo.",
-    ].join("\n");
-    const summaryMessages = [
-      { role: "system", content: summaryPrompt },
-      {
-        role: "user",
-        content:
-          `Pergunta do usuário: ${queryText}\n\n` +
-          "Excertos da base de conhecimento:\n" +
-          contextParts.join("\n\n"),
-      },
-    ];
-    try {
-      const summary = await callGroqChat(
-        apiKey,
-        DB_SUMMARY_MODEL,
-        summaryMessages,
-        DB_SUMMARY_MAX_TOKENS,
-        0.05
-      );
-      if (!summary.trim()) return null;
-      return {
-        role: "system" as const,
-        content: "Resumo guiado da Base de Conhecimento (baseado nos excertos acima — não contém informação adicional):\n" + summary.trim(),
-      };
-    } catch (err) {
-      console.warn("Falha ao gerar resumo do banco:", err);
-      return null;
-    }
-  };
-
   app.post("/api/chat", async (req, res) => {
     try {
       console.log("[/api/chat] request received");
@@ -1360,7 +1117,7 @@ async function startServer() {
       const autoModel = AUTO_MODEL;
       if (!apiKey) {
         console.error("[/api/chat] GROQ_API_KEY missing");
-        res.status(500).json({ error: "GROQ_API_KEY não configurada no servidor." });
+        res.status(500).json({ error: "GROQ_API_KEY nÃ£o configurada no servidor." });
         return;
       }
 
@@ -1372,7 +1129,7 @@ async function startServer() {
       };
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         console.error("[/api/chat] invalid messages payload");
-        res.status(400).json({ error: "Mensagens inválidas." });
+        res.status(400).json({ error: "Mensagens invÃ¡lidas." });
         return;
       }
       const normalizedPendingPdfs = Array.isArray(pendingPdfs)
@@ -1381,24 +1138,25 @@ async function startServer() {
           ? [pendingPdf]
           : [];
       let messagesForModel = await injectPendingPdfContext(messages, normalizedPendingPdfs);
-      const dbSelection = selectDbExcerpts(messagesForModel);
-      if (dbSelection) {
-        const dbContextMessage = buildDbContextMessage(dbSelection.contextParts);
-        if (dbContextMessage) {
-          messagesForModel = insertSystemContext(messagesForModel, dbContextMessage);
+      const requestStartedAt = Date.now();
+      const knowledgeSelection = knowledgeBase.selectForMessages(messagesForModel);
+      let knowledgeSummaryUsed = false;
+      if (knowledgeSelection) {
+        const knowledgeContextMessage = knowledgeBase.buildContextSystemMessage(knowledgeSelection);
+        if (knowledgeContextMessage) {
+          messagesForModel = insertSystemContext(messagesForModel, knowledgeContextMessage);
         }
-        const guidedSummary = await buildDbSummaryFromExcerpts(
-          apiKey,
-          dbSelection.queryText,
-          dbSelection.contextParts
+        const guidedSummary = await knowledgeBase.maybeBuildGuidedSummary(
+          knowledgeSelection,
+          async ({ model: summaryModel, messages: summaryMessages, maxTokens: summaryMaxTokens, temperature: summaryTemperature }) =>
+            callGroqChat(apiKey, summaryModel, summaryMessages, summaryMaxTokens, summaryTemperature),
         );
-        if (guidedSummary) {
-          messagesForModel = insertSystemContext(messagesForModel, guidedSummary);
+        if (guidedSummary.message) {
+          messagesForModel = insertSystemContext(messagesForModel, guidedSummary.message);
         }
-      } else {
-        const dbSummary = buildDbSummaryMessage();
-        if (dbSummary) messagesForModel = insertSystemContext(messagesForModel, dbSummary);
+        knowledgeSummaryUsed = guidedSummary.summaryUsed;
       }
+      const knowledgeTelemetry = knowledgeBase.toTelemetry(knowledgeSelection, knowledgeSummaryUsed);
       messagesForModel = insertSystemContext(messagesForModel, GUARDRAIL_SYSTEM_MESSAGE);
 
       const useAuto = model === "auto" || (!model && autoModel);
@@ -1414,7 +1172,7 @@ async function startServer() {
           : model || defaultModel;
       if (!MODEL_IDS.has(resolvedModel)) {
         console.error("[/api/chat] model not allowed:", resolvedModel);
-        res.status(400).json({ error: "Modelo não permitido." });
+        res.status(400).json({ error: "Modelo nÃ£o permitido." });
         return;
       }
 
@@ -1458,8 +1216,18 @@ async function startServer() {
       }
 
       const content = data?.choices?.[0]?.message?.content ?? "";
+      console.log(
+        "[/api/chat] knowledge:",
+        JSON.stringify({
+          docsUsed: knowledgeTelemetry.docsUsed,
+          contextChars: knowledgeTelemetry.contextChars,
+          summaryUsed: knowledgeTelemetry.summaryUsed,
+          policy: knowledgeTelemetry.policy,
+          latencyMs: Date.now() - requestStartedAt,
+        }),
+      );
       console.log("[/api/chat] success");
-      res.json({ content, model: usedModel });
+      res.json({ content, model: usedModel, knowledge: knowledgeTelemetry });
     } catch (error: any) {
       console.error("Erro no /api/chat:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });
@@ -1472,7 +1240,7 @@ async function startServer() {
       const apiKey = process.env.GROQ_API_KEY;
       if (!apiKey) {
         console.error("[/api/chat-stream] GROQ_API_KEY missing");
-        res.status(500).json({ error: "GROQ_API_KEY não configurada no servidor." });
+        res.status(500).json({ error: "GROQ_API_KEY nÃ£o configurada no servidor." });
         return;
       }
 
@@ -1483,7 +1251,7 @@ async function startServer() {
         pendingPdfs?: Array<{ dataUrl?: string; filename?: string }>;
       };
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
-        res.status(400).json({ error: "Mensagens inválidas." });
+        res.status(400).json({ error: "Mensagens invÃ¡lidas." });
         return;
       }
 
@@ -1493,24 +1261,25 @@ async function startServer() {
           ? [pendingPdf]
           : [];
       let messagesForModel = await injectPendingPdfContext(messages, normalizedPendingPdfs);
-      const dbSelection = selectDbExcerpts(messagesForModel);
-      if (dbSelection) {
-        const dbContextMessage = buildDbContextMessage(dbSelection.contextParts);
-        if (dbContextMessage) {
-          messagesForModel = insertSystemContext(messagesForModel, dbContextMessage);
+      const requestStartedAt = Date.now();
+      const knowledgeSelection = knowledgeBase.selectForMessages(messagesForModel);
+      let knowledgeSummaryUsed = false;
+      if (knowledgeSelection) {
+        const knowledgeContextMessage = knowledgeBase.buildContextSystemMessage(knowledgeSelection);
+        if (knowledgeContextMessage) {
+          messagesForModel = insertSystemContext(messagesForModel, knowledgeContextMessage);
         }
-        const guidedSummary = await buildDbSummaryFromExcerpts(
-          apiKey,
-          dbSelection.queryText,
-          dbSelection.contextParts
+        const guidedSummary = await knowledgeBase.maybeBuildGuidedSummary(
+          knowledgeSelection,
+          async ({ model: summaryModel, messages: summaryMessages, maxTokens: summaryMaxTokens, temperature: summaryTemperature }) =>
+            callGroqChat(apiKey, summaryModel, summaryMessages, summaryMaxTokens, summaryTemperature),
         );
-        if (guidedSummary) {
-          messagesForModel = insertSystemContext(messagesForModel, guidedSummary);
+        if (guidedSummary.message) {
+          messagesForModel = insertSystemContext(messagesForModel, guidedSummary.message);
         }
-      } else {
-        const dbSummary = buildDbSummaryMessage();
-        if (dbSummary) messagesForModel = insertSystemContext(messagesForModel, dbSummary);
+        knowledgeSummaryUsed = guidedSummary.summaryUsed;
       }
+      const knowledgeTelemetry = knowledgeBase.toTelemetry(knowledgeSelection, knowledgeSummaryUsed);
       messagesForModel = insertSystemContext(messagesForModel, GUARDRAIL_SYSTEM_MESSAGE);
 
       const useAuto = model === "auto" || (!model && AUTO_MODEL);
@@ -1525,7 +1294,7 @@ async function startServer() {
           ? autoSelectModel(messagesForModel)
           : model || DEFAULT_MODEL;
       if (!MODEL_IDS.has(resolvedModel)) {
-        res.status(400).json({ error: "Modelo não permitido." });
+        res.status(400).json({ error: "Modelo nÃ£o permitido." });
         return;
       }
 
@@ -1648,7 +1417,7 @@ async function startServer() {
         }
       }
       if (!firstResult) {
-        throw new Error("Nenhum modelo disponível para iniciar streaming.");
+        throw new Error("Nenhum modelo disponÃ­vel para iniciar streaming.");
       }
 
       // Commit first segment's output
@@ -1671,11 +1440,11 @@ async function startServer() {
         const continuationInstruction =
           "Sua resposta anterior foi cortada. Continue EXATAMENTE de onde parou.\n" +
           "REGRAS:\n" +
-          "- NÃO repita nenhum conteúdo já escrito.\n" +
-          "- Mantenha o mesmo idioma, tom, formato (markdown/bullets) e contexto técnico.\n" +
-          "- Entregue SOMENTE a continuação, começando da próxima palavra/frase.\n" +
-          "- NÃO adicione informações novas que não faziam parte do raciocínio original.\n" +
-          "- NÃO invente dados, normas ou fontes.";
+          "- NÃƒO repita nenhum conteÃºdo jÃ¡ escrito.\n" +
+          "- Mantenha o mesmo idioma, tom, formato (markdown/bullets) e contexto tÃ©cnico.\n" +
+          "- Entregue SOMENTE a continuaÃ§Ã£o, comeÃ§ando da prÃ³xima palavra/frase.\n" +
+          "- NÃƒO adicione informaÃ§Ãµes novas que nÃ£o faziam parte do raciocÃ­nio original.\n" +
+          "- NÃƒO invente dados, normas ou fontes.";
 
         const continuationMessages = [
           ...messagesForModel,
@@ -1713,12 +1482,23 @@ async function startServer() {
       }
 
       const finalSplit = { thinkingText: accumulatedThinking.trim(), answerText: accumulatedAnswer.trim() };
+      console.log(
+        "[/api/chat-stream] knowledge:",
+        JSON.stringify({
+          docsUsed: knowledgeTelemetry.docsUsed,
+          contextChars: knowledgeTelemetry.contextChars,
+          summaryUsed: knowledgeTelemetry.summaryUsed,
+          policy: knowledgeTelemetry.policy,
+          latencyMs: Date.now() - requestStartedAt,
+        }),
+      );
       res.write(
         `${JSON.stringify({
           type: "done",
           model: clientModel,
           thinkingText: finalSplit.thinkingText,
           content: finalSplit.answerText,
+          knowledge: knowledgeTelemetry,
         })}\n`
       );
       res.end();
@@ -1736,6 +1516,10 @@ async function startServer() {
     res.json({ ok: true, ts: Date.now() });
   });
 
+  app.get("/api/knowledge/health", (_req, res) => {
+    res.json(knowledgeBase.getHealth());
+  });
+
   app.get("/api/runtime/version", (_req, res) => {
     res.json({
       ok: true,
@@ -1746,6 +1530,7 @@ async function startServer() {
       hasGeometryBbox: true,
       hasMapSnapshot: true,
       hasMapCapabilities: true,
+      hasKnowledgeHealth: true,
     });
   });
 
@@ -1759,14 +1544,14 @@ async function startServer() {
 
       if (!apiKey || !apiSecret) {
         console.error("[/api/upload-image] Cloudinary missing keys");
-        res.status(500).json({ error: "Cloudinary não configurado." });
+        res.status(500).json({ error: "Cloudinary nÃ£o configurado." });
         return;
       }
 
       const { dataUrl, filename } = req.body as { dataUrl?: string; filename?: string };
       if (!dataUrl || typeof dataUrl !== "string") {
         console.error("[/api/upload-image] dataUrl missing");
-        res.status(400).json({ error: "dataUrl é obrigatório." });
+        res.status(400).json({ error: "dataUrl Ã© obrigatÃ³rio." });
         return;
       }
 
@@ -1831,20 +1616,20 @@ async function startServer() {
 
       if (!apiKey || !apiSecret) {
         console.error("[/api/upload-file] Cloudinary missing keys");
-        res.status(500).json({ error: "Cloudinary não configurado." });
+        res.status(500).json({ error: "Cloudinary nÃ£o configurado." });
         return;
       }
 
       const { dataUrl, filename } = req.body as { dataUrl?: string; filename?: string };
       if (!dataUrl || typeof dataUrl !== "string") {
         console.error("[/api/upload-file] dataUrl missing");
-        res.status(400).json({ error: "dataUrl é obrigatório." });
+        res.status(400).json({ error: "dataUrl Ã© obrigatÃ³rio." });
         return;
       }
 
       const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
       if (!match) {
-        res.status(400).json({ error: "dataUrl de PDF inválido." });
+        res.status(400).json({ error: "dataUrl de PDF invÃ¡lido." });
         return;
       }
       const mimeType = match[1] || "application/pdf";
@@ -1945,7 +1730,7 @@ async function startServer() {
       const name = String(req.query.name || "arquivo.pdf").replace(/[^a-zA-Z0-9._-]/g, "_");
 
       if (!remoteUrl || !remoteUrl.startsWith("https://res.cloudinary.com/da19dwpgk/")) {
-        res.status(400).json({ error: "URL de arquivo inválida." });
+        res.status(400).json({ error: "URL de arquivo invÃ¡lida." });
         return;
       }
 
@@ -2025,3 +1810,6 @@ async function startServer() {
 }
 
 startServer().catch(console.error);
+
+
+
