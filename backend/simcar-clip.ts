@@ -14,6 +14,7 @@ import crypto from "crypto";
 import archiver from "archiver";
 import proj4 from "proj4";
 import ExcelJS from "exceljs";
+import sharp from "sharp";
 import {
     area as turfArea,
     featureCollection as turfFeatureCollection,
@@ -92,6 +93,8 @@ type CachedJob = {
     polygon?: Feature<Polygon | MultiPolygon>;
     layerSummaries?: LayerSummary[];
     areaHa?: number;
+    /** Clipped GeoJSON geometries per layer name (for SVG rendering) */
+    clippedGeometries?: Map<string, Geometry[]>;
 };
 const jobCache = new Map<string, CachedJob>();
 
@@ -795,6 +798,7 @@ async function processClip(
 
     // 5. Process each layer
     const clippedLayers = new Map<string, { records: ShpRecord[]; fieldDefs: DbfFieldDef[] }>();
+    const clippedGeometries = new Map<string, Geometry[]>();
 
     for (let i = 0; i < layerNames.length; i++) {
         const layerName = layerNames[i];
@@ -945,6 +949,14 @@ async function processClip(
             clippedLayers.set(layerName, { records, fieldDefs });
         }
 
+        // Store clipped GeoJSON geometries for AI analysis rendering
+        const geoJsonGeoms = clipped
+            .map((f) => f.geometry)
+            .filter((g): g is Geometry => !!g);
+        if (geoJsonGeoms.length > 0) {
+            clippedGeometries.set(layerName, geoJsonGeoms);
+        }
+
         totalFeaturesClipped += records.length;
         layerSummaries.push({
             name: layerName,
@@ -1005,6 +1017,7 @@ async function processClip(
         polygon: userPolygon,
         layerSummaries,
         areaHa,
+        clippedGeometries,
     });
 
     // 8. Send completion event
@@ -1063,23 +1076,128 @@ function buildWmsGetMapUrl(
     return url.toString();
 }
 
-/** Fetch a WMS image and return as base64 data URL. */
-async function fetchWmsImage(
+/** Fetch a WMS image and return as a PNG Buffer. */
+async function fetchWmsImageBuffer(
     layers: string[],
     bbox: [number, number, number, number],
     width = 1200,
-    height = 800,
-): Promise<string> {
+    height = 900,
+): Promise<Buffer> {
     const mapUrl = buildWmsGetMapUrl(layers, bbox, width, height);
     const response = await fetch(mapUrl);
     if (!response.ok) {
         const text = await response.text();
         throw new Error(`WMS error ${response.status}: ${text.slice(0, 200)}`);
     }
-    const contentType = response.headers.get("content-type") || "image/png";
     const arr = await response.arrayBuffer();
-    const base64 = Buffer.from(arr).toString("base64");
-    return `data:${contentType};base64,${base64}`;
+    return Buffer.from(arr);
+}
+
+/** Convert GeoJSON coordinates to SVG path data. */
+function geoToPixel(
+    lon: number,
+    lat: number,
+    bbox: [number, number, number, number],
+    width: number,
+    height: number,
+): [number, number] {
+    const x = ((lon - bbox[0]) / (bbox[2] - bbox[0])) * width;
+    // WMS 1.1.1 with EPSG:4326 uses lon,lat order in bbox → y is inverted
+    const y = ((bbox[3] - lat) / (bbox[3] - bbox[1])) * height;
+    return [x, y];
+}
+
+/** Convert a ring (array of [lon, lat]) to SVG path commands. */
+function ringToSvgPath(
+    ring: number[][],
+    bbox: [number, number, number, number],
+    width: number,
+    height: number,
+): string {
+    return ring
+        .map((coord, i) => {
+            const [px, py] = geoToPixel(coord[0], coord[1], bbox, width, height);
+            return `${i === 0 ? "M" : "L"}${px.toFixed(1)},${py.toFixed(1)}`;
+        })
+        .join(" ") + " Z";
+}
+
+/** Build SVG overlay for a set of GeoJSON geometries with given color. */
+function geometriesToSvgPaths(
+    geometries: Geometry[],
+    bbox: [number, number, number, number],
+    width: number,
+    height: number,
+    stroke: string,
+    strokeWidth: number,
+    fill: string,
+): string {
+    const paths: string[] = [];
+    for (const geom of geometries) {
+        let rings: number[][][] = [];
+        if (geom.type === "Polygon") {
+            rings = geom.coordinates as number[][][];
+        } else if (geom.type === "MultiPolygon") {
+            for (const poly of (geom as any).coordinates) {
+                rings.push(...poly);
+            }
+        }
+        for (const ring of rings) {
+            const d = ringToSvgPath(ring, bbox, width, height);
+            paths.push(`<path d="${d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round"/>`);
+        }
+    }
+    return paths.join("\n");
+}
+
+/** Build a complete SVG overlay with all polygon layers. */
+function buildPolygonOverlaySvg(
+    width: number,
+    height: number,
+    bbox: [number, number, number, number],
+    propertyPolygon: Feature<Polygon | MultiPolygon>,
+    layerGeometries: Map<string, Geometry[]>,
+    layers: Array<{ name: string; stroke: string; fill: string; strokeWidth: number }>,
+): Buffer {
+    const svgParts: string[] = [
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+    ];
+
+    // Draw each layer
+    for (const layer of layers) {
+        const geoms = layerGeometries.get(layer.name);
+        if (geoms && geoms.length > 0) {
+            svgParts.push(
+                `<!-- ${layer.name} -->`,
+                geometriesToSvgPaths(geoms, bbox, width, height, layer.stroke, layer.strokeWidth, layer.fill),
+            );
+        }
+    }
+
+    // Always draw property polygon outline (red, no fill)
+    svgParts.push(
+        `<!-- Propriedade -->`,
+        geometriesToSvgPaths(
+            [propertyPolygon.geometry],
+            bbox, width, height,
+            "#EF4444", 3, "none",
+        ),
+    );
+
+    svgParts.push("</svg>");
+    return Buffer.from(svgParts.join("\n"));
+}
+
+/** Composite SVG overlay onto a WMS base image using sharp. Returns data URL. */
+async function compositeOverlay(
+    basePngBuffer: Buffer,
+    svgOverlay: Buffer,
+): Promise<string> {
+    const composited = await sharp(basePngBuffer)
+        .composite([{ input: svgOverlay, top: 0, left: 0 }])
+        .png()
+        .toBuffer();
+    return `data:image/png;base64,${composited.toString("base64")}`;
 }
 
 /** Upload a data URL to Cloudinary. Returns secure_url. */
@@ -1311,67 +1429,59 @@ async function processAnalysis(
         return;
     }
 
-    const { bbox, layerSummaries, areaHa: propAreaHa } = job;
+    const { bbox, polygon: propertyPolygon, layerSummaries, areaHa: propAreaHa, clippedGeometries } = job;
     const areaHa = propAreaHa ?? 0;
     const paddedBbox = padBbox(bbox, 0.10);
+    const IMG_W = 1200;
+    const IMG_H = 900;
+    const layerGeos = clippedGeometries ?? new Map<string, Geometry[]>();
 
-    // Discover WFS layer names for AC and AVN overlays
-    let acWfsLayer = "";
-    let avnWfsLayer = "";
+    // Step 1: Fetch SPOT base image (only WMS for satellite imagery)
+    sendSSE(res, { type: "progress", step: "generating_images", percent: 10, message: "Baixando imagem de satélite SPOT 2008..." });
+
+    let basePngBuffer: Buffer;
     try {
-        const caps = await getCapabilitiesCached(false);
-        const wfsNames = [...caps.layerNames];
-        const mapping = discoverLayerMapping(TEMPLATE_LAYERS, wfsNames);
-        acWfsLayer = mapping.get("AREA_CONSOLIDADA") || "";
-        avnWfsLayer = mapping.get("AVN") || "";
-    } catch {
-        // Fallback to common names
-        acWfsLayer = "Geoportal:SIMCAR_D_AREA_CONSOLIDADA";
-        avnWfsLayer = "Geoportal:SIMCAR_D_AVN";
-    }
-
-    // Step 1: Generate WMS images
-    sendSSE(res, { type: "progress", step: "generating_images", percent: 10, message: "Gerando imagens de satélite SPOT 2008..." });
-
-    const imagesToAnalyze: Array<{ dataUrl: string; caption: string }> = [];
-    const imageDescriptions: string[] = [];
-
-    try {
-        // Image 1: Overview — SPOT + AC + AVN overlays
-        const overviewLayers = [SPOT_LAYER];
-        if (acWfsLayer) overviewLayers.push(acWfsLayer);
-        if (avnWfsLayer) overviewLayers.push(avnWfsLayer);
-
-        console.log(`[SIMCAR ANALYSIS] Fetching overview image: ${overviewLayers.join(",")} bbox=${JSON.stringify(paddedBbox)}`);
-        const overviewDataUrl = await fetchWmsImage(overviewLayers, paddedBbox, 1200, 900);
-        imagesToAnalyze.push({ dataUrl: overviewDataUrl, caption: "Visão Geral: SPOT 2008 + Área Consolidada + AVN" });
-        imageDescriptions.push("Visão geral do imóvel");
-
-        sendSSE(res, { type: "progress", step: "generating_images", percent: 25, message: "Imagem geral gerada. Gerando zoom na Área Consolidada..." });
-
-        // Image 2: Zoom AC — SPOT + AC only
-        if (acWfsLayer) {
-            const acDataUrl = await fetchWmsImage([SPOT_LAYER, acWfsLayer], paddedBbox, 1200, 900);
-            imagesToAnalyze.push({ dataUrl: acDataUrl, caption: "Zoom: SPOT 2008 + Área Consolidada" });
-            imageDescriptions.push("Área Consolidada");
-        }
-
-        sendSSE(res, { type: "progress", step: "generating_images", percent: 40, message: "Gerando zoom na AVN..." });
-
-        // Image 3: Zoom AVN — SPOT + AVN only
-        if (avnWfsLayer) {
-            const avnDataUrl = await fetchWmsImage([SPOT_LAYER, avnWfsLayer], paddedBbox, 1200, 900);
-            imagesToAnalyze.push({ dataUrl: avnDataUrl, caption: "Zoom: SPOT 2008 + AVN" });
-            imageDescriptions.push("Área de Vegetação Nativa");
-        }
+        console.log(`[SIMCAR ANALYSIS] Fetching SPOT base image, bbox=${JSON.stringify(paddedBbox)}`);
+        basePngBuffer = await fetchWmsImageBuffer([SPOT_LAYER], paddedBbox, IMG_W, IMG_H);
     } catch (err: any) {
-        console.error("[SIMCAR ANALYSIS] WMS image error:", err.message);
-        sendSSE(res, { type: "error", message: `Erro ao gerar imagens WMS: ${err.message}` });
+        console.error("[SIMCAR ANALYSIS] WMS base image error:", err.message);
+        sendSSE(res, { type: "error", message: `Erro ao baixar imagem SPOT: ${err.message}` });
         return;
     }
 
-    if (imagesToAnalyze.length === 0) {
-        sendSSE(res, { type: "error", message: "Nenhuma camada de overlay encontrada para análise." });
+    sendSSE(res, { type: "progress", step: "generating_images", percent: 20, message: "Renderizando polígonos sobre a imagem..." });
+
+    const imagesToAnalyze: Array<{ dataUrl: string; caption: string }> = [];
+
+    try {
+        // Image 1: Overview — SPOT + all polygon overlays (property red, AC purple, AVN yellow)
+        const overviewSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon, layerGeos, [
+            { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.20)", strokeWidth: 2 },
+            { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.20)", strokeWidth: 2 },
+        ]);
+        const overviewDataUrl = await compositeOverlay(basePngBuffer, overviewSvg);
+        imagesToAnalyze.push({ dataUrl: overviewDataUrl, caption: "Visão Geral: SPOT 2008 + Propriedade (vermelho) + Área Consolidada (roxo) + AVN (amarelo)" });
+
+        sendSSE(res, { type: "progress", step: "generating_images", percent: 30, message: "Gerando imagem da Área Consolidada..." });
+
+        // Image 2: SPOT + AC only + property outline
+        const acSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon, layerGeos, [
+            { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.25)", strokeWidth: 2.5 },
+        ]);
+        const acDataUrl = await compositeOverlay(basePngBuffer, acSvg);
+        imagesToAnalyze.push({ dataUrl: acDataUrl, caption: "SPOT 2008 + Propriedade (vermelho) + Área Consolidada (roxo)" });
+
+        sendSSE(res, { type: "progress", step: "generating_images", percent: 40, message: "Gerando imagem da AVN..." });
+
+        // Image 3: SPOT + AVN only + property outline
+        const avnSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon, layerGeos, [
+            { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.25)", strokeWidth: 2.5 },
+        ]);
+        const avnDataUrl = await compositeOverlay(basePngBuffer, avnSvg);
+        imagesToAnalyze.push({ dataUrl: avnDataUrl, caption: "SPOT 2008 + Propriedade (vermelho) + AVN (amarelo)" });
+    } catch (err: any) {
+        console.error("[SIMCAR ANALYSIS] Image compositing error:", err.message);
+        sendSSE(res, { type: "error", message: `Erro ao renderizar polígonos: ${err.message}` });
         return;
     }
 
@@ -1389,7 +1499,6 @@ async function processAnalysis(
         }
     } catch (err: any) {
         console.error("[SIMCAR ANALYSIS] Cloudinary upload error:", err.message);
-        // Non-fatal: continue without Cloudinary URLs
         sendSSE(res, { type: "progress", step: "uploading_images", percent: 60, message: "Aviso: falha ao salvar no Cloudinary. Continuando análise..." });
     }
 

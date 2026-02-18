@@ -42,6 +42,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@turf/turf": "^7.3.4",
     "@types/archiver": "^7.0.0",
+    "@types/sharp": "^0.32.0",
     "archiver": "^7.0.1",
     "axios": "^1.12.0",
     "class-variance-authority": "^0.7.1",
@@ -64,6 +65,7 @@
     "react-hook-form": "^7.64.0",
     "react-resizable-panels": "^3.0.6",
     "recharts": "^2.15.2",
+    "sharp": "^0.34.5",
     "sonner": "^2.0.7",
     "streamdown": "^1.4.0",
     "tailwind-merge": "^3.3.1",
@@ -103,6 +105,9 @@
     },
     "overrides": {
       "tailwindcss>nanoid": "3.3.7"
-    }
+    },
+    "onlyBuiltDependencies": [
+      "sharp"
+    ]
   }
 }
