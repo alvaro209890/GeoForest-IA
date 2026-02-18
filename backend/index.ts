@@ -1030,9 +1030,32 @@ async function startServer() {
   };
 
   const DEFAULT_MODEL = "meta-llama/llama-3.3-70b-versatile";
-  const TEMPERATURE = 0.05;
-  const MAX_TOKENS = 1400;
+  const TEMPERATURE = 0.02;
+  const MAX_TOKENS = 1800;
   const AUTO_MODEL = true;
+  /** Trim text to the last complete sentence to avoid garbled continuation joins */
+  const trimToLastCompleteSentence = (text: string): string => {
+    const trimmed = text.trimEnd();
+    if (!trimmed) return trimmed;
+    // If it already ends with sentence-ending punctuation, return as-is
+    if (/[.!?:;\n]$/.test(trimmed)) return trimmed;
+    // Find the last sentence-ending punctuation
+    const lastSentenceEnd = Math.max(
+      trimmed.lastIndexOf(". "),
+      trimmed.lastIndexOf(".\n"),
+      trimmed.lastIndexOf("! "),
+      trimmed.lastIndexOf("?\n"),
+      trimmed.lastIndexOf("? "),
+      trimmed.lastIndexOf(":\n"),
+      trimmed.lastIndexOf(";\n"),
+    );
+    if (lastSentenceEnd > trimmed.length * 0.5) {
+      // Only trim if we'd keep at least 50% of the content
+      return trimmed.slice(0, lastSentenceEnd + 1).trimEnd();
+    }
+    return trimmed;
+  };
+
   const splitThinkProgress = (raw: string) => {
     let visible = "";
     const thinkParts: string[] = [];
@@ -1145,8 +1168,10 @@ async function startServer() {
     return {
       role: "system" as const,
       content:
-        "Resumo do Banco de Conhecimento (use para orientar resposta curta e objetiva):\n" +
-        summary,
+        "Índice do Banco de Conhecimento disponível (estes tópicos podem ser consultados em perguntas futuras):\n" +
+        summary +
+        "\n\nNOTA: Este é apenas o índice. Se o usuário perguntar sobre algo deste índice, os excertos relevantes serão carregados automaticamente. " +
+        "NÃO invente conteúdo que poderia estar nestes documentos — diga que pode pesquisar na base se necessário.",
     };
   };
 
@@ -1181,30 +1206,29 @@ async function startServer() {
     const terms = tokenize(queryText);
     if (!terms.length) return null;
 
-    const scored = scoreDocsBm25(terms).slice(0, 4);
+    const scored = scoreDocsBm25(terms).slice(0, 6);
     if (!scored.length) return null;
 
-    const maxExcerptChars = 380;
+    const maxExcerptChars = 600;
     const contextParts: string[] = [];
     for (const { doc } of scored) {
       const paragraphs = doc.text
         .split(/\n\s*\n+/)
         .map((p) => p.trim())
         .filter(Boolean);
-      let best = "";
-      let bestScore = -1;
-      for (const p of paragraphs) {
+      const scoredParagraphs = paragraphs.map((p) => {
         const pLower = normalizeText(p);
         let pScore = 0;
         for (const term of terms) {
           if (pLower.includes(term)) pScore += 1;
         }
-        if (pScore > bestScore) {
-          bestScore = pScore;
-          best = p;
-        }
+        return { text: p, score: pScore };
+      }).sort((a, b) => b.score - a.score);
+      const topParagraphs = scoredParagraphs.filter((p) => p.score > 0).slice(0, 2);
+      if (!topParagraphs.length && paragraphs.length) {
+        topParagraphs.push({ text: paragraphs[0], score: 0 });
       }
-      const excerpt = (best || paragraphs[0] || doc.text).slice(0, maxExcerptChars);
+      const excerpt = topParagraphs.map((p) => p.text).join("\n\n").slice(0, maxExcerptChars);
       contextParts.push(`Fonte: ${doc.relPath}\n${excerpt}`.trim());
     }
 
@@ -1217,11 +1241,16 @@ async function startServer() {
     return {
       role: "system" as const,
       content:
-        "Use apenas a Base de Conhecimento a seguir para responder de forma objetiva e curta. " +
-        "Se houver base legal, cite a lei/norma com número e ano. " +
-        "Se não houver base suficiente, diga o que falta. " +
-        "Cite a fonte usando [arquivo].\n\n" +
-        "Base de Conhecimento:\n" +
+        "## BASE DE CONHECIMENTO (FONTE PRIMÁRIA)\n" +
+        "Você DEVE usar os excertos abaixo como fonte principal para sua resposta.\n\n" +
+        "REGRAS OBRIGATÓRIAS:\n" +
+        "1. Baseie sua resposta EXCLUSIVAMENTE no conteúdo dos excertos fornecidos abaixo.\n" +
+        "2. Cite a fonte de cada informação no formato [nome_arquivo.md].\n" +
+        "3. Se a base NÃO contiver informação suficiente, diga: \"A base de conhecimento não contém informação suficiente sobre [tópico]. Recomendo consultar [fonte específica].\"\n" +
+        "4. NÃO invente artigos de lei, portarias, INs ou resoluções que não estejam nos excertos.\n" +
+        "5. Se houver base legal nos excertos, cite com número e ano exatos conforme aparecem no texto.\n" +
+        "6. Quando a informação for parcial, indique o que está confirmado e o que precisa ser verificado.\n\n" +
+        "Excertos:\n" +
         contextText,
     };
   };
@@ -1233,6 +1262,19 @@ async function startServer() {
     let idx = 0;
     while (idx < messages.length && messages[idx]?.role === "system") idx += 1;
     return [...messages.slice(0, idx), systemMessage, ...messages.slice(idx)];
+  };
+
+  const GUARDRAIL_SYSTEM_MESSAGE = {
+    role: "system" as const,
+    content: [
+      "## VERIFICAÇÃO FINAL ANTES DE RESPONDER",
+      "Antes de entregar sua resposta, verifique cada afirmação:",
+      "- Cada lei/norma citada tem número e ano corretos? Se não tem certeza, remova ou diga 'verificar na legislação vigente'.",
+      "- Cada dado numérico (área, percentual, coordenada) veio do usuário ou da Base de Conhecimento? Se não, remova.",
+      "- Cada fonte citada [arquivo.md] existe nos excertos fornecidos? Se não, remova a citação.",
+      "- Há afirmações categóricas sem evidência? Reformule como hipótese com nível de confiança.",
+      "- Se você não tem informação suficiente, é MELHOR dizer 'não sei / preciso de mais dados' do que inventar uma resposta plausível.",
+    ].join("\n"),
   };
 
   const callGroqChat = async (
@@ -1271,18 +1313,21 @@ async function startServer() {
     if (!DB_SUMMARY_ENABLED) return null;
     if (!contextParts.length) return null;
     const summaryPrompt = [
-      "Resuma de forma curta, técnica e objetiva.",
-      "Use apenas o conteúdo fornecido.",
-      "Cite as fontes no formato [arquivo].",
-      "Se faltar base legal, diga explicitamente.",
-    ].join(" ");
+      "Você é um assistente de sumarização técnica. Sua tarefa é resumir os excertos fornecidos.",
+      "REGRAS OBRIGATÓRIAS:",
+      "- Use APENAS informação presente nos excertos. NÃO adicione conhecimento externo.",
+      "- Cite as fontes no formato [arquivo.md].",
+      "- Se os excertos NÃO contêm informação para responder a pergunta, diga: 'Os excertos não contêm informação direta sobre este tópico.'",
+      "- NÃO invente artigos de lei, números de portarias ou dados que não estejam nos excertos.",
+      "- Seja curto, técnico e objetivo.",
+    ].join("\n");
     const summaryMessages = [
       { role: "system", content: summaryPrompt },
       {
         role: "user",
         content:
           `Pergunta do usuário: ${queryText}\n\n` +
-          "Excertos da base:\n" +
+          "Excertos da base de conhecimento:\n" +
           contextParts.join("\n\n"),
       },
     ];
@@ -1292,12 +1337,12 @@ async function startServer() {
         DB_SUMMARY_MODEL,
         summaryMessages,
         DB_SUMMARY_MAX_TOKENS,
-        0.1
+        0.05
       );
       if (!summary.trim()) return null;
       return {
         role: "system" as const,
-        content: "Resumo guiado da Base de Conhecimento:\n" + summary.trim(),
+        content: "Resumo guiado da Base de Conhecimento (baseado nos excertos acima — não contém informação adicional):\n" + summary.trim(),
       };
     } catch (err) {
       console.warn("Falha ao gerar resumo do banco:", err);
@@ -1354,6 +1399,7 @@ async function startServer() {
         const dbSummary = buildDbSummaryMessage();
         if (dbSummary) messagesForModel = insertSystemContext(messagesForModel, dbSummary);
       }
+      messagesForModel = insertSystemContext(messagesForModel, GUARDRAIL_SYSTEM_MESSAGE);
 
       const useAuto = model === "auto" || (!model && autoModel);
       const hasImageInput = messagesForModel.some(
@@ -1465,6 +1511,7 @@ async function startServer() {
         const dbSummary = buildDbSummaryMessage();
         if (dbSummary) messagesForModel = insertSystemContext(messagesForModel, dbSummary);
       }
+      messagesForModel = insertSystemContext(messagesForModel, GUARDRAIL_SYSTEM_MESSAGE);
 
       const useAuto = model === "auto" || (!model && AUTO_MODEL);
       const hasImageInput = messagesForModel.some(
@@ -1490,10 +1537,12 @@ async function startServer() {
         res.write(`${JSON.stringify(payload)}\n`);
       };
 
-      let rawModelText = "";
+      // --- Accumulated answer (visible to user) and thinking (hidden) ---
+      let accumulatedAnswer = "";
+      let accumulatedThinking = "";
       const clientModel = resolvedModel;
 
-      const continuationPool = hasImageInput
+      const fallbackModels = hasImageInput
         ? [
           ...IMAGE_ANALYSIS_FALLBACKS,
           "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -1504,10 +1553,18 @@ async function startServer() {
           "qwen/qwen3-32b",
           "moonshotai/kimi-k2-instruct-0905",
         ];
-      const continuationModels = [resolvedModel, ...continuationPool.filter((m) => m !== resolvedModel)];
-      const MAX_CONTINUATIONS = 3;
+      const startupCandidates = [resolvedModel, ...fallbackModels.filter((m) => m !== resolvedModel)];
+      const MAX_CONTINUATIONS = 2;
 
-      const streamModelSegment = async (segmentModel: string, segmentMessages: Array<{ role: string; content: any }>) => {
+      /**
+       * Streams one model segment. Returns { finishReason, segmentText }.
+       * segmentText is the RAW text this segment produced (may contain <think> tags).
+       * Deltas are emitted to the client using the accumulated answer so far.
+       */
+      const streamModelSegment = async (
+        segmentModel: string,
+        segmentMessages: Array<{ role: string; content: any }>
+      ): Promise<{ finishReason: string; segmentText: string }> => {
         const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -1532,6 +1589,7 @@ async function startServer() {
         const reader = upstream.body.getReader();
         let buffer = "";
         let finishReason = "";
+        let segmentRaw = "";
 
         while (true) {
           const { value, done } = await reader.read();
@@ -1547,7 +1605,7 @@ async function startServer() {
             const data = trimmed.slice(5).trim();
             if (!data) continue;
             if (data === "[DONE]") {
-              return finishReason || "stop";
+              return { finishReason: finishReason || "stop", segmentText: segmentRaw };
             }
             try {
               const parsed = JSON.parse(data);
@@ -1556,13 +1614,15 @@ async function startServer() {
               const fr = choice?.finish_reason;
               if (typeof fr === "string" && fr) finishReason = fr;
               if (typeof delta === "string" && delta.length > 0) {
-                rawModelText += delta;
-                const split = splitThinkProgress(rawModelText);
+                segmentRaw += delta;
+                // Parse this segment's think tags separately
+                const segSplit = splitThinkProgress(segmentRaw);
+                // Emit combined accumulated + this segment's visible text
                 writeChunk({
                   type: "delta",
                   model: clientModel,
-                  thinkingText: split.thinkingText,
-                  content: split.answerText,
+                  thinkingText: accumulatedThinking + (segSplit.thinkingText ? "\n\n" + segSplit.thinkingText : ""),
+                  content: accumulatedAnswer + segSplit.answerText,
                 });
               }
             } catch {
@@ -1571,43 +1631,88 @@ async function startServer() {
           }
         }
 
-        return finishReason || "stop";
+        return { finishReason: finishReason || "stop", segmentText: segmentRaw };
       };
 
-      let continuationIndex = 0;
-      let finishReason = "";
-      let started = false;
-      for (let i = 0; i < continuationModels.length; i += 1) {
-        const candidate = continuationModels[i];
+      // --- Phase 1: Start streaming with the first available model ---
+      let activeModel = "";
+      let firstResult: { finishReason: string; segmentText: string } | null = null;
+      for (const candidate of startupCandidates) {
+        if (!MODEL_IDS.has(candidate)) continue;
         try {
-          finishReason = await streamModelSegment(candidate, messagesForModel);
-          continuationIndex = i;
-          started = true;
+          firstResult = await streamModelSegment(candidate, messagesForModel);
+          activeModel = candidate;
           break;
         } catch (err) {
-          console.warn(`[ /api/chat-stream ] model fallback failed (${candidate})`, err);
+          console.warn(`[chat-stream] startup model failed (${candidate})`, err);
         }
       }
-      if (!started) {
+      if (!firstResult) {
         throw new Error("Nenhum modelo disponível para iniciar streaming.");
       }
 
-      while (finishReason === "length" && continuationIndex < MAX_CONTINUATIONS - 1) {
-        continuationIndex += 1;
-        const nextModel = continuationModels[Math.min(continuationIndex, continuationModels.length - 1)];
-        const partialAnswer = splitThinkProgress(rawModelText).answerText || rawModelText;
-        const continuationInstruction =
-          "Continue exatamente da última frase da sua resposta anterior, sem repetir conteúdo. " +
-          "Mantenha o mesmo idioma, estrutura e contexto técnico. Entregue somente a continuação.";
-        const continuationMessages = [
-          ...messagesForModel,
-          { role: "assistant", content: partialAnswer },
-          { role: "user", content: continuationInstruction },
-        ];
-        finishReason = await streamModelSegment(nextModel, continuationMessages);
+      // Commit first segment's output
+      const firstSplit = splitThinkProgress(firstResult.segmentText);
+      accumulatedAnswer += firstSplit.answerText;
+      if (firstSplit.thinkingText) {
+        accumulatedThinking += (accumulatedThinking ? "\n\n" : "") + firstSplit.thinkingText;
       }
 
-      const finalSplit = splitThinkProgress(rawModelText);
+      // --- Phase 2: Continue if the model hit max_tokens (finish_reason: "length") ---
+      let continuationsUsed = 0;
+      let lastFinishReason = firstResult.finishReason;
+
+      while (lastFinishReason === "length" && continuationsUsed < MAX_CONTINUATIONS) {
+        continuationsUsed += 1;
+
+        // Trim trailing incomplete sentence to avoid garbled joins
+        const trimmedAnswer = trimToLastCompleteSentence(accumulatedAnswer);
+
+        const continuationInstruction =
+          "Sua resposta anterior foi cortada. Continue EXATAMENTE de onde parou.\n" +
+          "REGRAS:\n" +
+          "- NÃO repita nenhum conteúdo já escrito.\n" +
+          "- Mantenha o mesmo idioma, tom, formato (markdown/bullets) e contexto técnico.\n" +
+          "- Entregue SOMENTE a continuação, começando da próxima palavra/frase.\n" +
+          "- NÃO adicione informações novas que não faziam parte do raciocínio original.\n" +
+          "- NÃO invente dados, normas ou fontes.";
+
+        const continuationMessages = [
+          ...messagesForModel,
+          { role: "assistant" as const, content: trimmedAnswer },
+          { role: "user" as const, content: continuationInstruction },
+        ];
+
+        // Try the SAME model first, then fallback to others
+        const candidatesForContinuation = [activeModel, ...startupCandidates.filter((m) => m !== activeModel)];
+        let contResult: { finishReason: string; segmentText: string } | null = null;
+
+        for (const candidate of candidatesForContinuation) {
+          if (!MODEL_IDS.has(candidate)) continue;
+          try {
+            contResult = await streamModelSegment(candidate, continuationMessages);
+            activeModel = candidate;
+            break;
+          } catch (err) {
+            console.warn(`[chat-stream] continuation model failed (${candidate})`, err);
+          }
+        }
+
+        if (!contResult) {
+          console.warn("[chat-stream] No model available for continuation, stopping.");
+          break;
+        }
+
+        // Commit continuation segment
+        const contSplit = splitThinkProgress(contResult.segmentText);
+        accumulatedAnswer += contSplit.answerText;
+        if (contSplit.thinkingText) {
+          accumulatedThinking += (accumulatedThinking ? "\n\n" : "") + contSplit.thinkingText;
+        }
+        lastFinishReason = contResult.finishReason;
+      }
+
+      const finalSplit = { thinkingText: accumulatedThinking.trim(), answerText: accumulatedAnswer.trim() };
       res.write(
         `${JSON.stringify({
           type: "done",

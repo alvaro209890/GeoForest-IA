@@ -69,6 +69,7 @@ type ChatMessage = {
       layerGroup?: string;
       inferredYear?: string;
       capturedAtIso?: string;
+      activeOverlays?: Array<{ name: string; title: string }>;
     };
   };
 };
@@ -564,20 +565,33 @@ export default function Dashboard() {
   const systemPrompt = useMemo(
     () => ({
       role: 'system',
-      content:
-        [
-          'Você é uma IA especializada em engenharia florestal e análise ambiental.',
-          `Usuário atual: ${userProfile?.fullName || 'Usuário'}.`,
-          'Responda em português do Brasil, com foco técnico, claro e orientado a ação.',
-          'Respostas curtas e objetivas. Só aprofunde se o usuário pedir análise completa.',
-          'Considere o contexto da conversa atual como prioridade.',
-          'Se faltarem dados, diga exatamente quais dados faltam.',
-          'Quando houver imagem, faça leitura visual disciplinada: evidências observáveis, interpretação e limitações.',
-          'Não confunda hipótese com fato observado; marque nível de confiança (alto/médio/baixo).',
-          'Para mapa/satélite, use BBOX/CRS/camada/ano informados para contextualizar a análise.',
-          'Se houver evidência clara de desmatamento anterior a 22/07/2008, trate como área consolidada e cite a base legal quando aplicável.',
-          'Não invente normas, números, fontes ou conclusões.',
-        ].join(' '),
+      content: [
+        `Você é a GeoForest IA, assistente técnica de engenharia florestal e análise ambiental do estado de Mato Grosso.`,
+        `Usuário atual: ${userProfile?.fullName || 'Usuário'}.`,
+        '',
+        '## REGRAS DE RESPOSTA',
+        '- Responda em português do Brasil, com foco técnico, claro e orientado a ação.',
+        '- Respostas curtas e objetivas. Só aprofunde se o usuário pedir análise completa.',
+        '- Considere o contexto da conversa atual como prioridade.',
+        '',
+        '## REGRAS ANTI-ALUCINAÇÃO (OBRIGATÓRIAS)',
+        '- NUNCA invente leis, normas, números de artigos, portarias, instruções normativas ou resoluções. Se não souber o número exato, diga "consulte a legislação vigente" ao invés de chutar.',
+        '- NUNCA fabrique dados numéricos (áreas, percentuais, coordenadas, datas) que não foram fornecidos pelo usuário ou pela Base de Conhecimento.',
+        '- NUNCA invente fontes, referências bibliográficas, links ou nomes de documentos que não existem.',
+        '- Se a Base de Conhecimento foi fornecida, use APENAS ela como fonte. Cite a fonte no formato [nome_do_arquivo.md].',
+        '- Se NÃO houver informação suficiente para responder, diga explicitamente: "Não tenho informação suficiente sobre isso. Dados necessários: [lista]."',
+        '- Separe SEMPRE o que é fato observável do que é interpretação ou hipótese.',
+        '- Classifique cada afirmação técnica com nível de confiança: [ALTA], [MÉDIA] ou [BAIXA].',
+        '- Quando citar legislação, cite APENAS leis que você tem certeza absoluta (ex: Lei 12.651/2012 - Código Florestal, Lei 9.605/1998 - Crimes Ambientais, LC 38/1995 - Código Ambiental de MT). Para qualquer outra, diga "verificar na legislação vigente".',
+        '',
+        '## REGRAS ESPECÍFICAS PARA MAPAS E SATÉLITE',
+        '- Para mapa/satélite, use BBOX/CRS/camada/ano informados para contextualizar a análise.',
+        '- Se houver evidência clara de desmatamento anterior a 22/07/2008, trate como área consolidada e cite a base legal (Art. 68, Lei 12.651/2012).',
+        '- Se faltarem dados para um diagnóstico, diga exatamente quais dados faltam ao invés de especular.',
+        '- Quando o usuário pedir laudo ou relatório, inclua as ressalvas técnicas e limitações da análise.',
+        '- CAMADAS DE OVERLAY: quando a imagem de mapa informar camadas de overlay ativas (ex: SIMCAR, CAR, áreas consolidadas, AUAs, APPs, reserva legal), considere estas camadas na sua análise. Elas são sobreposições vetoriais visíveis na imagem e representam informação geoespacial oficial. Mencione quais overlays estão presentes e como eles se relacionam com a área analisada.',
+        '- Exemplos de overlays comuns: simcar_area_consolidada (áreas de uso consolidado no SIMCAR), simcar_aua (Áreas de Uso Alternativo), simcar_app (Áreas de Preservação Permanente), simcar_rl (Reserva Legal), car_* (limites de imóveis do CAR).',
+      ].join('\n'),
     }),
     [userProfile?.fullName]
   );
@@ -1451,6 +1465,12 @@ export default function Dashboard() {
     const selectedLayerMeta = mapImageLayers.find((l) => l.name === selectedMapLayer);
     const inferredYearFromName =
       selectedMapLayer.match(/\b(19|20)\d{2}\b/)?.[0] || selectedLayerMeta?.inferredYear || '';
+    const activeOverlaysMeta = selectedSimcarOverlays
+      .map((name) => {
+        const meta = simcarDigitalLayers.find((l) => l.name === name);
+        return { name, title: meta?.title || name.split(':').pop() || name };
+      });
+
     const baseMapContext: MapContext = {
       layerName: selectedMapLayer,
       layerTitle: selectedLayerMeta?.title || selectedMapLayer,
@@ -1462,6 +1482,7 @@ export default function Dashboard() {
       width: 1280,
       height: 960,
       capturedAtIso: new Date().toISOString(),
+      activeOverlays: activeOverlaysMeta.length ? activeOverlaysMeta : undefined,
     };
 
     setMapCapturing(true);
@@ -1742,13 +1763,16 @@ export default function Dashboard() {
 
     let userPayloadText = userText;
     if (selectedImageFiles.length || selectedMapImageUrl) {
+      const overlayLines = (pendingMapContext?.activeOverlays || []).map(
+        (o) => `  • ${o.title} (${o.name})`
+      );
       const mapContextBlock = pendingMapContext
         ? [
           'Contexto técnico da imagem de mapa:',
-          `- Camada WMS: ${pendingMapContext.layerName}`,
-          pendingMapContext.layerTitle ? `- Título da camada: ${pendingMapContext.layerTitle}` : '',
+          `- Camada base WMS: ${pendingMapContext.layerName}`,
+          pendingMapContext.layerTitle ? `- Título da camada base: ${pendingMapContext.layerTitle}` : '',
           pendingMapContext.layerGroup ? `- Grupo: ${pendingMapContext.layerGroup}` : '',
-          pendingMapContext.inferredYear ? `- Ano da imagem: ${pendingMapContext.inferredYear}` : '',
+          pendingMapContext.inferredYear ? `- Ano da imagem base: ${pendingMapContext.inferredYear}` : '',
           `- BBOX (minX,minY,maxX,maxY): ${pendingMapContext.bbox.join(', ')}`,
           `- CRS: ${pendingMapContext.crs}`,
           `- Fonte: ${pendingMapContext.source}`,
@@ -1758,7 +1782,13 @@ export default function Dashboard() {
           pendingMapContext.capturedAtIso
             ? `- Data/hora de captura (ISO): ${pendingMapContext.capturedAtIso}`
             : '',
-          '- Observação: a imagem pode conter demarcação vetorial da área de interesse.',
+          overlayLines.length
+            ? `- Camadas de overlay ativas (${overlayLines.length} camadas sobrepostas à imagem base):\n${overlayLines.join('\n')}`
+            : '- Camadas de overlay ativas: nenhuma',
+          '- Observação: a imagem pode conter demarcação vetorial da área de interesse.' +
+            (overlayLines.length
+              ? ' As camadas de overlay listadas acima estão visíveis na imagem e devem ser consideradas na análise (ex: limites de CAR, áreas consolidadas, AUAs, APPs, reservas legais, SIMCAR, etc.).'
+              : ''),
         ]
           .filter(Boolean)
           .join('\n')
@@ -1913,18 +1943,31 @@ export default function Dashboard() {
       ? {
         role: 'system',
         content: [
-          'Modo de análise visual avançada ativado.',
-          'Siga esta ordem na resposta:',
-          '1) Leitura objetiva da cena (o que está visível).',
-          '2) Achados técnicos priorizados com evidências visuais.',
-          '3) Interpretação ambiental/florestal com nível de confiança por achado.',
-          '4) Incertezas e o que falta para fechar diagnóstico.',
-          '5) Próximas ações práticas (curto prazo).',
-          'Se houver contexto geoespacial (BBOX/CRS/camada/ano), use explicitamente no raciocínio.',
-          'Se houver evidência clara de desmatamento anterior a 22/07/2008, trate como área consolidada (indique confiança).',
-          'Evite afirmações categóricas sem suporte visual direto.',
-          'Mantenha a resposta curta e objetiva.',
-        ].join(' '),
+          '## MODO DE ANÁLISE VISUAL',
+          'Siga esta estrutura rigorosamente:',
+          '',
+          '**1. Descrição objetiva** — Descreva APENAS o que é visível na imagem (cores, padrões, texturas, feições). NÃO interprete ainda.',
+          '**2. Achados técnicos** — Liste os achados com evidência visual específica. Para cada um, indique o que na imagem sustenta a afirmação.',
+          '**3. Interpretação** — Para cada achado, forneça a interpretação ambiental/florestal com nível de confiança [ALTA/MÉDIA/BAIXA] e justificativa.',
+          '**4. Limitações e incertezas** — O que NÃO é possível afirmar com esta imagem. Quais dados adicionais seriam necessários.',
+          '**5. Recomendações** — Próximas ações práticas de curto prazo.',
+          '',
+          'REGRAS CRÍTICAS para análise visual:',
+          '- NÃO afirme espécies vegetais específicas a partir de imagem de satélite — use termos como "vegetação arbórea densa", "vegetação rasteira", "solo exposto".',
+          '- NÃO fabrique valores de NDVI, área em hectares ou percentuais a menos que tenham sido calculados e fornecidos.',
+          '- NÃO identifique propriedades, fazendas ou proprietários a menos que o usuário tenha informado.',
+          '- Se a resolução da imagem não permite uma conclusão, diga isso explicitamente.',
+          '- Se houver contexto geoespacial (BBOX/CRS/camada/ano), use explicitamente no raciocínio.',
+          '- Se houver evidência clara de desmatamento anterior a 22/07/2008, indique como possível área consolidada (Art. 68, Lei 12.651/2012) com nível de confiança.',
+          '',
+          'CAMADAS DE OVERLAY NA IMAGEM:',
+          '- Se o contexto técnico listar camadas de overlay ativas, elas estão VISÍVEIS na imagem como sobreposições vetoriais.',
+          '- Identifique visualmente onde os limites/polígonos dos overlays aparecem na imagem.',
+          '- Correlacione o que você vê na imagem base (satélite) com as informações das camadas sobrepostas.',
+          '- Exemplos: se a camada "simcar_area_consolidada" está ativa, procure na imagem as áreas marcadas como consolidadas e compare com o uso do solo visível.',
+          '- Se a camada de CAR está ativa, identifique os limites dos imóveis rurais e analise o cumprimento das obrigações (APP, RL).',
+          '- Se a camada de AUA (Área de Uso Alternativo) está ativa, verifique se a supressão autorizada está dentro dos limites indicados.',
+        ].join('\n'),
       }
       : null;
 
