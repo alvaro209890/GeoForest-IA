@@ -132,3 +132,6 @@
 [2026-02-18T19:05:45.779Z] {"timestamp":1771441545638,"level":"INFO","args":["%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools","font-weight:bold"],"stack":null}
 [2026-02-18T19:05:51.952Z] {"timestamp":1771441551065,"level":"WARN","args":["[auth-wake] falha ao pingar backend","Failed to fetch"],"stack":null}
 [2026-02-18T19:05:51.952Z] {"timestamp":1771441551480,"level":"LOG","args":["✅ Login realizado com sucesso:","ksuBBoiUfjece4x2UxgZPuYCuU42"],"stack":null}
+[2026-02-18T19:13:25.550Z] {"timestamp":1771442003434,"level":"DEBUG","args":["[Manus] Debug collector initialized (no rrweb, UI events only)"],"stack":null}
+[2026-02-18T19:13:25.550Z] {"timestamp":1771442003557,"level":"INFO","args":["%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools","font-weight:bold"],"stack":null}
+[2026-02-18T19:13:25.550Z] {"timestamp":1771442003742,"level":"DEBUG","args":["[vite] connected."],"stack":null}
