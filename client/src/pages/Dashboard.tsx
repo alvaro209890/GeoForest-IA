@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Leaf,
   Plus,
@@ -1028,9 +1028,24 @@ export default function Dashboard() {
     };
   };
 
+  const autoExpandGroupForLayer = (layerName: string) => {
+    const nameLow = layerName.toLowerCase();
+    let groupName = 'Outras';
+    if (nameLow.startsWith('mosaicos:landsat_5_')) groupName = 'Mosaicos / Landsat / Landsat-5';
+    else if (nameLow.startsWith('mosaicos:landsat_7_')) groupName = 'Mosaicos / Landsat / Landsat-7';
+    else if (nameLow.startsWith('mosaicos:landsat_8_')) groupName = 'Mosaicos / Landsat / Landsat-8';
+    else if (nameLow.startsWith('mosaicos:sentinel_2_') || nameLow.includes('geoportal_sentinel_2_')) groupName = 'Mosaicos / Sentinel-2';
+    else if (nameLow.includes('spot')) groupName = 'Mosaicos / SPOT';
+    else if (nameLow.includes('resourcesat')) groupName = 'Mosaicos / Resourcesat';
+    else if (nameLow.startsWith('semamt:')) groupName = 'SEMAMT';
+    else if (nameLow.startsWith('geoportal:')) groupName = 'Geoportal';
+    else if (nameLow.startsWith('mosaicos:')) groupName = 'Mosaicos / Outras';
+    setMapSectionOpen((prev) => ({ ...prev, imagery: true, [`img_${groupName}`]: true }));
+  };
+
   const openMapDialog = async () => {
     setMapDialogOpen(true);
-    setMapPreviewDataUrl('');
+    if (!mapPreviewDataUrl) setMapPreviewLoading(false);
     setMapLoading(true);
     try {
       const res = await fetch('/api/map/capabilities');
@@ -1049,6 +1064,7 @@ export default function Dashboard() {
       const chosenLayer = preferred || data?.defaultLayer || imageLayers[0]?.name || '';
       setSelectedMapLayer(chosenLayer);
       if (chosenLayer) {
+        autoExpandGroupForLayer(chosenLayer);
         setTimeout(() => {
           refreshMapPreview(chosenLayer, mapBbox);
         }, 0);
@@ -1056,8 +1072,9 @@ export default function Dashboard() {
     } catch (error: any) {
       const imageLayers = FALLBACK_WMS_IMAGE_LAYERS;
       setMapImageLayers(imageLayers);
-      const chosenLayer = selectedMapLayer || 'Mosaicos:LANDSAT_5_2008';
+      const chosenLayer = selectedMapLayer || 'Mosaicos:SENTINEL_2_2024';
       setSelectedMapLayer(chosenLayer);
+      autoExpandGroupForLayer(chosenLayer);
       setTimeout(() => {
         refreshMapPreview(chosenLayer, mapBbox);
       }, 0);
@@ -1097,7 +1114,11 @@ export default function Dashboard() {
       img.src = src;
     });
 
-  const refreshMapPreview = async (layerName?: string, bboxValue?: [number, number, number, number], overlays?: string[]) => {
+  const refreshMapPreviewRef = useRef<((layerName?: string, bboxValue?: [number, number, number, number], overlays?: string[]) => Promise<void>) | undefined>(undefined);
+  const refreshMapPreview = useCallback(async (layerName?: string, bboxValue?: [number, number, number, number], overlays?: string[]) => {
+    return refreshMapPreviewRef.current?.(layerName, bboxValue, overlays);
+  }, []);
+  refreshMapPreviewRef.current = async (layerName?: string, bboxValue?: [number, number, number, number], overlays?: string[]) => {
     const effectiveLayer = layerName || selectedMapLayer;
     const effectiveBbox = bboxValue || mapBbox;
     if (!effectiveLayer) return;
@@ -1110,6 +1131,7 @@ export default function Dashboard() {
     const cached = mapPreviewCacheRef.current.get(cacheKey);
     if (cached) {
       setMapPreviewDataUrl(cached);
+      setMapPreviewLoading(false);
       return;
     }
 
@@ -3004,6 +3026,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                         type="button"
                                         onClick={() => {
                                           setSelectedMapLayer(layer.name);
+                                          autoExpandGroupForLayer(layer.name);
                                           refreshMapPreview(layer.name, mapBbox);
                                         }}
                                         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition-all ${isActive
@@ -3235,11 +3258,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
                 </div>
                 <div className="relative min-h-0">
-                  {mapLoading || mapPreviewLoading ? (
+                  {mapLoading && !mapPreviewDataUrl ? (
                     <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm">
-                      {mapLoading ? 'Carregando camadas do mapa...' : 'Carregando prévia WMS...'}
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="w-8 h-8 border-2 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin" />
+                        <span>Carregando camadas do mapa...</span>
+                      </div>
                     </div>
-                  ) : mapPreviewDataUrl ? (
+                  ) : mapPreviewDataUrl || mapPreviewLoading ? (
                     <div
                       ref={mapPreviewViewportRef}
                       onWheel={applyMapZoomFromWheel}
@@ -3261,19 +3287,26 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           ref={mapPreviewImageRef}
                           src={mapPreviewDataUrl}
                           alt="Prévia WMS da área selecionada"
-                          className="max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain pointer-events-none"
-                          style={
-                            mapDragging
+                          className="max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain pointer-events-none transition-opacity duration-300"
+                          style={{
+                            ...(mapDragging
                               ? { transform: `translate(${mapDragOffset.x}px, ${mapDragOffset.y}px)` }
-                              : undefined
-                          }
+                              : {}),
+                            opacity: mapPreviewLoading ? 0.5 : 1,
+                          }}
                           draggable={false}
                         />
                         {mapPolygonPoints && (
                           <svg
                             viewBox="0 0 100 100"
                             preserveAspectRatio="none"
-                            className="absolute inset-0 h-full w-full pointer-events-none"
+                            className="absolute inset-0 h-full w-full pointer-events-none transition-opacity duration-300"
+                            style={{
+                              ...(mapDragging
+                                ? { transform: `translate(${mapDragOffset.x}px, ${mapDragOffset.y}px)` }
+                                : {}),
+                              opacity: mapPreviewLoading ? 0.4 : 1,
+                            }}
                           >
                             <polygon
                               points={mapPolygonPoints}
@@ -3284,6 +3317,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           </svg>
                         )}
                       </div>
+                      {mapPreviewLoading && (
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+                          <div className="flex flex-col items-center gap-2 bg-black/50 backdrop-blur-sm px-5 py-3 rounded-xl">
+                            <div className="w-6 h-6 border-2 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin" />
+                            <span className="text-xs text-slate-300">Carregando prévia...</span>
+                          </div>
+                        </div>
+                      )}
                       {mapRectSelectionStyle && (
                         <div
                           className="pointer-events-none absolute border-2 border-amber-300 bg-amber-300/15"
@@ -3298,7 +3339,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                   ) : (
                     <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm px-6 text-center">
-                      Selecione uma camada e clique em “Atualizar Prévia WMS”.
+                      Selecione uma camada e clique em "Atualizar Prévia WMS".
                     </div>
                   )}
                 </div>
