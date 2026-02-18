@@ -95,6 +95,9 @@ type CachedJob = {
     areaHa?: number;
     /** Clipped GeoJSON geometries per layer name (for SVG rendering) */
     clippedGeometries?: Map<string, Geometry[]>;
+    /** Cloudinary URLs for persisted download */
+    inputZipUrl?: string;
+    outputZipUrl?: string;
 };
 const jobCache = new Map<string, CachedJob>();
 
@@ -1009,6 +1012,24 @@ async function processClip(
     ];
 
     pruneJobCache();
+
+    // 7b. Upload ZIPs to Cloudinary for persistence
+    let inputZipUrl: string | undefined;
+    let outputZipUrl: string | undefined;
+    try {
+        sendSSE(res, { type: "progress", layer: "UPLOAD", current: total, total, status: "uploading_cloudinary" });
+        const [inUrl, outUrl] = await Promise.all([
+            uploadBufferToCloudinary(propertyZip, `simcar_input_${jobId.slice(0, 8)}`),
+            uploadBufferToCloudinary(zipBuffer, `simcar_output_${jobId.slice(0, 8)}`),
+        ]);
+        inputZipUrl = inUrl;
+        outputZipUrl = outUrl;
+        console.log(`[SIMCAR CLIP] Cloudinary: input=${inUrl}, output=${outUrl}`);
+    } catch (err: any) {
+        console.error("[SIMCAR CLIP] Cloudinary ZIP upload error:", err.message);
+        // Non-fatal: continue without Cloudinary URLs
+    }
+
     jobCache.set(jobId, {
         buffer: zipBuffer,
         expiresAt: Date.now() + CACHE_TTL_MS,
@@ -1018,6 +1039,8 @@ async function processClip(
         layerSummaries,
         areaHa,
         clippedGeometries,
+        inputZipUrl,
+        outputZipUrl,
     });
 
     // 8. Send completion event
@@ -1027,6 +1050,8 @@ async function processClip(
     sendSSE(res, {
         type: "complete",
         downloadUrl: `/api/simcar/clip/download/${jobId}`,
+        inputZipUrl,
+        outputZipUrl,
         summary: {
             propertyAreaHa: areaHa,
             crs: "EPSG:4674",
@@ -1044,6 +1069,15 @@ async function processClip(
 const SEMA_WMS_BASE = process.env.SEMA_WMS_BASE_URL || "https://geo.sema.mt.gov.br/geoserver/ows";
 const SEMA_WMS_AUTHKEY = process.env.SEMA_WMS_AUTHKEY || "541085de-9a2e-454e-bdba-eb3d57a2f492";
 const SPOT_LAYER = "Mosaicos:MOSAICO_SPOT_SEPLAN";
+const LANDSAT5_2007_LAYER = process.env.WMS_LANDSAT5_2007 || "Mosaicos:MOSAICO_LANDSAT5_2007";
+const LANDSAT5_2008_LAYER = process.env.WMS_LANDSAT5_2008 || "Mosaicos:MOSAICO_LANDSAT5_2008";
+
+/** Available satellite base layers for analysis. */
+const SATELLITE_LAYERS: Record<string, { wmsLayer: string; label: string; year: number }> = {
+    spot_2008: { wmsLayer: SPOT_LAYER, label: "SPOT 2008", year: 2008 },
+    landsat5_2007: { wmsLayer: LANDSAT5_2007_LAYER, label: "Landsat 5 (2007)", year: 2007 },
+    landsat5_2008: { wmsLayer: LANDSAT5_2008_LAYER, label: "Landsat 5 (2008)", year: 2008 },
+};
 const ANALYSIS_VISION_MODELS = [
     "openai/gpt-oss-120b",
     "meta-llama/llama-4-maverick-17b-128e-instruct",
@@ -1200,30 +1234,28 @@ async function compositeOverlay(
     return `data:image/png;base64,${composited.toString("base64")}`;
 }
 
-/** Upload a data URL to Cloudinary. Returns secure_url. */
+/** Cloudinary commons */
+const CLOUDINARY_CLOUD = "da19dwpgk";
+
+function cloudinarySign(params: Record<string, string>): string {
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    if (!apiSecret) throw new Error("Cloudinary não configurado.");
+    const base = Object.keys(params).sort().map((k) => `${k}=${params[k]}`).join("&");
+    return crypto.createHash("sha1").update(base + apiSecret).digest("hex");
+}
+
+/** Upload a data URL (image) to Cloudinary. Returns secure_url. */
 async function uploadToCloudinary(dataUrl: string, filename: string): Promise<string> {
-    const cloudName = "da19dwpgk";
     const apiKey = process.env.CLOUDINARY_API_KEY;
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
     const folder = process.env.CLOUDINARY_FOLDER;
-
     if (!apiKey || !apiSecret) throw new Error("Cloudinary não configurado.");
 
     const timestamp = Math.floor(Date.now() / 1000);
     const publicId = `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_");
-
-    const paramsToSign: Record<string, string> = { timestamp: String(timestamp) };
-    if (folder) paramsToSign.folder = folder;
-    paramsToSign.public_id = publicId;
-
-    const signatureBase = Object.keys(paramsToSign)
-        .sort()
-        .map((key) => `${key}=${paramsToSign[key]}`)
-        .join("&");
-    const signature = crypto
-        .createHash("sha1")
-        .update(signatureBase + apiSecret)
-        .digest("hex");
+    const params: Record<string, string> = { timestamp: String(timestamp), public_id: publicId };
+    if (folder) params.folder = folder;
+    const signature = cloudinarySign(params);
 
     const form = new FormData();
     form.append("file", dataUrl);
@@ -1233,16 +1265,45 @@ async function uploadToCloudinary(dataUrl: string, filename: string): Promise<st
     if (folder) form.append("folder", folder);
     form.append("public_id", publicId);
 
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`;
     const response = await fetch(uploadUrl, { method: "POST", body: form });
-
     if (!response.ok) {
         const text = await response.text();
         throw new Error(`Cloudinary error ${response.status}: ${text.slice(0, 200)}`);
     }
+    return ((await response.json()) as { secure_url: string }).secure_url;
+}
 
-    const data = await response.json() as { secure_url: string };
-    return data.secure_url;
+/** Upload a raw Buffer (ZIP etc.) to Cloudinary. Returns secure_url. */
+async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promise<string> {
+    const apiKey = process.env.CLOUDINARY_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    const folder = process.env.CLOUDINARY_FOLDER;
+    if (!apiKey || !apiSecret) throw new Error("Cloudinary não configurado.");
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    const publicId = `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_");
+    const params: Record<string, string> = { timestamp: String(timestamp), public_id: publicId };
+    if (folder) params.folder = folder;
+    const signature = cloudinarySign(params);
+
+    const b64 = `data:application/zip;base64,${buffer.toString("base64")}`;
+    const form = new FormData();
+    form.append("file", b64);
+    form.append("api_key", apiKey);
+    form.append("timestamp", String(timestamp));
+    form.append("signature", signature);
+    if (folder) form.append("folder", folder);
+    form.append("public_id", publicId);
+    form.append("resource_type", "raw");
+
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/raw/upload`;
+    const response = await fetch(uploadUrl, { method: "POST", body: form });
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Cloudinary raw error ${response.status}: ${text.slice(0, 200)}`);
+    }
+    return ((await response.json()) as { secure_url: string }).secure_url;
 }
 
 /** Call Groq vision model with images. Multi-model fallback on failure. */
@@ -1375,53 +1436,158 @@ function padBbox(
 function buildAnalysisPrompt(
     areaHa: number,
     layerSummaries: LayerSummary[],
+    selectedLayers?: string[],
 ): string {
     const acSummary = layerSummaries.find((l) => l.name === "AREA_CONSOLIDADA");
     const avnSummary = layerSummaries.find((l) => l.name === "AVN");
 
+    // Build detailed quantitative table
+    const quantRows = layerSummaries
+        .filter((l) => l.features > 0)
+        .map((l) => {
+            const pct = areaHa > 0 ? ((l.areaHa ?? 0) / areaHa * 100).toFixed(1) : "?";
+            return `| ${l.name} | ${l.features} | ${l.areaHa?.toFixed(2) ?? '-'} ha | ${pct}% |`;
+        });
+
+    const selectedInfo = selectedLayers && selectedLayers.length > 0
+        ? `Imagens enviadas dos satélites: ${selectedLayers.map((k) => SATELLITE_LAYERS[k]?.label || k).join(", ")}.`
+        : "Imagens SPOT 2008 enviadas.";
+
     return [
         "Você é a GeoForest IA, um sistema especializado em análise ambiental para imóveis rurais em Mato Grosso.",
         "",
-        "## Contexto",
-        `- Imóvel rural com área total de ${areaHa.toFixed(2)} hectares.`,
-        `- Área Consolidada (AC): ${acSummary?.features ?? 0} feições, ${acSummary?.areaHa?.toFixed(2) ?? '0'} ha`,
-        `- Área de Vegetação Nativa (AVN): ${avnSummary?.features ?? 0} feições, ${avnSummary?.areaHa?.toFixed(2) ?? '0'} ha`,
+        "## Contexto do Imóvel",
+        `- Área total do imóvel: **${areaHa.toFixed(2)} hectares**`,
+        `- Área Consolidada (AC): ${acSummary?.features ?? 0} feições, ${acSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((acSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%)`,
+        `- Área de Vegetação Nativa (AVN): ${avnSummary?.features ?? 0} feições, ${avnSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((avnSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%)`,
+        "",
+        "### Dados quantitativos completos do recorte SIMCAR",
+        "| Camada | Feições | Área | % do Imóvel |",
+        "|--------|---------|------|-------------||",
+        ...quantRows,
         "",
         "## Imagens enviadas",
-        "1. **Visão Geral**: Imagem SPOT 2008 (marco temporal do Art. 68 da Lei 12.651/2012) com os overlays de ÁREA CONSOLIDADA e AVN renderizados pelo geoserver da SEMA-MT.",
-        "2. **Zoom na Área Consolidada**: Imagem SPOT 2008 com overlay apenas da camada Área Consolidada (estilo padrão do GeoServer).",
-        "3. **Zoom na AVN**: Imagem SPOT 2008 com overlay apenas da camada AVN (estilo padrão do GeoServer).",
+        selectedInfo,
+        "Para cada satélite, foram geradas 3 imagens:",
+        "1. **Visão Geral**: imagem base + Propriedade (contorno vermelho) + Área Consolidada (roxo) + AVN (amarelo)",
+        "2. **Área Consolidada**: imagem base + Propriedade + somente AC",
+        "3. **AVN**: imagem base + Propriedade + somente AVN",
+        "",
+        "O polígono vermelho é a PROPRIEDADE RURAL (ATP). O roxo é ÁREA CONSOLIDADA. O amarelo é VEGETAÇÃO NATIVA.",
         "",
         "## Sua Tarefa",
-        "Analise as 3 imagens e forneça:",
+        "Analise TODAS as imagens e forneça:",
         "",
         "### 1. Análise da Área Consolidada",
-        "- A classificação como Área Consolidada (AC) coincide visualmente com áreas de uso antropizado (agricultura, pastagem, solo exposto, edificações) na imagem de 2008?",
-        "- Há trechos classificados como AC que parecem ter vegetação nativa na imagem de 2008? Se sim, descreva a localização aproximada.",
+        "- A classificação AC coincide com áreas de uso antropizado (agricultura, pastagem, solo exposto, edificações)?",
+        "- Há trechos AC que parecem ter vegetação nativa? Descreva localização aproximada.",
         "",
         "### 2. Análise da AVN",
-        "- A classificação como AVN coincide com cobertura de vegetação nativa (floresta, cerrado, mata ciliar) na imagem de 2008?",
-        "- Há trechos classificados como AVN que parecem já ter sido desmatados/antropizados em 2008? Se sim, descreva.",
+        "- A classificação AVN coincide com cobertura de vegetação nativa (floresta, cerrado, mata ciliar)?",
+        "- Há trechos AVN que parecem já antropizados? Descreva.",
         "",
-        "### 3. Pontos de concordância e discordância",
-        "- Liste os principais pontos onde a classificação CONCORDA com o que se vê na imagem.",
-        "- Liste os principais pontos onde a classificação DISCORDA do observado.",
+        selectedLayers && selectedLayers.length > 1
+            ? "### 3. Análise Temporal Multi-Imagem\n" +
+            "- Compare as imagens de diferentes anos/sensores. Houve mudança visível na cobertura entre os anos?\n" +
+            "- Identifique áreas que mudaram de vegetação nativa para uso antrópico (ou vice-versa) entre as datas.\n"
+            : "",
+        `### ${selectedLayers && selectedLayers.length > 1 ? '4' : '3'}. Pontos de concordância e discordância`,
+        "- Liste onde a classificação CONCORDA com a imagem.",
+        "- Liste onde a classificação DISCORDA do observado.",
         "",
-        "### 4. Nível de Confiança",
-        "Classifique sua confiança geral na análise: [ALTA], [MÉDIA] ou [BAIXA].",
-        "Justifique o nível escolhido (qualidade da imagem, resolução, cobertura de nuvens, etc.).",
+        `### ${selectedLayers && selectedLayers.length > 1 ? '5' : '4'}. Nível de Confiança`,
+        "Classifique: [ALTA], [MÉDIA] ou [BAIXA]. Justifique.",
         "",
-        "### 5. Recomendações",
+        `### ${selectedLayers && selectedLayers.length > 1 ? '6' : '5'}. Recomendações`,
         "Forneça recomendações técnicas ao analista ambiental.",
         "",
         "Responda em português de forma detalhada e técnica.",
     ].join("\n");
 }
 
+/**
+ * Generate composited satellite images for given layers.
+ * Returns array of { dataUrl, caption } for each satellite × 3 views.
+ */
+async function generateSatelliteImages(
+    res: Response,
+    job: CachedJob,
+    selectedLayers: string[],
+): Promise<Array<{ dataUrl: string; caption: string }>> {
+    const { bbox, polygon: propertyPolygon, clippedGeometries } = job;
+    const paddedBbox = padBbox(bbox!, 0.10);
+    const IMG_W = 1200;
+    const IMG_H = 900;
+    const layerGeos = clippedGeometries ?? new Map<string, Geometry[]>();
+    const images: Array<{ dataUrl: string; caption: string }> = [];
+
+    const validKeys = selectedLayers.filter((k) => SATELLITE_LAYERS[k]);
+    if (validKeys.length === 0) validKeys.push("spot_2008"); // fallback
+
+    const totalSteps = validKeys.length * 3;
+    let step = 0;
+
+    for (const key of validKeys) {
+        const sat = SATELLITE_LAYERS[key];
+        sendSSE(res, {
+            type: "progress", step: "generating_images",
+            percent: 10 + Math.round((step / totalSteps) * 40),
+            message: `Baixando imagem ${sat.label}...`,
+        });
+
+        let basePng: Buffer;
+        try {
+            basePng = await fetchWmsImageBuffer([sat.wmsLayer], paddedBbox, IMG_W, IMG_H);
+        } catch (err: any) {
+            console.warn(`[SIMCAR ANALYSIS] WMS ${sat.label} failed: ${err.message}`);
+            sendSSE(res, {
+                type: "progress", step: "generating_images",
+                percent: 10 + Math.round((step / totalSteps) * 40),
+                message: `Aviso: ${sat.label} indisponível, pulando...`,
+            });
+            step += 3;
+            continue;
+        }
+
+        // 3 composites per satellite
+        // 1: Overview (AC + AVN + property)
+        const overviewSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+            { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.20)", strokeWidth: 2 },
+            { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.20)", strokeWidth: 2 },
+        ]);
+        images.push({ dataUrl: await compositeOverlay(basePng, overviewSvg), caption: `${sat.label} — Visão Geral (propriedade + AC + AVN)` });
+        step++;
+
+        sendSSE(res, {
+            type: "progress", step: "generating_images",
+            percent: 10 + Math.round((step / totalSteps) * 40),
+            message: `${sat.label}: renderizando Área Consolidada...`,
+        });
+
+        // 2: AC only
+        const acSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+            { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.25)", strokeWidth: 2.5 },
+        ]);
+        images.push({ dataUrl: await compositeOverlay(basePng, acSvg), caption: `${sat.label} — Área Consolidada` });
+        step++;
+
+        // 3: AVN only
+        const avnSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+            { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.25)", strokeWidth: 2.5 },
+        ]);
+        images.push({ dataUrl: await compositeOverlay(basePng, avnSvg), caption: `${sat.label} — AVN` });
+        step++;
+    }
+
+    return images;
+}
+
 /** Main analysis pipeline (called from the SSE endpoint). */
 async function processAnalysis(
     res: Response,
     jobId: string,
+    selectedLayers: string[] = ["spot_2008"],
+    aiAnalysis = true,
 ) {
     const job = jobCache.get(jobId);
     if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
@@ -1429,59 +1595,23 @@ async function processAnalysis(
         return;
     }
 
-    const { bbox, polygon: propertyPolygon, layerSummaries, areaHa: propAreaHa, clippedGeometries } = job;
+    const { layerSummaries, areaHa: propAreaHa } = job;
     const areaHa = propAreaHa ?? 0;
-    const paddedBbox = padBbox(bbox, 0.10);
-    const IMG_W = 1200;
-    const IMG_H = 900;
-    const layerGeos = clippedGeometries ?? new Map<string, Geometry[]>();
 
-    // Step 1: Fetch SPOT base image (only WMS for satellite imagery)
-    sendSSE(res, { type: "progress", step: "generating_images", percent: 10, message: "Baixando imagem de satélite SPOT 2008..." });
+    // Step 1: Generate satellite images with polygon overlays
+    sendSSE(res, { type: "progress", step: "generating_images", percent: 10, message: "Iniciando geração de imagens..." });
 
-    let basePngBuffer: Buffer;
+    let imagesToAnalyze: Array<{ dataUrl: string; caption: string }>;
     try {
-        console.log(`[SIMCAR ANALYSIS] Fetching SPOT base image, bbox=${JSON.stringify(paddedBbox)}`);
-        basePngBuffer = await fetchWmsImageBuffer([SPOT_LAYER], paddedBbox, IMG_W, IMG_H);
+        imagesToAnalyze = await generateSatelliteImages(res, job, selectedLayers);
     } catch (err: any) {
-        console.error("[SIMCAR ANALYSIS] WMS base image error:", err.message);
-        sendSSE(res, { type: "error", message: `Erro ao baixar imagem SPOT: ${err.message}` });
+        console.error("[SIMCAR ANALYSIS] Image generation error:", err.message);
+        sendSSE(res, { type: "error", message: `Erro ao gerar imagens: ${err.message}` });
         return;
     }
 
-    sendSSE(res, { type: "progress", step: "generating_images", percent: 20, message: "Renderizando polígonos sobre a imagem..." });
-
-    const imagesToAnalyze: Array<{ dataUrl: string; caption: string }> = [];
-
-    try {
-        // Image 1: Overview — SPOT + all polygon overlays (property red, AC purple, AVN yellow)
-        const overviewSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon, layerGeos, [
-            { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.20)", strokeWidth: 2 },
-            { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.20)", strokeWidth: 2 },
-        ]);
-        const overviewDataUrl = await compositeOverlay(basePngBuffer, overviewSvg);
-        imagesToAnalyze.push({ dataUrl: overviewDataUrl, caption: "Visão Geral: SPOT 2008 + Propriedade (vermelho) + Área Consolidada (roxo) + AVN (amarelo)" });
-
-        sendSSE(res, { type: "progress", step: "generating_images", percent: 30, message: "Gerando imagem da Área Consolidada..." });
-
-        // Image 2: SPOT + AC only + property outline
-        const acSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon, layerGeos, [
-            { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.25)", strokeWidth: 2.5 },
-        ]);
-        const acDataUrl = await compositeOverlay(basePngBuffer, acSvg);
-        imagesToAnalyze.push({ dataUrl: acDataUrl, caption: "SPOT 2008 + Propriedade (vermelho) + Área Consolidada (roxo)" });
-
-        sendSSE(res, { type: "progress", step: "generating_images", percent: 40, message: "Gerando imagem da AVN..." });
-
-        // Image 3: SPOT + AVN only + property outline
-        const avnSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon, layerGeos, [
-            { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.25)", strokeWidth: 2.5 },
-        ]);
-        const avnDataUrl = await compositeOverlay(basePngBuffer, avnSvg);
-        imagesToAnalyze.push({ dataUrl: avnDataUrl, caption: "SPOT 2008 + Propriedade (vermelho) + AVN (amarelo)" });
-    } catch (err: any) {
-        console.error("[SIMCAR ANALYSIS] Image compositing error:", err.message);
-        sendSSE(res, { type: "error", message: `Erro ao renderizar polígonos: ${err.message}` });
+    if (imagesToAnalyze.length === 0) {
+        sendSSE(res, { type: "error", message: "Nenhuma imagem de satélite foi gerada. Verifique a disponibilidade das camadas WMS." });
         return;
     }
 
@@ -1499,7 +1629,18 @@ async function processAnalysis(
         }
     } catch (err: any) {
         console.error("[SIMCAR ANALYSIS] Cloudinary upload error:", err.message);
-        sendSSE(res, { type: "progress", step: "uploading_images", percent: 60, message: "Aviso: falha ao salvar no Cloudinary. Continuando análise..." });
+        sendSSE(res, { type: "progress", step: "uploading_images", percent: 60, message: "Aviso: falha ao salvar no Cloudinary. Continuando..." });
+    }
+
+    if (!aiAnalysis) {
+        // Image-only mode: return images without AI analysis
+        sendSSE(res, {
+            type: "complete",
+            percent: 100,
+            images: cloudinaryUrls,
+            layerSummaries: layerSummaries.filter((l) => ["AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
+        });
+        return;
     }
 
     // Step 3: AI Analysis
@@ -1507,7 +1648,7 @@ async function processAnalysis(
 
     let analysisText: string;
     try {
-        const prompt = buildAnalysisPrompt(areaHa, layerSummaries);
+        const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers);
         analysisText = await callVisionAnalysis(imagesToAnalyze, prompt);
     } catch (err: any) {
         console.error("[SIMCAR ANALYSIS] AI analysis error:", err.message);
@@ -1608,15 +1749,16 @@ export function registerSimcarClipRoutes(app: Express) {
         res.flushHeaders();
 
         try {
-            const { jobId } = req.body as { jobId?: string };
+            const { jobId, selectedLayers, imageOnly } = req.body as { jobId?: string; selectedLayers?: string[]; imageOnly?: boolean };
             if (!jobId) {
                 sendSSE(res, { type: "error", message: "jobId é obrigatório." });
                 res.end();
                 return;
             }
 
-            console.log(`[SIMCAR ANALYSIS] Starting analysis for job: ${jobId}`);
-            await processAnalysis(res, jobId);
+            const layers = Array.isArray(selectedLayers) && selectedLayers.length > 0 ? selectedLayers : ["spot_2008"];
+            console.log(`[SIMCAR ANALYSIS] Starting analysis for job: ${jobId}, layers: ${layers.join(",")}, aiAnalysis: ${!imageOnly}`);
+            await processAnalysis(res, jobId, layers, !imageOnly);
         } catch (err: any) {
             console.error("[SIMCAR ANALYSIS] Unexpected error:", err);
             sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });

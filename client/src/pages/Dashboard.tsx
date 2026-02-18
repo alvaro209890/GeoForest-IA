@@ -722,7 +722,18 @@ export default function Dashboard() {
     layersWithData: number;
     totalLayers: number;
     jobId: string;
+    inputZipUrl?: string;
+    outputZipUrl?: string;
+    analysisImages?: Array<{ url: string; caption: string }>;
+    analysisMessages?: Array<{ role: 'ai' | 'user'; text: string; images?: string[] }>;
   }>>([]);
+
+  // ─── SIMCAR Satellite Selection ───
+  const [simcarSelectedSatellites, setSimcarSelectedSatellites] = useState<Record<string, boolean>>({
+    spot_2008: true,
+    landsat5_2007: false,
+    landsat5_2008: false,
+  });
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
   const [mapRectSelection, setMapRectSelection] = useState<{
     left: number;
@@ -3205,7 +3216,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   key={clip.id}
                   className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors group cursor-pointer mb-1"
                   onClick={() => {
-                    // Load clip results
+                    // Load clip results + persisted analysis data
                     setSimcarClipDownloadUrl(clip.downloadUrl);
                     setSimcarClipJobId(clip.jobId);
                     setSimcarClipSummary({
@@ -3215,6 +3226,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       processingTimeMs: 0,
                       crs: 'EPSG:4674',
                     });
+                    // Restore analysis data if available
+                    setSimcarAnalysisImages(clip.analysisImages || []);
+                    setSimcarAnalysisMessages(clip.analysisMessages || []);
+                    setSimcarClipProcessing(false);
+                    setSimcarAnalysisProcessing(false);
+                    setSimcarClipError(null);
                   }}
                 >
                   <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
@@ -3851,6 +3868,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     layersWithData: summary?.layers?.filter((l: any) => l.features > 0).length ?? 0,
                                     totalLayers: summary?.layers?.length ?? 0,
                                     jobId: match[1],
+                                    inputZipUrl: event.inputZipUrl || undefined,
+                                    outputZipUrl: event.outputZipUrl || undefined,
                                   }, ...prev]);
                                 }
                               } else if (event.type === 'error') {
@@ -4064,74 +4083,185 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       )}
                     </section>
 
-                    {/* AI Analysis Button */}
+                    {/* Satellite Image Selection + Analysis Buttons */}
                     {!simcarAnalysisProcessing && simcarAnalysisMessages.length === 0 && (
-                      <button
-                        onClick={async () => {
-                          if (!simcarClipJobId) return;
-                          setSimcarAnalysisProcessing(true);
-                          setSimcarAnalysisProgress({ step: 'starting', percent: 0, message: 'Iniciando análise...' });
-                          setSimcarAnalysisImages([]);
-                          setSimcarAnalysisMessages([]);
+                      <section className="bg-[#0e1216]/60 backdrop-blur-md border border-white/5 rounded-2xl p-5 space-y-4">
+                        {/* ZIP Download Links */}
+                        {(() => {
+                          const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
+                          const inputUrl = historyEntry?.inputZipUrl;
+                          const outputUrl = historyEntry?.outputZipUrl;
+                          return (inputUrl || outputUrl) ? (
+                            <div className="flex gap-2">
+                              {inputUrl && (
+                                <a href={inputUrl} target="_blank" rel="noopener noreferrer"
+                                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white text-xs font-medium transition-colors">
+                                  <Download size={14} /> Shapefile Original
+                                </a>
+                              )}
+                              {outputUrl && (
+                                <a href={outputUrl} target="_blank" rel="noopener noreferrer"
+                                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-emerald-700/30 hover:bg-emerald-600/30 text-emerald-300 hover:text-white text-xs font-medium transition-colors">
+                                  <Download size={14} /> ZIP Recortado
+                                </a>
+                              )}
+                            </div>
+                          ) : null;
+                        })()}
 
-                          try {
-                            const response = await fetch('/api/simcar/clip/analyze', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ jobId: simcarClipJobId }),
-                            });
+                        {/* Satellite Selection */}
+                        <div>
+                          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Selecione as imagens de satélite</h4>
+                          <div className="grid grid-cols-3 gap-2">
+                            {[
+                              { key: 'spot_2008', label: 'SPOT 2008', color: 'emerald' },
+                              { key: 'landsat5_2007', label: 'Landsat 5 (2007)', color: 'blue' },
+                              { key: 'landsat5_2008', label: 'Landsat 5 (2008)', color: 'cyan' },
+                            ].map((sat) => (
+                              <button
+                                key={sat.key}
+                                onClick={() => setSimcarSelectedSatellites((prev) => ({ ...prev, [sat.key]: !prev[sat.key] }))}
+                                className={`p-2.5 rounded-lg border text-xs font-medium transition-all ${simcarSelectedSatellites[sat.key]
+                                  ? `border-${sat.color}-500/50 bg-${sat.color}-500/15 text-${sat.color}-300`
+                                  : 'border-white/10 bg-white/5 text-slate-500 hover:text-slate-300 hover:bg-white/10'
+                                  }`}
+                              >
+                                {simcarSelectedSatellites[sat.key] ? '☑' : '☐'} {sat.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
 
-                            const reader = response.body?.getReader();
-                            const decoder = new TextDecoder();
-                            let buffer = '';
-
-                            if (reader) {
-                              while (true) {
-                                const { done, value } = await reader.read();
-                                if (done) break;
-                                buffer += decoder.decode(value, { stream: true });
-                                const lines = buffer.split('\n');
-                                buffer = lines.pop() || '';
-
-                                for (const line of lines) {
-                                  if (!line.startsWith('data: ')) continue;
-                                  try {
-                                    const event = JSON.parse(line.slice(6));
-                                    if (event.type === 'progress') {
-                                      setSimcarAnalysisProgress({
-                                        step: event.step,
-                                        percent: event.percent,
-                                        message: event.message,
-                                      });
-                                    } else if (event.type === 'complete') {
-                                      setSimcarAnalysisImages(event.images || []);
-                                      setSimcarAnalysisMessages([{
-                                        role: 'ai',
-                                        text: event.analysis || '',
-                                        images: (event.images || []).map((img: any) => img.url),
-                                      }]);
-                                      setSimcarAnalysisProgress(null);
-                                    } else if (event.type === 'error') {
-                                      setSimcarAnalysisMessages([{ role: 'ai', text: `❌ ${event.message}` }]);
-                                      setSimcarAnalysisProgress(null);
+                        {/* Two Buttons: Analyze with AI + View Images */}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={async () => {
+                              if (!simcarClipJobId) return;
+                              const layers = Object.entries(simcarSelectedSatellites).filter(([, v]) => v).map(([k]) => k);
+                              if (layers.length === 0) { setSimcarClipError('Selecione pelo menos uma imagem de satélite.'); return; }
+                              setSimcarAnalysisProcessing(true);
+                              setSimcarAnalysisProgress({ step: 'starting', percent: 0, message: 'Iniciando análise...' });
+                              setSimcarAnalysisImages([]);
+                              setSimcarAnalysisMessages([]);
+                              try {
+                                const response = await fetch('/api/simcar/clip/analyze', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ jobId: simcarClipJobId, selectedLayers: layers }),
+                                });
+                                const reader = response.body?.getReader();
+                                const decoder = new TextDecoder();
+                                let buf = '';
+                                if (reader) {
+                                  while (true) {
+                                    const { done, value } = await reader.read();
+                                    if (done) break;
+                                    buf += decoder.decode(value, { stream: true });
+                                    const lines = buf.split('\n');
+                                    buf = lines.pop() || '';
+                                    for (const line of lines) {
+                                      if (!line.startsWith('data: ')) continue;
+                                      try {
+                                        const event = JSON.parse(line.slice(6));
+                                        if (event.type === 'progress') {
+                                          setSimcarAnalysisProgress({ step: event.step, percent: event.percent, message: event.message });
+                                        } else if (event.type === 'complete') {
+                                          setSimcarAnalysisImages(event.images || []);
+                                          setSimcarAnalysisMessages([{
+                                            role: 'ai',
+                                            text: event.analysis || '',
+                                            images: (event.images || []).map((img: any) => img.url),
+                                          }]);
+                                          setSimcarAnalysisProgress(null);
+                                          // Persist to history
+                                          setSimcarClipHistory((prev) => prev.map((c) =>
+                                            c.jobId === simcarClipJobId
+                                              ? { ...c, analysisImages: event.images || [], analysisMessages: [{ role: 'ai' as const, text: event.analysis || '', images: (event.images || []).map((img: any) => img.url) }] }
+                                              : c
+                                          ));
+                                        } else if (event.type === 'error') {
+                                          setSimcarAnalysisMessages([{ role: 'ai', text: `❌ ${event.message}` }]);
+                                          setSimcarAnalysisProgress(null);
+                                        }
+                                      } catch { }
                                     }
-                                  } catch { }
+                                  }
                                 }
+                              } catch (err: any) {
+                                setSimcarAnalysisMessages([{ role: 'ai', text: `❌ ${err.message || 'Erro inesperado.'}` }]);
+                              } finally {
+                                setSimcarAnalysisProcessing(false);
+                                setSimcarAnalysisProgress(null);
                               }
-                            }
-                          } catch (err: any) {
-                            setSimcarAnalysisMessages([{ role: 'ai', text: `❌ ${err.message || 'Erro inesperado na análise.'}` }]);
-                          } finally {
-                            setSimcarAnalysisProcessing(false);
-                            setSimcarAnalysisProgress(null);
-                          }
-                        }}
-                        disabled={!simcarClipJobId}
-                        className="w-full py-3 rounded-xl font-medium text-sm bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-900/30 transition-all duration-300 flex items-center justify-center gap-2"
-                      >
-                        <Brain size={16} />
-                        Analisar com IA
-                      </button>
+                            }}
+                            disabled={!simcarClipJobId}
+                            className="flex-1 py-3 rounded-xl font-medium text-sm bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-900/30 transition-all duration-300 flex items-center justify-center gap-2"
+                          >
+                            <Brain size={16} />
+                            Analisar com IA
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (!simcarClipJobId) return;
+                              const layers = Object.entries(simcarSelectedSatellites).filter(([, v]) => v).map(([k]) => k);
+                              if (layers.length === 0) { setSimcarClipError('Selecione pelo menos uma imagem.'); return; }
+                              setSimcarAnalysisProcessing(true);
+                              setSimcarAnalysisProgress({ step: 'starting', percent: 0, message: 'Gerando imagens...' });
+                              setSimcarAnalysisImages([]);
+                              try {
+                                const response = await fetch('/api/simcar/clip/analyze', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ jobId: simcarClipJobId, selectedLayers: layers, imageOnly: true }),
+                                });
+                                const reader = response.body?.getReader();
+                                const decoder = new TextDecoder();
+                                let buf = '';
+                                if (reader) {
+                                  while (true) {
+                                    const { done, value } = await reader.read();
+                                    if (done) break;
+                                    buf += decoder.decode(value, { stream: true });
+                                    const lines = buf.split('\n');
+                                    buf = lines.pop() || '';
+                                    for (const line of lines) {
+                                      if (!line.startsWith('data: ')) continue;
+                                      try {
+                                        const event = JSON.parse(line.slice(6));
+                                        if (event.type === 'progress') {
+                                          setSimcarAnalysisProgress({ step: event.step, percent: event.percent, message: event.message });
+                                        } else if (event.type === 'complete') {
+                                          setSimcarAnalysisImages(event.images || []);
+                                          setSimcarAnalysisProgress(null);
+                                          // Persist images to history
+                                          setSimcarClipHistory((prev) => prev.map((c) =>
+                                            c.jobId === simcarClipJobId
+                                              ? { ...c, analysisImages: event.images || [] }
+                                              : c
+                                          ));
+                                        } else if (event.type === 'error') {
+                                          setSimcarClipError(event.message);
+                                          setSimcarAnalysisProgress(null);
+                                        }
+                                      } catch { }
+                                    }
+                                  }
+                                }
+                              } catch (err: any) {
+                                setSimcarClipError(err.message || 'Erro ao gerar imagens.');
+                              } finally {
+                                setSimcarAnalysisProcessing(false);
+                                setSimcarAnalysisProgress(null);
+                              }
+                            }}
+                            disabled={!simcarClipJobId}
+                            className="flex-1 py-3 rounded-xl font-medium text-sm bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-500 hover:to-slate-600 text-white shadow-lg shadow-slate-900/30 transition-all duration-300 flex items-center justify-center gap-2"
+                          >
+                            <Eye size={16} />
+                            Ver Imagens
+                          </button>
+                        </div>
+                      </section>
                     )}
 
                     {/* AI Analysis Progress */}
