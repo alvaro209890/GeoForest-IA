@@ -239,6 +239,23 @@ async function startServer() {
   const SEMA_WMS_AUTHKEY =
     process.env.SEMA_WMS_AUTHKEY ||
     "541085de-9a2e-454e-bdba-eb3d57a2f492";
+  const readPositiveInt = (raw: string | undefined, fallback: number) => {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.floor(parsed);
+  };
+  const MAP_CAPABILITIES_TTL_MS = readPositiveInt(
+    process.env.MAP_CAPABILITIES_TTL_MS,
+    5 * 60 * 1000,
+  );
+  const MAP_SNAPSHOT_TTL_MS = readPositiveInt(
+    process.env.MAP_SNAPSHOT_TTL_MS,
+    10 * 60 * 1000,
+  );
+  const MAP_SNAPSHOT_CACHE_MAX_ITEMS = readPositiveInt(
+    process.env.MAP_SNAPSHOT_CACHE_MAX_ITEMS,
+    40,
+  );
   const CURATED_IMAGERY_LAYER_NAMES = [
     "SEMAMT:ALOS_PALSAR_DEM",
     "Geoportal:DECLIVIDADE_GEOPORTAL",
@@ -497,7 +514,102 @@ async function startServer() {
     }
   };
 
+  type MapCapabilitiesPayload = {
+    serviceTitle: string;
+    layers: Array<{
+      name: string;
+      title: string;
+      crs: string[];
+      inferredYear?: string;
+      group: "spot" | "landsat" | "sentinel" | "other";
+    }>;
+    imageLayers: Array<{
+      name: string;
+      title: string;
+      crs: string[];
+      inferredYear?: string;
+      group: "spot" | "landsat" | "sentinel" | "other";
+    }>;
+    shapeLayers: Array<{
+      name: string;
+      title: string;
+      crs: string[];
+    }>;
+    simcarDigitalLayers: Array<{
+      name: string;
+      title: string;
+      crs: string[];
+    }>;
+    defaultLayer?: string;
+    recommended: {
+      legalMarco2008: string;
+    };
+  };
+  type MapCapabilitiesCacheEntry = {
+    expiresAt: number;
+    xml: string;
+    payload?: MapCapabilitiesPayload;
+    allowedLayerNames?: Set<string>;
+  };
+  type MapSnapshotPayload = {
+    dataUrl: string;
+    mimeType: string;
+    sourceUrl: string;
+    mapContext: {
+      layerName: string;
+      bbox: [number, number, number, number];
+      crs: string;
+      width: number;
+      height: number;
+      source: "SEMA_WMS";
+    };
+  };
+  let mapCapabilitiesCache: MapCapabilitiesCacheEntry | null = null;
+  const mapSnapshotCache = new Map<string, { expiresAt: number; payload: MapSnapshotPayload }>();
+
+  const pruneMapSnapshotCache = () => {
+    const now = Date.now();
+    for (const [key, entry] of mapSnapshotCache.entries()) {
+      if (entry.expiresAt <= now) {
+        mapSnapshotCache.delete(key);
+      }
+    }
+    while (mapSnapshotCache.size > MAP_SNAPSHOT_CACHE_MAX_ITEMS) {
+      const oldestKey = mapSnapshotCache.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      mapSnapshotCache.delete(oldestKey);
+    }
+  };
+
+  const getCachedMapSnapshot = (cacheKey: string): MapSnapshotPayload | null => {
+    const cached = mapSnapshotCache.get(cacheKey);
+    if (!cached) return null;
+    if (cached.expiresAt <= Date.now()) {
+      mapSnapshotCache.delete(cacheKey);
+      return null;
+    }
+    mapSnapshotCache.delete(cacheKey);
+    mapSnapshotCache.set(cacheKey, cached);
+    return cached.payload;
+  };
+
+  const storeMapSnapshot = (cacheKey: string, payload: MapSnapshotPayload) => {
+    pruneMapSnapshotCache();
+    if (mapSnapshotCache.has(cacheKey)) {
+      mapSnapshotCache.delete(cacheKey);
+    }
+    mapSnapshotCache.set(cacheKey, {
+      expiresAt: Date.now() + MAP_SNAPSHOT_TTL_MS,
+      payload,
+    });
+    pruneMapSnapshotCache();
+  };
+
   const fetchSemamtCapabilitiesXml = async () => {
+    if (mapCapabilitiesCache && mapCapabilitiesCache.expiresAt > Date.now()) {
+      return mapCapabilitiesCache.xml;
+    }
+
     const capUrl = new URL(SEMA_WMS_BASE);
     capUrl.searchParams.set("service", "WMS");
     capUrl.searchParams.set("request", "GetCapabilities");
@@ -531,13 +643,112 @@ async function startServer() {
 
     const xml = await response.text();
     console.log(`[WMS] Capabilities XML received: ${xml.length} chars`);
+    mapCapabilitiesCache = {
+      expiresAt: Date.now() + MAP_CAPABILITIES_TTL_MS,
+      xml,
+    };
     return xml;
   };
 
-  const fetchSemamtImageryLayers = async () => {
+  const getMapCapabilitiesData = async () => {
+    if (
+      mapCapabilitiesCache &&
+      mapCapabilitiesCache.expiresAt > Date.now() &&
+      mapCapabilitiesCache.payload &&
+      mapCapabilitiesCache.allowedLayerNames
+    ) {
+      return mapCapabilitiesCache;
+    }
+
     const xml = await fetchSemamtCapabilitiesXml();
-    const parsedLayers = parseLayersFromCapabilities(xml);
-    return toImageryLayers(parsedLayers);
+    const parsed = parseLayersFromCapabilities(xml);
+    console.log(`[API] Capabilities parsed: ${parsed.length} layers total`);
+
+    const parsedImagery = toImageryLayers(parsed).map((l) => ({
+      name: l.name,
+      title: l.title,
+      crs: l.crs,
+      inferredYear: l.inferredYear,
+      group: l.group,
+    }));
+    console.log(`[API] Imagery layers: ${parsedImagery.length}`);
+
+    const byLowerName = new Map(parsedImagery.map((l) => [l.name.toLowerCase(), l]));
+    const curatedImagery = CURATED_IMAGERY_LAYER_NAMES.map((name) => {
+      const existing = byLowerName.get(name.toLowerCase());
+      if (existing) return existing;
+      return {
+        name,
+        title: name.split(":")[1] || name,
+        crs: ["EPSG:4326"],
+        inferredYear: String(name.match(/\b(19|20)\d{2}\b/)?.[0] || ""),
+        group: /landsat/i.test(name)
+          ? ("landsat" as const)
+          : /spot/i.test(name)
+            ? ("spot" as const)
+            : /sentinel/i.test(name)
+              ? ("sentinel" as const)
+              : ("other" as const),
+      };
+    });
+    const imagery = [...curatedImagery];
+    for (const layer of parsedImagery) {
+      if (!CURATED_IMAGERY_ORDER_MAP.has(layer.name.toLowerCase())) {
+        imagery.push(layer);
+      }
+    }
+    console.log(`[API] Final imagery count: ${imagery.length}`);
+
+    const shapeLayers = toShapeLayers(parsed).map((l) => ({
+      name: l.name,
+      title: l.title,
+      crs: l.crs,
+    }));
+    console.log(`[API] Shape layers: ${shapeLayers.length}`);
+
+    const simcarDigitalLayers = toSimcarDigitalLayers(parsed);
+    console.log(
+      `[API] SIMCAR Digital layers: ${simcarDigitalLayers.length}`,
+      simcarDigitalLayers.map((l) => l.name),
+    );
+
+    const defaultLayer =
+      imagery.find((l) => l.name === "Mosaicos:LANDSAT_5_2008")?.name ||
+      imagery.find((l) => l.group === "landsat")?.name ||
+      imagery.find((l) => l.group === "spot")?.name ||
+      imagery.find((l) => l.group === "sentinel")?.name ||
+      imagery[0]?.name;
+
+    const payload: MapCapabilitiesPayload = {
+      serviceTitle: "SEMA WMS",
+      layers: imagery,
+      imageLayers: imagery,
+      shapeLayers,
+      simcarDigitalLayers,
+      defaultLayer,
+      recommended: {
+        legalMarco2008: "Mosaicos:LANDSAT_5_2008",
+      },
+    };
+
+    const allowedLayerNames = new Set<string>([
+      ...imagery.map((l) => l.name.toLowerCase()),
+      ...CURATED_IMAGERY_LAYER_NAMES.map((l) => l.toLowerCase()),
+      ...simcarDigitalLayers.map((l) => l.name.toLowerCase()),
+    ]);
+
+    mapCapabilitiesCache = {
+      expiresAt: Date.now() + MAP_CAPABILITIES_TTL_MS,
+      xml,
+      payload,
+      allowedLayerNames,
+    };
+    return mapCapabilitiesCache;
+  };
+
+  const fetchSemamtImageryLayers = async () => {
+    const capabilities = await getMapCapabilitiesData();
+    return capabilities.payload?.imageLayers || [];
   };
 
   const decodeDataUrl = (dataUrl: string) => {
@@ -704,76 +915,15 @@ async function startServer() {
   app.get("/api/map/capabilities", async (_req, res) => {
     try {
       console.log("[API] GET /api/map/capabilities â€” iniciando...");
-      const xml = await fetchSemamtCapabilitiesXml();
-      const parsed = parseLayersFromCapabilities(xml);
-      console.log(`[API] Capabilities parsed: ${parsed.length} layers total`);
-
-      const parsedImagery = toImageryLayers(parsed).map((l) => ({
-        name: l.name,
-        title: l.title,
-        crs: l.crs,
-        inferredYear: l.inferredYear,
-        group: l.group,
-      }));
-      console.log(`[API] Imagery layers: ${parsedImagery.length}`);
-
-      const byLowerName = new Map(parsedImagery.map((l) => [l.name.toLowerCase(), l]));
-      const curatedImagery = CURATED_IMAGERY_LAYER_NAMES.map((name) => {
-        const existing = byLowerName.get(name.toLowerCase());
-        if (existing) return existing;
-        return {
-          name,
-          title: name.split(":")[1] || name,
-          crs: ["EPSG:4326"],
-          inferredYear: String(name.match(/\b(19|20)\d{2}\b/)?.[0] || ""),
-          group: /landsat/i.test(name)
-            ? ("landsat" as const)
-            : /spot/i.test(name)
-              ? ("spot" as const)
-              : /sentinel/i.test(name)
-                ? ("sentinel" as const)
-                : ("other" as const),
-        };
-      });
-      const imagery = [...curatedImagery];
-      for (const layer of parsedImagery) {
-        if (!CURATED_IMAGERY_ORDER_MAP.has(layer.name.toLowerCase())) {
-          imagery.push(layer);
-        }
+      const capabilities = await getMapCapabilitiesData();
+      const payload = capabilities.payload;
+      if (!payload) {
+        throw new Error("Falha ao montar payload de capabilities.");
       }
-      console.log(`[API] Final imagery count: ${imagery.length}`);
-
-      const shapeLayers = toShapeLayers(parsed).map((l) => ({
-        name: l.name,
-        title: l.title,
-        crs: l.crs,
-      }));
-      console.log(`[API] Shape layers: ${shapeLayers.length}`);
-
-      const simcarDigitalLayers = toSimcarDigitalLayers(parsed);
-      console.log(`[API] SIMCAR Digital layers: ${simcarDigitalLayers.length}`, simcarDigitalLayers.map((l) => l.name));
-
-      const defaultLayer =
-        imagery.find((l) => l.name === "Mosaicos:LANDSAT_5_2008")?.name ||
-        imagery.find((l) => l.group === "landsat")?.name ||
-        imagery.find((l) => l.group === "spot")?.name ||
-        imagery.find((l) => l.group === "sentinel")?.name ||
-        imagery[0]?.name;
-
-      console.log(`[API] Default layer: ${defaultLayer}`);
+      console.log(`[API] Default layer: ${payload.defaultLayer}`);
       console.log("[API] GET /api/map/capabilities â€” sucesso");
-
-      res.json({
-        serviceTitle: "SEMA WMS",
-        layers: imagery,
-        imageLayers: imagery,
-        shapeLayers,
-        simcarDigitalLayers,
-        defaultLayer,
-        recommended: {
-          legalMarco2008: "Mosaicos:LANDSAT_5_2008",
-        },
-      });
+      res.setHeader("Cache-Control", "public, max-age=120");
+      res.json(payload);
     } catch (error: any) {
       console.error("Erro no /api/map/capabilities:", error?.message || error);
       console.error("Stack:", error?.stack);
@@ -814,48 +964,63 @@ async function startServer() {
         return;
       }
 
-      let availableImagery: Awaited<ReturnType<typeof fetchSemamtImageryLayers>> = [];
+      const safeWidth = Math.max(256, Math.min(4096, Math.floor(Number(width) || 1200)));
+      const safeHeight = Math.max(256, Math.min(4096, Math.floor(Number(height) || 800)));
+      const safeFormat = format === "image/jpeg" ? "image/jpeg" : "image/png";
+      const safeCrs = typeof crs === "string" && crs.trim().length ? crs.trim() : "EPSG:4326";
+      const normalizedLayerName = String(layerName);
+      const safeOverlayLayers = Array.isArray(overlayLayers)
+        ? [...new Set(overlayLayers.map((x) => String(x).trim()).filter((x) => x.length > 0))].slice(
+            0,
+            8,
+          )
+        : [];
+      const snapshotCacheKey = [
+        normalizedLayerName,
+        safeOverlayLayers.join(","),
+        `${minX},${minY},${maxX},${maxY}`,
+        safeCrs,
+        `${safeWidth}x${safeHeight}`,
+        safeFormat,
+      ].join("|");
+      const cachedSnapshot = getCachedMapSnapshot(snapshotCacheKey);
+      if (cachedSnapshot) {
+        res.setHeader("Cache-Control", "public, max-age=60");
+        res.setHeader("x-map-cache", "hit");
+        res.json(cachedSnapshot);
+        return;
+      }
+
+      let capabilities: Awaited<ReturnType<typeof getMapCapabilitiesData>> | null = null;
       try {
-        availableImagery = await fetchSemamtImageryLayers();
+        capabilities = await getMapCapabilitiesData();
       } catch (capErr) {
         console.warn("[/api/map/snapshot] capabilities check failed:", capErr);
       }
-
-      if (availableImagery.length) {
-        const xml = await fetchSemamtCapabilitiesXml();
-        const allParsed = parseLayersFromCapabilities(xml);
-        const simcarNames = toSimcarDigitalLayers(allParsed).map((l) => l.name.toLowerCase());
-        const allowed = new Set([
-          ...availableImagery.map((l) => l.name.toLowerCase()),
-          ...CURATED_IMAGERY_LAYER_NAMES.map((l) => l.toLowerCase()),
-          ...simcarNames,
-        ]);
-        if (!allowed.has(layerName.toLowerCase())) {
-          res.status(400).json({
-            error: `Layer '${layerName}' nÃ£o Ã© uma camada disponÃ­vel.`,
-            availableLayers: availableImagery.slice(0, 50).map((l) => l.name),
-          });
-          return;
-        }
+      if (
+        capabilities?.allowedLayerNames &&
+        !capabilities.allowedLayerNames.has(normalizedLayerName.toLowerCase())
+      ) {
+        res.status(400).json({
+          error: `Layer '${normalizedLayerName}' nÃ£o Ã© uma camada disponÃ­vel.`,
+          availableLayers: capabilities.payload?.imageLayers.slice(0, 50).map((l) => l.name) || [],
+        });
+        return;
       }
-
-      const safeOverlayLayers = Array.isArray(overlayLayers)
-        ? overlayLayers.filter((x) => typeof x === "string" && x.trim().length > 0).slice(0, 8)
-        : [];
 
       const mapUrl = new URL(SEMA_WMS_BASE);
       mapUrl.searchParams.set("service", "WMS");
       mapUrl.searchParams.set("request", "GetMap");
       mapUrl.searchParams.set("version", "1.1.1");
-      const allLayers = [layerName, ...safeOverlayLayers];
+      const allLayers = [normalizedLayerName, ...safeOverlayLayers];
       mapUrl.searchParams.set("layers", allLayers.join(","));
       mapUrl.searchParams.set("styles", new Array(allLayers.length).fill("").join(","));
-      mapUrl.searchParams.set("format", format);
+      mapUrl.searchParams.set("format", safeFormat);
       mapUrl.searchParams.set("transparent", "false");
-      mapUrl.searchParams.set("srs", crs);
+      mapUrl.searchParams.set("srs", safeCrs);
       mapUrl.searchParams.set("bbox", `${minX},${minY},${maxX},${maxY}`);
-      mapUrl.searchParams.set("width", String(Math.max(256, Math.min(4096, Math.floor(width)))));
-      mapUrl.searchParams.set("height", String(Math.max(256, Math.min(4096, Math.floor(height)))));
+      mapUrl.searchParams.set("width", String(safeWidth));
+      mapUrl.searchParams.set("height", String(safeHeight));
       if (SEMA_WMS_AUTHKEY) {
         mapUrl.searchParams.set("authkey", SEMA_WMS_AUTHKEY);
       }
@@ -875,9 +1040,10 @@ async function startServer() {
         const text = await response.text();
         const layerNotDefined = /LayerNotDefined|Could not find layer/i.test(text);
         if (layerNotDefined) {
-          const available = availableImagery.slice(0, 50).map((l) => l.name);
+          const available =
+            capabilities?.payload?.imageLayers.slice(0, 50).map((l) => l.name) || [];
           res.status(400).json({
-            error: `Layer '${layerName}' nÃ£o existe no WMS da SEMA.`,
+            error: `Layer '${normalizedLayerName}' nÃ£o existe no WMS da SEMA.`,
             availableLayers: available,
           });
           return;
@@ -892,20 +1058,23 @@ async function startServer() {
       const arr = await response.arrayBuffer();
       const base64 = Buffer.from(arr).toString("base64");
       const dataUrl = `data:${contentType};base64,${base64}`;
-
-      res.json({
+      const payload: MapSnapshotPayload = {
         dataUrl,
         mimeType: contentType,
         sourceUrl: mapUrl.toString(),
         mapContext: {
-          layerName,
+          layerName: normalizedLayerName,
           bbox: [minX, minY, maxX, maxY],
-          crs,
-          width,
-          height,
+          crs: safeCrs,
+          width: safeWidth,
+          height: safeHeight,
           source: "SEMA_WMS",
         },
-      });
+      };
+      storeMapSnapshot(snapshotCacheKey, payload);
+      res.setHeader("Cache-Control", "public, max-age=60");
+      res.setHeader("x-map-cache", "miss");
+      res.json(payload);
     } catch (error: any) {
       console.error("Erro no /api/map/snapshot:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });

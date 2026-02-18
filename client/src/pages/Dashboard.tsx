@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  area as turfArea,
+  featureCollection as turfFeatureCollection,
+  intersect as turfIntersect,
+  polygon as turfPolygon,
+  union as turfUnion,
+} from '@turf/turf';
+import type { Feature, Geometry, MultiPolygon, Polygon } from 'geojson';
+import {
   Leaf,
   Plus,
   Search,
@@ -70,6 +78,18 @@ type ChatMessage = {
       inferredYear?: string;
       capturedAtIso?: string;
       activeOverlays?: Array<{ name: string; title: string }>;
+      intersectionSummary?: {
+        polygonAreaHa: number;
+        computedAtIso: string;
+        layers: Array<{
+          layerName: string;
+          title: string;
+          status: 'ok' | 'not_in_wfs' | 'no_intersection' | 'invalid_layer' | 'error';
+          intersectionHa: number;
+          coveragePercentOfPolygon: number;
+          warnings: string[];
+        }>;
+      };
     };
   };
 };
@@ -97,12 +117,17 @@ type IntersectionResult = {
   coveragePercentOfPolygon: number;
   warnings: string[];
 };
-type IntersectionResponse = {
-  ok: boolean;
-  wfsSource: string;
-  polygonAreaHa: number;
-  computedAtIso: string;
+type MapCapabilitiesResponse = {
+  serviceTitle?: string;
+  layers?: MapLayerOption[];
+  imageLayers?: MapLayerOption[];
+  simcarDigitalLayers?: Array<{ name: string; title: string }>;
+  defaultLayer?: string;
+};
+type IntersectionCacheEntry = {
+  expiresAt: number;
   results: IntersectionResult[];
+  computedAtIso: string;
 };
 
 const FALLBACK_WMS_IMAGE_LAYERS: MapLayerOption[] = [
@@ -165,6 +190,17 @@ const FALLBACK_WMS_IMAGE_LAYERS: MapLayerOption[] = [
 
 const SEMA_WMS_DIRECT_BASE =
   'https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&version=1.1.1&authkey=541085de-9a2e-454e-bdba-eb3d57a2f492&request=GetMap';
+const SEMA_WFS_BASE_URL = 'https://geo.sema.mt.gov.br/geoserver/ows';
+const SEMA_WFS_AUTHKEY = '541085de-9a2e-454e-bdba-eb3d57a2f492';
+const FRONT_WFS_TIMEOUT_MS = 25000;
+const FRONT_WFS_PAGE_SIZE = 2000;
+const FRONT_WFS_MAX_FEATURES = 50000;
+const FRONT_WFS_CAPABILITIES_TTL_MS = 10 * 60 * 1000;
+const FRONT_WFS_DESCRIBE_TTL_MS = 30 * 60 * 1000;
+const FRONT_MAP_CAPABILITIES_TTL_MS = 10 * 60 * 1000;
+const FRONT_MAP_CAPABILITIES_STORAGE_KEY = 'geoforest.map.capabilities.v1';
+const FRONT_INTERSECTION_RESULT_TTL_MS = 6 * 60 * 1000;
+const FRONT_INTERSECTION_RESULT_CACHE_MAX = 48;
 
 const buildDirectWmsGetMapUrl = (
   layerName: string,
@@ -356,6 +392,72 @@ const intersectionStatusClass = (status: IntersectionStatus) => {
     default:
       return 'text-slate-300';
   }
+};
+
+const buildWfsUrl = (params: Record<string, string | number | undefined>) => {
+  const url = new URL(SEMA_WFS_BASE_URL);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+    url.searchParams.set(key, String(value));
+  });
+  if (SEMA_WFS_AUTHKEY) {
+    url.searchParams.set('authkey', SEMA_WFS_AUTHKEY);
+  }
+  return url.toString();
+};
+
+const parseWfsLayerNamesFromCapabilities = (xml: string) => {
+  const names: string[] = [];
+  const regex = /<FeatureType\b[\s\S]*?<Name>\s*([^<]+)\s*<\/Name>[\s\S]*?<\/FeatureType>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(xml)) !== null) {
+    const name = String(match[1] || '').trim();
+    if (!name || !name.includes(':')) continue;
+    names.push(name);
+  }
+  return [...new Set(names)];
+};
+
+const parseGeometryFieldFromDescribe = (xml: string) => {
+  const candidates = [...xml.matchAll(/<xsd:element[^>]*name="([^"]+)"[^>]*type="gml:[^"]*PropertyType"/gi)]
+    .map((m) => String(m[1] || '').trim())
+    .filter(Boolean);
+  if (!candidates.length) return 'GEOMETRY';
+  const preferred = candidates.find((name) => name.toUpperCase() === 'GEOMETRY');
+  return preferred || candidates[0];
+};
+
+const parseNumberMatched = (xml: string) => {
+  const match = xml.match(/numberMatched="([^"]+)"/i);
+  if (!match) return null;
+  const raw = String(match[1] || '').trim();
+  if (!raw || raw.toLowerCase() === 'unknown') return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+};
+
+const numberToWkt = (value: number) => Number(value.toFixed(8)).toString();
+
+const polygonToWkt = (ring: number[][]) =>
+  `POLYGON((${ring.map(([x, y]) => `${numberToWkt(x)} ${numberToWkt(y)}`).join(',')}))`;
+
+const toPolygonLikeFeature = (geometry: Geometry | null | undefined): Feature<Polygon | MultiPolygon> | null => {
+  if (!geometry) return null;
+  if (geometry.type === 'Polygon') {
+    return {
+      type: 'Feature',
+      properties: {},
+      geometry: geometry as Polygon,
+    };
+  }
+  if (geometry.type === 'MultiPolygon') {
+    return {
+      type: 'Feature',
+      properties: {},
+      geometry: geometry as MultiPolygon,
+    };
+  }
+  return null;
 };
 
 const renderInlineRichText = (text: string) => {
@@ -556,6 +658,9 @@ export default function Dashboard() {
   const [mapPreviewDataUrl, setMapPreviewDataUrl] = useState('');
   const [mapPreviewLoading, setMapPreviewLoading] = useState(false);
   const mapPreviewCacheRef = useRef<Map<string, string>>(new Map());
+  const mapCapabilitiesCacheRef = useRef<{ expiresAt: number; data: MapCapabilitiesResponse } | null>(
+    null
+  );
   const mapPreviewAbortRef = useRef<AbortController | null>(null);
   const MAX_MAP_PREVIEW_CACHE = 24;
   const [mapDragging, setMapDragging] = useState(false);
@@ -566,9 +671,13 @@ export default function Dashboard() {
   const [intersectionError, setIntersectionError] = useState<string | null>(null);
   const [intersectionResults, setIntersectionResults] = useState<IntersectionResult[]>([]);
   const [polygonAreaHa, setPolygonAreaHa] = useState<number | null>(null);
+  const [intersectionComputedAtIso, setIntersectionComputedAtIso] = useState<string | null>(null);
   const [lastIntersectionRequestKey, setLastIntersectionRequestKey] = useState('');
+  const intersectionResultCacheRef = useRef<Map<string, IntersectionCacheEntry>>(new Map());
   const intersectionAbortRef = useRef<AbortController | null>(null);
   const intersectionDebounceRef = useRef<number | null>(null);
+  const wfsCapabilitiesCacheRef = useRef<{ expiresAt: number; layerNames: Set<string> } | null>(null);
+  const wfsDescribeCacheRef = useRef<Map<string, { expiresAt: number; geometryField: string }>>(new Map());
   const [mapSectionOpen, setMapSectionOpen] = useState<Record<string, boolean>>({ imagery: true, simcar: true, advanced: false });
   const [simcarSearchFilter, setSimcarSearchFilter] = useState('');
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
@@ -1115,17 +1224,66 @@ export default function Dashboard() {
     setMapSectionOpen((prev) => ({ ...prev, imagery: true, [`img_${groupName}`]: true }));
   };
 
+  const readCachedMapCapabilities = useCallback((): MapCapabilitiesResponse | null => {
+    const now = Date.now();
+    const inMemory = mapCapabilitiesCacheRef.current;
+    if (inMemory && inMemory.expiresAt > now) {
+      return inMemory.data;
+    }
+    try {
+      const raw = window.sessionStorage.getItem(FRONT_MAP_CAPABILITIES_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { expiresAt?: number; data?: MapCapabilitiesResponse };
+      if (!parsed?.data || !Number.isFinite(Number(parsed.expiresAt))) {
+        window.sessionStorage.removeItem(FRONT_MAP_CAPABILITIES_STORAGE_KEY);
+        return null;
+      }
+      if (Number(parsed.expiresAt) <= now) {
+        window.sessionStorage.removeItem(FRONT_MAP_CAPABILITIES_STORAGE_KEY);
+        return null;
+      }
+      mapCapabilitiesCacheRef.current = {
+        expiresAt: Number(parsed.expiresAt),
+        data: parsed.data,
+      };
+      return parsed.data;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const storeMapCapabilitiesCache = useCallback((data: MapCapabilitiesResponse) => {
+    const entry = {
+      expiresAt: Date.now() + FRONT_MAP_CAPABILITIES_TTL_MS,
+      data,
+    };
+    mapCapabilitiesCacheRef.current = entry;
+    try {
+      window.sessionStorage.setItem(FRONT_MAP_CAPABILITIES_STORAGE_KEY, JSON.stringify(entry));
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  const loadMapCapabilities = useCallback(async (): Promise<MapCapabilitiesResponse> => {
+    const cached = readCachedMapCapabilities();
+    if (cached) return cached;
+    const res = await fetch('/api/map/capabilities');
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || 'Falha ao carregar camadas de mapa');
+    }
+    const data = (await res.json()) as MapCapabilitiesResponse;
+    storeMapCapabilitiesCache(data);
+    return data;
+  }, [readCachedMapCapabilities, storeMapCapabilitiesCache]);
+
   const openMapDialog = async () => {
     setMapDialogOpen(true);
     if (!mapPreviewDataUrl) setMapPreviewLoading(false);
     setMapLoading(true);
     try {
-      const res = await fetch('/api/map/capabilities');
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Falha ao carregar camadas de mapa');
-      }
-      const data = await res.json();
+      const data = await loadMapCapabilities();
       const imageLayersRaw = (data?.imageLayers || data?.layers || []) as MapLayerOption[];
       const imageLayers = imageLayersRaw.length ? imageLayersRaw : FALLBACK_WMS_IMAGE_LAYERS;
       setMapImageLayers(imageLayers);
@@ -1156,6 +1314,10 @@ export default function Dashboard() {
     }
   };
 
+  useEffect(() => {
+    void loadMapCapabilities().catch(() => undefined);
+  }, [loadMapCapabilities]);
+
   const buildMapPreviewKey = (
     layer: string,
     bbox: [number, number, number, number],
@@ -1175,6 +1337,45 @@ export default function Dashboard() {
     if (cache.size > MAX_MAP_PREVIEW_CACHE) {
       const oldestKey = cache.keys().next().value;
       if (oldestKey) cache.delete(oldestKey);
+    }
+  };
+
+  const getCachedIntersectionResult = (cacheKey: string) => {
+    const cache = intersectionResultCacheRef.current;
+    const now = Date.now();
+    const cached = cache.get(cacheKey);
+    if (!cached) return null;
+    if (cached.expiresAt <= now) {
+      cache.delete(cacheKey);
+      return null;
+    }
+    cache.delete(cacheKey);
+    cache.set(cacheKey, cached);
+    return cached;
+  };
+
+  const storeIntersectionResultCache = (
+    cacheKey: string,
+    results: IntersectionResult[],
+    computedAtIso: string
+  ) => {
+    const cache = intersectionResultCacheRef.current;
+    const now = Date.now();
+    for (const [key, entry] of cache.entries()) {
+      if (entry.expiresAt <= now) cache.delete(key);
+    }
+    if (cache.has(cacheKey)) {
+      cache.delete(cacheKey);
+    }
+    cache.set(cacheKey, {
+      expiresAt: Date.now() + FRONT_INTERSECTION_RESULT_TTL_MS,
+      results,
+      computedAtIso,
+    });
+    while (cache.size > FRONT_INTERSECTION_RESULT_CACHE_MAX) {
+      const oldestKey = cache.keys().next().value;
+      if (!oldestKey) break;
+      cache.delete(oldestKey);
     }
   };
 
@@ -1301,25 +1502,40 @@ export default function Dashboard() {
         setIntersectionError(null);
         setIntersectionResults([]);
         setPolygonAreaHa(null);
+        setIntersectionComputedAtIso(null);
         setLastIntersectionRequestKey('');
         return;
       }
+
+      const polygonFeature = turfPolygon(polygon.coordinates);
+      const polygonAreaValue = Number((turfArea(polygonFeature) / 10000).toFixed(4));
+      setPolygonAreaHa(polygonAreaValue);
 
       const overlayNames = [...new Set((overrides ?? selectedSimcarOverlays).filter(Boolean))];
       if (!overlayNames.length) {
         setIntersectionLoading(false);
         setIntersectionError(null);
         setIntersectionResults([]);
-        setPolygonAreaHa(null);
+        setIntersectionComputedAtIso(null);
         setLastIntersectionRequestKey('');
         return;
       }
 
-      const requestKey = `${polygon.coordinates[0].map((p) => `${p[0]},${p[1]}`).join('|')}::${overlayNames
+      const requestKey = `${polygon.coordinates[0]
+        .map((p) => `${p[0]},${p[1]}`)
+        .join('|')}::${overlayNames
         .slice()
         .sort()
         .join(',')}`;
-      if (requestKey === lastIntersectionRequestKey) return;
+      const cachedIntersection = getCachedIntersectionResult(requestKey);
+      if (cachedIntersection) {
+        setIntersectionLoading(false);
+        setIntersectionError(null);
+        setIntersectionResults(cachedIntersection.results);
+        setIntersectionComputedAtIso(cachedIntersection.computedAtIso);
+        setLastIntersectionRequestKey(requestKey);
+        return;
+      }
 
       if (intersectionAbortRef.current) {
         intersectionAbortRef.current.abort();
@@ -1330,53 +1546,261 @@ export default function Dashboard() {
       setIntersectionError(null);
 
       try {
-        const res = await fetch('/api/map/intersection-hectares', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            polygon,
-            layerNames: overlayNames,
-            crs: 'EPSG:4326',
-          }),
-        });
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(text || 'Falha ao calcular interseção das camadas.');
-        }
-        const data = (await res.json()) as Partial<IntersectionResponse>;
-        const backendResults = Array.isArray(data.results) ? data.results : [];
-        const byLayer = new Map(backendResults.map((item) => [item.layerName, item]));
-        const orderedResults: IntersectionResult[] = overlayNames.map((layerName) => {
-          const item = byLayer.get(layerName);
-          if (!item) {
+        const fetchWithTimeout = async (url: string) => {
+          const timeoutController = new AbortController();
+          const timer = window.setTimeout(() => timeoutController.abort(), FRONT_WFS_TIMEOUT_MS);
+          const abortCurrent = () => timeoutController.abort();
+          controller.signal.addEventListener('abort', abortCurrent);
+          try {
+            return await fetch(url, { signal: timeoutController.signal });
+          } finally {
+            window.clearTimeout(timer);
+            controller.signal.removeEventListener('abort', abortCurrent);
+          }
+        };
+
+        const fetchText = async (url: string) => {
+          const response = await fetchWithTimeout(url);
+          if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`WFS ${response.status}: ${String(body || '').slice(0, 220)}`);
+          }
+          return await response.text();
+        };
+
+        const fetchJson = async <T,>(url: string): Promise<T> => {
+          const response = await fetchWithTimeout(url);
+          if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`WFS ${response.status}: ${String(body || '').slice(0, 220)}`);
+          }
+          return (await response.json()) as T;
+        };
+
+        const getAvailableLayers = async () => {
+          const cached = wfsCapabilitiesCacheRef.current;
+          if (cached && cached.expiresAt > Date.now()) {
+            return cached.layerNames;
+          }
+          const xml = await fetchText(
+            buildWfsUrl({ service: 'WFS', request: 'GetCapabilities', version: '2.0.0' })
+          );
+          const layerNames = new Set(parseWfsLayerNamesFromCapabilities(xml));
+          wfsCapabilitiesCacheRef.current = {
+            expiresAt: Date.now() + FRONT_WFS_CAPABILITIES_TTL_MS,
+            layerNames,
+          };
+          return layerNames;
+        };
+
+        const getGeometryField = async (layerName: string) => {
+          const cached = wfsDescribeCacheRef.current.get(layerName);
+          if (cached && cached.expiresAt > Date.now()) {
+            return cached.geometryField;
+          }
+          const xml = await fetchText(
+            buildWfsUrl({
+              service: 'WFS',
+              version: '2.0.0',
+              request: 'DescribeFeatureType',
+              typeNames: layerName,
+            })
+          );
+          const geometryField = parseGeometryFieldFromDescribe(xml);
+          wfsDescribeCacheRef.current.set(layerName, {
+            expiresAt: Date.now() + FRONT_WFS_DESCRIBE_TTL_MS,
+            geometryField,
+          });
+          return geometryField;
+        };
+
+        const polygonRing = polygon.coordinates[0].map((point) => [Number(point[0]), Number(point[1])]);
+        const polygonWkt = polygonToWkt(polygonRing);
+        const availableLayers = await getAvailableLayers();
+
+        const computeLayer = async (layerName: string): Promise<IntersectionResult> => {
+          if (!availableLayers.has(layerName)) {
             return {
               layerName,
               status: 'not_in_wfs',
               matchedFeatures: 0,
               intersectionHa: 0,
               coveragePercentOfPolygon: 0,
-              warnings: ['Camada não encontrada na resposta do WFS.'],
+              warnings: ['Camada nao encontrada no WFS.'],
             };
           }
-          return {
-            layerName: item.layerName,
-            status: item.status,
-            matchedFeatures: Number(item.matchedFeatures || 0),
-            intersectionHa: Number(item.intersectionHa || 0),
-            coveragePercentOfPolygon: Number(item.coveragePercentOfPolygon || 0),
-            warnings: Array.isArray(item.warnings) ? item.warnings : [],
-          };
+
+          const warnings: string[] = [];
+          try {
+            const geometryField = await getGeometryField(layerName);
+            const cqlFilter = `INTERSECTS(${geometryField},${polygonWkt})`;
+            const hitsXml = await fetchText(
+              buildWfsUrl({
+                service: 'WFS',
+                version: '2.0.0',
+                request: 'GetFeature',
+                typeNames: layerName,
+                resultType: 'hits',
+                CQL_FILTER: cqlFilter,
+              })
+            );
+            const numberMatched = parseNumberMatched(hitsXml);
+            if (numberMatched === 0) {
+              return {
+                layerName,
+                status: 'no_intersection',
+                matchedFeatures: 0,
+                intersectionHa: 0,
+                coveragePercentOfPolygon: 0,
+                warnings,
+              };
+            }
+
+            let startIndex = 0;
+            let totalFetched = 0;
+            let usedSinglePageFallback = false;
+            const clipped: Array<Feature<Polygon | MultiPolygon>> = [];
+
+            while (true) {
+              if (totalFetched >= FRONT_WFS_MAX_FEATURES) {
+                warnings.push(`Limite de ${FRONT_WFS_MAX_FEATURES} feicoes atingido; resultado parcial.`);
+                break;
+              }
+              const pageSize = Math.min(FRONT_WFS_PAGE_SIZE, FRONT_WFS_MAX_FEATURES - totalFetched);
+              if (pageSize <= 0) break;
+
+              const pageUrl = buildWfsUrl({
+                service: 'WFS',
+                version: '2.0.0',
+                request: 'GetFeature',
+                typeNames: layerName,
+                outputFormat: 'application/json',
+                srsName: 'EPSG:4326',
+                startIndex,
+                count: pageSize,
+                CQL_FILTER: cqlFilter,
+              });
+
+              let page: { features?: Array<{ geometry?: Geometry | null }> };
+              try {
+                page = await fetchJson<{ features?: Array<{ geometry?: Geometry | null }> }>(pageUrl);
+              } catch (error: any) {
+                const message = String(error?.message || '');
+                const requiresFallback =
+                  /natural order without a primary key/i.test(message) ||
+                  /cannot do natural order without a primary key/i.test(message) ||
+                  /\bWFS 400\b/i.test(message);
+                if (!requiresFallback || usedSinglePageFallback) {
+                  throw error;
+                }
+                const fallbackCount = Math.min(FRONT_WFS_MAX_FEATURES, Math.max(100, FRONT_WFS_PAGE_SIZE));
+                const fallbackUrl = buildWfsUrl({
+                  service: 'WFS',
+                  version: '2.0.0',
+                  request: 'GetFeature',
+                  typeNames: layerName,
+                  outputFormat: 'application/json',
+                  srsName: 'EPSG:4326',
+                  count: fallbackCount,
+                  CQL_FILTER: cqlFilter,
+                });
+                page = await fetchJson<{ features?: Array<{ geometry?: Geometry | null }> }>(fallbackUrl);
+                usedSinglePageFallback = true;
+                warnings.push(
+                  `WFS sem paginacao startIndex; calculo limitado a ${fallbackCount} feicoes nesta camada.`
+                );
+              }
+
+              const features = Array.isArray(page.features) ? page.features : [];
+              if (!features.length) break;
+
+              for (const rawFeature of features) {
+                const polygonLike = toPolygonLikeFeature(rawFeature.geometry);
+                if (!polygonLike) continue;
+                const intersection = turfIntersect(
+                  turfFeatureCollection([polygonFeature, polygonLike]) as any
+                ) as Feature<Polygon | MultiPolygon> | null;
+                if (!intersection) continue;
+                clipped.push(intersection);
+              }
+
+              totalFetched += features.length;
+              startIndex += features.length;
+              if (usedSinglePageFallback) break;
+              if (features.length < pageSize) break;
+              if (numberMatched !== null && startIndex >= numberMatched) break;
+            }
+
+            if (!clipped.length) {
+              return {
+                layerName,
+                status: 'no_intersection',
+                matchedFeatures: numberMatched ?? totalFetched,
+                intersectionHa: 0,
+                coveragePercentOfPolygon: 0,
+                warnings,
+              };
+            }
+
+            let merged = clipped[0];
+            for (let i = 1; i < clipped.length; i += 1) {
+              const unioned = turfUnion(
+                turfFeatureCollection([merged, clipped[i]]) as any
+              ) as Feature<Polygon | MultiPolygon> | null;
+              if (!unioned) {
+                warnings.push('Falha ao unir geometrias; mantendo uniao parcial.');
+                continue;
+              }
+              merged = unioned;
+            }
+
+            const intersectionHa = Number((turfArea(merged) / 10000).toFixed(4));
+            const coveragePercentOfPolygon =
+              polygonAreaValue > 0 ? Number(((intersectionHa / polygonAreaValue) * 100).toFixed(4)) : 0;
+            return {
+              layerName,
+              status: 'ok',
+              matchedFeatures: numberMatched ?? totalFetched,
+              intersectionHa,
+              coveragePercentOfPolygon,
+              warnings,
+            };
+          } catch (error: any) {
+            return {
+              layerName,
+              status: 'error',
+              matchedFeatures: 0,
+              intersectionHa: 0,
+              coveragePercentOfPolygon: 0,
+              warnings: [...warnings, String(error?.message || error || 'Erro interno')],
+            };
+          }
+        };
+
+        const orderedResults = new Array<IntersectionResult>(overlayNames.length);
+        let cursor = 0;
+        const workerCount = Math.max(1, Math.min(3, overlayNames.length));
+        const workers = Array.from({ length: workerCount }, async () => {
+          while (true) {
+            const idx = cursor;
+            cursor += 1;
+            if (idx >= overlayNames.length) break;
+            orderedResults[idx] = await computeLayer(overlayNames[idx]);
+          }
         });
+        await Promise.all(workers);
+
+        const computedAtIso = new Date().toISOString();
         setIntersectionResults(orderedResults);
-        setPolygonAreaHa(Number(data.polygonAreaHa || 0));
+        setIntersectionComputedAtIso(computedAtIso);
         setLastIntersectionRequestKey(requestKey);
+        storeIntersectionResultCache(requestKey, orderedResults, computedAtIso);
       } catch (error: any) {
         if (error?.name === 'AbortError') return;
         setIntersectionResults([]);
-        setPolygonAreaHa(null);
+        setIntersectionComputedAtIso(null);
         setLastIntersectionRequestKey('');
-        setIntersectionError(error?.message || 'Erro ao calcular interseção das camadas.');
+        setIntersectionError(error?.message || 'Erro ao calcular intersecao das camadas.');
       } finally {
         if (intersectionAbortRef.current === controller) {
           intersectionAbortRef.current = null;
@@ -1384,8 +1808,52 @@ export default function Dashboard() {
         }
       }
     },
-    [buildIntersectionPolygonPayload, lastIntersectionRequestKey, selectedSimcarOverlays]
+    [buildIntersectionPolygonPayload, selectedSimcarOverlays]
   );
+
+  const intersectionRowsSorted = useMemo(
+    () =>
+      [...intersectionResults].sort((a, b) => {
+        if (b.intersectionHa !== a.intersectionHa) return b.intersectionHa - a.intersectionHa;
+        return b.coveragePercentOfPolygon - a.coveragePercentOfPolygon;
+      }),
+    [intersectionResults]
+  );
+
+  const intersectionSummaryStats = useMemo(() => {
+    const totalHa = intersectionRowsSorted.reduce((acc, row) => acc + (Number(row.intersectionHa) || 0), 0);
+    const totalCoverage = intersectionRowsSorted.reduce(
+      (acc, row) => acc + (Number(row.coveragePercentOfPolygon) || 0),
+      0
+    );
+    const okCount = intersectionRowsSorted.filter((row) => row.status === 'ok').length;
+    return {
+      totalHa: Number(totalHa.toFixed(4)),
+      totalCoverage: Math.min(100, Number(totalCoverage.toFixed(4))),
+      okCount,
+    };
+  }, [intersectionRowsSorted]);
+
+  const intersectionSummaryForContext = useMemo(() => {
+    if (polygonAreaHa === null || !intersectionRowsSorted.length) return undefined;
+    const layers = intersectionRowsSorted.slice(0, 12).map((row) => {
+      const layerTitle =
+        simcarDigitalLayers.find((layer) => layer.name === row.layerName)?.title || row.layerName;
+      return {
+        layerName: row.layerName,
+        title: layerTitle,
+        status: row.status,
+        intersectionHa: Number(row.intersectionHa || 0),
+        coveragePercentOfPolygon: Number(row.coveragePercentOfPolygon || 0),
+        warnings: Array.isArray(row.warnings) ? row.warnings : [],
+      };
+    });
+    return {
+      polygonAreaHa: Number(polygonAreaHa.toFixed(4)),
+      computedAtIso: intersectionComputedAtIso || new Date().toISOString(),
+      layers,
+    };
+  }, [intersectionRowsSorted, polygonAreaHa, intersectionComputedAtIso, simcarDigitalLayers]);
 
   useEffect(() => {
     if (!mapDialogOpen) {
@@ -1688,6 +2156,7 @@ export default function Dashboard() {
       height: 960,
       capturedAtIso: new Date().toISOString(),
       activeOverlays: activeOverlaysMeta.length ? activeOverlaysMeta : undefined,
+      intersectionSummary: intersectionSummaryForContext,
     };
 
     setMapCapturing(true);
@@ -1971,6 +2440,12 @@ export default function Dashboard() {
       const overlayLines = (pendingMapContext?.activeOverlays || []).map(
         (o) => `  • ${o.title} (${o.name})`
       );
+      const intersectionSummaryLines = (pendingMapContext?.intersectionSummary?.layers || [])
+        .slice(0, 12)
+        .map(
+          (row) =>
+            `  - ${row.title} (${row.layerName}) | ${row.intersectionHa.toFixed(4)} ha | ${row.coveragePercentOfPolygon.toFixed(4)}% | ${row.status}`
+        );
       const mapContextBlock = pendingMapContext
         ? [
           'Contexto técnico da imagem de mapa:',
@@ -1990,6 +2465,12 @@ export default function Dashboard() {
           overlayLines.length
             ? `- Camadas de overlay ativas (${overlayLines.length} camadas sobrepostas à imagem base):\n${overlayLines.join('\n')}`
             : '- Camadas de overlay ativas: nenhuma',
+          pendingMapContext.intersectionSummary
+            ? `- Intersecao WFS (ha/% por camada) sobre o poligono importado:\n` +
+              `  Area total do poligono: ${pendingMapContext.intersectionSummary.polygonAreaHa.toFixed(4)} ha\n` +
+              `  Data/hora do calculo (ISO): ${pendingMapContext.intersectionSummary.computedAtIso}\n` +
+              `${intersectionSummaryLines.length ? intersectionSummaryLines.join('\n') : '  - sem linhas de intersecao'}`
+            : '- Intersecao WFS: sem calculo WFS disponivel.',
           '- Observação: a imagem pode conter demarcação vetorial da área de interesse.' +
             (overlayLines.length
               ? ' As camadas de overlay listadas acima estão visíveis na imagem e devem ser consideradas na análise (ex: limites de CAR, áreas consolidadas, AUAs, APPs, reservas legais, SIMCAR, etc.).'
@@ -3406,70 +3887,84 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <div className="px-3 pb-3 space-y-2">
                       {mapPolygon.length < 3 ? (
                         <p className="text-[11px] text-slate-500">
-                          Importe um polígono (.kml/.zip) para calcular interseção por camada.
+                          Importe um poligono (.kml/.zip) para calcular intersecao por camada.
                         </p>
-                      ) : selectedSimcarOverlays.length === 0 ? (
-                        <p className="text-[11px] text-slate-500">
-                          Selecione ao menos um overlay SIMCAR para calcular.
-                        </p>
-                      ) : intersectionError ? (
-                        <p className="text-[11px] text-rose-300">{intersectionError}</p>
                       ) : (
                         <>
                           {polygonAreaHa !== null && (
                             <p className="text-[11px] text-slate-400">
-                              Área do polígono: <span className="text-slate-200 font-medium">{polygonAreaHa.toFixed(4)} ha</span>
+                              Area do poligono: <span className="text-slate-200 font-medium">{polygonAreaHa.toFixed(4)} ha</span>
                             </p>
                           )}
-                          <div className="max-h-48 overflow-auto custom-scrollbar rounded-lg border border-white/10">
-                            <table className="w-full text-[11px]">
-                              <thead className="bg-white/5 text-slate-400">
-                                <tr>
-                                  <th className="text-left px-2 py-1.5 font-medium">Camada</th>
-                                  <th className="text-right px-2 py-1.5 font-medium">Interseção (ha)</th>
-                                  <th className="text-right px-2 py-1.5 font-medium">% polígono</th>
-                                  <th className="text-left px-2 py-1.5 font-medium">Status</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {intersectionResults.map((row) => {
-                                  const layerTitle =
-                                    simcarDigitalLayers.find((l) => l.name === row.layerName)?.title ||
-                                    row.layerName;
-                                  return (
-                                    <tr key={row.layerName} className="border-t border-white/5 text-slate-300">
-                                      <td className="px-2 py-1.5">
-                                        <div className="truncate" title={`${layerTitle} (${row.layerName})`}>
-                                          {layerTitle}
-                                        </div>
-                                      </td>
-                                      <td className="px-2 py-1.5 text-right tabular-nums">
-                                        {row.intersectionHa.toFixed(4)}
-                                      </td>
-                                      <td className="px-2 py-1.5 text-right tabular-nums">
-                                        {row.coveragePercentOfPolygon.toFixed(4)}%
-                                      </td>
-                                      <td className={`px-2 py-1.5 ${intersectionStatusClass(row.status)}`}>
-                                        {intersectionStatusLabel(row.status)}
-                                        {row.warnings.length > 0 ? (
-                                          <span className="ml-1 text-[10px] text-amber-300" title={row.warnings.join('\n')}>
-                                            ⚠
-                                          </span>
-                                        ) : null}
-                                      </td>
+                          {intersectionComputedAtIso && (
+                            <p className="text-[10px] text-slate-500">
+                              Calculo: {new Date(intersectionComputedAtIso).toLocaleString()} | Camadas OK: {intersectionSummaryStats.okCount}
+                            </p>
+                          )}
+                          {selectedSimcarOverlays.length === 0 ? (
+                            <p className="text-[11px] text-slate-500">
+                              Selecione ao menos um overlay SIMCAR para calcular. A area total ja foi calculada.
+                            </p>
+                          ) : intersectionError ? (
+                            <p className="text-[11px] text-rose-300">{intersectionError}</p>
+                          ) : (
+                            <>
+                              <p className="text-[11px] text-slate-400">
+                                Soma das intersecoes: <span className="text-slate-200 font-medium">{intersectionSummaryStats.totalHa.toFixed(4)} ha</span> |
+                                Cobertura total (cap): <span className="text-slate-200 font-medium">{intersectionSummaryStats.totalCoverage.toFixed(4)}%</span>
+                              </p>
+                              <div className="max-h-48 overflow-auto custom-scrollbar rounded-lg border border-white/10">
+                                <table className="w-full text-[11px]">
+                                  <thead className="bg-white/5 text-slate-400">
+                                    <tr>
+                                      <th className="text-left px-2 py-1.5 font-medium">Camada</th>
+                                      <th className="text-right px-2 py-1.5 font-medium">Intersecao (ha)</th>
+                                      <th className="text-right px-2 py-1.5 font-medium">% poligono</th>
+                                      <th className="text-left px-2 py-1.5 font-medium">Status</th>
                                     </tr>
-                                  );
-                                })}
-                                {!intersectionLoading && intersectionResults.length === 0 && (
-                                  <tr>
-                                    <td colSpan={4} className="px-2 py-2 text-slate-500">
-                                      Nenhum resultado para exibir.
-                                    </td>
-                                  </tr>
-                                )}
-                              </tbody>
-                            </table>
-                          </div>
+                                  </thead>
+                                  <tbody>
+                                    {intersectionRowsSorted.map((row) => {
+                                      const layerTitle =
+                                        simcarDigitalLayers.find((l) => l.name === row.layerName)?.title ||
+                                        row.layerName;
+                                      const firstWarning = row.warnings[0] || '';
+                                      return (
+                                        <tr key={row.layerName} className="border-t border-white/5 text-slate-300">
+                                          <td className="px-2 py-1.5">
+                                            <div className="truncate" title={`${layerTitle} (${row.layerName})`}>
+                                              {layerTitle}
+                                            </div>
+                                          </td>
+                                          <td className="px-2 py-1.5 text-right tabular-nums">
+                                            {row.intersectionHa.toFixed(4)}
+                                          </td>
+                                          <td className="px-2 py-1.5 text-right tabular-nums">
+                                            {row.coveragePercentOfPolygon.toFixed(4)}%
+                                          </td>
+                                          <td className={`px-2 py-1.5 ${intersectionStatusClass(row.status)}`}>
+                                            <div>{intersectionStatusLabel(row.status)}</div>
+                                            {firstWarning ? (
+                                              <div className="text-[10px] text-amber-300 truncate" title={row.warnings.join('\n')}>
+                                                {firstWarning}
+                                              </div>
+                                            ) : null}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                    {!intersectionLoading && intersectionRowsSorted.length === 0 && (
+                                      <tr>
+                                        <td colSpan={4} className="px-2 py-2 text-slate-500">
+                                          Nenhum resultado para exibir.
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
                     </div>
