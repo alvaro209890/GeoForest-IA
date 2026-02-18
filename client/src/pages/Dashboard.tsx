@@ -2978,35 +2978,50 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <div className="px-3 pb-3 space-y-1">
                         {groupedImageLayerEntries.map(([groupName, layers]) => {
                           if (!layers.length) return null;
+                          const groupKey = `img_${groupName}`;
+                          const isGroupOpen = mapSectionOpen[groupKey] ?? layers.some((l) => l.name === selectedMapLayer);
+                          const activeInGroup = layers.some((l) => l.name === selectedMapLayer);
                           return (
                             <div key={groupName}>
-                              <p className="text-[10px] uppercase tracking-wider text-slate-500 font-medium px-1 pt-2 pb-1">{groupName}</p>
-                              <div className="space-y-0.5">
-                                {layers.map((layer) => {
-                                  const isActive = selectedMapLayer === layer.name;
-                                  return (
-                                    <button
-                                      key={layer.name}
-                                      type="button"
-                                      onClick={() => {
-                                        setSelectedMapLayer(layer.name);
-                                        refreshMapPreview(layer.name, mapBbox);
-                                      }}
-                                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition-all ${isActive
+                              <button
+                                type="button"
+                                onClick={() => setMapSectionOpen((p) => ({ ...p, [groupKey]: !isGroupOpen }))}
+                                className={`w-full flex items-center justify-between px-1 pt-2 pb-1 group ${activeInGroup ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
+                              >
+                                <span className="text-[10px] uppercase tracking-wider font-medium">{groupName.split(' / ').pop()}</span>
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[9px] opacity-60">{layers.length}</span>
+                                  <ChevronDown size={10} className={`transition-transform ${isGroupOpen ? '' : '-rotate-90'}`} />
+                                </div>
+                              </button>
+                              {isGroupOpen && (
+                                <div className="space-y-0.5">
+                                  {layers.map((layer) => {
+                                    const isActive = selectedMapLayer === layer.name;
+                                    return (
+                                      <button
+                                        key={layer.name}
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedMapLayer(layer.name);
+                                          refreshMapPreview(layer.name, mapBbox);
+                                        }}
+                                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition-all ${isActive
                                           ? 'bg-emerald-500/15 text-emerald-200 border border-emerald-500/30'
                                           : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
-                                        }`}
-                                    >
-                                      <div className={`w-2.5 h-2.5 rounded-full border-2 flex-shrink-0 transition-colors ${isActive ? 'border-emerald-400 bg-emerald-400' : 'border-slate-600'
-                                        }`} />
-                                      <span className="truncate flex-1">{layer.title}</span>
-                                      {layer.inferredYear && (
-                                        <span className={`text-[10px] flex-shrink-0 ${isActive ? 'text-emerald-300' : 'text-slate-600'}`}>{layer.inferredYear}</span>
-                                      )}
-                                    </button>
-                                  );
-                                })}
-                              </div>
+                                          }`}
+                                      >
+                                        <div className={`w-2.5 h-2.5 rounded-full border-2 flex-shrink-0 transition-colors ${isActive ? 'border-emerald-400 bg-emerald-400' : 'border-slate-600'
+                                          }`} />
+                                        <span className="truncate flex-1">{layer.title}</span>
+                                        {layer.inferredYear && (
+                                          <span className={`text-[10px] flex-shrink-0 ${isActive ? 'text-emerald-300' : 'text-slate-600'}`}>{layer.inferredYear}</span>
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
                           );
                         })}

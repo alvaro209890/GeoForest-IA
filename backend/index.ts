@@ -448,7 +448,13 @@ async function startServer() {
   const toSimcarDigitalLayers = (layers: ReturnType<typeof parseLayersFromCapabilities>) => {
     return layers
       .filter((l) => l.isRenderable)
-      .filter((l) => l.name.toLowerCase().startsWith("geoportal:simcar_d_"))
+      .filter((l) => {
+        const low = l.name.toLowerCase();
+        return (
+          low.startsWith("geoportal:simcar_") ||
+          low.startsWith("geoportal:car_")
+        );
+      })
       .map((l) => ({
         name: l.name,
         title: l.title,
