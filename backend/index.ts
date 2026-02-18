@@ -14,6 +14,56 @@ const __dirname = path.dirname(__filename);
 async function startServer() {
   const app = express();
   const server = createServer(app);
+  const bootId = crypto.randomUUID();
+  const renderInfo = {
+    provider: process.env.RENDER ? "render" : "local",
+    service: process.env.RENDER_SERVICE_NAME || null,
+    instance: process.env.RENDER_INSTANCE_ID || null,
+    region: process.env.RENDER_REGION || null,
+    commit: process.env.RENDER_GIT_COMMIT || null,
+  };
+  const logBackend = (
+    event: string,
+    payload: Record<string, unknown>,
+    level: "info" | "warn" | "error" = "info",
+  ) => {
+    const line = JSON.stringify({
+      ts: new Date().toISOString(),
+      level,
+      event,
+      bootId,
+      ...renderInfo,
+      ...payload,
+    });
+    if (level === "error") {
+      console.error(line);
+      return;
+    }
+    if (level === "warn") {
+      console.warn(line);
+      return;
+    }
+    console.log(line);
+  };
+  process.on("unhandledRejection", (reason: unknown) => {
+    logBackend(
+      "process_unhandled_rejection",
+      {
+        reason:
+          reason instanceof Error
+            ? { message: reason.message, stack: reason.stack || "" }
+            : String(reason),
+      },
+      "error",
+    );
+  });
+  process.on("uncaughtException", (error: Error) => {
+    logBackend(
+      "process_uncaught_exception",
+      { message: error.message, stack: error.stack || "" },
+      "error",
+    );
+  });
 
   app.use(express.json({ limit: "12mb" }));
 
@@ -28,6 +78,38 @@ async function startServer() {
       res.status(204).end();
       return;
     }
+    next();
+  });
+  app.use((req, res, next) => {
+    if (!req.path.startsWith("/api")) {
+      next();
+      return;
+    }
+    const startedAt = Date.now();
+    const requestId = crypto.randomUUID();
+    res.setHeader("x-request-id", requestId);
+    res.on("finish", () => {
+      const durationMs = Date.now() - startedAt;
+      const level =
+        res.statusCode >= 500 ? "error" : res.statusCode >= 400 ? "warn" : "info";
+      logBackend(
+        "http_request",
+        {
+          requestId,
+          method: req.method,
+          path: req.path,
+          status: res.statusCode,
+          durationMs,
+          ip:
+            String(req.headers["x-forwarded-for"] || "")
+              .split(",")[0]
+              .trim() || req.socket.remoteAddress || "",
+          userAgent: String(req.headers["user-agent"] || ""),
+          referer: String(req.headers.referer || ""),
+        },
+        level,
+      );
+    });
     next();
   });
 
@@ -1782,7 +1864,12 @@ async function startServer() {
     process.env.PORT || (process.env.NODE_ENV === "production" ? 3000 : 3001);
 
   server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+    logBackend("server_started", {
+      port,
+      node: process.version,
+      env: process.env.NODE_ENV || "development",
+      baseUrl: `http://localhost:${port}/`,
+    });
   });
 
   const keepAliveUrl = process.env.KEEP_ALIVE_URL;
@@ -1790,22 +1877,40 @@ async function startServer() {
   if (keepAliveUrl) {
     const ping = async () => {
       try {
+        const startedAt = Date.now();
         const res = await fetch(keepAliveUrl, { method: "GET" });
         if (!res.ok) {
-          console.warn(`Keep-alive respondeu ${res.status} ${res.statusText}`);
+          logBackend(
+            "keep_alive_ping",
+            {
+              url: keepAliveUrl,
+              status: res.status,
+              statusText: res.statusText,
+              durationMs: Date.now() - startedAt,
+            },
+            "warn",
+          );
         } else {
-          console.log(`Keep-alive ok (${res.status}) em ${new Date().toISOString()}`);
+          logBackend("keep_alive_ping", {
+            url: keepAliveUrl,
+            status: res.status,
+            durationMs: Date.now() - startedAt,
+          });
         }
       } catch (err) {
-        console.warn("Keep-alive falhou:", err);
+        logBackend(
+          "keep_alive_ping",
+          { url: keepAliveUrl, error: err instanceof Error ? err.message : String(err) },
+          "warn",
+        );
       }
     };
 
-    console.log(`Keep-alive ativo: ${keepAliveUrl} a cada ${keepAliveInterval}ms`);
+    logBackend("keep_alive_enabled", { url: keepAliveUrl, intervalMs: keepAliveInterval });
     ping().catch(() => undefined);
     setInterval(ping, keepAliveInterval).unref();
   } else {
-    console.warn("Keep-alive desativado: defina KEEP_ALIVE_URL.");
+    logBackend("keep_alive_disabled", { reason: "KEEP_ALIVE_URL not configured" }, "warn");
   }
 }
 

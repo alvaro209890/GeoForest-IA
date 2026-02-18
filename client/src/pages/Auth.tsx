@@ -85,10 +85,41 @@ export default function Auth() {
     return true;
   };
 
+  const wakeBackend = async () => {
+    const configuredBase = String(import.meta.env.VITE_API_BASE || '').trim();
+    const apiBase = configuredBase ? configuredBase.replace(/\/+$/, '') : '';
+    const url = `${apiBase}/api/health`;
+    const controller = new AbortController();
+    const timeoutMs = 20000;
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    const startedAt = performance.now();
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        cache: 'no-store',
+        keepalive: true,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        console.warn('[auth-wake] backend respondeu com erro', res.status, res.statusText);
+        return;
+      }
+      console.info('[auth-wake] ping enviado com sucesso', {
+        status: res.status,
+        elapsedMs: Math.round(performance.now() - startedAt),
+      });
+    } catch (error: any) {
+      console.warn('[auth-wake] falha ao pingar backend', error?.message || error);
+    } finally {
+      window.clearTimeout(timer);
+    }
+  };
+
   const onSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateSignUp()) return;
     setLoading(true);
+    void wakeBackend();
     try {
       await handleSignUp({
         email: signupEmail,
@@ -108,6 +139,7 @@ export default function Auth() {
     e.preventDefault();
     if (!validateLogin()) return;
     setLoading(true);
+    void wakeBackend();
     try {
       await handleLogin(loginEmail, loginPassword);
       toast.success('Login realizado com sucesso!');
@@ -121,6 +153,7 @@ export default function Auth() {
 
   const onGoogleSignIn = async () => {
     setLoading(true);
+    void wakeBackend();
     try {
       await handleGoogleSignIn();
       toast.success('Login com Google realizado com sucesso!');
