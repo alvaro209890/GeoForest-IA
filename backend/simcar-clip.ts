@@ -12,6 +12,7 @@ import fs from "fs";
 import crypto from "crypto";
 import archiver from "archiver";
 import proj4 from "proj4";
+import ExcelJS from "exceljs";
 import {
     area as turfArea,
     featureCollection as turfFeatureCollection,
@@ -515,6 +516,7 @@ async function buildOutputZip(
     templateEntries: Array<{ name: string; data: Buffer }>,
     clippedLayers: Map<string, { records: ShpRecord[]; fieldDefs: DbfFieldDef[] }>,
     prjBuffers: Map<string, Buffer>,
+    xlsxBuffer?: Buffer,
 ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
         const archive = archiver("zip", { zlib: { level: 6 } });
@@ -575,8 +577,140 @@ async function buildOutputZip(
             archive.append(entry.data, { name: entry.name });
         }
 
+        // Add XLSX quantitative report if available
+        if (xlsxBuffer) {
+            archive.append(xlsxBuffer, { name: "QUANTITATIVOS.xlsx" });
+        }
+
         archive.finalize();
     });
+}
+
+/* ─── XLSX Quantitative Report Builder ───────────────────────── */
+
+async function buildQuantitativeXlsx(
+    layerSummaries: LayerSummary[],
+    propertyAreaHa: number,
+    airIdentificacao?: string,
+): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "GeoForest IA";
+    workbook.created = new Date();
+
+    const headerFill: ExcelJS.Fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF10B981" }, // emerald-500
+    };
+    const headerFont: Partial<ExcelJS.Font> = {
+        bold: true,
+        color: { argb: "FFFFFFFF" },
+        size: 11,
+    };
+    const thinBorder: Partial<ExcelJS.Border> = { style: "thin", color: { argb: "FFD1D5DB" } };
+    const allBorders: Partial<ExcelJS.Borders> = {
+        top: thinBorder,
+        left: thinBorder,
+        bottom: thinBorder,
+        right: thinBorder,
+    };
+
+    // ── Sheet 1: Resumo ──
+    const resumo = workbook.addWorksheet("Resumo");
+
+    // Title row
+    resumo.mergeCells("A1:B1");
+    const titleCell = resumo.getCell("A1");
+    titleCell.value = "Relatório Quantitativo — Recorte SIMCAR";
+    titleCell.font = { bold: true, size: 14, color: { argb: "FF065F46" } };
+    titleCell.alignment = { horizontal: "center" };
+
+    // Summary data
+    const summaryData: [string, string | number][] = [
+        ["Data do Processamento", new Date().toLocaleString("pt-BR", { timeZone: "America/Cuiaba" })],
+        ["Nº Identificação AIR", airIdentificacao || "—"],
+        ["Área do Imóvel (ha)", Number(propertyAreaHa.toFixed(4))],
+        ["Sistema de Referência", "EPSG:4674 (SIRGAS 2000)"],
+        ["Total de Camadas", layerSummaries.length],
+        ["Camadas com Dados", layerSummaries.filter((l) => l.features > 0).length],
+        ["Total de Feições Recortadas", layerSummaries.reduce((s, l) => s + l.features, 0)],
+    ];
+
+    summaryData.forEach(([label, value], idx) => {
+        const row = resumo.getRow(idx + 3);
+        row.getCell(1).value = label;
+        row.getCell(1).font = { bold: true, size: 11 };
+        row.getCell(2).value = value;
+        row.getCell(2).alignment = { horizontal: "left" };
+        row.getCell(1).border = allBorders;
+        row.getCell(2).border = allBorders;
+    });
+
+    resumo.getColumn(1).width = 32;
+    resumo.getColumn(2).width = 40;
+
+    // ── Sheet 2: Camadas ──
+    const camadas = workbook.addWorksheet("Camadas");
+
+    // Header row
+    const headers = ["Camada", "Origem", "Feições", "Área (ha)", "% do Imóvel", "Observações"];
+    const headerRow = camadas.getRow(1);
+    headers.forEach((h, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = headerFont;
+        cell.fill = headerFill;
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = allBorders;
+    });
+    headerRow.height = 24;
+
+    // Data rows
+    layerSummaries.forEach((layer, idx) => {
+        const row = camadas.getRow(idx + 2);
+        const pct = propertyAreaHa > 0 && layer.areaHa
+            ? Number(((layer.areaHa / propertyAreaHa) * 100).toFixed(2))
+            : 0;
+
+        row.getCell(1).value = layer.name;
+        row.getCell(2).value = layer.source === "property" ? "Imóvel" : "WFS";
+        row.getCell(3).value = layer.features;
+        row.getCell(4).value = layer.areaHa ?? 0;
+        row.getCell(5).value = pct;
+        row.getCell(6).value = layer.warning || (layer.features === 0 ? "Sem dados" : "OK");
+
+        // Formatting
+        row.getCell(3).alignment = { horizontal: "center" };
+        row.getCell(4).numFmt = "#,##0.0000";
+        row.getCell(5).numFmt = "#,##0.00";
+        for (let c = 1; c <= 6; c++) row.getCell(c).border = allBorders;
+
+        // Alternate row shading
+        if (idx % 2 === 1) {
+            for (let c = 1; c <= 6; c++) {
+                row.getCell(c).fill = {
+                    type: "pattern",
+                    pattern: "solid",
+                    fgColor: { argb: "FFF0FDF4" }, // emerald-50
+                };
+            }
+        }
+    });
+
+    // Auto-fit columns
+    camadas.getColumn(1).width = 28; // Camada
+    camadas.getColumn(2).width = 12; // Origem
+    camadas.getColumn(3).width = 10; // Feições
+    camadas.getColumn(4).width = 14; // Área (ha)
+    camadas.getColumn(5).width = 14; // % do Imóvel
+    camadas.getColumn(6).width = 36; // Observações
+
+    // Auto-filter
+    camadas.autoFilter = { from: "A1", to: `F${layerSummaries.length + 1}` };
+
+    // Write to buffer
+    const arrayBuffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(arrayBuffer);
 }
 
 /* ─── Main Processing Pipeline ───────────────────────────────── */
@@ -593,6 +727,7 @@ async function processClip(
     res: Response,
     propertyZip: Buffer,
     requestedLayers: string[] | null,
+    airIdentificacao?: string,
 ) {
     const startTime = Date.now();
     const layerNames = requestedLayers && requestedLayers.length > 0
@@ -672,6 +807,15 @@ async function processClip(
             const attributes: Record<string, string | number | null> = {};
             for (const f of fieldDefs) attributes[f.name] = null;
             if (attributes["ID"] !== undefined) attributes["ID"] = 1;
+
+            // Fill AIR IDENTIFIC field with user-provided identification number
+            if (layerName === "AIR" && airIdentificacao) {
+                // Ensure IDENTIFIC field exists in schema
+                if (!fieldDefs.some((f) => f.name === "IDENTIFIC")) {
+                    fieldDefs.push({ name: "IDENTIFIC", type: "C" as const, length: 50, decimals: 0 });
+                }
+                attributes["IDENTIFIC"] = airIdentificacao;
+            }
 
             clippedLayers.set(layerName, {
                 records: [{ rings, attributes }],
@@ -809,9 +953,18 @@ async function processClip(
         status: "building_zip",
     });
 
+    // 6b. Build XLSX quantitative report
+    let xlsxBuffer: Buffer | undefined;
+    try {
+        xlsxBuffer = await buildQuantitativeXlsx(layerSummaries, areaHa, airIdentificacao);
+    } catch (err: any) {
+        console.error("[SIMCAR CLIP] XLSX build error:", err.message);
+        // Non-fatal: continue without XLSX
+    }
+
     let zipBuffer: Buffer;
     try {
-        zipBuffer = await buildOutputZip(templateEntries, clippedLayers, prjBuffers);
+        zipBuffer = await buildOutputZip(templateEntries, clippedLayers, prjBuffers, xlsxBuffer);
     } catch (err: any) {
         sendSSE(res, { type: "error", message: `Erro ao montar ZIP: ${err.message}` });
         return;
@@ -865,6 +1018,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 propertyZip?: string;
                 filename?: string;
                 layerNames?: string[];
+                airIdentificacao?: string;
             };
 
             if (!body.propertyZip) {
@@ -893,7 +1047,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 `size=${zipBuffer.length}, layers=${body.layerNames?.length || "all"}`,
             );
 
-            await processClip(res, zipBuffer, body.layerNames || null);
+            await processClip(res, zipBuffer, body.layerNames || null, body.airIdentificacao || undefined);
         } catch (err: any) {
             console.error("[SIMCAR CLIP] Unexpected error:", err);
             sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });

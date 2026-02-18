@@ -696,6 +696,7 @@ export default function Dashboard() {
   const [simcarClipSummary, setSimcarClipSummary] = useState<any>(null);
   const [simcarClipError, setSimcarClipError] = useState<string | null>(null);
   const simcarClipAbortRef = useRef<AbortController | null>(null);
+  const [simcarAirId, setSimcarAirId] = useState('');
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
   const [mapRectSelection, setMapRectSelection] = useState<{
     left: number;
@@ -3144,16 +3145,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
         <div className="p-4 border-t border-white/5">
           <button
-            onClick={() => setActiveView('settings')}
-            className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'settings' ? 'bg-white/10' : ''
-              }`}
-          >
-            <Settings size={18} className={`transition-colors ${activeView === 'settings' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
-            <span className="text-sm text-slate-300 group-hover:text-white transition-colors xl:block lg:hidden">
-              Configurações
-            </span>
-          </button>
-          <button
             onClick={() => {
               setActiveView('simcar-clip');
               // Fetch available layers if not loaded
@@ -3176,6 +3167,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <Scissors size={18} className={`transition-colors ${activeView === 'simcar-clip' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
             <span className="text-sm text-slate-300 group-hover:text-white transition-colors xl:block lg:hidden">
               Recortar SIMCAR
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveView('settings')}
+            className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'settings' ? 'bg-white/10' : ''
+              }`}
+          >
+            <Settings size={18} className={`transition-colors ${activeView === 'settings' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
+            <span className="text-sm text-slate-300 group-hover:text-white transition-colors xl:block lg:hidden">
+              Configurações
             </span>
           </button>
           <div className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group">
@@ -3552,8 +3553,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 {/* Upload Area */}
                 <div
                   className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer mb-4 ${simcarClipFile
-                      ? 'border-emerald-500/50 bg-emerald-500/5'
-                      : 'border-white/10 hover:border-emerald-500/30 hover:bg-white/5'
+                    ? 'border-emerald-500/50 bg-emerald-500/5'
+                    : 'border-white/10 hover:border-emerald-500/30 hover:bg-white/5'
                     }`}
                   onClick={() => {
                     const input = document.createElement('input');
@@ -3638,8 +3639,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             )
                           }
                           className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs transition-colors ${layer.selected
-                              ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20'
-                              : 'bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10'
+                            ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20'
+                            : 'bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10'
                             }`}
                         >
                           {layer.selected ? <CheckSquare size={12} /> : <Square size={12} />}
@@ -3653,9 +3654,24 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
                 )}
 
+                {/* AIR Identification Input */}
+                <div className="mb-4">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
+                    Nº Identificação da AIR *
+                  </label>
+                  <input
+                    type="text"
+                    value={simcarAirId}
+                    onChange={(e) => setSimcarAirId(e.target.value)}
+                    placeholder="Ex: MT-5107768-4D6B3C22B5FE4..."
+                    className="w-full px-4 py-2.5 rounded-xl bg-black/30 border border-white/10 text-white text-sm placeholder-slate-500 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none transition-colors"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">Será preenchido no campo IDENTIFIC da camada AIR</p>
+                </div>
+
                 {/* Process Button */}
                 <button
-                  disabled={!simcarClipFile || simcarClipProcessing || simcarClipLayers.filter(l => l.selected).length === 0}
+                  disabled={!simcarClipFile || simcarClipProcessing || !simcarAirId.trim() || simcarClipLayers.filter(l => l.selected).length === 0}
                   onClick={async () => {
                     if (!simcarClipFile) return;
                     setSimcarClipProcessing(true);
@@ -3681,6 +3697,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           propertyZip: base64,
                           filename: simcarClipFile.name,
                           layerNames: selectedLayers,
+                          airIdentificacao: simcarAirId.trim(),
                         }),
                         signal: controller.signal,
                       });
@@ -3727,9 +3744,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       simcarClipAbortRef.current = null;
                     }
                   }}
-                  className={`w-full py-3 rounded-xl font-medium text-sm transition-all duration-300 flex items-center justify-center gap-2 ${!simcarClipFile || simcarClipProcessing || simcarClipLayers.filter(l => l.selected).length === 0
-                      ? 'bg-white/5 text-slate-500 cursor-not-allowed'
-                      : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/30'
+                  className={`w-full py-3 rounded-xl font-medium text-sm transition-all duration-300 flex items-center justify-center gap-2 ${!simcarClipFile || simcarClipProcessing || !simcarAirId.trim() || simcarClipLayers.filter(l => l.selected).length === 0
+                    ? 'bg-white/5 text-slate-500 cursor-not-allowed'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/30'
                     }`}
                 >
                   {simcarClipProcessing ? (
@@ -3760,27 +3777,33 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </section>
 
               {/* Progress */}
-              {simcarClipProgress && simcarClipProcessing && (
-                <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm text-slate-300">Processando camada {simcarClipProgress.current}/{simcarClipProgress.total}</span>
-                    <span className="text-xs text-emerald-400 font-mono">{simcarClipProgress.layer}</span>
-                  </div>
-                  <div className="w-full bg-black/40 h-2 rounded-full overflow-hidden">
-                    <div
-                      className="bg-gradient-to-r from-emerald-500 to-green-400 h-full rounded-full transition-all duration-500"
-                      style={{ width: `${(simcarClipProgress.current / simcarClipProgress.total) * 100}%` }}
-                    />
-                  </div>
-                  <p className="text-[10px] text-slate-500 mt-2">
-                    {simcarClipProgress.status === 'fetching' && 'Buscando feições do WFS...'}
-                    {simcarClipProgress.status === 'clipping' && 'Recortando feições...'}
-                    {simcarClipProgress.status === 'copying_property' && 'Copiando polígono do imóvel...'}
-                    {simcarClipProgress.status === 'building_zip' && 'Montando arquivo ZIP...'}
-                    {simcarClipProgress.status === 'no_wfs_match' && 'Camada não encontrada no WFS'}
-                  </p>
-                </section>
-              )}
+              {simcarClipProgress && simcarClipProcessing && (() => {
+                const pct = simcarClipProgress.total > 0 ? Math.round((simcarClipProgress.current / simcarClipProgress.total) * 100) : 0;
+                return (
+                  <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm text-slate-300">Processando camada {simcarClipProgress.current}/{simcarClipProgress.total}</span>
+                      <span className="text-xs text-emerald-400 font-mono">{simcarClipProgress.layer}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 bg-black/40 h-2.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-emerald-500 to-green-400 h-full rounded-full transition-all duration-500"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className="text-sm font-semibold text-emerald-400 tabular-nums min-w-[3ch] text-right">{pct}%</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-2">
+                      {simcarClipProgress.status === 'fetching' && 'Buscando feições do WFS...'}
+                      {simcarClipProgress.status === 'clipping' && 'Recortando feições...'}
+                      {simcarClipProgress.status === 'copying_property' && 'Copiando polígono do imóvel...'}
+                      {simcarClipProgress.status === 'building_zip' && 'Montando arquivo ZIP...'}
+                      {simcarClipProgress.status === 'no_wfs_match' && 'Camada não encontrada no WFS'}
+                    </p>
+                  </section>
+                );
+              })()}
 
               {/* Error */}
               {simcarClipError && (
@@ -3866,8 +3889,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                       </td>
                                       <td className="py-2 text-center">
                                         <span className={`px-1.5 py-0.5 rounded text-[10px] ${layer.source === 'property'
-                                            ? 'bg-amber-500/10 text-amber-400'
-                                            : 'bg-blue-500/10 text-blue-400'
+                                          ? 'bg-amber-500/10 text-amber-400'
+                                          : 'bg-blue-500/10 text-blue-400'
                                           }`}>
                                           {layer.source === 'property' ? 'Imóvel' : 'WFS'}
                                         </span>
