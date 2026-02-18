@@ -30,6 +30,12 @@ import {
   FileText,
   Trash2,
   X,
+  Scissors,
+  Upload,
+  Download,
+  CheckSquare,
+  Square,
+  Loader2,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
@@ -626,7 +632,7 @@ const parseZipShpGeometryOnClient = async (file: File): Promise<ParsedGeometry> 
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activeView, setActiveView] = useState<'chat' | 'settings'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip'>('chat');
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const [, setLocation] = useLocation();
@@ -680,6 +686,16 @@ export default function Dashboard() {
   const wfsDescribeCacheRef = useRef<Map<string, { expiresAt: number; geometryField: string }>>(new Map());
   const [mapSectionOpen, setMapSectionOpen] = useState<Record<string, boolean>>({ imagery: true, simcar: true, advanced: false });
   const [simcarSearchFilter, setSimcarSearchFilter] = useState('');
+
+  // ─── SIMCAR Clip State ───
+  const [simcarClipFile, setSimcarClipFile] = useState<File | null>(null);
+  const [simcarClipLayers, setSimcarClipLayers] = useState<Array<{ name: string; category: string; selected: boolean }>>([]);
+  const [simcarClipProcessing, setSimcarClipProcessing] = useState(false);
+  const [simcarClipProgress, setSimcarClipProgress] = useState<{ current: number; total: number; layer: string; status: string } | null>(null);
+  const [simcarClipDownloadUrl, setSimcarClipDownloadUrl] = useState<string | null>(null);
+  const [simcarClipSummary, setSimcarClipSummary] = useState<any>(null);
+  const [simcarClipError, setSimcarClipError] = useState<string | null>(null);
+  const simcarClipAbortRef = useRef<AbortController | null>(null);
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
   const [mapRectSelection, setMapRectSelection] = useState<{
     left: number;
@@ -1524,9 +1540,9 @@ export default function Dashboard() {
       const requestKey = `${polygon.coordinates[0]
         .map((p) => `${p[0]},${p[1]}`)
         .join('|')}::${overlayNames
-        .slice()
-        .sort()
-        .join(',')}`;
+          .slice()
+          .sort()
+          .join(',')}`;
       const cachedIntersection = getCachedIntersectionResult(requestKey);
       if (cachedIntersection) {
         setIntersectionLoading(false);
@@ -2467,14 +2483,14 @@ export default function Dashboard() {
             : '- Camadas de overlay ativas: nenhuma',
           pendingMapContext.intersectionSummary
             ? `- Intersecao WFS (ha/% por camada) sobre o poligono importado:\n` +
-              `  Area total do poligono: ${pendingMapContext.intersectionSummary.polygonAreaHa.toFixed(4)} ha\n` +
-              `  Data/hora do calculo (ISO): ${pendingMapContext.intersectionSummary.computedAtIso}\n` +
-              `${intersectionSummaryLines.length ? intersectionSummaryLines.join('\n') : '  - sem linhas de intersecao'}`
+            `  Area total do poligono: ${pendingMapContext.intersectionSummary.polygonAreaHa.toFixed(4)} ha\n` +
+            `  Data/hora do calculo (ISO): ${pendingMapContext.intersectionSummary.computedAtIso}\n` +
+            `${intersectionSummaryLines.length ? intersectionSummaryLines.join('\n') : '  - sem linhas de intersecao'}`
             : '- Intersecao WFS: sem calculo WFS disponivel.',
           '- Observação: a imagem pode conter demarcação vetorial da área de interesse.' +
-            (overlayLines.length
-              ? ' As camadas de overlay listadas acima estão visíveis na imagem e devem ser consideradas na análise (ex: limites de CAR, áreas consolidadas, AUAs, APPs, reservas legais, SIMCAR, etc.).'
-              : ''),
+          (overlayLines.length
+            ? ' As camadas de overlay listadas acima estão visíveis na imagem e devem ser consideradas na análise (ex: limites de CAR, áreas consolidadas, AUAs, APPs, reservas legais, SIMCAR, etc.).'
+            : ''),
         ]
           .filter(Boolean)
           .join('\n')
@@ -3129,11 +3145,37 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         <div className="p-4 border-t border-white/5">
           <button
             onClick={() => setActiveView('settings')}
-            className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2"
+            className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'settings' ? 'bg-white/10' : ''
+              }`}
           >
-            <Settings size={18} className="text-slate-500 group-hover:text-emerald-400 transition-colors" />
+            <Settings size={18} className={`transition-colors ${activeView === 'settings' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
             <span className="text-sm text-slate-300 group-hover:text-white transition-colors xl:block lg:hidden">
               Configurações
+            </span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveView('simcar-clip');
+              // Fetch available layers if not loaded
+              if (simcarClipLayers.length === 0) {
+                fetch('/api/simcar/layers')
+                  .then((r) => r.json())
+                  .then((data: any) => {
+                    if (Array.isArray(data?.layers)) {
+                      setSimcarClipLayers(
+                        data.layers.map((l: any) => ({ name: l.name, category: l.category, selected: true })),
+                      );
+                    }
+                  })
+                  .catch(() => { });
+              }
+            }}
+            className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'simcar-clip' ? 'bg-white/10' : ''
+              }`}
+          >
+            <Scissors size={18} className={`transition-colors ${activeView === 'simcar-clip' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
+            <span className="text-sm text-slate-300 group-hover:text-white transition-colors xl:block lg:hidden">
+              Recortar SIMCAR
             </span>
           </button>
           <div className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group">
@@ -3170,7 +3212,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2">
               <Zap size={16} className="text-emerald-400 fill-current" />
               <span className="font-medium text-slate-200">
-                {activeView === 'chat' ? 'GeoForest v2.0' : 'Configurações'}
+                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recortar SIMCAR' : 'Configurações'}
               </span>
               {activeView === 'chat' && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide">
@@ -3493,6 +3535,326 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </div>
             </div>
           </>
+        ) : activeView === 'simcar-clip' ? (
+          <div className="flex-1 overflow-y-auto px-6 py-8 custom-scrollbar">
+            <div className="max-w-4xl mx-auto space-y-6 animate-fade-in-up">
+              <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                    <Scissors size={20} />
+                  </div>
+                  <div>
+                    <h2 className="font-semibold text-lg text-slate-200">Recorte Automático SIMCAR</h2>
+                    <p className="text-xs text-slate-400">Envie o shapefile do imóvel e receba as camadas SIMCAR recortadas</p>
+                  </div>
+                </div>
+
+                {/* Upload Area */}
+                <div
+                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer mb-4 ${simcarClipFile
+                      ? 'border-emerald-500/50 bg-emerald-500/5'
+                      : 'border-white/10 hover:border-emerald-500/30 hover:bg-white/5'
+                    }`}
+                  onClick={() => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = '.zip';
+                    input.onchange = (e) => {
+                      const file = (e.target as HTMLInputElement).files?.[0];
+                      if (file) {
+                        setSimcarClipFile(file);
+                        setSimcarClipDownloadUrl(null);
+                        setSimcarClipSummary(null);
+                        setSimcarClipError(null);
+                      }
+                    };
+                    input.click();
+                  }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const file = e.dataTransfer.files[0];
+                    if (file && file.name.toLowerCase().endsWith('.zip')) {
+                      setSimcarClipFile(file);
+                      setSimcarClipDownloadUrl(null);
+                      setSimcarClipSummary(null);
+                      setSimcarClipError(null);
+                    }
+                  }}
+                >
+                  {simcarClipFile ? (
+                    <div className="flex items-center justify-center gap-3">
+                      <FileText size={24} className="text-emerald-400" />
+                      <div>
+                        <p className="text-sm font-medium text-white">{simcarClipFile.name}</p>
+                        <p className="text-xs text-slate-400">{(simcarClipFile.size / 1024).toFixed(0)} KB</p>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSimcarClipFile(null);
+                        }}
+                        className="ml-2 p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-red-400 transition-colors"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload size={32} className="text-slate-500 mx-auto mb-3" />
+                      <p className="text-sm text-slate-300">Arraste o ZIP do shapefile aqui</p>
+                      <p className="text-xs text-slate-500 mt-1">ou clique para selecionar (.zip com .shp + .prj)</p>
+                    </>
+                  )}
+                </div>
+
+                {/* Layer Selection */}
+                {simcarClipLayers.length > 0 && (
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Camadas ({simcarClipLayers.filter(l => l.selected).length}/{simcarClipLayers.length})</span>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setSimcarClipLayers((prev) => prev.map((l) => ({ ...l, selected: true })))}
+                          className="text-[10px] text-emerald-400 hover:text-emerald-300 transition-colors"
+                        >
+                          Todos
+                        </button>
+                        <button
+                          onClick={() => setSimcarClipLayers((prev) => prev.map((l) => ({ ...l, selected: false })))}
+                          className="text-[10px] text-slate-400 hover:text-slate-300 transition-colors"
+                        >
+                          Nenhum
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1.5 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                      {simcarClipLayers.map((layer) => (
+                        <button
+                          key={layer.name}
+                          onClick={() =>
+                            setSimcarClipLayers((prev) =>
+                              prev.map((l) => (l.name === layer.name ? { ...l, selected: !l.selected } : l)),
+                            )
+                          }
+                          className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs transition-colors ${layer.selected
+                              ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20'
+                              : 'bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10'
+                            }`}
+                        >
+                          {layer.selected ? <CheckSquare size={12} /> : <Square size={12} />}
+                          <span className="truncate">{layer.name}</span>
+                          {layer.category === 'property' && (
+                            <span className="text-[9px] text-amber-400 ml-auto">●</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Process Button */}
+                <button
+                  disabled={!simcarClipFile || simcarClipProcessing || simcarClipLayers.filter(l => l.selected).length === 0}
+                  onClick={async () => {
+                    if (!simcarClipFile) return;
+                    setSimcarClipProcessing(true);
+                    setSimcarClipProgress(null);
+                    setSimcarClipDownloadUrl(null);
+                    setSimcarClipSummary(null);
+                    setSimcarClipError(null);
+
+                    try {
+                      const arrayBuf = await simcarClipFile.arrayBuffer();
+                      const base64 = btoa(
+                        new Uint8Array(arrayBuf).reduce((data, byte) => data + String.fromCharCode(byte), ''),
+                      );
+
+                      const selectedLayers = simcarClipLayers.filter((l) => l.selected).map((l) => l.name);
+                      const controller = new AbortController();
+                      simcarClipAbortRef.current = controller;
+
+                      const response = await fetch('/api/simcar/clip', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          propertyZip: base64,
+                          filename: simcarClipFile.name,
+                          layerNames: selectedLayers,
+                        }),
+                        signal: controller.signal,
+                      });
+
+                      const reader = response.body?.getReader();
+                      const decoder = new TextDecoder();
+                      let buffer = '';
+
+                      if (reader) {
+                        while (true) {
+                          const { done, value } = await reader.read();
+                          if (done) break;
+                          buffer += decoder.decode(value, { stream: true });
+                          const lines = buffer.split('\n');
+                          buffer = lines.pop() || '';
+
+                          for (const line of lines) {
+                            if (!line.startsWith('data: ')) continue;
+                            try {
+                              const event = JSON.parse(line.slice(6));
+                              if (event.type === 'progress') {
+                                setSimcarClipProgress({
+                                  current: event.current,
+                                  total: event.total,
+                                  layer: event.layer,
+                                  status: event.status,
+                                });
+                              } else if (event.type === 'complete') {
+                                setSimcarClipDownloadUrl(event.downloadUrl);
+                                setSimcarClipSummary(event.summary);
+                              } else if (event.type === 'error') {
+                                setSimcarClipError(event.message);
+                              }
+                            } catch { }
+                          }
+                        }
+                      }
+                    } catch (err: any) {
+                      if (err.name !== 'AbortError') {
+                        setSimcarClipError(err.message || 'Erro inesperado no processamento.');
+                      }
+                    } finally {
+                      setSimcarClipProcessing(false);
+                      simcarClipAbortRef.current = null;
+                    }
+                  }}
+                  className={`w-full py-3 rounded-xl font-medium text-sm transition-all duration-300 flex items-center justify-center gap-2 ${!simcarClipFile || simcarClipProcessing || simcarClipLayers.filter(l => l.selected).length === 0
+                      ? 'bg-white/5 text-slate-500 cursor-not-allowed'
+                      : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/30'
+                    }`}
+                >
+                  {simcarClipProcessing ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Processando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Scissors size={16} />
+                      <span>Processar Recorte</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Cancel Button */}
+                {simcarClipProcessing && (
+                  <button
+                    onClick={() => {
+                      simcarClipAbortRef.current?.abort();
+                      setSimcarClipProcessing(false);
+                    }}
+                    className="w-full mt-2 py-2 rounded-xl border border-red-500/20 text-red-400 text-sm hover:bg-red-500/10 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                )}
+              </section>
+
+              {/* Progress */}
+              {simcarClipProgress && simcarClipProcessing && (
+                <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm text-slate-300">Processando camada {simcarClipProgress.current}/{simcarClipProgress.total}</span>
+                    <span className="text-xs text-emerald-400 font-mono">{simcarClipProgress.layer}</span>
+                  </div>
+                  <div className="w-full bg-black/40 h-2 rounded-full overflow-hidden">
+                    <div
+                      className="bg-gradient-to-r from-emerald-500 to-green-400 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${(simcarClipProgress.current / simcarClipProgress.total) * 100}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-2">
+                    {simcarClipProgress.status === 'fetching' && 'Buscando feições do WFS...'}
+                    {simcarClipProgress.status === 'clipping' && 'Recortando feições...'}
+                    {simcarClipProgress.status === 'copying_property' && 'Copiando polígono do imóvel...'}
+                    {simcarClipProgress.status === 'building_zip' && 'Montando arquivo ZIP...'}
+                    {simcarClipProgress.status === 'no_wfs_match' && 'Camada não encontrada no WFS'}
+                  </p>
+                </section>
+              )}
+
+              {/* Error */}
+              {simcarClipError && (
+                <section className="bg-red-900/20 border border-red-500/20 rounded-2xl p-6">
+                  <p className="text-sm text-red-300">❌ {simcarClipError}</p>
+                </section>
+              )}
+
+              {/* Result */}
+              {simcarClipDownloadUrl && simcarClipSummary && (
+                <section className="bg-[#0e1612]/60 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-6 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                      <Download size={20} />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-white">Recorte Concluído</h3>
+                      <p className="text-xs text-slate-400">
+                        {simcarClipSummary.layersWithData} camadas com dados • {simcarClipSummary.totalFeaturesClipped} feições • {(simcarClipSummary.processingTimeMs / 1000).toFixed(1)}s
+                      </p>
+                    </div>
+                    <a
+                      href={simcarClipDownloadUrl}
+                      download
+                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/30"
+                    >
+                      <Download size={14} />
+                      Baixar ZIP
+                    </a>
+                  </div>
+
+                  {/* Summary Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-white/10">
+                          <th className="text-left py-2 text-slate-400 font-medium">Camada</th>
+                          <th className="text-center py-2 text-slate-400 font-medium">Tipo</th>
+                          <th className="text-right py-2 text-slate-400 font-medium">Feições</th>
+                          <th className="text-right py-2 text-slate-400 font-medium">Área (ha)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(simcarClipSummary.layers || []).map((layer: any) => (
+                          <tr key={layer.name} className="border-b border-white/5">
+                            <td className="py-1.5 text-slate-200 font-mono">{layer.name}</td>
+                            <td className="py-1.5 text-center">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] ${layer.source === 'property'
+                                  ? 'bg-amber-500/10 text-amber-400'
+                                  : 'bg-blue-500/10 text-blue-400'
+                                }`}>
+                                {layer.source === 'property' ? 'Imóvel' : 'WFS'}
+                              </span>
+                            </td>
+                            <td className={`py-1.5 text-right ${layer.features > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+                              {layer.features}
+                            </td>
+                            <td className="py-1.5 text-right text-slate-300">
+                              {layer.areaHa ? layer.areaHa.toFixed(2) : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="text-xs text-slate-500 flex justify-between">
+                    <span>Área do imóvel: {simcarClipSummary.propertyAreaHa?.toFixed(2)} ha</span>
+                    <span>CRS: {simcarClipSummary.crs}</span>
+                  </div>
+                </section>
+              )}
+            </div>
+          </div>
         ) : (
           <div className="flex-1 overflow-y-auto px-6 py-8 custom-scrollbar">
             <div className="max-w-4xl mx-auto space-y-8 animate-fade-in-up">

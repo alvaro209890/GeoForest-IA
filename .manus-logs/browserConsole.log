@@ -125,3 +125,5 @@
 [2026-02-18T18:03:21.901Z] {"timestamp":1771437801810,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
 [2026-02-18T18:03:31.892Z] {"timestamp":1771437810050,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
 [2026-02-18T18:03:31.892Z] {"timestamp":1771437810050,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-02-18T18:47:29.903Z] {"timestamp":1771440401753,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
+[2026-02-18T18:47:29.903Z] {"timestamp":1771440401754,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}

@@ -15,9 +15,9 @@ import type {
   Polygon,
 } from "geojson";
 
-type PolygonGeometry = { type: "Polygon"; coordinates: number[][][] };
-type MultiPolygonGeometry = { type: "MultiPolygon"; coordinates: number[][][][] };
-type SupportedPolygonGeometry = PolygonGeometry | MultiPolygonGeometry;
+export type PolygonGeometry = { type: "Polygon"; coordinates: number[][][] };
+export type MultiPolygonGeometry = { type: "MultiPolygon"; coordinates: number[][][][] };
+export type SupportedPolygonGeometry = PolygonGeometry | MultiPolygonGeometry;
 
 type IntersectionStatus =
   | "ok"
@@ -49,11 +49,11 @@ type LayerFetchPage = {
 
 const DEFAULT_WFS_BASE_URL = "https://geo.sema.mt.gov.br/geoserver/ows";
 const DEFAULT_WFS_AUTHKEY = "541085de-9a2e-454e-bdba-eb3d57a2f492";
-const WFS_BASE_URL = process.env.WFS_BASE_URL || DEFAULT_WFS_BASE_URL;
-const WFS_AUTHKEY =
+export const WFS_BASE_URL = process.env.WFS_BASE_URL || DEFAULT_WFS_BASE_URL;
+export const WFS_AUTHKEY =
   process.env.WFS_AUTHKEY || process.env.SEMA_WMS_AUTHKEY || DEFAULT_WFS_AUTHKEY;
-const WFS_TIMEOUT_MS = Number(process.env.WFS_TIMEOUT_MS ?? "25000");
-const WFS_PAGE_SIZE = Number(process.env.WFS_PAGE_SIZE ?? "2000");
+export const WFS_TIMEOUT_MS = Number(process.env.WFS_TIMEOUT_MS ?? "25000");
+export const WFS_PAGE_SIZE = Number(process.env.WFS_PAGE_SIZE ?? "2000");
 const WFS_MAX_FEATURES_PER_LAYER = Number(
   process.env.WFS_MAX_FEATURES_PER_LAYER ?? "50000",
 );
@@ -63,10 +63,10 @@ const LAYER_NAME_REGEX = /^[A-Za-z0-9_]+:[A-Za-z0-9_]+$/;
 
 let capabilitiesCache:
   | {
-      expiresAt: number;
-      layerNames: Set<string>;
-      featureTypeCount: number;
-    }
+    expiresAt: number;
+    layerNames: Set<string>;
+    featureTypeCount: number;
+  }
   | null = null;
 
 const describeCache = new Map<
@@ -94,7 +94,7 @@ function sanitizeLayerNames(input: unknown): string[] {
   return out;
 }
 
-function buildWfsUrl(params: Record<string, string | number | undefined>) {
+export function buildWfsUrl(params: Record<string, string | number | undefined>) {
   const url = new URL(WFS_BASE_URL);
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null) continue;
@@ -106,7 +106,7 @@ function buildWfsUrl(params: Record<string, string | number | undefined>) {
   return url.toString();
 }
 
-async function fetchTextWithTimeout(url: string, timeoutMs: number) {
+export async function fetchTextWithTimeout(url: string, timeoutMs: number) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -121,7 +121,7 @@ async function fetchTextWithTimeout(url: string, timeoutMs: number) {
   }
 }
 
-async function fetchJsonWithTimeout<T>(url: string, timeoutMs: number): Promise<T> {
+export async function fetchJsonWithTimeout<T>(url: string, timeoutMs: number): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -136,7 +136,7 @@ async function fetchJsonWithTimeout<T>(url: string, timeoutMs: number): Promise<
   }
 }
 
-function parseWfsLayerNamesFromCapabilities(xml: string) {
+export function parseWfsLayerNamesFromCapabilities(xml: string) {
   const names: string[] = [];
   const regex =
     /<FeatureType\b[\s\S]*?<Name>\s*([^<]+)\s*<\/Name>[\s\S]*?<\/FeatureType>/gi;
@@ -169,7 +169,7 @@ function parseGeometryFieldFromDescribe(xml: string) {
   return preferred || candidates[0];
 }
 
-async function getCapabilitiesCached(forceRefresh = false) {
+export async function getCapabilitiesCached(forceRefresh = false) {
   const current = capabilitiesCache;
   if (!forceRefresh && current && current.expiresAt > nowMs()) {
     return current;
@@ -190,7 +190,7 @@ async function getCapabilitiesCached(forceRefresh = false) {
   return next;
 }
 
-async function getGeometryFieldForLayer(layerName: string) {
+export async function getGeometryFieldForLayer(layerName: string) {
   const cached = describeCache.get(layerName);
   if (cached && cached.expiresAt > nowMs()) {
     return cached.geometryField;
@@ -214,7 +214,7 @@ function isFiniteCoordinate(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function normalizeRing(ring: unknown): number[][] | null {
+export function normalizeRing(ring: unknown): number[][] | null {
   if (!Array.isArray(ring) || ring.length < 3) return null;
   const out: number[][] = [];
   for (const point of ring) {
@@ -233,7 +233,7 @@ function normalizeRing(ring: unknown): number[][] | null {
   return out.length >= 4 ? out : null;
 }
 
-function normalizePolygonGeometry(input: unknown): SupportedPolygonGeometry | null {
+export function normalizePolygonGeometry(input: unknown): SupportedPolygonGeometry | null {
   if (!input || typeof input !== "object") return null;
   const raw = input as { type?: unknown; coordinates?: unknown };
   if (raw.type === "Polygon") {
@@ -272,7 +272,7 @@ function ringToWkt(ring: number[][]) {
   return ring.map(([x, y]) => `${numberToWkt(x)} ${numberToWkt(y)}`).join(",");
 }
 
-function polygonToWkt(geometry: SupportedPolygonGeometry) {
+export function polygonToWkt(geometry: SupportedPolygonGeometry) {
   if (geometry.type === "Polygon") {
     return `POLYGON(${geometry.coordinates.map((ring) => `(${ringToWkt(ring)})`).join(",")})`;
   }
@@ -290,7 +290,7 @@ function toPolygonFeature(
   return turfMultiPolygon(geometry.coordinates);
 }
 
-function toPolygonOrMultiFeature(
+export function toPolygonOrMultiFeature(
   geometry: Geometry | null | undefined,
 ): Feature<Polygon | MultiPolygon> | null {
   if (!geometry) return null;
