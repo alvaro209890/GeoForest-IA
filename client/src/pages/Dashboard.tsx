@@ -710,6 +710,19 @@ export default function Dashboard() {
   const [simcarAnalysisInput, setSimcarAnalysisInput] = useState('');
   const [simcarAnalysisSending, setSimcarAnalysisSending] = useState(false);
   const simcarAnalysisChatRef = useRef<HTMLDivElement | null>(null);
+
+  // ─── SIMCAR Clip History (for sidebar cards) ───
+  const [simcarClipHistory, setSimcarClipHistory] = useState<Array<{
+    id: string;
+    timestamp: string;
+    filename: string;
+    downloadUrl: string;
+    totalFeatures: number;
+    propertyAreaHa: number;
+    layersWithData: number;
+    totalLayers: number;
+    jobId: string;
+  }>>([]);
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
   const [mapRectSelection, setMapRectSelection] = useState<{
     left: number;
@@ -3097,95 +3110,176 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         </div>
 
         <div className="px-4 mb-6 space-y-2">
-          <button
-            onClick={() => createConversation()}
-            className="w-full group relative overflow-hidden rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-all duration-300 p-[1px]"
-          >
-            <div className="relative flex items-center justify-center gap-2 bg-[#0f241a] group-hover:bg-transparent text-emerald-100 py-3 rounded-[11px] transition-colors">
-              <Plus size={20} />
-              <span className="font-medium xl:block lg:hidden">Novo chat</span>
-            </div>
-          </button>
-          <div className="relative">
-            <Search size={16} className="text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-            <Input
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar conversa..."
-              className="pl-9 bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-emerald-400 focus:ring-emerald-400/40"
-            />
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-4 space-y-1 custom-scrollbar">
-          {filteredConversations.map((conv) => (
-            <div
-              key={conv.id}
-              className={`w-full flex items-center gap-2 p-2 rounded-lg transition-colors group ${conv.id === activeConversationId ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-slate-400'
-                }`}
-            >
+          {activeView === 'simcar-clip' ? (
+            /* ─── SIMCAR Mode: Modo Assistente + Novo Recorte ─── */
+            <>
               <button
-                onClick={() => onSelectConversation(conv.id)}
-                className="flex-1 min-w-0 text-left flex items-center gap-3"
+                onClick={() => setActiveView('chat')}
+                className="w-full group relative overflow-hidden rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-all duration-300 p-[1px]"
               >
-                <MessageSquare
-                  size={18}
-                  className={conv.id === activeConversationId ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}
-                />
-                <div className="overflow-hidden xl:block lg:hidden">
-                  <p className="text-sm text-slate-300 truncate group-hover:text-white transition-colors inline-flex items-center gap-2">
-                    {conv.lastAttachmentType === 'pdf' && <FileText size={12} className="text-emerald-300 shrink-0" />}
-                    {conv.lastAttachmentType === 'image' && <ImagePlus size={12} className="text-emerald-300 shrink-0" />}
-                    <span className="truncate">{conv.title}</span>
-                  </p>
-                  {conv.lastMessagePreview && <p className="text-[10px] text-slate-600 truncate">{conv.lastMessagePreview}</p>}
+                <div className="relative flex items-center justify-center gap-2 bg-[#0f241a] group-hover:bg-transparent text-emerald-100 py-2.5 rounded-[11px] transition-colors">
+                  <MessageSquare size={18} />
+                  <span className="font-medium xl:block lg:hidden">Modo Assistente</span>
                 </div>
               </button>
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteConversation(conv.id);
+                onClick={() => {
+                  // Reset clip state for a new clip
+                  setSimcarClipFile(null);
+                  setSimcarClipProcessing(false);
+                  setSimcarClipProgress(null);
+                  setSimcarClipDownloadUrl(null);
+                  setSimcarClipSummary(null);
+                  setSimcarClipError(null);
+                  setSimcarClipJobId(null);
+                  setSimcarAnalysisProcessing(false);
+                  setSimcarAnalysisImages([]);
+                  setSimcarAnalysisMessages([]);
+                  setSimcarAnalysisProgress(null);
+                  setActiveView('simcar-clip');
                 }}
-                className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition"
-                title="Excluir chat"
-                aria-label="Excluir chat"
+                className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 transition-all duration-300 p-[1px] shadow-lg shadow-purple-900/30"
               >
-                <Trash2 size={14} />
+                <div className="relative flex items-center justify-center gap-2 bg-[#120e1a] group-hover:bg-transparent text-purple-100 py-2.5 rounded-[11px] transition-colors">
+                  <Plus size={18} />
+                  <span className="font-medium xl:block lg:hidden">Novo Recorte</span>
+                </div>
               </button>
+            </>
+          ) : (
+            /* ─── Chat Mode: Novo Chat + Recorte SIMCAR ─── */
+            <>
+              <button
+                onClick={() => createConversation()}
+                className="w-full group relative overflow-hidden rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-all duration-300 p-[1px]"
+              >
+                <div className="relative flex items-center justify-center gap-2 bg-[#0f241a] group-hover:bg-transparent text-emerald-100 py-2.5 rounded-[11px] transition-colors">
+                  <Plus size={18} />
+                  <span className="font-medium xl:block lg:hidden">Novo Chat</span>
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  setActiveView('simcar-clip');
+                  if (simcarClipLayers.length === 0) {
+                    fetch('/api/simcar/layers')
+                      .then((r) => r.json())
+                      .then((data: any) => {
+                        if (Array.isArray(data?.layers)) {
+                          setSimcarClipLayers(
+                            data.layers.map((l: any) => ({ name: l.name, category: l.category, selected: true })),
+                          );
+                        }
+                      })
+                      .catch(() => { });
+                  }
+                }}
+                className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 transition-all duration-300 p-[1px] shadow-lg shadow-purple-900/30"
+              >
+                <div className="relative flex items-center justify-center gap-2 bg-[#120e1a] group-hover:bg-transparent text-purple-100 py-2.5 rounded-[11px] transition-colors">
+                  <Scissors size={18} />
+                  <span className="font-medium xl:block lg:hidden">Recorte SIMCAR</span>
+                </div>
+              </button>
+            </>
+          )}
+          {activeView !== 'simcar-clip' && (
+            <div className="relative">
+              <Search size={16} className="text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Buscar conversa..."
+                className="pl-9 bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-emerald-400 focus:ring-emerald-400/40"
+              />
             </div>
-          ))}
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 space-y-1 custom-scrollbar">
+          {activeView === 'simcar-clip' ? (
+            /* ─── SIMCAR Clip History Cards ─── */
+            simcarClipHistory.length > 0 ? (
+              simcarClipHistory.map((clip) => (
+                <div
+                  key={clip.id}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors group cursor-pointer mb-1"
+                  onClick={() => {
+                    // Load clip results
+                    setSimcarClipDownloadUrl(clip.downloadUrl);
+                    setSimcarClipJobId(clip.jobId);
+                    setSimcarClipSummary({
+                      totalFeaturesClipped: clip.totalFeatures,
+                      propertyAreaHa: clip.propertyAreaHa,
+                      layers: [],
+                      processingTimeMs: 0,
+                      crs: 'EPSG:4674',
+                    });
+                  }}
+                >
+                  <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
+                    <Scissors size={16} />
+                  </div>
+                  <div className="flex-1 min-w-0 xl:block lg:hidden">
+                    <p className="text-sm text-slate-200 truncate">{clip.filename}</p>
+                    <p className="text-[10px] text-slate-500">
+                      {clip.layersWithData}/{clip.totalLayers} camadas • {clip.totalFeatures} feições
+                    </p>
+                  </div>
+                  <Download size={14} className="text-slate-500 group-hover:text-emerald-400 transition-colors shrink-0 xl:block lg:hidden" />
+                </div>
+              ))
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Scissors size={32} className="text-slate-600 mb-3" />
+                <p className="text-sm text-slate-400">Nenhum recorte ainda</p>
+                <p className="text-[10px] text-slate-600 mt-1">Clique em "Novo Recorte" para começar</p>
+              </div>
+            )
+          ) : (
+            /* ─── Chat Conversation List ─── */
+            filteredConversations.map((conv) => (
+              <div
+                key={conv.id}
+                className={`w-full flex items-center gap-2 p-2 rounded-lg transition-colors group ${conv.id === activeConversationId ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-slate-400'}`}
+              >
+                <button
+                  onClick={() => onSelectConversation(conv.id)}
+                  className="flex-1 min-w-0 text-left flex items-center gap-3"
+                >
+                  <MessageSquare
+                    size={18}
+                    className={conv.id === activeConversationId ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}
+                  />
+                  <div className="overflow-hidden xl:block lg:hidden">
+                    <p className="text-sm text-slate-300 truncate group-hover:text-white transition-colors inline-flex items-center gap-2">
+                      {conv.lastAttachmentType === 'pdf' && <FileText size={12} className="text-emerald-300 shrink-0" />}
+                      {conv.lastAttachmentType === 'image' && <ImagePlus size={12} className="text-emerald-300 shrink-0" />}
+                      <span className="truncate">{conv.title}</span>
+                    </p>
+                    {conv.lastMessagePreview && <p className="text-[10px] text-slate-600 truncate">{conv.lastMessagePreview}</p>}
+                  </div>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteConversation(conv.id);
+                  }}
+                  className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition"
+                  title="Excluir chat"
+                  aria-label="Excluir chat"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))
+          )}
         </div>
 
         <div className="p-4 border-t border-white/5">
           <button
-            onClick={() => {
-              setActiveView('simcar-clip');
-              // Fetch available layers if not loaded
-              if (simcarClipLayers.length === 0) {
-                fetch('/api/simcar/layers')
-                  .then((r) => r.json())
-                  .then((data: any) => {
-                    if (Array.isArray(data?.layers)) {
-                      setSimcarClipLayers(
-                        data.layers.map((l: any) => ({ name: l.name, category: l.category, selected: true })),
-                      );
-                    }
-                  })
-                  .catch(() => { });
-              }
-            }}
-            className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'simcar-clip' ? 'bg-white/10' : ''
-              }`}
-          >
-            <Scissors size={18} className={`transition-colors ${activeView === 'simcar-clip' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
-            <span className="text-sm text-slate-300 group-hover:text-white transition-colors xl:block lg:hidden">
-              Recortar SIMCAR
-            </span>
-          </button>
-          <button
             onClick={() => setActiveView('settings')}
-            className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'settings' ? 'bg-white/10' : ''
-              }`}
+            className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'settings' ? 'bg-white/10' : ''}`}
           >
             <Settings size={18} className={`transition-colors ${activeView === 'settings' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
             <span className="text-sm text-slate-300 group-hover:text-white transition-colors xl:block lg:hidden">
@@ -3226,7 +3320,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2">
               <Zap size={16} className="text-emerald-400 fill-current" />
               <span className="font-medium text-slate-200">
-                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recortar SIMCAR' : 'Configurações'}
+                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : 'Configurações'}
               </span>
               {activeView === 'chat' && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide">
@@ -3743,7 +3837,22 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 setSimcarClipSummary(event.summary);
                                 // Extract jobId from download URL for AI analysis
                                 const match = event.downloadUrl?.match(/\/download\/(.+)$/);
-                                if (match) setSimcarClipJobId(match[1]);
+                                if (match) {
+                                  setSimcarClipJobId(match[1]);
+                                  // Push to clip history for sidebar cards
+                                  const summary = event.summary;
+                                  setSimcarClipHistory((prev) => [{
+                                    id: match[1],
+                                    timestamp: new Date().toISOString(),
+                                    filename: `Recorte ${new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
+                                    downloadUrl: event.downloadUrl,
+                                    totalFeatures: summary?.totalFeaturesClipped ?? 0,
+                                    propertyAreaHa: summary?.propertyAreaHa ?? 0,
+                                    layersWithData: summary?.layers?.filter((l: any) => l.features > 0).length ?? 0,
+                                    totalLayers: summary?.layers?.length ?? 0,
+                                    jobId: match[1],
+                                  }, ...prev]);
+                                }
                               } else if (event.type === 'error') {
                                 setSimcarClipError(event.message);
                               }
@@ -4091,8 +4200,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           {simcarAnalysisMessages.map((msg, idx) => (
                             <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                               <div className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm whitespace-pre-wrap ${msg.role === 'user'
-                                  ? 'bg-purple-600/20 text-purple-100 rounded-br-md'
-                                  : 'bg-white/5 text-slate-200 rounded-bl-md'
+                                ? 'bg-purple-600/20 text-purple-100 rounded-br-md'
+                                : 'bg-white/5 text-slate-200 rounded-bl-md'
                                 }`}>
                                 {msg.text}
                               </div>
