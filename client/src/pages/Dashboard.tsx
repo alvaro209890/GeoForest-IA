@@ -3790,69 +3790,134 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               )}
 
               {/* Result */}
-              {simcarClipDownloadUrl && simcarClipSummary && (
-                <section className="bg-[#0e1612]/60 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-6 space-y-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
-                      <Download size={20} />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-white">Recorte Concluído</h3>
-                      <p className="text-xs text-slate-400">
-                        {simcarClipSummary.layersWithData} camadas com dados • {simcarClipSummary.totalFeaturesClipped} feições • {(simcarClipSummary.processingTimeMs / 1000).toFixed(1)}s
-                      </p>
-                    </div>
-                    <a
-                      href={simcarClipDownloadUrl}
-                      download
-                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/30"
-                    >
-                      <Download size={14} />
-                      Baixar ZIP
-                    </a>
-                  </div>
+              {simcarClipDownloadUrl && simcarClipSummary && (() => {
+                const layers: any[] = simcarClipSummary.layers || [];
+                const withData = layers.filter((l: any) => l.features > 0);
+                const withoutData = layers.filter((l: any) => l.features === 0);
+                const totalAreaHa = withData.reduce((sum: number, l: any) => sum + (l.areaHa || 0), 0);
+                const totalFeatures = simcarClipSummary.totalFeaturesClipped || 0;
+                const propertyAreaHa = simcarClipSummary.propertyAreaHa || 0;
+                return (
+                  <>
+                    {/* Summary Cards */}
+                    <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {[
+                        { label: 'Área Imóvel', value: `${propertyAreaHa.toFixed(2)} ha`, color: 'text-amber-400', bg: 'bg-amber-500/10' },
+                        { label: 'Camadas com Dados', value: `${withData.length} / ${layers.length}`, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+                        { label: 'Feições Recortadas', value: String(totalFeatures), color: 'text-blue-400', bg: 'bg-blue-500/10' },
+                        { label: 'Área Recortada', value: `${totalAreaHa.toFixed(2)} ha`, color: 'text-purple-400', bg: 'bg-purple-500/10' },
+                      ].map((card) => (
+                        <div key={card.label} className={`${card.bg} border border-white/5 rounded-xl p-4 text-center`}>
+                          <p className={`text-lg font-bold ${card.color}`}>{card.value}</p>
+                          <p className="text-[10px] text-slate-400 mt-1">{card.label}</p>
+                        </div>
+                      ))}
+                    </section>
 
-                  {/* Summary Table */}
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-white/10">
-                          <th className="text-left py-2 text-slate-400 font-medium">Camada</th>
-                          <th className="text-center py-2 text-slate-400 font-medium">Tipo</th>
-                          <th className="text-right py-2 text-slate-400 font-medium">Feições</th>
-                          <th className="text-right py-2 text-slate-400 font-medium">Área (ha)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(simcarClipSummary.layers || []).map((layer: any) => (
-                          <tr key={layer.name} className="border-b border-white/5">
-                            <td className="py-1.5 text-slate-200 font-mono">{layer.name}</td>
-                            <td className="py-1.5 text-center">
-                              <span className={`px-1.5 py-0.5 rounded text-[10px] ${layer.source === 'property'
-                                  ? 'bg-amber-500/10 text-amber-400'
-                                  : 'bg-blue-500/10 text-blue-400'
-                                }`}>
-                                {layer.source === 'property' ? 'Imóvel' : 'WFS'}
+                    {/* Download + Detailed Table */}
+                    <section className="bg-[#0e1612]/60 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-6 space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                          <Download size={20} />
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-white">Recorte Concluído</h3>
+                          <p className="text-xs text-slate-400">
+                            Processado em {(simcarClipSummary.processingTimeMs / 1000).toFixed(1)}s • CRS: {simcarClipSummary.crs}
+                          </p>
+                        </div>
+                        <a
+                          href={simcarClipDownloadUrl}
+                          download
+                          className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/30"
+                        >
+                          <Download size={14} />
+                          Baixar ZIP
+                        </a>
+                      </div>
+
+                      {/* Layers with data */}
+                      {withData.length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400 mb-2">
+                            Camadas com dados ({withData.length})
+                          </p>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="border-b border-white/10">
+                                  <th className="text-left py-2 text-slate-400 font-medium">Camada</th>
+                                  <th className="text-center py-2 text-slate-400 font-medium">Origem</th>
+                                  <th className="text-right py-2 text-slate-400 font-medium">Feições</th>
+                                  <th className="text-right py-2 text-slate-400 font-medium">Área (ha)</th>
+                                  <th className="text-right py-2 text-slate-400 font-medium">% Imóvel</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {withData.map((layer: any) => {
+                                  const pct = propertyAreaHa > 0 && layer.areaHa ? ((layer.areaHa / propertyAreaHa) * 100) : null;
+                                  return (
+                                    <tr key={layer.name} className="border-b border-white/5 hover:bg-white/[0.02]">
+                                      <td className="py-2 text-slate-200 font-mono text-xs">
+                                        {layer.name}
+                                        {layer.warning && (
+                                          <span className="block text-[9px] text-amber-400/70 mt-0.5">{layer.warning}</span>
+                                        )}
+                                      </td>
+                                      <td className="py-2 text-center">
+                                        <span className={`px-1.5 py-0.5 rounded text-[10px] ${layer.source === 'property'
+                                            ? 'bg-amber-500/10 text-amber-400'
+                                            : 'bg-blue-500/10 text-blue-400'
+                                          }`}>
+                                          {layer.source === 'property' ? 'Imóvel' : 'WFS'}
+                                        </span>
+                                      </td>
+                                      <td className="py-2 text-right text-emerald-400 font-medium">{layer.features}</td>
+                                      <td className="py-2 text-right text-slate-300">{layer.areaHa ? layer.areaHa.toFixed(2) : '—'}</td>
+                                      <td className="py-2 text-right text-slate-400">{pct !== null ? `${pct.toFixed(1)}%` : '—'}</td>
+                                    </tr>
+                                  );
+                                })}
+                                {/* Totals row */}
+                                <tr className="border-t border-emerald-500/20 font-medium">
+                                  <td className="py-2 text-emerald-400 text-xs">TOTAL</td>
+                                  <td className="py-2" />
+                                  <td className="py-2 text-right text-emerald-400">{totalFeatures}</td>
+                                  <td className="py-2 text-right text-emerald-300">{totalAreaHa.toFixed(2)}</td>
+                                  <td className="py-2 text-right text-emerald-300">
+                                    {propertyAreaHa > 0 ? `${((totalAreaHa / propertyAreaHa) * 100).toFixed(1)}%` : '—'}
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Layers without data */}
+                      {withoutData.length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                            Camadas sem dados na área ({withoutData.length})
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {withoutData.map((layer: any) => (
+                              <span
+                                key={layer.name}
+                                className="px-2 py-1 rounded-lg bg-white/5 text-[10px] text-slate-500 font-mono"
+                                title={layer.warning || 'Nenhuma feição encontrada na área do imóvel'}
+                              >
+                                {layer.name}
+                                {layer.warning && <span className="text-amber-400/50 ml-1">!</span>}
                               </span>
-                            </td>
-                            <td className={`py-1.5 text-right ${layer.features > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
-                              {layer.features}
-                            </td>
-                            <td className="py-1.5 text-right text-slate-300">
-                              {layer.areaHa ? layer.areaHa.toFixed(2) : '—'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="text-xs text-slate-500 flex justify-between">
-                    <span>Área do imóvel: {simcarClipSummary.propertyAreaHa?.toFixed(2)} ha</span>
-                    <span>CRS: {simcarClipSummary.crs}</span>
-                  </div>
-                </section>
-              )}
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </section>
+                  </>
+                );
+              })()}
             </div>
           </div>
         ) : (

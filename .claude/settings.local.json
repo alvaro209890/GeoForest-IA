@@ -3,7 +3,17 @@
     "allow": [
       "Bash(wc:*)",
       "Bash(unzip:*)",
-      "Bash(node -e:*)"
+      "Bash(node -e:*)",
+      "Bash(git -C C:/GIS/GeoForest-IA status:*)",
+      "Bash(git -C C:/GIS/GeoForest-IA diff --stat)",
+      "Bash(git -C C:/GIS/GeoForest-IA log --oneline -5)",
+      "Bash(git -C C:/GIS/GeoForest-IA log --oneline --all --name-only -1)",
+      "Bash(npx vite:*)",
+      "Bash(npx esbuild:*)",
+      "Bash(taskkill:*)",
+      "Bash(npm run build:*)",
+      "Bash(NODE_ENV=production node:*)",
+      "Bash(curl:*)"
     ]
   }
 }

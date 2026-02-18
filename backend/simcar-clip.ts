@@ -276,13 +276,31 @@ function discoverLayerMapping(
 
         const lower = tmpl.toLowerCase();
 
-        // Try exact matches with common prefixes
+        // SEMA-MT WFS uses "Geoportal:SIMCAR_D_<name>" for SIMCAR Digital layers
+        // Also try SIMCAR_CAR_, CAR_, and bare name patterns
         const candidates = [
-            `geoportal:simcar_${lower}`,
-            `geoportal:${lower}`,
+            `geoportal:simcar_d_${lower}`,       // Most common: SIMCAR Digital layers
+            `geoportal:simcar_${lower}`,          // Some layers use SIMCAR_ without D_
+            `geoportal:simcar_car_${lower}`,      // Some validated CAR layers
+            `geoportal:car_${lower}`,             // CAR namespace
+            `geoportal:${lower}`,                 // Bare name
+            `semamt:simcar_d_${lower}`,
             `semamt:simcar_${lower}`,
             `semamt:${lower}`,
         ];
+
+        // Handle special template name remappings
+        const aliasMap: Record<string, string[]> = {
+            "vereda": ["simcar_d_veredas", "simcar_d_vereda"],
+            "area_uso_restrito": ["simcar_d_area_uso_restrito", "areas_uso_restrito"],
+            "area_altitude_1800": ["simcar_d_area_altitude_1800", "simcar_d_altitude_1800"],
+            "rio_acima_600": ["simcar_d_rio_acima_600", "simcar_d_rio_maior_600"],
+            "arlrem": ["simcar_d_arlrem", "simcar_arld", "simcar_d_arld"],
+        };
+        const aliases = aliasMap[lower] || [];
+        for (const alias of aliases) {
+            candidates.push(`geoportal:${alias}`);
+        }
 
         let matched = false;
         for (const candidate of candidates) {
@@ -294,16 +312,39 @@ function discoverLayerMapping(
             }
         }
 
+        // Fallback: fuzzy — find a WFS layer whose suffix matches SIMCAR_D_<name> or just <name>
         if (!matched) {
-            // Fuzzy: find WFS layer that contains the template name
             for (const [wfsLow, wfsOriginal] of wfsLower) {
-                const wfsSuffix = wfsLow.split(":")[1] || wfsLow;
-                if (wfsSuffix === `simcar_${lower}` || wfsSuffix === lower) {
+                const wfsSuffix = (wfsLow.split(":")[1] || wfsLow).toLowerCase();
+                if (
+                    wfsSuffix === `simcar_d_${lower}` ||
+                    wfsSuffix === `simcar_${lower}` ||
+                    wfsSuffix === `simcar_car_${lower}` ||
+                    wfsSuffix === `car_${lower}` ||
+                    wfsSuffix === lower
+                ) {
+                    mapping.set(tmpl, wfsOriginal);
+                    matched = true;
+                    break;
+                }
+            }
+        }
+
+        // Last resort: partial match — WFS layer ending with _<TEMPLATE_NAME>
+        if (!matched) {
+            for (const [wfsLow, wfsOriginal] of wfsLower) {
+                const wfsSuffix = (wfsLow.split(":")[1] || wfsLow).toLowerCase();
+                if (wfsSuffix.endsWith(`_${lower}`) && wfsSuffix.includes("simcar")) {
                     mapping.set(tmpl, wfsOriginal);
                     break;
                 }
             }
         }
+    }
+
+    console.log("[SIMCAR CLIP] Layer mapping results:");
+    for (const [tmpl, wfs] of mapping) {
+        console.log(`  ${tmpl} -> ${wfs}`);
     }
 
     return mapping;
