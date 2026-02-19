@@ -1113,7 +1113,7 @@ const ANALYSIS_VISION_MODELS = [
     "meta-llama/llama-4-scout-17b-16e-instruct",
 ];
 const GEMINI_API_BASE = process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta";
-const GEMINI_VISION_MODELS = (process.env.GEMINI_VISION_MODELS || "gemini-1.5-flash")
+const GEMINI_VISION_MODELS = (process.env.GEMINI_VISION_MODELS || "gemini-2.5-flash")
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
