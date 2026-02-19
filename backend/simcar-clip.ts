@@ -1560,17 +1560,12 @@ function padBbox(
     ];
 }
 
-/** Build the AI analysis prompt. */
-function buildAnalysisPrompt(
-    areaHa: number,
-    layerSummaries: LayerSummary[],
-    selectedLayers?: string[],
-): string {
+/** Build shared context block (property info + quantitative table). */
+function buildPropertyContext(areaHa: number, layerSummaries: LayerSummary[]): string {
     const acSummary = layerSummaries.find((l) => l.name === "AREA_CONSOLIDADA");
     const avnSummary = layerSummaries.find((l) => l.name === "AVN");
     const atpSummary = layerSummaries.find((l) => l.name === "ATP");
 
-    // Build detailed quantitative table
     const quantRows = layerSummaries
         .filter((l) => l.features > 0)
         .map((l) => {
@@ -1578,31 +1573,8 @@ function buildAnalysisPrompt(
             return `| ${l.name} | ${l.features} | ${l.areaHa?.toFixed(2) ?? '-'} ha | ${pct}% |`;
         });
 
-    const validLayers = (selectedLayers || []).filter((k) => SATELLITE_LAYERS[k]);
-    const isMultiYear = validLayers.length > 1;
-    const layerLabels = validLayers.map((k) => SATELLITE_LAYERS[k]?.label || k);
-    const layerYears = validLayers.map((k) => SATELLITE_LAYERS[k]?.year || 0).sort();
-
-    // Satellite-specific image descriptions
-    const satDescriptions = validLayers.map((k, i) => {
-        const sat = SATELLITE_LAYERS[k];
-        const imgBase = i * 3 + 1;
-        const sensor = k.startsWith("landsat") ? "Landsat 5 TM (30m de resolução espacial)" : "SPOT (2.5m de resolução espacial)";
-        return [
-            `#### ${sat.label} — ${sensor}`,
-            `- Imagem ${imgBase}: Visão Geral — base ${sat.label} + contorno vermelho (propriedade) + Área Consolidada (roxo semi-transparente) + AVN (amarelo semi-transparente)`,
-            `- Imagem ${imgBase + 1}: Área Consolidada — base ${sat.label} + contorno vermelho (propriedade) + somente AC (roxo)`,
-            `- Imagem ${imgBase + 2}: AVN — base ${sat.label} + contorno vermelho (propriedade) + somente AVN (amarelo)`,
-        ].join("\n");
-    }).join("\n\n");
-
-    const parts: string[] = [
-        "Você é a **GeoForest IA**, uma inteligência artificial especialista em sensoriamento remoto e análise ambiental para imóveis rurais no Estado de Mato Grosso.",
-        "Sua função é realizar uma análise técnica detalhada comparando os dados vetoriais do CAR (Cadastro Ambiental Rural) com as imagens de satélite fornecidas.",
-        "",
-        "---",
-        "",
-        "## 1. Contexto do Imóvel Rural",
+    return [
+        "## Contexto do Imóvel Rural",
         "",
         `| Parâmetro | Valor |`,
         `|-----------|-------|`,
@@ -1615,92 +1587,252 @@ function buildAnalysisPrompt(
         "| Camada | Feições | Área | % do Imóvel |",
         "|--------|---------|------|-----------|",
         ...quantRows,
+    ].join("\n");
+}
+
+/** Build prompt for a SINGLE satellite analysis (3 images). */
+function buildSingleSatellitePrompt(
+    areaHa: number,
+    layerSummaries: LayerSummary[],
+    satelliteKey: string,
+): string {
+    const sat = SATELLITE_LAYERS[satelliteKey];
+    const sensor = satelliteKey.startsWith("landsat")
+        ? "Landsat 5 TM (30m de resolução espacial)"
+        : "SPOT (2.5m de resolução espacial)";
+
+    return [
+        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
+        "Analise as 3 imagens do satélite fornecido comparando com os dados vetoriais do CAR.",
         "",
         "---",
         "",
-        "## 2. Imagens Fornecidas",
+        buildPropertyContext(areaHa, layerSummaries),
         "",
-        `Foram geradas imagens de **${layerLabels.join(", ")}**${isMultiYear ? ` (cobrindo o período ${layerYears[0]}–${layerYears[layerYears.length - 1]})` : ""}.`,
+        "---",
         "",
-        "**Legenda dos polígonos sobrepostos:**",
+        `## Imagens: ${sat.label} — ${sensor}`,
+        "",
+        "**Legenda dos polígonos:**",
         "- 🟥 **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
-        "- 🟪 **Semi-transparente roxo**: ÁREA CONSOLIDADA (AC) — área de uso antropizado declarada no CAR",
-        "- 🟨 **Semi-transparente amarelo**: ÁREA DE VEGETAÇÃO NATIVA (AVN) — área de vegetação nativa declarada",
+        "- 🟪 **Roxo semi-transparente**: ÁREA CONSOLIDADA (AC)",
+        "- 🟨 **Amarelo semi-transparente**: VEGETAÇÃO NATIVA (AVN)",
+        "",
+        `- Imagem 1: Visão Geral — base ${sat.label} + propriedade + AC + AVN`,
+        `- Imagem 2: Área Consolidada — base ${sat.label} + propriedade + somente AC`,
+        `- Imagem 3: AVN — base ${sat.label} + propriedade + somente AVN`,
+        "",
+        "---",
+        "",
+        "## Instruções",
+        "",
+        "### Análise da Área Consolidada (AC)",
+        "- As áreas em roxo correspondem a uso antrópico (pastagem, agricultura, solo exposto)?",
+        "- Algum trecho de AC apresenta textura de vegetação nativa?",
+        "- Descreva a localização de trechos discordantes (ex: 'porção norte', 'borda leste').",
+        "",
+        "### Análise da Vegetação Nativa (AVN)",
+        "- As áreas em amarelo correspondem a vegetação nativa (floresta, cerrado, mata ciliar)?",
+        "- Algum trecho de AVN parece antropizado (pastagem, desmatamento, queimada)?",
+        "- Avalie integridade e conectividade da vegetação.",
+        "",
+        "### Concordâncias e Discordâncias",
+        "- **✅ CONCORDA**: áreas onde classificação coincide com a imagem.",
+        "- **❌ DISCORDA**: áreas onde classificação não condiz. Indique a classificação mais apropriada.",
+        "",
+        "### Nível de Confiança",
+        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]**.",
+        "",
+        "---",
+        "Responda em **português**, use markdown, seja detalhado e técnico.",
+    ].join("\n");
+}
+
+/** Build the full prompt for single-satellite analysis (original behavior). */
+function buildAnalysisPrompt(
+    areaHa: number,
+    layerSummaries: LayerSummary[],
+    selectedLayers?: string[],
+): string {
+    const validLayers = (selectedLayers || []).filter((k) => SATELLITE_LAYERS[k]);
+    const isMultiYear = validLayers.length > 1;
+    const layerLabels = validLayers.map((k) => SATELLITE_LAYERS[k]?.label || k);
+    const layerYears = validLayers.map((k) => SATELLITE_LAYERS[k]?.year || 0).sort();
+
+    const satDescriptions = validLayers.map((k, i) => {
+        const sat = SATELLITE_LAYERS[k];
+        const imgBase = i * 3 + 1;
+        const sensor = k.startsWith("landsat") ? "Landsat 5 TM (30m de resolução espacial)" : "SPOT (2.5m de resolução espacial)";
+        return [
+            `#### ${sat.label} — ${sensor}`,
+            `- Imagem ${imgBase}: Visão Geral — base ${sat.label} + contorno vermelho (propriedade) + AC (roxo) + AVN (amarelo)`,
+            `- Imagem ${imgBase + 1}: Área Consolidada — base ${sat.label} + contorno vermelho + somente AC (roxo)`,
+            `- Imagem ${imgBase + 2}: AVN — base ${sat.label} + contorno vermelho + somente AVN (amarelo)`,
+        ].join("\n");
+    }).join("\n\n");
+
+    const parts: string[] = [
+        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
+        "Realize uma análise técnica comparando os dados vetoriais do CAR com as imagens de satélite.",
+        "",
+        "---",
+        "",
+        buildPropertyContext(areaHa, layerSummaries),
+        "",
+        "---",
+        "",
+        "## Imagens Fornecidas",
+        "",
+        `Foram geradas imagens de **${layerLabels.join(", ")}**${isMultiYear ? ` (período ${layerYears[0]}–${layerYears[layerYears.length - 1]})` : ""}.`,
+        "",
+        "**Legenda:**",
+        "- 🟥 **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
+        "- 🟪 **Roxo semi-transparente**: ÁREA CONSOLIDADA (AC)",
+        "- 🟨 **Amarelo semi-transparente**: VEGETAÇÃO NATIVA (AVN)",
         "",
         satDescriptions,
         "",
         "---",
         "",
-        "## 3. Instruções de Análise",
+        "## Instruções de Análise",
         "",
         "### 3.1 Análise da Área Consolidada (AC)",
-        "Para cada imagem de satélite:",
-        "- Verifique se as áreas classificadas como AC (roxo) correspondem visualmente a **uso antrópico** (pastagem, agricultura, solo exposto, construções, estradas).",
-        "- Identifique eventuais **trechos de AC que apresentam textura e cor de vegetação nativa** (copa de árvores, mata densa, vegetação de cerrado).",
-        "- Descreva a localização aproximada de trechos discordantes (ex: 'porção norte', 'borda leste junto ao curso d'água').",
+        "- Verifique se AC (roxo) corresponde a uso antrópico (pastagem, agricultura, solo exposto, construções).",
+        "- Identifique trechos de AC com textura de vegetação nativa.",
+        "- Descreva localização de trechos discordantes.",
         "",
-        "### 3.2 Análise da Área de Vegetação Nativa (AVN)",
-        "Para cada imagem de satélite:",
-        "- Verifique se as áreas classificadas como AVN (amarelo) correspondem a **vegetação nativa** (floresta ombrófila, cerradão, cerrado stricto sensu, mata ciliar, veredas).",
-        "- Identifique eventuais **trechos de AVN que parecem já antropizados** (pastagem degradada, talhes de desmatamento, queimadas).",
-        "- Avalie a **integridade e conectividade** da vegetação nativa.",
+        "### 3.2 Análise da Vegetação Nativa (AVN)",
+        "- Verifique se AVN (amarelo) corresponde a vegetação nativa.",
+        "- Identifique trechos de AVN antropizados.",
+        "- Avalie integridade e conectividade.",
         "",
     ];
 
     if (isMultiYear) {
         parts.push(
             "### 3.3 Análise Temporal (Multi-período)",
-            `Você recebeu imagens de **${layerLabels.join(" e ")}**. Esta é a parte MAIS IMPORTANTE da sua análise.`,
-            "",
-            "**Compare sistematicamente as imagens dos diferentes anos:**",
+            `Imagens de **${layerLabels.join(" e ")}**. Parte MAIS IMPORTANTE.`,
             "",
             "#### a) Mudanças na cobertura vegetal",
-            "- Identifique áreas onde houve **supressão de vegetação** (mata → solo exposto / pastagem) entre os anos.",
-            "- Identifique áreas onde houve **regeneração** (solo exposto → vegetação secundária).",
-            "- Estime a área aproximada das mudanças (em hectares, com base na proporção visual).",
+            "- Supressão (mata → solo/pastagem) ou regeneração entre os anos.",
+            "- Estime a área das mudanças.",
             "",
-            "#### b) Consistência da classificação do CAR vs. histórico",
-            "- A classificação AC reflete corretamente o uso antrópico que JÁ EXISTIA na imagem mais antiga?",
-            "- Alguma área classificada como AC mostra vegetação nativa na imagem mais antiga (possível desmatamento posterior ao marco temporal)?",
-            "- Alguma área classificada como AVN já estava antropizada na imagem mais antiga?",
+            "#### b) Consistência CAR vs. histórico",
+            "- AC existia na imagem mais antiga?",
+            "- AC mostra vegetação nativa na imagem mais antiga (desmatamento posterior)?",
+            "- AVN já antropizada na imagem mais antiga?",
             "",
-            "#### c) Marco temporal do Art. 68 da Lei 12.651/2012",
-            "- O Art. 68 do Código Florestal protege áreas de uso consolidado existentes em 22/07/2008.",
-            "- Com base nas imagens, as áreas de AC já estavam consolidadas antes de julho de 2008?",
-            "- Houve expansão agrícola/pecuária sobre vegetação nativa após 2008?",
+            "#### c) Art. 68 — Lei 12.651/2012 (marco: 22/07/2008)",
+            "- AC consolidada antes de julho/2008?",
+            "- Expansão sobre vegetação nativa após 2008?",
             "",
             "#### d) Diferenças entre sensores",
-            "- Note que Landsat 5 TM tem resolução de 30m e SPOT tem 2.5m. Pequenos talhes podem não ser visíveis no Landsat.",
-            "- Não confunda diferença de resolução com mudança real de cobertura.",
+            "- Landsat 30m vs SPOT 2.5m — não confundir resolução com mudança.",
             "",
         );
     }
 
-    const nextSection = isMultiYear ? 4 : 3;
+    const n = isMultiYear ? 4 : 3;
     parts.push(
-        `### 3.${nextSection} Concordâncias e Discordâncias`,
-        "Organize em formato de lista:",
-        "- **✅ CONCORDA**: descreva \u00e1reas onde classificação coincide com a imagem.",
-        "- **❌ DISCORDA**: descreva \u00e1reas onde classificação não condiz com o observado. Indique qual seria a classificação mais apropriada.",
+        `### 3.${n} Concordâncias e Discordâncias`,
+        "- **✅ CONCORDA**: classificação coincide com imagem.",
+        "- **❌ DISCORDA**: classificação não condiz. Indique a classificação correta.",
         "",
-        `### 3.${nextSection + 1} Nível de Confiança`,
-        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]**.",
-        "Justifique considerando: resolução das imagens, presença de nuvens/sombras, nitidez, consistência entre sensores.",
+        `### 3.${n + 1} Nível de Confiança: [ALTA], [MÉDIA] ou [BAIXA]`,
         "",
-        `### 3.${nextSection + 2} Recomendações ao Analista`,
-        "- Sugira ações práticas: vistoria em campo, solicitação de imagens complementares, retificação de polígonos no CAR.",
-        "- Se aplicável, cite artigos relevantes do Código Florestal (Lei 12.651/2012).",
+        `### 3.${n + 2} Recomendações ao Analista`,
+        "- Ações práticas: vistoria, imagens complementares, retificação do CAR.",
+        "- Artigos relevantes do Código Florestal.",
         "",
         "---",
-        "",
-        "## Formato de Resposta",
-        "- Use markdown com seções e sub-seções.",
-        "- Seja detalhado e técnico, mas acessível.",
-        "- Refira-se às imagens pelo número (Imagem 1, 2, 3...) e nome do satélite.",
-        "- Responda inteiramente em **português**.",
+        "Responda em **português**, use markdown com seções e sub-seções.",
     );
 
     return parts.join("\n");
+}
+
+/**
+ * Build the synthesis prompt for multi-satellite temporal comparison.
+ * Receives the individual per-satellite analyses as input.
+ */
+function buildSynthesisPrompt(
+    areaHa: number,
+    layerSummaries: LayerSummary[],
+    perSatelliteAnalyses: Array<{ satelliteLabel: string; year: number; analysis: string }>,
+): string {
+    const labels = perSatelliteAnalyses.map((a) => a.satelliteLabel);
+    const years = perSatelliteAnalyses.map((a) => a.year).sort();
+
+    const analysesBlock = perSatelliteAnalyses.map((a) => [
+        `### Análise: ${a.satelliteLabel} (${a.year})`,
+        "",
+        a.analysis,
+    ].join("\n")).join("\n\n---\n\n");
+
+    return [
+        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
+        "",
+        "Você receberá análises individuais feitas por IA para diferentes imagens de satélite do MESMO imóvel rural.",
+        "Sua tarefa é **sintetizar e comparar** essas análises para produzir um **laudo temporal integrado**.",
+        "",
+        "---",
+        "",
+        buildPropertyContext(areaHa, layerSummaries),
+        "",
+        "---",
+        "",
+        `## Análises Individuais Realizadas (${labels.join(", ")})`,
+        "",
+        analysesBlock,
+        "",
+        "---",
+        "",
+        "## Sua Tarefa: Laudo Integrado Multi-temporal",
+        "",
+        "Produza um laudo ÚNICO e COMPLETO que integre as análises acima. Estruture assim:",
+        "",
+        "### 1. Resumo por Satélite",
+        "Para cada satélite, resuma em 2-3 frases os achados principais da análise individual (AC e AVN).",
+        "",
+        "### 2. Análise Temporal Comparativa",
+        `Compare sistematicamente as imagens dos anos **${years.join(", ")}**:`,
+        "",
+        "#### a) Mudanças na Cobertura Vegetal",
+        "- Identifique áreas com **supressão** (vegetação → solo/pastagem) entre os anos.",
+        "- Identifique áreas com **regeneração** (solo → vegetação secundária).",
+        "- Estime áreas das mudanças (em hectares, proporção visual).",
+        "",
+        "#### b) Consistência do CAR vs. Histórico",
+        "- A Área Consolidada (AC) já existia como uso antrópico na imagem mais antiga?",
+        "- Alguma AC mostra vegetação nativa na imagem mais antiga (desmatamento posterior)?",
+        "- Alguma AVN já estava antropizada na imagem mais antiga?",
+        "",
+        "#### c) Marco Temporal — Art. 68 da Lei 12.651/2012",
+        "- Data de referência: **22/07/2008**.",
+        "- As áreas de AC já estavam consolidadas antes de julho/2008?",
+        "- Houve expansão agrícola/pecuária sobre vegetação nativa após 2008?",
+        "",
+        "#### d) Diferenças entre Sensores",
+        "- Landsat 5 TM tem 30m; SPOT tem 2.5m. Não confundir resolução com mudança real.",
+        "- Onde as análises divergem por diferença de resolução, aponte explicitamente.",
+        "",
+        "### 3. Concordâncias e Discordâncias (Consolidadas)",
+        "- **✅ CONCORDA**: áreas onde TODAS as imagens confirmam a classificação do CAR.",
+        "- **❌ DISCORDA**: áreas onde alguma imagem contradiz a classificação. Indique qual ano e o que mostrou.",
+        "- **⚠️ INCONCLUSIVO**: áreas onde os satélites divergem por limitação de resolução.",
+        "",
+        "### 4. Nível de Confiança",
+        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]**.",
+        "Justifique com base na resolução, cobertura de nuvens, consistência entre sensores.",
+        "",
+        "### 5. Recomendações ao Analista",
+        "- Ações práticas: vistoria em campo, imagens complementares, retificação do CAR.",
+        "- Cite artigos do Código Florestal quando aplicável.",
+        "",
+        "---",
+        "Responda em **português**, use markdown, seja detalhado e técnico.",
+        "NÃO repita as análises individuais integralmente — sintetize e compare.",
+    ].join("\n");
 }
 
 /**
@@ -1849,15 +1981,14 @@ async function processAnalysis(
     // Step 3: Prepare images for AI (use Cloudinary URLs or compress base64 as fallback)
     sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens para análise IA..." });
 
-    const aiImages: Array<{ url?: string; dataUrl?: string; caption: string }> = [];
+    type AiImage = { url?: string; dataUrl?: string; caption: string };
+    const aiImages: AiImage[] = [];
     if (cloudinaryUrls.length === imagesToAnalyze.length) {
-        // Use Cloudinary URLs — much lighter payload for the vision API
         for (const cu of cloudinaryUrls) {
             aiImages.push({ url: cu.url, caption: cu.caption });
         }
         console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs for vision API`);
     } else {
-        // Fallback: compress base64 images to reduce payload
         console.log(`[SIMCAR ANALYSIS] Cloudinary partial/failed, compressing ${imagesToAnalyze.length} images for vision API`);
         for (const img of imagesToAnalyze) {
             try {
@@ -1869,17 +2000,95 @@ async function processAnalysis(
         }
     }
 
-    // Step 4: AI Analysis
-    sendSSE(res, { type: "progress", step: "analyzing", percent: 65, message: "IA analisando imagens (isso pode levar alguns segundos)..." });
+    // Step 4: AI Analysis — strategy depends on number of satellites
+    const validKeys = selectedLayers.filter((k) => SATELLITE_LAYERS[k]);
+    const isMultiSatellite = validKeys.length > 1;
 
     let analysisText: string;
-    try {
-        const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers);
-        analysisText = await callVisionAnalysis(aiImages, prompt);
-    } catch (err: any) {
-        console.error("[SIMCAR ANALYSIS] AI analysis error:", err.message);
-        sendSSE(res, { type: "error", message: `Erro na análise IA: ${err.message}` });
-        return;
+
+    if (isMultiSatellite) {
+        // ── MULTI-SATELLITE: analyze each satellite separately, then synthesize ──
+        console.log(`[SIMCAR ANALYSIS] Multi-satellite mode: ${validKeys.length} satellites, analyzing individually...`);
+
+        const perSatelliteResults: Array<{ satelliteLabel: string; year: number; analysis: string }> = [];
+        let satIdx = 0;
+
+        for (const key of validKeys) {
+            const sat = SATELLITE_LAYERS[key];
+            if (!sat) continue;
+
+            // Extract the 3 images for this satellite (based on caption containing the label)
+            const satImages = aiImages.filter((img) => img.caption.startsWith(sat.label));
+            if (satImages.length === 0) {
+                console.warn(`[SIMCAR ANALYSIS] No images found for ${sat.label}, skipping individual analysis`);
+                satIdx++;
+                continue;
+            }
+
+            const progressPct = 65 + Math.round((satIdx / validKeys.length) * 20);
+            sendSSE(res, {
+                type: "progress", step: "analyzing", percent: progressPct,
+                message: `IA analisando ${sat.label} (${satIdx + 1}/${validKeys.length})...`,
+            });
+
+            try {
+                const prompt = buildSingleSatellitePrompt(areaHa, layerSummaries, key);
+                const result = await callVisionAnalysis(satImages, prompt);
+                perSatelliteResults.push({ satelliteLabel: sat.label, year: sat.year, analysis: result });
+                console.log(`[SIMCAR ANALYSIS] ${sat.label} analysis complete (${result.length} chars)`);
+            } catch (err: any) {
+                console.error(`[SIMCAR ANALYSIS] ${sat.label} analysis failed:`, err.message);
+                sendSSE(res, {
+                    type: "progress", step: "analyzing", percent: progressPct,
+                    message: `Aviso: análise de ${sat.label} falhou, continuando com os demais...`,
+                });
+            }
+            satIdx++;
+        }
+
+        if (perSatelliteResults.length === 0) {
+            // All individual analyses failed — try legacy single-call as last resort
+            console.warn(`[SIMCAR ANALYSIS] All individual analyses failed, trying legacy single-call...`);
+            sendSSE(res, { type: "progress", step: "analyzing", percent: 85, message: "Tentando análise unificada como fallback..." });
+            try {
+                const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers);
+                analysisText = await callVisionAnalysis(aiImages, prompt);
+            } catch (err: any) {
+                console.error("[SIMCAR ANALYSIS] Legacy fallback also failed:", err.message);
+                sendSSE(res, { type: "error", message: `Erro na análise IA: ${err.message}` });
+                return;
+            }
+        } else if (perSatelliteResults.length === 1) {
+            // Only one satellite succeeded — return its analysis directly (no synthesis needed)
+            analysisText = perSatelliteResults[0].analysis;
+        } else {
+            // Multiple results — synthesize with temporal comparison
+            sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando análise temporal comparativa..." });
+            try {
+                const synthesisPrompt = buildSynthesisPrompt(areaHa, layerSummaries, perSatelliteResults);
+                analysisText = await callTextFollowUp([{ role: "user", content: synthesisPrompt }]);
+                console.log(`[SIMCAR ANALYSIS] Synthesis complete (${analysisText.length} chars)`);
+            } catch (err: any) {
+                // Synthesis failed — concatenate individual analyses as fallback
+                console.error("[SIMCAR ANALYSIS] Synthesis failed, concatenating analyses:", err.message);
+                analysisText = perSatelliteResults.map((r) => [
+                    `## Análise: ${r.satelliteLabel} (${r.year})`,
+                    "",
+                    r.analysis,
+                ].join("\n")).join("\n\n---\n\n");
+            }
+        }
+    } else {
+        // ── SINGLE SATELLITE: direct analysis (original behavior) ──
+        sendSSE(res, { type: "progress", step: "analyzing", percent: 65, message: "IA analisando imagens (isso pode levar alguns segundos)..." });
+        try {
+            const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers);
+            analysisText = await callVisionAnalysis(aiImages, prompt);
+        } catch (err: any) {
+            console.error("[SIMCAR ANALYSIS] AI analysis error:", err.message);
+            sendSSE(res, { type: "error", message: `Erro na análise IA: ${err.message}` });
+            return;
+        }
     }
 
     // Step 5: Complete
