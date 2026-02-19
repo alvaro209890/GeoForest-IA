@@ -44,6 +44,8 @@
     uiTextMaxLen: 80,
     // Scroll throttling: minimum ms between scroll events
     scrollThrottleMs: 500,
+    // Stop background reporting when dev server is gone to avoid log spam
+    maxConsecutiveReportFailures: 3,
   };
 
   // ==========================================================================
@@ -56,6 +58,9 @@
     lastReportTime: Date.now(),
     lastScrollTime: 0,
   };
+  var reportTimer = null;
+  var consecutiveReportFailures = 0;
+  var reportingDisabled = false;
 
   // ==========================================================================
   // Utility Functions
@@ -714,6 +719,10 @@
   // ==========================================================================
 
   function reportLogs() {
+    if (reportingDisabled) {
+      return Promise.resolve();
+    }
+
     var consoleLogs = store.consoleLogs.splice(0);
     var networkRequests = store.networkRequests.splice(0);
     var uiEvents = store.uiEvents.splice(0);
@@ -741,23 +750,39 @@
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    }).catch(function () {
-      // Put data back on failure (but respect limits)
-      store.consoleLogs = consoleLogs.concat(store.consoleLogs);
-      store.networkRequests = networkRequests.concat(store.networkRequests);
-      store.uiEvents = uiEvents.concat(store.uiEvents);
+    })
+      .then(function () {
+        consecutiveReportFailures = 0;
+      })
+      .catch(function () {
+        // Put data back on failure (but respect limits)
+        store.consoleLogs = consoleLogs.concat(store.consoleLogs);
+        store.networkRequests = networkRequests.concat(store.networkRequests);
+        store.uiEvents = uiEvents.concat(store.uiEvents);
 
-      pruneBuffer(store.consoleLogs, CONFIG.bufferSize.console);
-      pruneBuffer(store.networkRequests, CONFIG.bufferSize.network);
-      pruneBuffer(store.uiEvents, CONFIG.bufferSize.ui);
-    });
+        pruneBuffer(store.consoleLogs, CONFIG.bufferSize.console);
+        pruneBuffer(store.networkRequests, CONFIG.bufferSize.network);
+        pruneBuffer(store.uiEvents, CONFIG.bufferSize.ui);
+        consecutiveReportFailures += 1;
+        if (consecutiveReportFailures >= CONFIG.maxConsecutiveReportFailures) {
+          reportingDisabled = true;
+          if (reportTimer) {
+            clearInterval(reportTimer);
+            reportTimer = null;
+          }
+        }
+      });
   }
 
   // Periodic reporting
-  setInterval(reportLogs, CONFIG.reportInterval);
+  reportTimer = setInterval(reportLogs, CONFIG.reportInterval);
 
   // Report on page unload
   window.addEventListener("beforeunload", function () {
+    if (reportingDisabled) {
+      return;
+    }
+
     var consoleLogs = store.consoleLogs;
     var networkRequests = store.networkRequests;
     var uiEvents = store.uiEvents;

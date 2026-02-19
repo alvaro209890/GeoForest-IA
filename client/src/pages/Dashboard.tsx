@@ -1238,7 +1238,7 @@ export default function Dashboard() {
     }
   };
 
-  const downloadAttachment = (meta?: ChatMessage['meta']) => {
+  const downloadAttachment = useCallback((meta?: ChatMessage['meta']) => {
     if (!meta) return;
     const isImage = meta.fileType === 'image';
     const fileName = meta.fileName || (isImage ? 'imagem-anexada.png' : 'documento.pdf');
@@ -1257,7 +1257,7 @@ export default function Dashboard() {
     }
 
     window.open(toFileProxyUrl(sourceUrl, fileName, 'download'), '_blank', 'noopener,noreferrer');
-  };
+  }, []);
 
   const uploadImageFile = async (file: File): Promise<string | null> => {
     const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -2485,7 +2485,7 @@ export default function Dashboard() {
     }
   };
 
-  const splitThinkContent = (raw: string) => {
+  const splitThinkContent = useCallback((raw: string) => {
     const thinkRegex = /<think>([\s\S]*?)<\/think>/gi;
     const thinkParts: string[] = [];
     let match: RegExpExecArray | null;
@@ -2497,7 +2497,7 @@ export default function Dashboard() {
       cleanText: cleanText || 'Desculpe, não consegui formular uma resposta.',
       thinkingText: thinkParts.join('\n\n').trim(),
     };
-  };
+  }, []);
 
   const readFileAsDataUrl = (file: File) =>
     new Promise<string>((resolve, reject) => {
@@ -3002,6 +3002,162 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       ? 'Auto (Florestal)'
       : models.find((m) => m.id === selectedModel)?.label || selectedModel;
 
+  const chatTimeline = useMemo(
+    () => (
+      <>
+        {messages.map((msg) => {
+          const parsedFromText = splitThinkContent(msg.text || '');
+          const displayThinking = msg.meta?.thinkingText || parsedFromText.thinkingText;
+          const displayText = parsedFromText.cleanText;
+          return (
+            <div key={msg.id} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-fade-in-up`}>
+              <div
+                className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${msg.role === 'ai'
+                    ? 'bg-gradient-to-br from-emerald-500 to-green-700 shadow-lg shadow-emerald-900/50'
+                    : 'bg-slate-700'
+                  }`}
+              >
+                {msg.role === 'ai' ? <Leaf size={14} className="text-white" /> : <User size={14} className="text-slate-300" />}
+              </div>
+              <div
+                className={`
+                        relative max-w-[85%] lg:max-w-[75%] p-4 rounded-2xl
+                        ${msg.role === 'ai'
+                    ? 'bg-[#131f18]/80 border border-emerald-500/10 text-slate-200 rounded-tl-sm'
+                    : 'bg-emerald-600 text-white rounded-tr-sm shadow-md shadow-emerald-900/20'
+                  }
+                      `}
+              >
+                {(msg.meta?.fileType === 'pdf' || msg.meta?.fileType === 'image') && (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      downloadAttachment(msg.meta);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        downloadAttachment(msg.meta);
+                      }
+                    }}
+                    className={`mb-2 inline-flex max-w-[260px] items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] border ${msg.role === 'user'
+                        ? 'bg-emerald-700/45 border-emerald-300/30 text-emerald-50'
+                        : 'bg-[#0f1713] border-white/10 text-slate-200'
+                      } cursor-pointer hover:border-emerald-400/40`}
+                  >
+                    <div
+                      className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${msg.meta?.fileType === 'pdf'
+                          ? 'bg-red-500/20 text-red-300'
+                          : 'bg-emerald-500/20 text-emerald-300'
+                        }`}
+                    >
+                      {msg.meta?.fileType === 'pdf' ? <FileText size={13} /> : <ImagePlus size={13} />}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{msg.meta?.fileName || (msg.meta?.fileType === 'pdf' ? 'Documento PDF' : 'Imagem anexada')}</p>
+                      <p className={`text-[10px] ${msg.role === 'user' ? 'text-emerald-100/80' : 'text-slate-500'}`}>
+                        {msg.meta?.fileType === 'pdf' ? 'Documento (clique para baixar)' : 'Imagem (clique para baixar)'}
+                      </p>
+                    </div>
+                    <FileDown size={13} className={msg.role === 'user' ? 'text-emerald-100/80' : 'text-emerald-300'} />
+                  </div>
+                )}
+                {msg.role === 'ai' && displayThinking && (
+                  <div className="mb-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[10px] uppercase tracking-wider text-emerald-300/80">
+                        Pensamento da IA
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedThinking((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))
+                        }
+                        className="text-[10px] text-emerald-300 hover:text-emerald-200"
+                      >
+                        {expandedThinking[msg.id] ? 'Ocultar' : 'Expandir'}
+                      </button>
+                    </div>
+                    {expandedThinking[msg.id] && (
+                      <p className="mt-2 text-xs leading-relaxed text-slate-300 whitespace-pre-wrap">
+                        {displayThinking}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {msg.role === 'ai' ? (
+                  <div className="chat-markdown text-sm leading-relaxed">{renderRichText(displayText)}</div>
+                ) : (
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{displayText}</p>
+                )}
+                {msg.meta?.fileType === 'image' && msg.meta.imageUrl && (
+                  <img src={msg.meta.imageUrl} alt="Imagem" className="mt-3 rounded-xl max-h-52 border border-white/10" />
+                )}
+                {msg.meta?.fileType === 'pdf' && !msg.meta?.fileUrl && !msg.meta?.fileDownloadUrl && (
+                  <div className="mt-3">
+                    <span className="inline-flex items-center gap-2 text-xs text-slate-400">
+                      <FileText size={14} /> Enviando PDF...
+                    </span>
+                  </div>
+                )}
+                <span
+                  className={`text-[10px] absolute bottom-2 right-4 opacity-50 ${msg.role === 'user' ? 'text-emerald-100' : 'text-slate-500'
+                    }`}
+                >
+                  {msg.time}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+        {(typingMessageId || aiThinking) && (
+          <div className="flex gap-4 animate-fade-in-up">
+            <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-[#203127] border border-emerald-500/20">
+              <Sparkles size={14} className="text-emerald-300" />
+            </div>
+            <div className="relative max-w-[85%] lg:max-w-[75%] p-4 rounded-2xl bg-[#0f1713]/90 border border-dashed border-emerald-500/35 text-slate-200">
+              <div className="mb-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
+                <div className="text-[10px] uppercase tracking-wider text-emerald-300/80 mb-1">
+                  Pensamento da IA
+                </div>
+                <p className="text-sm leading-relaxed whitespace-pre-wrap text-slate-300/90">
+                  {liveThinkingText ||
+                    [
+                      'Lendo sua solicitação',
+                      'Analisando contexto ambiental',
+                      'Selecionando estratégia de resposta',
+                      'Consolidando resultado',
+                    ][processingHintIndex]}
+                </p>
+              </div>
+              <div className="chat-markdown text-sm leading-relaxed text-slate-200/95 min-h-5">
+                {renderRichText(typingText || 'Gerando resposta...')}
+              </div>
+              <div className="flex items-center gap-2 mt-2">
+                <span className="typing-dot"></span>
+                <span className="typing-dot"></span>
+                <span className="typing-dot"></span>
+              </div>
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </>
+    ),
+    [
+      messages,
+      splitThinkContent,
+      downloadAttachment,
+      expandedThinking,
+      typingMessageId,
+      aiThinking,
+      liveThinkingText,
+      processingHintIndex,
+      typingText,
+    ]
+  );
+
   const mapPolygonPoints = useMemo(() => {
     if (!mapPolygon.length) return '';
     const [minX, minY, maxX, maxY] = mapBbox;
@@ -3457,144 +3613,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           <>
             <div className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth custom-scrollbar relative z-0">
               <div className="max-w-3xl mx-auto space-y-6">
-                {messages.map((msg) => {
-                  const parsedFromText = splitThinkContent(msg.text || '');
-                  const displayThinking = msg.meta?.thinkingText || parsedFromText.thinkingText;
-                  const displayText = parsedFromText.cleanText;
-                  return (
-                    <div key={msg.id} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-fade-in-up`}>
-                      <div
-                        className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${msg.role === 'ai'
-                          ? 'bg-gradient-to-br from-emerald-500 to-green-700 shadow-lg shadow-emerald-900/50'
-                          : 'bg-slate-700'
-                          }`}
-                      >
-                        {msg.role === 'ai' ? <Leaf size={14} className="text-white" /> : <User size={14} className="text-slate-300" />}
-                      </div>
-                      <div
-                        className={`
-                        relative max-w-[85%] lg:max-w-[75%] p-4 rounded-2xl
-                        ${msg.role === 'ai'
-                            ? 'bg-[#131f18]/80 border border-emerald-500/10 text-slate-200 rounded-tl-sm'
-                            : 'bg-emerald-600 text-white rounded-tr-sm shadow-md shadow-emerald-900/20'
-                          }
-                      `}
-                      >
-                        {(msg.meta?.fileType === 'pdf' || msg.meta?.fileType === 'image') && (
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => {
-                              downloadAttachment(msg.meta);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                downloadAttachment(msg.meta);
-                              }
-                            }}
-                            className={`mb-2 inline-flex max-w-[260px] items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] border ${msg.role === 'user'
-                              ? 'bg-emerald-700/45 border-emerald-300/30 text-emerald-50'
-                              : 'bg-[#0f1713] border-white/10 text-slate-200'
-                              } cursor-pointer hover:border-emerald-400/40`}
-                          >
-                            <div
-                              className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${msg.meta?.fileType === 'pdf'
-                                ? 'bg-red-500/20 text-red-300'
-                                : 'bg-emerald-500/20 text-emerald-300'
-                                }`}
-                            >
-                              {msg.meta?.fileType === 'pdf' ? <FileText size={13} /> : <ImagePlus size={13} />}
-                            </div>
-                            <div className="min-w-0">
-                              <p className="truncate font-medium">{msg.meta?.fileName || (msg.meta?.fileType === 'pdf' ? 'Documento PDF' : 'Imagem anexada')}</p>
-                              <p className={`text-[10px] ${msg.role === 'user' ? 'text-emerald-100/80' : 'text-slate-500'}`}>
-                                {msg.meta?.fileType === 'pdf' ? 'Documento (clique para baixar)' : 'Imagem (clique para baixar)'}
-                              </p>
-                            </div>
-                            <FileDown size={13} className={msg.role === 'user' ? 'text-emerald-100/80' : 'text-emerald-300'} />
-                          </div>
-                        )}
-                        {msg.role === 'ai' && displayThinking && (
-                          <div className="mb-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="text-[10px] uppercase tracking-wider text-emerald-300/80">
-                                Pensamento da IA
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setExpandedThinking((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))
-                                }
-                                className="text-[10px] text-emerald-300 hover:text-emerald-200"
-                              >
-                                {expandedThinking[msg.id] ? 'Ocultar' : 'Expandir'}
-                              </button>
-                            </div>
-                            {expandedThinking[msg.id] && (
-                              <p className="mt-2 text-xs leading-relaxed text-slate-300 whitespace-pre-wrap">
-                                {displayThinking}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                        {msg.role === 'ai' ? (
-                          <div className="chat-markdown text-sm leading-relaxed">{renderRichText(displayText)}</div>
-                        ) : (
-                          <p className="text-sm leading-relaxed whitespace-pre-wrap">{displayText}</p>
-                        )}
-                        {msg.meta?.fileType === 'image' && msg.meta.imageUrl && (
-                          <img src={msg.meta.imageUrl} alt="Imagem" className="mt-3 rounded-xl max-h-52 border border-white/10" />
-                        )}
-                        {msg.meta?.fileType === 'pdf' && !msg.meta?.fileUrl && !msg.meta?.fileDownloadUrl && (
-                          <div className="mt-3">
-                            <span className="inline-flex items-center gap-2 text-xs text-slate-400">
-                              <FileText size={14} /> Enviando PDF...
-                            </span>
-                          </div>
-                        )}
-                        <span
-                          className={`text-[10px] absolute bottom-2 right-4 opacity-50 ${msg.role === 'user' ? 'text-emerald-100' : 'text-slate-500'
-                            }`}
-                        >
-                          {msg.time}
-                        </span>
-                      </div>
-                    </div>
-                  )
-                })}
-                {(typingMessageId || aiThinking) && (
-                  <div className="flex gap-4 animate-fade-in-up">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-[#203127] border border-emerald-500/20">
-                      <Sparkles size={14} className="text-emerald-300" />
-                    </div>
-                    <div className="relative max-w-[85%] lg:max-w-[75%] p-4 rounded-2xl bg-[#0f1713]/90 border border-dashed border-emerald-500/35 text-slate-200">
-                      <div className="mb-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
-                        <div className="text-[10px] uppercase tracking-wider text-emerald-300/80 mb-1">
-                          Pensamento da IA
-                        </div>
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap text-slate-300/90">
-                          {liveThinkingText ||
-                            [
-                              'Lendo sua solicitação',
-                              'Analisando contexto ambiental',
-                              'Selecionando estratégia de resposta',
-                              'Consolidando resultado',
-                            ][processingHintIndex]}
-                        </p>
-                      </div>
-                      <div className="chat-markdown text-sm leading-relaxed text-slate-200/95 min-h-5">
-                        {renderRichText(typingText || 'Gerando resposta...')}
-                      </div>
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className="typing-dot"></span>
-                        <span className="typing-dot"></span>
-                        <span className="typing-dot"></span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
+                {chatTimeline}
               </div>
             </div>
 
@@ -5636,19 +5655,25 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             draggable={false}
                           />
                         )}
-                        <img
-                          ref={mapPreviewImageRef}
-                          src={mapPreviewDataUrl}
-                          alt="Prévia WMS da área selecionada"
-                          className="max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain pointer-events-none transition-opacity duration-300"
-                          style={{
-                            ...(mapDragging
-                              ? { transform: `translate(${mapDragOffset.x}px, ${mapDragOffset.y}px)` }
-                              : {}),
-                            opacity: mapPreviewLoading ? 0.5 : 1,
-                          }}
-                          draggable={false}
-                        />
+                        {mapPreviewDataUrl ? (
+                          <img
+                            ref={mapPreviewImageRef}
+                            src={mapPreviewDataUrl}
+                            alt="Prévia WMS da área selecionada"
+                            className="max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain pointer-events-none transition-opacity duration-300"
+                            style={{
+                              ...(mapDragging
+                                ? { transform: `translate(${mapDragOffset.x}px, ${mapDragOffset.y}px)` }
+                                : {}),
+                              opacity: mapPreviewLoading ? 0.5 : 1,
+                            }}
+                            draggable={false}
+                          />
+                        ) : (
+                          <div className="max-h-[calc(82vh-130px)] max-w-full px-4 py-3 rounded-lg bg-black/35 text-xs text-slate-400">
+                            Carregando prévia do mapa...
+                          </div>
+                        )}
                         {mapPolygonPoints && (
                           <svg
                             viewBox="0 0 100 100"
