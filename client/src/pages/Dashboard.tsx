@@ -381,6 +381,29 @@ const sanitizeMessagesForFirestore = (msgs: ChatMessage[]) =>
     return clean;
   });
 
+const isPlainObject = (value: unknown): value is Record<string, any> => {
+  if (!value || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
+
+const stripUndefinedDeep = <T,>(value: T): T => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => stripUndefinedDeep(item))
+      .filter((item) => item !== undefined) as T;
+  }
+  if (isPlainObject(value)) {
+    const out: Record<string, any> = {};
+    Object.entries(value).forEach(([key, item]) => {
+      const clean = stripUndefinedDeep(item);
+      if (clean !== undefined) out[key] = clean;
+    });
+    return out as T;
+  }
+  return (value === undefined ? undefined : value) as T;
+};
+
 const toCloudinaryDownloadUrl = (url?: string) => {
   if (!url) return '';
   if (url.includes('/upload/fl_attachment/')) return url;
@@ -986,10 +1009,25 @@ export default function Dashboard() {
     async (clip: SimcarClipHistoryItem) => {
       if (!simcarClipsRef) return;
       const clipDocRef = doc(simcarClipsRef, clip.jobId);
+      const cleanClip = stripUndefinedDeep(clip);
+      const lastMessage = cleanClip.analysisMessages?.[cleanClip.analysisMessages.length - 1];
+      const payload = stripUndefinedDeep({
+        ...cleanClip,
+        kind: 'simcar_recorte',
+        title: cleanClip.filename,
+        files: {
+          inputZipUrl: cleanClip.inputZipUrl,
+          outputZipUrl: cleanClip.outputZipUrl,
+          contextUrl: cleanClip.contextUrl,
+        },
+        analysisMessageCount: cleanClip.analysisMessages?.length ?? 0,
+        analysisImageCount: cleanClip.analysisImages?.length ?? 0,
+        lastMessagePreview: lastMessage?.text ? String(lastMessage.text).slice(0, 280) : '',
+      });
       await setDoc(
         clipDocRef,
         {
-          ...clip,
+          ...payload,
           updatedAt: serverTimestamp(),
           createdAt: serverTimestamp(),
         },
@@ -1003,10 +1041,23 @@ export default function Dashboard() {
     async (jobId: string, patch: Partial<SimcarClipHistoryItem>) => {
       if (!simcarClipsRef || !jobId) return;
       const clipDocRef = doc(simcarClipsRef, jobId);
+      const cleanPatch = stripUndefinedDeep(patch);
+      const lastMessage =
+        Array.isArray(cleanPatch.analysisMessages) && cleanPatch.analysisMessages.length > 0
+          ? cleanPatch.analysisMessages[cleanPatch.analysisMessages.length - 1]
+          : undefined;
+      const enrichedPatch = stripUndefinedDeep({
+        ...cleanPatch,
+        analysisMessageCount: Array.isArray(cleanPatch.analysisMessages)
+          ? cleanPatch.analysisMessages.length
+          : undefined,
+        analysisImageCount: Array.isArray(cleanPatch.analysisImages) ? cleanPatch.analysisImages.length : undefined,
+        lastMessagePreview: lastMessage?.text ? String(lastMessage.text).slice(0, 280) : undefined,
+      });
       await setDoc(
         clipDocRef,
         {
-          ...patch,
+          ...enrichedPatch,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -1076,9 +1127,21 @@ export default function Dashboard() {
               layersWithData: Number(data?.layersWithData || 0),
               totalLayers: Number(data?.totalLayers || 0),
               jobId: String(data?.jobId || docSnap.id),
-              inputZipUrl: data?.inputZipUrl ? String(data.inputZipUrl) : undefined,
-              outputZipUrl: data?.outputZipUrl ? String(data.outputZipUrl) : undefined,
-              contextUrl: data?.contextUrl ? String(data.contextUrl) : undefined,
+              inputZipUrl: data?.inputZipUrl
+                ? String(data.inputZipUrl)
+                : data?.files?.inputZipUrl
+                  ? String(data.files.inputZipUrl)
+                  : undefined,
+              outputZipUrl: data?.outputZipUrl
+                ? String(data.outputZipUrl)
+                : data?.files?.outputZipUrl
+                  ? String(data.files.outputZipUrl)
+                  : undefined,
+              contextUrl: data?.contextUrl
+                ? String(data.contextUrl)
+                : data?.files?.contextUrl
+                  ? String(data.files.contextUrl)
+                  : undefined,
               analysisImages: Array.isArray(data?.analysisImages) ? data.analysisImages : [],
               analysisMessages: Array.isArray(data?.analysisMessages) ? data.analysisMessages : [],
             });
@@ -4175,10 +4238,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     : String(event.downloadUrl || '');
                                 setSimcarClipDownloadUrl(resolvedDownloadUrl);
                                 setSimcarClipSummary(event.summary);
-                                // Extract jobId from download URL for AI analysis
-                                const match = event.downloadUrl?.match(/\/download\/(.+)$/);
-                                if (match) {
-                                  const nextJobId = match[1];
+                                const nextJobId =
+                                  typeof event.jobId === 'string' && event.jobId.trim()
+                                    ? event.jobId.trim()
+                                    : event.downloadUrl?.match(/\/download\/([^/?]+)/)?.[1] || null;
+                                if (nextJobId) {
                                   setSimcarClipJobId(nextJobId);
                                   // Push to clip history for sidebar cards and persist in Firestore
                                   const summary = event.summary;
@@ -4201,6 +4265,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     return [newClip, ...filtered];
                                   });
                                   void persistSimcarClipHistoryEntry(newClip);
+                                } else {
+                                  setSimcarClipError('Recorte gerado, mas não foi possível identificar o job para salvar histórico.');
                                 }
                               } else if (event.type === 'error') {
                                 setSimcarClipError(event.message);
