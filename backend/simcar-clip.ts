@@ -1110,7 +1110,12 @@ function buildWmsGetMapUrl(
     return url.toString();
 }
 
-/** Fetch a WMS image and return as a PNG Buffer. */
+/** PNG magic bytes: 0x89 P N G */
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+/** JPEG magic bytes: 0xFF 0xD8 0xFF */
+const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
+
+/** Fetch a WMS image and return as a PNG Buffer. Validates the response is actually an image. */
 async function fetchWmsImageBuffer(
     layers: string[],
     bbox: [number, number, number, number],
@@ -1118,13 +1123,39 @@ async function fetchWmsImageBuffer(
     height = 900,
 ): Promise<Buffer> {
     const mapUrl = buildWmsGetMapUrl(layers, bbox, width, height);
-    const response = await fetch(mapUrl);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    const response = await fetch(mapUrl, { signal: controller.signal });
+    clearTimeout(timeout);
+
     if (!response.ok) {
         const text = await response.text();
         throw new Error(`WMS error ${response.status}: ${text.slice(0, 200)}`);
     }
+
+    // Check Content-Type header
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("xml") || contentType.includes("html") || contentType.includes("text")) {
+        const text = await response.text();
+        throw new Error(`WMS retornou ${contentType} em vez de imagem: ${text.slice(0, 200)}`);
+    }
+
     const arr = await response.arrayBuffer();
-    return Buffer.from(arr);
+    const buf = Buffer.from(arr);
+
+    // Validate buffer starts with PNG or JPEG magic bytes
+    if (buf.length < 4) {
+        throw new Error(`WMS retornou buffer muito pequeno (${buf.length} bytes)`);
+    }
+    const isPng = buf.subarray(0, 4).equals(PNG_MAGIC);
+    const isJpeg = buf.subarray(0, 3).equals(JPEG_MAGIC);
+    if (!isPng && !isJpeg) {
+        // Likely an XML/text error response with 200 status
+        const preview = buf.toString("utf8", 0, Math.min(200, buf.length));
+        throw new Error(`WMS retornou formato inválido (não é PNG/JPEG): ${preview.slice(0, 150)}`);
+    }
+
+    return buf;
 }
 
 /** Convert GeoJSON coordinates to SVG path data. */
