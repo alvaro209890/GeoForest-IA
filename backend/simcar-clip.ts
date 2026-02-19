@@ -1117,6 +1117,7 @@ const GEMINI_VISION_MODELS = (process.env.GEMINI_VISION_MODELS || "gemini-1.5-fl
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
+const SIMCAR_REQUIRE_GEMINI = String(process.env.SIMCAR_REQUIRE_GEMINI || "").toLowerCase() === "true";
 
 /** Generate a WMS GetMap URL for a given layer + bbox. */
 function buildWmsGetMapUrl(
@@ -1691,6 +1692,9 @@ async function analyzeWithGroqAndGemini(
     }
 
     const hasGemini = Boolean(process.env.GEMINI_API_KEY);
+    if (SIMCAR_REQUIRE_GEMINI && !hasGemini) {
+        throw new Error("SIMCAR_REQUIRE_GEMINI=true, mas GEMINI_API_KEY não está configurada.");
+    }
     if (!hasGemini) {
         console.warn("[SIMCAR ANALYSIS] GEMINI_API_KEY ausente; usando apenas Groq.");
         return callVisionAnalysis(images, prompt);
@@ -1711,11 +1715,22 @@ async function analyzeWithGroqAndGemini(
 
     const groqText = groqResult.status === "fulfilled" ? groqResult.value : "";
     const geminiText = geminiResult.status === "fulfilled" ? geminiResult.value : "";
+    const groqOk = Boolean(groqText);
+    const geminiOk = Boolean(geminiText);
+    console.log(
+        `[SIMCAR ANALYSIS] ${contextLabel}: provider_status groq=${groqOk ? "ok" : "fail"} gemini=${geminiOk ? "ok" : "fail"} requireGemini=${SIMCAR_REQUIRE_GEMINI}`,
+    );
 
     if (!groqText && !geminiText) {
         const groqErr = groqResult.status === "rejected" ? String(groqResult.reason?.message || groqResult.reason) : "";
         const geminiErr = geminiResult.status === "rejected" ? String(geminiResult.reason?.message || geminiResult.reason) : "";
         throw new Error(`Groq e Gemini falharam para ${contextLabel}. Groq=${groqErr} | Gemini=${geminiErr}`);
+    }
+    if (SIMCAR_REQUIRE_GEMINI && !geminiText) {
+        const geminiErr = geminiResult.status === "rejected"
+            ? String(geminiResult.reason?.message || geminiResult.reason)
+            : "empty response";
+        throw new Error(`Gemini obrigatório e indisponível para ${contextLabel}. Erro Gemini: ${geminiErr}`);
     }
     if (groqText && !geminiText) return groqText;
     if (!groqText && geminiText) return geminiText;
