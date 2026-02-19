@@ -1,11 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  area as turfArea,
-  featureCollection as turfFeatureCollection,
-  intersect as turfIntersect,
-  polygon as turfPolygon,
-  union as turfUnion,
-} from '@turf/turf';
 import type { Feature, Geometry, MultiPolygon, Polygon } from 'geojson';
 import {
   Leaf,
@@ -723,6 +716,10 @@ export default function Dashboard() {
   const [simcarClipSummary, setSimcarClipSummary] = useState<any>(null);
   const [simcarClipError, setSimcarClipError] = useState<string | null>(null);
   const simcarClipAbortRef = useRef<AbortController | null>(null);
+  const simcarClipProgressFlushTimerRef = useRef<number | null>(null);
+  const simcarClipProgressPendingRef = useRef<{ current: number; total: number; layer: string; status: string } | null>(
+    null
+  );
   const [simcarAirId, setSimcarAirId] = useState('');
   const [simcarClipJobId, setSimcarClipJobId] = useState<string | null>(null);
 
@@ -806,6 +803,41 @@ export default function Dashboard() {
   } | null>(null);
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
   const [settingsRef, setSettingsRef] = useState<DocumentReference | null>(null);
+  const selectedSimcarClipLayerNames = useMemo(
+    () => simcarClipLayers.filter((layer) => layer.selected).map((layer) => layer.name),
+    [simcarClipLayers]
+  );
+  const selectedSimcarClipLayerCount = selectedSimcarClipLayerNames.length;
+
+  const flushQueuedSimcarClipProgress = useCallback(() => {
+    const pending = simcarClipProgressPendingRef.current;
+    simcarClipProgressPendingRef.current = null;
+    simcarClipProgressFlushTimerRef.current = null;
+    if (pending) setSimcarClipProgress(pending);
+  }, []);
+
+  const queueSimcarClipProgress = useCallback(
+    (next: { current: number; total: number; layer: string; status: string }) => {
+      simcarClipProgressPendingRef.current = next;
+      if (simcarClipProgressFlushTimerRef.current !== null) return;
+      simcarClipProgressFlushTimerRef.current = window.setTimeout(flushQueuedSimcarClipProgress, 120);
+    },
+    [flushQueuedSimcarClipProgress]
+  );
+
+  const clearSimcarClipProgressQueue = useCallback(() => {
+    if (simcarClipProgressFlushTimerRef.current !== null) {
+      window.clearTimeout(simcarClipProgressFlushTimerRef.current);
+      simcarClipProgressFlushTimerRef.current = null;
+    }
+    simcarClipProgressPendingRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearSimcarClipProgressQueue();
+    };
+  }, [clearSimcarClipProgressQueue]);
 
   const systemPrompt = useMemo(
     () => ({
@@ -1584,6 +1616,14 @@ export default function Dashboard() {
         setLastIntersectionRequestKey('');
         return;
       }
+
+      const {
+        area: turfArea,
+        featureCollection: turfFeatureCollection,
+        intersect: turfIntersect,
+        polygon: turfPolygon,
+        union: turfUnion,
+      } = await import('@turf/turf');
 
       const polygonFeature = turfPolygon(polygon.coordinates);
       const polygonAreaValue = Number((turfArea(polygonFeature) / 10000).toFixed(4));
@@ -2466,6 +2506,13 @@ export default function Dashboard() {
       reader.onerror = () => reject(new Error('Falha ao ler arquivo anexado.'));
       reader.readAsDataURL(file);
     });
+
+  const readFileAsBase64Payload = async (file: File) => {
+    const dataUrl = await readFileAsDataUrl(file);
+    const comma = dataUrl.indexOf(',');
+    if (comma < 0) throw new Error('Falha ao preparar arquivo ZIP para envio.');
+    return dataUrl.slice(comma + 1);
+  };
 
   const patchMessageMeta = async (messageId: string, patch: Partial<NonNullable<ChatMessage['meta']>>, lastUserText: string) => {
     const updatedMessages = messagesRef.current.map((msg) =>
@@ -3794,7 +3841,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 {simcarClipLayers.length > 0 && (
                   <div className="mb-4">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Camadas ({simcarClipLayers.filter(l => l.selected).length}/{simcarClipLayers.length})</span>
+                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Camadas ({selectedSimcarClipLayerCount}/{simcarClipLayers.length})</span>
                       <div className="flex gap-2">
                         <button
                           onClick={() => setSimcarClipLayers((prev) => prev.map((l) => ({ ...l, selected: true })))}
@@ -3852,22 +3899,19 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
                 {/* Process Button */}
                 <button
-                  disabled={!simcarClipFile || simcarClipProcessing || !simcarAirId.trim() || simcarClipLayers.filter(l => l.selected).length === 0}
+                  disabled={!simcarClipFile || simcarClipProcessing || !simcarAirId.trim() || selectedSimcarClipLayerCount === 0}
                   onClick={async () => {
                     if (!simcarClipFile) return;
                     setSimcarClipProcessing(true);
+                    clearSimcarClipProgressQueue();
                     setSimcarClipProgress(null);
                     setSimcarClipDownloadUrl(null);
                     setSimcarClipSummary(null);
                     setSimcarClipError(null);
 
                     try {
-                      const arrayBuf = await simcarClipFile.arrayBuffer();
-                      const base64 = btoa(
-                        new Uint8Array(arrayBuf).reduce((data, byte) => data + String.fromCharCode(byte), ''),
-                      );
-
-                      const selectedLayers = simcarClipLayers.filter((l) => l.selected).map((l) => l.name);
+                      const base64 = await readFileAsBase64Payload(simcarClipFile);
+                      const selectedLayers = selectedSimcarClipLayerNames;
                       const controller = new AbortController();
                       simcarClipAbortRef.current = controller;
 
@@ -3900,7 +3944,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             try {
                               const event = JSON.parse(line.slice(6));
                               if (event.type === 'progress') {
-                                setSimcarClipProgress({
+                                queueSimcarClipProgress({
                                   current: event.current,
                                   total: event.total,
                                   layer: event.layer,
@@ -3941,11 +3985,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         setSimcarClipError(err.message || 'Erro inesperado no processamento.');
                       }
                     } finally {
+                      clearSimcarClipProgressQueue();
                       setSimcarClipProcessing(false);
                       simcarClipAbortRef.current = null;
                     }
                   }}
-                  className={`w-full py-3 rounded-xl font-medium text-sm transition-all duration-300 flex items-center justify-center gap-2 ${!simcarClipFile || simcarClipProcessing || !simcarAirId.trim() || simcarClipLayers.filter(l => l.selected).length === 0
+                  className={`w-full py-3 rounded-xl font-medium text-sm transition-all duration-300 flex items-center justify-center gap-2 ${!simcarClipFile || simcarClipProcessing || !simcarAirId.trim() || selectedSimcarClipLayerCount === 0
                     ? 'bg-white/5 text-slate-500 cursor-not-allowed'
                     : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/30'
                     }`}
@@ -3968,6 +4013,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <button
                     onClick={() => {
                       simcarClipAbortRef.current?.abort();
+                      clearSimcarClipProgressQueue();
                       setSimcarClipProcessing(false);
                     }}
                     className="w-full mt-2 py-2 rounded-xl border border-red-500/20 text-red-400 text-sm hover:bg-red-500/10 transition-colors"

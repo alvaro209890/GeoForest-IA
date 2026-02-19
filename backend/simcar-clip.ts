@@ -1078,6 +1078,19 @@ const SATELLITE_LAYERS: Record<string, { wmsLayer: string; label: string; year: 
     landsat5_2007: { wmsLayer: LANDSAT5_2007_LAYER, label: "Landsat 5 (2007)", year: 2007 },
     landsat5_2008: { wmsLayer: LANDSAT5_2008_LAYER, label: "Landsat 5 (2008)", year: 2008 },
 };
+
+function getOrderedSatelliteKeys(selectedLayers: string[] = []): string[] {
+    const unique = Array.from(new Set(selectedLayers.filter((k) => SATELLITE_LAYERS[k])));
+    if (unique.length === 0) return ["spot_2008"];
+    return unique.sort((a, b) => {
+        const satA = SATELLITE_LAYERS[a];
+        const satB = SATELLITE_LAYERS[b];
+        const yearDiff = satA.year - satB.year;
+        if (yearDiff !== 0) return yearDiff;
+        return satA.label.localeCompare(satB.label);
+    });
+}
+
 const ANALYSIS_VISION_MODELS = [
     "openai/gpt-oss-120b",
     "meta-llama/llama-4-maverick-17b-128e-instruct",
@@ -1654,7 +1667,7 @@ function buildAnalysisPrompt(
     layerSummaries: LayerSummary[],
     selectedLayers?: string[],
 ): string {
-    const validLayers = (selectedLayers || []).filter((k) => SATELLITE_LAYERS[k]);
+    const validLayers = getOrderedSatelliteKeys(selectedLayers || []);
     const isMultiYear = validLayers.length > 1;
     const layerLabels = validLayers.map((k) => SATELLITE_LAYERS[k]?.label || k);
     const layerYears = validLayers.map((k) => SATELLITE_LAYERS[k]?.year || 0).sort();
@@ -1851,8 +1864,7 @@ async function generateSatelliteImages(
     const layerGeos = clippedGeometries ?? new Map<string, Geometry[]>();
     const images: Array<{ dataUrl: string; caption: string }> = [];
 
-    const validKeys = selectedLayers.filter((k) => SATELLITE_LAYERS[k]);
-    if (validKeys.length === 0) validKeys.push("spot_2008"); // fallback
+    const validKeys = getOrderedSatelliteKeys(selectedLayers);
 
     const totalSteps = validKeys.length * 3;
     let step = 0;
@@ -2001,7 +2013,7 @@ async function processAnalysis(
     }
 
     // Step 4: AI Analysis — strategy depends on number of satellites
-    const validKeys = selectedLayers.filter((k) => SATELLITE_LAYERS[k]);
+    const validKeys = getOrderedSatelliteKeys(selectedLayers);
     const isMultiSatellite = validKeys.length > 1;
 
     let analysisText: string;
@@ -2045,6 +2057,8 @@ async function processAnalysis(
             }
             satIdx++;
         }
+
+        perSatelliteResults.sort((a, b) => (a.year - b.year) || a.satelliteLabel.localeCompare(b.satelliteLabel));
 
         if (perSatelliteResults.length === 0) {
             // All individual analyses failed — try legacy single-call as last resort

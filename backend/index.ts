@@ -128,7 +128,7 @@ async function startServer() {
     }
 
     if (originAllowed) {
-      res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
       res.setHeader(
         "Access-Control-Allow-Headers",
         requestedHeaders || "Content-Type, Authorization, Accept, Origin",
@@ -2014,4 +2014,3 @@ async function startServer() {
 }
 
 startServer().catch(console.error);
-

@@ -1,22 +1,30 @@
+import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import Auth from "./pages/Auth";
-import Dashboard from "./pages/Dashboard";
+const Auth = lazy(() => import("./pages/Auth"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const NotFound = lazy(() => import("./pages/NotFound"));
 
 
 function Router() {
   return (
-    <Switch>
-      <Route path="/" component={Auth} />
-      <Route path="/dashboard" component={Dashboard} />
-      <Route path="/404" component={NotFound} />
-      {/* Final fallback route */}
-      <Route component={NotFound} />
-    </Switch>
+    <Suspense
+      fallback={
+        <div className="flex h-screen w-full bg-[#050b08] text-slate-200 items-center justify-center">
+          Carregando...
+        </div>
+      }
+    >
+      <Switch>
+        <Route path="/">{() => <Auth />}</Route>
+        <Route path="/dashboard">{() => <Dashboard />}</Route>
+        <Route path="/404">{() => <NotFound />}</Route>
+        <Route>{() => <NotFound />}</Route>
+      </Switch>
+    </Suspense>
   );
 }
 
