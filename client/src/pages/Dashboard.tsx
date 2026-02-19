@@ -840,6 +840,8 @@ export default function Dashboard() {
   const [simcarThinkingHidden, setSimcarThinkingHidden] = useState(false);
   const [simcarAnalysisInput, setSimcarAnalysisInput] = useState('');
   const [simcarAnalysisSending, setSimcarAnalysisSending] = useState(false);
+  const [simcarLiveThinkingText, setSimcarLiveThinkingText] = useState('');
+  const [simcarLiveAnswerText, setSimcarLiveAnswerText] = useState('');
   const simcarAnalysisChatRef = useRef<HTMLDivElement | null>(null);
 
   // ─── SIMCAR Clip History (for sidebar cards) ───
@@ -2746,6 +2748,151 @@ export default function Dashboard() {
     });
   }, []);
 
+  const sendSimcarFollowUpMessage = useCallback(async (userMsg: string) => {
+    const baseMessages = simcarAnalysisMessages;
+    setSimcarAnalysisMessages((prev) => [...prev, { role: 'user', text: userMsg }]);
+    setSimcarAnalysisSending(true);
+    setSimcarLiveThinkingText('');
+    setSimcarLiveAnswerText('');
+    setSimcarThinkingHidden(false);
+
+    try {
+      const chatMessages = baseMessages.map((m) => ({
+        role: m.role === 'ai' ? 'assistant' : 'user',
+        content: m.text,
+      }));
+      chatMessages.push({ role: 'user', content: userMsg });
+
+      const response = await fetch(apiUrl('/api/simcar/clip/analyze/chat?stream=1'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: chatMessages }),
+      });
+
+      if (!response.ok) {
+        const raw = await response.text().catch(() => '');
+        throw new Error(raw || `HTTP ${response.status}`);
+      }
+
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      if (contentType.includes('application/json')) {
+        const data = await response.json().catch(() => ({}));
+        const parsed = splitThinkContent(String(data?.content || data?.error || 'Sem resposta.'));
+        const aiMsg: SimcarAnalysisMessage = {
+          role: 'ai',
+          text: parsed.cleanText,
+          thinkingText: parsed.thinkingText || undefined,
+        };
+        if (parsed.thinkingText) {
+          setSimcarThinkingText(parsed.thinkingText);
+        }
+        setSimcarAnalysisMessages((prev) => [...prev, aiMsg]);
+        if (simcarClipJobId) {
+          const nextHistory = [...baseMessages, { role: 'user' as const, text: userMsg }, aiMsg];
+          void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
+        }
+        return;
+      }
+
+      if (!response.body) {
+        throw new Error('Resposta sem stream.');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let streamAnswer = '';
+      let streamThinking = '';
+      let completedContent = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (!payload) continue;
+          let event: any;
+          try {
+            event = JSON.parse(payload);
+          } catch {
+            continue;
+          }
+
+          if (event.type === 'delta') {
+            streamAnswer = String(event.answerText || streamAnswer || '');
+            streamThinking = String(event.thinkingText || streamThinking || '');
+            setSimcarLiveAnswerText(streamAnswer);
+            setSimcarLiveThinkingText(streamThinking);
+            if (streamThinking.trim()) {
+              setSimcarThinkingText(streamThinking.trim());
+            }
+          } else if (event.type === 'complete') {
+            completedContent = String(event.content || '');
+            streamAnswer = String(event.answerText || streamAnswer || '');
+            streamThinking = String(event.thinkingText || streamThinking || '');
+            setSimcarLiveAnswerText(streamAnswer);
+            setSimcarLiveThinkingText(streamThinking);
+            if (streamThinking.trim()) {
+              setSimcarThinkingText(streamThinking.trim());
+            }
+          } else if (event.type === 'error') {
+            throw new Error(String(event.message || 'Erro no stream de análise.'));
+          }
+        }
+      }
+
+      const rawContent = completedContent
+        || (streamThinking.trim()
+          ? `<think>\n${streamThinking.trim()}\n</think>\n\n${streamAnswer}`
+          : streamAnswer || 'Sem resposta.');
+      const parsed = splitThinkContent(String(rawContent));
+      const aiMsg: SimcarAnalysisMessage = {
+        role: 'ai',
+        text: parsed.cleanText,
+        thinkingText: parsed.thinkingText || undefined,
+      };
+
+      if (parsed.thinkingText) {
+        setSimcarThinkingText(parsed.thinkingText);
+      }
+      setSimcarAnalysisMessages((prev) => [...prev, aiMsg]);
+
+      if (simcarClipJobId) {
+        const nextHistory = [...baseMessages, { role: 'user' as const, text: userMsg }, aiMsg];
+        void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
+      }
+    } catch (err: any) {
+      const aiText = `❌ ${err.message || 'Erro ao processar resposta.'}`;
+      setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: aiText }]);
+      if (simcarClipJobId) {
+        const nextHistory = [
+          ...baseMessages,
+          { role: 'user' as const, text: userMsg },
+          { role: 'ai' as const, text: aiText },
+        ];
+        void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
+      }
+    } finally {
+      setSimcarAnalysisSending(false);
+      setSimcarLiveThinkingText('');
+      setSimcarLiveAnswerText('');
+      setTimeout(() => {
+        simcarAnalysisChatRef.current?.scrollTo({ top: simcarAnalysisChatRef.current.scrollHeight, behavior: 'smooth' });
+      }, 100);
+    }
+  }, [
+    simcarAnalysisMessages,
+    splitThinkContent,
+    simcarClipJobId,
+    patchPersistedSimcarClip,
+    simcarAnalysisChatRef,
+  ]);
+
   const readFileAsDataUrl = (file: File) =>
     new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -3623,6 +3770,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   setSimcarAnalysisProgress(null);
                   setSimcarThinkingText('');
                   setSimcarThinkingHidden(false);
+                  setSimcarLiveThinkingText('');
+                  setSimcarLiveAnswerText('');
                   setActiveView('simcar-clip');
                 }}
                 className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 transition-all duration-300 p-[1px] shadow-lg shadow-purple-900/30"
@@ -3708,6 +3857,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     setSimcarAnalysisMessages(restoredMessages);
                     setSimcarThinkingText(extractSimcarThinkingText(restoredMessages));
                     setSimcarThinkingHidden(false);
+                    setSimcarLiveThinkingText('');
+                    setSimcarLiveAnswerText('');
                     setSimcarClipProcessing(false);
                     setSimcarAnalysisProcessing(false);
                     setSimcarClipError(null);
@@ -3750,6 +3901,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         setSimcarAnalysisMessages([]);
                         setSimcarThinkingText('');
                         setSimcarThinkingHidden(false);
+                        setSimcarLiveThinkingText('');
+                        setSimcarLiveAnswerText('');
                       }
                     }}
                     className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition xl:block lg:hidden"
@@ -4544,8 +4697,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               setSimcarAnalysisProgress({ step: 'starting', percent: 0, message: 'Iniciando análise...' });
                               setSimcarAnalysisImages([]);
                               setSimcarAnalysisMessages([]);
-                              setSimcarThinkingText('Iniciando análise do recorte...');
+                              setSimcarThinkingText('');
                               setSimcarThinkingHidden(false);
+                              setSimcarLiveThinkingText('');
+                              setSimcarLiveAnswerText('');
                               try {
                                 const response = await fetch(apiUrl('/api/simcar/clip/analyze'), {
                                   method: 'POST',
@@ -4573,7 +4728,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                         const event = JSON.parse(line.slice(6));
                                         if (event.type === 'progress') {
                                           setSimcarAnalysisProgress({ step: event.step, percent: event.percent, message: event.message });
-                                          if (event.message) appendSimcarThinking(event.message);
+                                        } else if (event.type === 'model_thinking') {
+                                          const source = event.source ? `[${event.source}]` : '';
+                                          const thought = String(event.thinkingText || '').trim();
+                                          if (thought) {
+                                            appendSimcarThinking(source ? `${source}\n${thought}` : thought);
+                                            setSimcarThinkingHidden(false);
+                                          }
                                         } else if (event.type === 'complete') {
                                           const parsed = splitThinkContent(String(event.analysis || ''));
                                           if (parsed.thinkingText) {
@@ -4599,7 +4760,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                             analysisMessages: [aiMessage],
                                           });
                                         } else if (event.type === 'error') {
-                                          appendSimcarThinking(`Erro: ${event.message}`);
                                           setSimcarAnalysisMessages([{ role: 'ai', text: `❌ ${event.message}` }]);
                                           setSimcarAnalysisProgress(null);
                                         }
@@ -4823,9 +4983,25 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           ))}
                           {simcarAnalysisSending && (
                             <div className="flex justify-start">
-                              <div className="bg-white/5 rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-2">
-                                <Loader2 size={14} className="animate-spin text-purple-400" />
-                                <span className="text-xs text-slate-400">Pensando...</span>
+                              <div className="max-w-[90%] rounded-2xl rounded-bl-md px-4 py-3 bg-[#111a20]/80 border border-purple-500/20 text-slate-200">
+                                {!simcarThinkingHidden && simcarLiveThinkingText.trim() && (
+                                  <div className="mb-3 rounded-xl border border-purple-400/30 bg-purple-500/10 px-3 py-2">
+                                    <p className="text-[10px] uppercase tracking-wider text-purple-300 mb-1">Pensamento da IA</p>
+                                    <p className="text-xs leading-relaxed whitespace-pre-wrap text-slate-300/90">
+                                      {simcarLiveThinkingText}
+                                    </p>
+                                  </div>
+                                )}
+                                {simcarLiveAnswerText.trim() ? (
+                                  <div className="analysis-markdown">
+                                    {renderAnalysisRichText(simcarLiveAnswerText)}
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <Loader2 size={14} className="animate-spin text-purple-400" />
+                                    <span className="text-xs text-slate-400">Pensando...</span>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )}
@@ -4845,61 +5021,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 if (e.key === 'Enter' && simcarAnalysisInput.trim() && !simcarAnalysisSending) {
                                   const userMsg = simcarAnalysisInput.trim();
                                   setSimcarAnalysisInput('');
-                                  setSimcarAnalysisMessages((prev) => [...prev, { role: 'user', text: userMsg }]);
-                                  setSimcarAnalysisSending(true);
-                                  appendSimcarThinking(`Pergunta complementar: ${userMsg}`);
-                                  setSimcarThinkingHidden(false);
-
-                                  try {
-                                    // Build chat history for context
-                                    const chatMessages = simcarAnalysisMessages.map((m) => ({
-                                      role: m.role === 'ai' ? 'assistant' : 'user',
-                                      content: m.text,
-                                    }));
-                                    chatMessages.push({ role: 'user', content: userMsg });
-
-                                    const response = await fetch(apiUrl('/api/simcar/clip/analyze/chat'), {
-                                      method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ messages: chatMessages }),
-                                    });
-                                    const data = await response.json();
-                                    const parsed = splitThinkContent(String(data.content || data.error || 'Sem resposta.'));
-                                    const aiMsg: SimcarAnalysisMessage = {
-                                      role: 'ai',
-                                      text: parsed.cleanText,
-                                      thinkingText: parsed.thinkingText || undefined,
-                                    };
-                                    if (parsed.thinkingText) {
-                                      appendSimcarThinking(parsed.thinkingText);
-                                      setSimcarThinkingHidden(false);
-                                    }
-                                    setSimcarAnalysisMessages((prev) => [...prev, aiMsg]);
-                                    if (simcarClipJobId) {
-                                      const nextHistory = [
-                                        ...simcarAnalysisMessages,
-                                        { role: 'user' as const, text: userMsg },
-                                        aiMsg,
-                                      ];
-                                      void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
-                                    }
-                                  } catch (err: any) {
-                                    const aiText = `❌ ${err.message}`;
-                                    setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: aiText }]);
-                                    if (simcarClipJobId) {
-                                      const nextHistory = [
-                                        ...simcarAnalysisMessages,
-                                        { role: 'user' as const, text: userMsg },
-                                        { role: 'ai' as const, text: aiText },
-                                      ];
-                                      void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
-                                    }
-                                  } finally {
-                                    setSimcarAnalysisSending(false);
-                                    setTimeout(() => {
-                                      simcarAnalysisChatRef.current?.scrollTo({ top: simcarAnalysisChatRef.current.scrollHeight, behavior: 'smooth' });
-                                    }, 100);
-                                  }
+                                  await sendSimcarFollowUpMessage(userMsg);
                                 }
                               }}
                             />
@@ -4908,60 +5030,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 if (!simcarAnalysisInput.trim() || simcarAnalysisSending) return;
                                 const userMsg = simcarAnalysisInput.trim();
                                 setSimcarAnalysisInput('');
-                                setSimcarAnalysisMessages((prev) => [...prev, { role: 'user', text: userMsg }]);
-                                setSimcarAnalysisSending(true);
-                                appendSimcarThinking(`Pergunta complementar: ${userMsg}`);
-                                setSimcarThinkingHidden(false);
-
-                                try {
-                                  const chatMessages = simcarAnalysisMessages.map((m) => ({
-                                    role: m.role === 'ai' ? 'assistant' : 'user',
-                                    content: m.text,
-                                  }));
-                                  chatMessages.push({ role: 'user', content: userMsg });
-
-                                  const response = await fetch(apiUrl('/api/simcar/clip/analyze/chat'), {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ messages: chatMessages }),
-                                  });
-                                  const data = await response.json();
-                                  const parsed = splitThinkContent(String(data.content || data.error || 'Sem resposta.'));
-                                  const aiMsg: SimcarAnalysisMessage = {
-                                    role: 'ai',
-                                    text: parsed.cleanText,
-                                    thinkingText: parsed.thinkingText || undefined,
-                                  };
-                                  if (parsed.thinkingText) {
-                                    appendSimcarThinking(parsed.thinkingText);
-                                    setSimcarThinkingHidden(false);
-                                  }
-                                  setSimcarAnalysisMessages((prev) => [...prev, aiMsg]);
-                                  if (simcarClipJobId) {
-                                    const nextHistory = [
-                                      ...simcarAnalysisMessages,
-                                      { role: 'user' as const, text: userMsg },
-                                      aiMsg,
-                                    ];
-                                    void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
-                                  }
-                                } catch (err: any) {
-                                  const aiText = `❌ ${err.message}`;
-                                  setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: aiText }]);
-                                  if (simcarClipJobId) {
-                                    const nextHistory = [
-                                      ...simcarAnalysisMessages,
-                                      { role: 'user' as const, text: userMsg },
-                                      { role: 'ai' as const, text: aiText },
-                                    ];
-                                    void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
-                                  }
-                                } finally {
-                                  setSimcarAnalysisSending(false);
-                                  setTimeout(() => {
-                                    simcarAnalysisChatRef.current?.scrollTo({ top: simcarAnalysisChatRef.current.scrollHeight, behavior: 'smooth' });
-                                  }, 100);
-                                }
+                                await sendSimcarFollowUpMessage(userMsg);
                               }}
                               disabled={!simcarAnalysisInput.trim() || simcarAnalysisSending}
                               className="p-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:bg-white/5 disabled:text-slate-500 text-white transition-colors"
