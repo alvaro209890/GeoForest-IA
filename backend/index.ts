@@ -75,15 +75,69 @@ async function startServer() {
 
   app.use(express.json({ limit: "25mb" }));
 
-  // Basic CORS for local development
+  const isDevelopment = process.env.NODE_ENV !== "production";
+  const normalizeOrigin = (value: string) => value.trim().replace(/\/+$/, "").toLowerCase();
+  const defaultCorsOrigins = [
+    "http://localhost:5173",
+    "http://localhost:4173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:4173",
+    "http://127.0.0.1:3000",
+    "https://ia-florestal.web.app",
+    "http://ia-florestal.web.app",
+    "https://ia-florestal.firebaseapp.com",
+    "http://ia-florestal.firebaseapp.com",
+  ].map(normalizeOrigin);
+  const corsOrigins = new Set(defaultCorsOrigins);
+  const corsOriginRegex = [
+    /^https?:\/\/localhost(?::\d+)?$/i,
+    /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
+    /^https?:\/\/ia-florestal\.web\.app$/i,
+    /^https?:\/\/ia-florestal\.firebaseapp\.com$/i,
+  ];
+  const corsEnv = process.env.CORS_ORIGINS;
+  if (corsEnv) {
+    corsEnv
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean)
+      .forEach((origin) => corsOrigins.add(normalizeOrigin(origin)));
+  }
+  const isOriginAllowed = (origin: string) => {
+    if (!origin) return false;
+    const normalized = normalizeOrigin(origin);
+    if (corsOrigins.has(normalized)) return true;
+    return corsOriginRegex.some((re) => re.test(normalized));
+  };
+
+  // CORS for browser clients
   app.use((req, res, next) => {
-    if (process.env.NODE_ENV !== "production") {
+    const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
+    const originAllowed = isDevelopment || isOriginAllowed(origin);
+    const requestedHeaders =
+      typeof req.headers["access-control-request-headers"] === "string"
+        ? req.headers["access-control-request-headers"]
+        : "";
+
+    if (isDevelopment) {
       res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    } else if (originAllowed) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
     }
+
+    if (originAllowed) {
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        requestedHeaders || "Content-Type, Authorization, Accept, Origin",
+      );
+      res.setHeader("Access-Control-Max-Age", "86400");
+    }
+
     if (req.method === "OPTIONS") {
-      res.status(204).end();
+      res.status(originAllowed ? 204 : 403).end();
       return;
     }
     next();
@@ -1960,6 +2014,4 @@ async function startServer() {
 }
 
 startServer().catch(console.error);
-
-
 
