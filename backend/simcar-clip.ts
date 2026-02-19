@@ -1150,6 +1150,7 @@ async function processClip(
 
     sendSSE(res, {
         type: "complete",
+        jobId,
         downloadUrl: `/api/simcar/clip/download/${jobId}`,
         inputZipUrl,
         outputZipUrl,
@@ -1585,6 +1586,64 @@ function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
     return { mimeType: match[1], base64: match[2] };
 }
 
+function isTruncationFinishReason(reason: unknown): boolean {
+    const normalized = String(reason || "").trim().toLowerCase();
+    return (
+        normalized === "length" ||
+        normalized === "max_tokens" ||
+        normalized === "max_output_tokens" ||
+        normalized === "token_limit"
+    );
+}
+
+const CONTINUATION_INSTRUCTION =
+    "Sua resposta anterior foi cortada. Continue EXATAMENTE de onde parou.\n" +
+    "Regras:\n" +
+    "- Nao repita o que ja foi escrito.\n" +
+    "- Mantenha o mesmo idioma, formato e nivel tecnico.\n" +
+    "- Entregue somente a continuacao a partir da proxima frase.\n" +
+    "- Nao invente dados novos fora do contexto ja fornecido.";
+
+async function continueTruncatedAnalysisText(
+    baseText: string,
+    prompt: string,
+    providerLabel: string,
+    finishReason: unknown,
+): Promise<string> {
+    const currentText = String(baseText || "").trim();
+    if (!currentText || !isTruncationFinishReason(finishReason)) {
+        return currentText;
+    }
+
+    try {
+        console.warn(
+            `[SIMCAR ANALYSIS] ${providerLabel} response truncated (finish=${String(finishReason)}). Requesting continuation...`,
+        );
+        const continuationMessages = [
+            {
+                role: "user" as const,
+                content:
+                    "Você está finalizando um laudo técnico de recorte ambiental.\n" +
+                    "Mantenha o mesmo estilo técnico da resposta original.\n\n" +
+                    `Prompt original:\n${prompt}`,
+            },
+            { role: "assistant" as const, content: trimForContinuation(currentText) || currentText },
+            { role: "user" as const, content: CONTINUATION_INSTRUCTION },
+        ];
+        const continuation = await callTextFollowUp(continuationMessages);
+        const merged = mergeContinuationText(currentText, continuation).trim();
+        console.log(
+            `[SIMCAR ANALYSIS] ${providerLabel} continuation merged (chars=${merged.length})`,
+        );
+        return merged || currentText;
+    } catch (err: any) {
+        console.warn(
+            `[SIMCAR ANALYSIS] ${providerLabel} continuation failed: ${err?.message || String(err)}`,
+        );
+        return currentText;
+    }
+}
+
 async function resolveImageDataUrlForGemini(image: AiImage): Promise<string> {
     if (image.dataUrl) return image.dataUrl;
     if (!image.url) throw new Error(`Imagem sem URL/dataUrl: ${image.caption}`);
@@ -1668,10 +1727,18 @@ async function callVisionAnalysis(
                 }
 
                 const data = await response.json() as any;
-                const content = data?.choices?.[0]?.message?.content;
+                const choice = data?.choices?.[0];
+                const content = normalizeAssistantContent(choice?.message?.content).trim();
                 if (content) {
+                    const finishReason = String(choice?.finish_reason || "stop");
+                    const finalized = await continueTruncatedAnalysisText(
+                        content,
+                        prompt,
+                        `Groq/${model}`,
+                        finishReason,
+                    );
                     console.log(`[SIMCAR ANALYSIS] Success with model: ${model} (attempt ${attempt + 1})`);
-                    return String(content);
+                    return finalized;
                 }
                 lastError = `${model}: empty response`;
             } catch (err: any) {
@@ -1707,6 +1774,34 @@ function buildDualModelMergePrompt(
         "",
         "Seja objetivo e não repita integralmente os textos de origem.",
     ].join("\n");
+}
+
+function splitThinkProgress(raw: string) {
+    let visible = "";
+    const thinkParts: string[] = [];
+    let cursor = 0;
+
+    while (cursor < raw.length) {
+        const start = raw.indexOf("<think>", cursor);
+        if (start === -1) {
+            visible += raw.slice(cursor);
+            break;
+        }
+        visible += raw.slice(cursor, start);
+        const thinkStart = start + "<think>".length;
+        const end = raw.indexOf("</think>", thinkStart);
+        if (end === -1) {
+            thinkParts.push(raw.slice(thinkStart));
+            break;
+        }
+        thinkParts.push(raw.slice(thinkStart, end));
+        cursor = end + "</think>".length;
+    }
+
+    return {
+        thinkingText: thinkParts.join("\n\n").trim(),
+        answerText: visible.trim(),
+    };
 }
 
 async function callGeminiVisionAnalysis(
@@ -1753,7 +1848,7 @@ async function callGeminiVisionAnalysis(
                             contents: [{ role: "user", parts }],
                             generationConfig: {
                                 temperature: 0.1,
-                                maxOutputTokens: currentImages.length > 3 ? 3200 : 2200,
+                                maxOutputTokens: currentImages.length > 3 ? 5200 : 3800,
                             },
                         }),
                         signal: controller.signal,
@@ -1769,15 +1864,22 @@ async function callGeminiVisionAnalysis(
                 }
 
                 const data = await response.json() as any;
-                const content = (data?.candidates?.[0]?.content?.parts || [])
+                const candidate = data?.candidates?.[0];
+                const content = (candidate?.content?.parts || [])
                     .map((p: any) => (typeof p?.text === "string" ? p.text : ""))
                     .filter(Boolean)
                     .join("\n")
                     .trim();
 
                 if (content) {
+                    const finalized = await continueTruncatedAnalysisText(
+                        content,
+                        prompt,
+                        `Gemini/${model}`,
+                        candidate?.finishReason,
+                    );
                     console.log(`[SIMCAR ANALYSIS] Success with Gemini model: ${model} (attempt ${attempt + 1})`);
-                    return content;
+                    return finalized;
                 }
                 const blockReason = data?.promptFeedback?.blockReason;
                 lastError = `${model}: empty response${blockReason ? ` (${blockReason})` : ""}`;
@@ -1964,13 +2066,6 @@ async function callTextFollowUp(
     ];
     const MAX_TOKENS = 2200;
     const MAX_CONTINUATIONS = 2;
-    const continuationInstruction =
-        "Sua resposta anterior foi cortada. Continue EXATAMENTE de onde parou.\n" +
-        "Regras:\n" +
-        "- Nao repita o que ja foi escrito.\n" +
-        "- Mantenha o mesmo idioma, formato e nivel tecnico.\n" +
-        "- Entregue somente a continuacao a partir da proxima frase.\n" +
-        "- Nao invente dados novos fora do contexto ja fornecido.";
 
     let lastError = "";
     for (const model of TEXT_MODELS) {
@@ -1991,7 +2086,7 @@ async function callTextFollowUp(
                 const continuationMessages = [
                     ...messages,
                     { role: "assistant" as const, content: assistantSoFar || mergedContent },
-                    { role: "user" as const, content: continuationInstruction },
+                    { role: "user" as const, content: CONTINUATION_INSTRUCTION },
                 ];
 
                 let continuationObtained = false;
@@ -2028,6 +2123,164 @@ async function callTextFollowUp(
         }
     }
     throw new Error(`Falha nos modelos de texto. Último erro: ${lastError}`);
+}
+
+async function streamTextFollowUp(
+    res: Response,
+    messages: Array<{ role: string; content: any }>,
+): Promise<void> {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
+
+    const TEXT_MODELS = [
+        "openai/gpt-oss-120b",
+        "meta-llama/llama-3.3-70b-versatile",
+        "qwen/qwen3-32b",
+    ];
+    const MAX_TOKENS = 2200;
+    const MAX_CONTINUATIONS = 2;
+
+    let accumulatedAnswer = "";
+    let accumulatedThinking = "";
+    let activeModel = "";
+
+    const writeChunk = (payload: Record<string, any>) => {
+        sendSSE(res, payload);
+    };
+
+    const streamModelSegment = async (
+        segmentModel: string,
+        segmentMessages: Array<{ role: string; content: any }>,
+    ): Promise<{ finishReason: string; segmentText: string }> => {
+        const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+                model: segmentModel,
+                temperature: 0.1,
+                max_tokens: MAX_TOKENS,
+                stream: true,
+                messages: segmentMessages,
+            }),
+        });
+
+        if (!upstream.ok || !upstream.body) {
+            const text = await upstream.text();
+            throw new Error(`groq ${segmentModel} ${upstream.status}: ${text.slice(0, 320)}`);
+        }
+
+        const decoder = new TextDecoder();
+        const reader = upstream.body.getReader();
+        let buffer = "";
+        let finishReason = "";
+        let segmentRaw = "";
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed.startsWith("data:")) continue;
+                const data = trimmed.slice(5).trim();
+                if (!data) continue;
+                if (data === "[DONE]") {
+                    return { finishReason: finishReason || "stop", segmentText: segmentRaw };
+                }
+                try {
+                    const parsed = JSON.parse(data);
+                    const choice = parsed?.choices?.[0];
+                    const delta = choice?.delta?.content;
+                    const fr = choice?.finish_reason;
+                    if (typeof fr === "string" && fr) finishReason = fr;
+                    if (typeof delta === "string" && delta.length > 0) {
+                        segmentRaw += delta;
+                        const segSplit = splitThinkProgress(segmentRaw);
+                        writeChunk({
+                            type: "delta",
+                            model: segmentModel,
+                            thinkingText: mergeContinuationText(accumulatedThinking, segSplit.thinkingText),
+                            answerText: mergeContinuationText(accumulatedAnswer, segSplit.answerText),
+                        });
+                    }
+                } catch {
+                    // ignore malformed upstream chunks
+                }
+            }
+        }
+
+        return { finishReason: finishReason || "stop", segmentText: segmentRaw };
+    };
+
+    let firstResult: { finishReason: string; segmentText: string } | null = null;
+    for (const candidate of TEXT_MODELS) {
+        try {
+            firstResult = await streamModelSegment(candidate, messages);
+            activeModel = candidate;
+            break;
+        } catch (err) {
+            console.warn(`[SIMCAR ANALYSIS CHAT] startup model failed (${candidate})`, err);
+        }
+    }
+    if (!firstResult) {
+        throw new Error("Nenhum modelo disponível para iniciar resposta.");
+    }
+
+    const firstSplit = splitThinkProgress(firstResult.segmentText);
+    accumulatedAnswer = mergeContinuationText(accumulatedAnswer, firstSplit.answerText);
+    accumulatedThinking = mergeContinuationText(accumulatedThinking, firstSplit.thinkingText);
+
+    let continuationsUsed = 0;
+    let lastFinishReason = firstResult.finishReason;
+
+    while (lastFinishReason === "length" && continuationsUsed < MAX_CONTINUATIONS) {
+        continuationsUsed += 1;
+        const assistantSoFar = trimForContinuation(accumulatedAnswer);
+        const continuationMessages = [
+            ...messages,
+            { role: "assistant" as const, content: assistantSoFar || accumulatedAnswer },
+            { role: "user" as const, content: CONTINUATION_INSTRUCTION },
+        ];
+
+        let contResult: { finishReason: string; segmentText: string } | null = null;
+        const candidates = [activeModel, ...TEXT_MODELS.filter((m) => m !== activeModel)];
+        for (const candidate of candidates) {
+            try {
+                contResult = await streamModelSegment(candidate, continuationMessages);
+                activeModel = candidate;
+                break;
+            } catch (err) {
+                console.warn(`[SIMCAR ANALYSIS CHAT] continuation failed (${candidate})`, err);
+            }
+        }
+        if (!contResult) break;
+
+        const contSplit = splitThinkProgress(contResult.segmentText);
+        accumulatedAnswer = mergeContinuationText(accumulatedAnswer, contSplit.answerText);
+        accumulatedThinking = mergeContinuationText(accumulatedThinking, contSplit.thinkingText);
+        lastFinishReason = contResult.finishReason;
+    }
+
+    const finalThinking = accumulatedThinking.trim();
+    const finalAnswer = accumulatedAnswer.trim();
+    const finalContent = finalThinking
+        ? `<think>\n${finalThinking}\n</think>\n\n${finalAnswer}`
+        : finalAnswer;
+
+    writeChunk({
+        type: "complete",
+        model: activeModel || TEXT_MODELS[0],
+        thinkingText: finalThinking,
+        answerText: finalAnswer,
+        content: finalContent,
+    });
 }
 
 /** Pad bbox by a percentage to give visual margin. */
@@ -2697,6 +2950,14 @@ async function processAnalysis(
                     prompt,
                     `${sat.label} (${sat.year})`,
                 );
+                const split = splitThinkProgress(result);
+                if (split.thinkingText) {
+                    sendSSE(res, {
+                        type: "model_thinking",
+                        source: `${sat.label} (${sat.year})`,
+                        thinkingText: split.thinkingText,
+                    });
+                }
                 perSatelliteResults.push({ satelliteLabel: sat.label, year: sat.year, analysis: result });
                 console.log(`[SIMCAR ANALYSIS] ${sat.label} analysis complete (${result.length} chars)`);
             } catch (err: any) {
@@ -2736,6 +2997,14 @@ async function processAnalysis(
             try {
                 const synthesisPrompt = buildSynthesisPrompt(areaHa, layerSummaries, perSatelliteResults);
                 analysisText = await callTextFollowUp([{ role: "user", content: synthesisPrompt }]);
+                const split = splitThinkProgress(analysisText);
+                if (split.thinkingText) {
+                    sendSSE(res, {
+                        type: "model_thinking",
+                        source: "Sintese temporal",
+                        thinkingText: split.thinkingText,
+                    });
+                }
                 console.log(`[SIMCAR ANALYSIS] Synthesis complete (${analysisText.length} chars)`);
             } catch (err: any) {
                 // Synthesis failed — concatenate individual analyses as fallback
@@ -2760,6 +3029,14 @@ async function processAnalysis(
                 prompt,
                 singleContext || "Análise de um único satélite",
             );
+            const split = splitThinkProgress(analysisText);
+            if (split.thinkingText) {
+                sendSSE(res, {
+                    type: "model_thinking",
+                    source: singleContext || "Analise unica",
+                    thinkingText: split.thinkingText,
+                });
+            }
         } catch (err: any) {
             console.error("[SIMCAR ANALYSIS] AI analysis error:", err.message);
             sendSSE(res, { type: "error", message: `Erro na análise IA: ${err.message}` });
@@ -2894,13 +3171,34 @@ export function registerSimcarClipRoutes(app: Express) {
 
     // AI follow-up chat endpoint
     app.post("/api/simcar/clip/analyze/chat", async (req: Request, res: Response) => {
+        const streamMode = String((req.query as any)?.stream || "").toLowerCase() === "1";
         try {
             const { messages } = req.body as {
                 messages?: Array<{ role: string; content: any }>;
             };
 
             if (!messages || !Array.isArray(messages) || messages.length === 0) {
+                if (streamMode) {
+                    res.setHeader("Content-Type", "text/event-stream");
+                    res.setHeader("Cache-Control", "no-cache");
+                    res.setHeader("Connection", "keep-alive");
+                    sendSSE(res, { type: "error", message: "Mensagens inválidas." });
+                    if (!res.writableEnded) res.end();
+                    return;
+                }
                 res.status(400).json({ error: "Mensagens inválidas." });
+                return;
+            }
+
+            if (streamMode) {
+                res.setHeader("Content-Type", "text/event-stream");
+                res.setHeader("Cache-Control", "no-cache");
+                res.setHeader("Connection", "keep-alive");
+                res.setHeader("X-Accel-Buffering", "no");
+                res.flushHeaders();
+
+                await streamTextFollowUp(res, messages);
+                if (!res.writableEnded) res.end();
                 return;
             }
 
@@ -2908,6 +3206,11 @@ export function registerSimcarClipRoutes(app: Express) {
             res.json({ content: reply });
         } catch (err: any) {
             console.error("[SIMCAR ANALYSIS CHAT] Error:", err);
+            if (streamMode) {
+                sendSSE(res, { type: "error", message: err.message || "Erro interno." });
+                if (!res.writableEnded) res.end();
+                return;
+            }
             res.status(500).json({ error: err.message || "Erro interno." });
         }
     });
