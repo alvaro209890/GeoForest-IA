@@ -14,7 +14,7 @@ import {
   reprojectPolygon,
   reprojectBbox,
 } from "./geo-utils";
-import { registerSimcarClipRoutes } from "./simcar-clip";
+import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1702,8 +1702,7 @@ async function startServer() {
   });
 
   app.get("/api/runtime/version", (_req, res) => {
-    const requireGemini =
-      String(process.env.SIMCAR_REQUIRE_GEMINI || "").toLowerCase() === "true";
+    const geminiRuntime = getSimcarGeminiRuntimeConfig();
     res.json({
       ok: true,
       ts: Date.now(),
@@ -1715,9 +1714,15 @@ async function startServer() {
       hasMapCapabilities: true,
       hasKnowledgeHealth: true,
       hasSimcarContextRehydrate: true,
-      hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
-      requireGemini,
-      geminiVisionModels: String(process.env.GEMINI_VISION_MODELS || "gemini-2.5-flash"),
+      hasGeminiKey: geminiRuntime.hasGeminiApiKey,
+      requireGemini: geminiRuntime.requireGemini,
+      geminiApiBase: geminiRuntime.geminiApiBase,
+      geminiImageShare: geminiRuntime.geminiImageShare,
+      geminiVisionModels: geminiRuntime.geminiVisionModels,
+      geminiTextSynthesisModels: geminiRuntime.geminiTextSynthesisModels,
+      hasGroqKey: Boolean(process.env.GROQ_API_KEY),
+      hasCloudinaryKey: Boolean(process.env.CLOUDINARY_API_KEY),
+      hasCloudinarySecret: Boolean(process.env.CLOUDINARY_API_SECRET),
     });
   });
 

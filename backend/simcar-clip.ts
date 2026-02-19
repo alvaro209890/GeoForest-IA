@@ -6,6 +6,7 @@
  *   POST /api/simcar/clip          — SSE stream (progress + result)
  *   GET  /api/simcar/clip/download/:jobId — Download final ZIP
  *   POST /api/simcar/clip/analyze   — SSE stream (AI analysis of clips)
+ *   GET  /api/simcar/gemini/config  — Runtime Gemini config (+ optional probe)
  */
 import type { Express, Request, Response } from "express";
 import path from "path";
@@ -1229,27 +1230,59 @@ const GEMINI_TEXT_FALLBACK_MODELS = [
     "gemini-2.5-flash",
 ];
 
+function normalizeGeminiModelName(raw: string): string {
+    return String(raw || "")
+        .trim()
+        .replace(/^['"`]+|['"`]+$/g, "")
+        .replace(/^models\//i, "")
+        .replace(/:generateContent$/i, "")
+        .trim();
+}
+
 function buildGeminiModelChain(configValue: string | undefined, backupModels: string[]): string[] {
     const configured = String(configValue || "")
-        .split(",")
-        .map((x) => x.trim())
+        .split(/[,\n;]+/)
+        .map((x) => normalizeGeminiModelName(x))
         .filter(Boolean);
-    return Array.from(new Set([...configured, ...backupModels]));
+    const normalizedBackup = backupModels
+        .map((x) => normalizeGeminiModelName(x))
+        .filter(Boolean);
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const model of [...configured, ...normalizedBackup]) {
+        const key = model.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(model);
+    }
+    return merged;
 }
 
 const GEMINI_VISION_MODELS = buildGeminiModelChain(
-    process.env.GEMINI_VISION_MODELS,
+    process.env.GEMINI_VISION_MODELS || process.env.GEMINI_MODELS,
     GEMINI_VISION_FALLBACK_MODELS,
 );
 const GEMINI_TEXT_SYNTHESIS_MODELS = buildGeminiModelChain(
-    process.env.GEMINI_TEXT_SYNTHESIS_MODELS,
+    process.env.GEMINI_TEXT_SYNTHESIS_MODELS || process.env.GEMINI_MODELS,
     GEMINI_TEXT_FALLBACK_MODELS,
 );
-const GEMINI_IMAGE_SHARE_RAW = Number(process.env.GEMINI_IMAGE_SHARE || "0.75");
+const GEMINI_IMAGE_SHARE_INPUT = String(process.env.GEMINI_IMAGE_SHARE || "0.75").replace(",", ".");
+const GEMINI_IMAGE_SHARE_RAW = Number(GEMINI_IMAGE_SHARE_INPUT);
 const GEMINI_IMAGE_SHARE = Number.isFinite(GEMINI_IMAGE_SHARE_RAW)
     ? Math.min(0.95, Math.max(0.55, GEMINI_IMAGE_SHARE_RAW))
     : 0.75;
 const SIMCAR_REQUIRE_GEMINI = String(process.env.SIMCAR_REQUIRE_GEMINI || "").toLowerCase() === "true";
+
+export function getSimcarGeminiRuntimeConfig() {
+    return {
+        hasGeminiApiKey: Boolean(process.env.GEMINI_API_KEY),
+        requireGemini: SIMCAR_REQUIRE_GEMINI,
+        geminiApiBase: GEMINI_API_BASE,
+        geminiVisionModels: GEMINI_VISION_MODELS,
+        geminiTextSynthesisModels: GEMINI_TEXT_SYNTHESIS_MODELS,
+        geminiImageShare: GEMINI_IMAGE_SHARE,
+    };
+}
 
 /** Generate a WMS GetMap URL for a given layer + bbox. */
 function buildWmsGetMapUrl(
@@ -1810,6 +1843,59 @@ async function callGeminiTextSynthesis(
     }
 
     throw new Error(`Gemini synthesis falhou para ${contextLabel}. Último erro: ${lastError}`);
+}
+
+async function probeGeminiModel(model: string): Promise<{ ok: boolean; error?: string }> {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        return { ok: false, error: "GEMINI_API_KEY ausente" };
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+        const response = await fetch(
+            `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contents: [{ role: "user", parts: [{ text: "Responda somente OK." }] }],
+                    generationConfig: {
+                        temperature: 0,
+                        maxOutputTokens: 16,
+                    },
+                }),
+                signal: controller.signal,
+            },
+        );
+
+        if (!response.ok) {
+            const text = await response.text();
+            return { ok: false, error: `${response.status}: ${text.slice(0, 180)}` };
+        }
+
+        const data = await response.json() as any;
+        const candidate = data?.candidates?.[0];
+        const content = (candidate?.content?.parts || [])
+            .map((p: any) => (typeof p?.text === "string" ? p.text : ""))
+            .filter(Boolean)
+            .join("\n")
+            .trim();
+
+        if (!content) {
+            const finish = candidate?.finishReason ? ` finish=${candidate.finishReason}` : "";
+            const block = data?.promptFeedback?.blockReason ? ` block=${data.promptFeedback.blockReason}` : "";
+            return { ok: false, error: `empty_response${finish}${block}` };
+        }
+
+        return { ok: true };
+    } catch (err: any) {
+        const isAbort = err?.name === "AbortError";
+        return { ok: false, error: isAbort ? "timeout (20s)" : (err?.message || String(err)) };
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 async function resolveImageDataUrlForGemini(image: AiImage): Promise<string> {
@@ -3241,6 +3327,45 @@ async function processAnalysis(
 /* ─── Express Route Registration ─────────────────────────────── */
 
 export function registerSimcarClipRoutes(app: Express) {
+    app.get("/api/simcar/gemini/config", async (req: Request, res: Response) => {
+        const probe = String((req.query as any)?.probe || "").toLowerCase() === "1";
+        const runtime = getSimcarGeminiRuntimeConfig();
+
+        if (!probe) {
+            res.json({
+                ok: true,
+                ...runtime,
+                note: "Use ?probe=1 para testar chamada real em cada modelo Gemini configurado.",
+            });
+            return;
+        }
+
+        const modelsToProbe = Array.from(
+            new Set([...runtime.geminiVisionModels, ...runtime.geminiTextSynthesisModels]),
+        );
+        const modelChecks: Array<{ model: string; ok: boolean; error?: string }> = [];
+        for (const model of modelsToProbe) {
+            const check = await probeGeminiModel(model);
+            modelChecks.push({
+                model,
+                ok: check.ok,
+                error: check.error,
+            });
+        }
+        const okModels = modelChecks.filter((m) => m.ok).length;
+
+        res.json({
+            ok: okModels > 0,
+            ...runtime,
+            probe: true,
+            checkedAt: new Date().toISOString(),
+            totalModels: modelChecks.length,
+            okModels,
+            failedModels: modelChecks.length - okModels,
+            models: modelChecks,
+        });
+    });
+
     // SSE endpoint for clip processing
     app.post("/api/simcar/clip", async (req: Request, res: Response) => {
         // SSE headers
