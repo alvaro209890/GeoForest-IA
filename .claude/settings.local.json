@@ -16,7 +16,11 @@
       "Bash(curl:*)",
       "Bash(npx tsc:*)",
       "Bash(pnpm dev:*)",
-      "Bash(pnpm dev:server:*)"
+      "Bash(pnpm dev:server:*)",
+      "Bash(pnpm install:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
