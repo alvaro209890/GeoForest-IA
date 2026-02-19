@@ -1216,20 +1216,35 @@ const ANALYSIS_VISION_MODELS = [
     "meta-llama/llama-4-scout-17b-16e-instruct",
 ];
 const GEMINI_API_BASE = process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta";
-const GEMINI_VISION_MODELS = (
-    process.env.GEMINI_VISION_MODELS ||
-    "gemini-3-pro,nano-banana-pro,gemini-3-flash,gemini-2.5-flash"
-)
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
-const GEMINI_TEXT_SYNTHESIS_MODELS = (
-    process.env.GEMINI_TEXT_SYNTHESIS_MODELS ||
-    "gemini-3-pro,gemini-3-flash,gemini-2.5-pro,gemini-2.5-flash"
-)
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
+const GEMINI_VISION_FALLBACK_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-3-flash",
+    "nano-banana-pro",
+    "gemini-3-pro",
+];
+const GEMINI_TEXT_FALLBACK_MODELS = [
+    "gemini-3-pro",
+    "gemini-3-flash",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+];
+
+function buildGeminiModelChain(configValue: string | undefined, backupModels: string[]): string[] {
+    const configured = String(configValue || "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+    return Array.from(new Set([...configured, ...backupModels]));
+}
+
+const GEMINI_VISION_MODELS = buildGeminiModelChain(
+    process.env.GEMINI_VISION_MODELS,
+    GEMINI_VISION_FALLBACK_MODELS,
+);
+const GEMINI_TEXT_SYNTHESIS_MODELS = buildGeminiModelChain(
+    process.env.GEMINI_TEXT_SYNTHESIS_MODELS,
+    GEMINI_TEXT_FALLBACK_MODELS,
+);
 const GEMINI_IMAGE_SHARE_RAW = Number(process.env.GEMINI_IMAGE_SHARE || "0.75");
 const GEMINI_IMAGE_SHARE = Number.isFinite(GEMINI_IMAGE_SHARE_RAW)
     ? Math.min(0.95, Math.max(0.55, GEMINI_IMAGE_SHARE_RAW))

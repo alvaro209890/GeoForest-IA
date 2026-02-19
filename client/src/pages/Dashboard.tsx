@@ -843,6 +843,8 @@ export default function Dashboard() {
   const [simcarLiveThinkingText, setSimcarLiveThinkingText] = useState('');
   const [simcarLiveAnswerText, setSimcarLiveAnswerText] = useState('');
   const simcarAnalysisChatRef = useRef<HTMLDivElement | null>(null);
+  const simcarThinkingPanelRef = useRef<HTMLDivElement | null>(null);
+  const simcarLiveAnswerPanelRef = useRef<HTMLDivElement | null>(null);
 
   // ─── SIMCAR Clip History (for sidebar cards) ───
   const [simcarClipHistory, setSimcarClipHistory] = useState<SimcarClipHistoryItem[]>([]);
@@ -1186,6 +1188,31 @@ export default function Dashboard() {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, activeView]);
+
+  useEffect(() => {
+    if (simcarThinkingHidden) return;
+    const target = simcarThinkingPanelRef.current;
+    if (!target) return;
+    const raf = window.requestAnimationFrame(() => {
+      target.scrollTop = target.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [
+    simcarThinkingText,
+    simcarLiveThinkingText,
+    simcarAnalysisProcessing,
+    simcarAnalysisSending,
+    simcarThinkingHidden,
+  ]);
+
+  useEffect(() => {
+    const target = simcarLiveAnswerPanelRef.current;
+    if (!target) return;
+    const raf = window.requestAnimationFrame(() => {
+      target.scrollTop = target.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [simcarLiveAnswerText, simcarAnalysisSending]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -4855,13 +4882,26 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     )}
 
                     {/* AI Thinking Bubble (Top) */}
-                    {(simcarAnalysisProcessing || simcarThinkingText.trim()) && (
-                      <section className="relative rounded-2xl border border-purple-400/25 bg-[#101622]/75 backdrop-blur-md px-4 py-3">
-                        <div className="absolute -top-1.5 left-8 h-3 w-3 rotate-45 border-l border-t border-purple-400/25 bg-[#101622]/75" />
+                    {(simcarAnalysisProcessing || simcarAnalysisSending || simcarThinkingText.trim() || simcarLiveThinkingText.trim()) && (
+                      <section className="sticky top-2 z-20 relative rounded-2xl border border-purple-400/25 bg-[#101622]/85 backdrop-blur-md px-4 py-3 shadow-lg shadow-black/25">
+                        <div className="absolute -top-1.5 left-8 h-3 w-3 rotate-45 border-l border-t border-purple-400/25 bg-[#101622]/85" />
                         <div className="flex items-center justify-between gap-3 mb-2">
                           <div className="flex items-center gap-2">
                             <Brain size={14} className="text-purple-300" />
                             <h3 className="font-semibold text-slate-200 text-xs uppercase tracking-wider">Pensamento da IA</h3>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border ${simcarAnalysisSending
+                              ? 'border-purple-400/35 bg-purple-500/15 text-purple-200'
+                              : simcarAnalysisProcessing
+                                ? 'border-indigo-400/35 bg-indigo-500/15 text-indigo-200'
+                                : 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+                              }`}>
+                              <span className="thinking-status-dot" />
+                              {simcarAnalysisSending
+                                ? (simcarLiveAnswerText.trim() ? 'Escrevendo resposta' : 'Pensando em tempo real')
+                                : simcarAnalysisProcessing
+                                  ? 'Pensando nos modelos'
+                                  : 'Concluído'}
+                            </span>
                           </div>
                           <div className="flex items-center gap-2">
                             <button
@@ -4873,7 +4913,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             </button>
                             <button
                               type="button"
-                              onClick={() => setSimcarThinkingText('')}
+                              onClick={() => {
+                                setSimcarThinkingText('');
+                                setSimcarLiveThinkingText('');
+                              }}
                               className="px-2.5 py-1 rounded-lg text-[10px] font-medium bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-300 transition-colors"
                             >
                               Apagar
@@ -4883,10 +4926,18 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         {simcarThinkingHidden ? (
                           <p className="text-xs text-slate-500 italic">Pensamento oculto.</p>
                         ) : (
-                          <div className="max-h-44 overflow-y-auto custom-scrollbar rounded-xl border border-white/10 bg-black/25 px-3 py-2">
-                            <p className="text-xs leading-relaxed text-slate-300/85 whitespace-pre-wrap">
-                              {simcarThinkingText.trim() || 'Aguardando novos passos da análise...'}
-                            </p>
+                          <div className="space-y-2">
+                            <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                              <p className="text-[10px] uppercase tracking-wider text-purple-300/90 mb-1">Raciocínio em tempo real</p>
+                              <div ref={simcarThinkingPanelRef} className="max-h-44 overflow-y-auto custom-scrollbar">
+                                <p className="text-xs leading-relaxed text-slate-300/90 whitespace-pre-wrap">
+                                  {(simcarLiveThinkingText || simcarThinkingText).trim() ||
+                                    (simcarAnalysisProcessing || simcarAnalysisSending
+                                      ? 'Aguardando o primeiro bloco de pensamento...'
+                                      : 'Sem pensamento disponível.')}
+                                </p>
+                              </div>
+                            </div>
                           </div>
                         )}
                       </section>
@@ -4984,22 +5035,15 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           {simcarAnalysisSending && (
                             <div className="flex justify-start">
                               <div className="max-w-[90%] rounded-2xl rounded-bl-md px-4 py-3 bg-[#111a20]/80 border border-purple-500/20 text-slate-200">
-                                {!simcarThinkingHidden && simcarLiveThinkingText.trim() && (
-                                  <div className="mb-3 rounded-xl border border-purple-400/30 bg-purple-500/10 px-3 py-2">
-                                    <p className="text-[10px] uppercase tracking-wider text-purple-300 mb-1">Pensamento da IA</p>
-                                    <p className="text-xs leading-relaxed whitespace-pre-wrap text-slate-300/90">
-                                      {simcarLiveThinkingText}
-                                    </p>
-                                  </div>
-                                )}
                                 {simcarLiveAnswerText.trim() ? (
-                                  <div className="analysis-markdown">
+                                  <div className="analysis-markdown" ref={simcarLiveAnswerPanelRef}>
                                     {renderAnalysisRichText(simcarLiveAnswerText)}
+                                    <span className="thinking-caret ml-1 align-middle" />
                                   </div>
                                 ) : (
                                   <div className="flex items-center gap-2">
                                     <Loader2 size={14} className="animate-spin text-purple-400" />
-                                    <span className="text-xs text-slate-400">Pensando...</span>
+                                    <span className="text-xs text-slate-400">Pensando e estruturando resposta...</span>
                                   </div>
                                 )}
                               </div>
@@ -6250,6 +6294,28 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
             40% { transform: scale(1); opacity: 1; }
           }
+          .thinking-status-dot {
+            width: 0.36rem;
+            height: 0.36rem;
+            border-radius: 999px;
+            background: currentColor;
+            opacity: 0.9;
+            animation: thinking-pulse 1.1s ease-in-out infinite;
+          }
+          @keyframes thinking-pulse {
+            0%, 100% { transform: scale(0.7); opacity: 0.45; }
+            50% { transform: scale(1); opacity: 1; }
+          }
+          .thinking-caret {
+            display: inline-block;
+            width: 0.5rem;
+            height: 0.92em;
+            border-right: 2px solid rgba(196, 181, 253, 0.95);
+            animation: thinking-caret-blink 0.9s step-end infinite;
+          }
+          @keyframes thinking-caret-blink {
+            50% { opacity: 0; }
+          }
           .chat-markdown p {
             margin: 0;
             white-space: pre-wrap;
@@ -6357,7 +6423,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             filter: saturate(0.95);
           }
           @media (prefers-reduced-motion: reduce) {
-            .animate-fade-in-up, .typing-dot {
+            .animate-fade-in-up, .typing-dot, .thinking-status-dot, .thinking-caret {
               animation: none !important;
             }
           }
