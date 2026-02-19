@@ -1069,14 +1069,24 @@ async function processClip(
 const SEMA_WMS_BASE = process.env.SEMA_WMS_BASE_URL || "https://geo.sema.mt.gov.br/geoserver/ows";
 const SEMA_WMS_AUTHKEY = process.env.SEMA_WMS_AUTHKEY || "541085de-9a2e-454e-bdba-eb3d57a2f492";
 const SPOT_LAYER = "Mosaicos:MOSAICO_SPOT_SEPLAN";
-const LANDSAT5_2007_LAYER = process.env.WMS_LANDSAT5_2007 || "Mosaicos:MOSAICO_LANDSAT5_2007";
-const LANDSAT5_2008_LAYER = process.env.WMS_LANDSAT5_2008 || "Mosaicos:MOSAICO_LANDSAT5_2008";
+const LANDSAT5_2007_LAYER = process.env.WMS_LANDSAT5_2007 || "Mosaicos:LANDSAT_5_2007";
+const LANDSAT5_2008_LAYER = process.env.WMS_LANDSAT5_2008 || "Mosaicos:LANDSAT_5_2008";
 
 /** Available satellite base layers for analysis. */
-const SATELLITE_LAYERS: Record<string, { wmsLayer: string; label: string; year: number }> = {
+const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]; label: string; year: number }> = {
     spot_2008: { wmsLayer: SPOT_LAYER, label: "SPOT 2008", year: 2008 },
-    landsat5_2007: { wmsLayer: LANDSAT5_2007_LAYER, label: "Landsat 5 (2007)", year: 2007 },
-    landsat5_2008: { wmsLayer: LANDSAT5_2008_LAYER, label: "Landsat 5 (2008)", year: 2008 },
+    landsat5_2007: {
+        wmsLayer: LANDSAT5_2007_LAYER,
+        wmsAliases: ["Mosaicos:LANDSAT_5_2007", "Mosaicos:MOSAICO_LANDSAT5_2007"],
+        label: "Landsat 5 (2007)",
+        year: 2007,
+    },
+    landsat5_2008: {
+        wmsLayer: LANDSAT5_2008_LAYER,
+        wmsAliases: ["Mosaicos:LANDSAT_5_2008", "Mosaicos:MOSAICO_LANDSAT5_2008"],
+        label: "Landsat 5 (2008)",
+        year: 2008,
+    },
 };
 
 function getOrderedSatelliteKeys(selectedLayers: string[] = []): string[] {
@@ -1092,10 +1102,8 @@ function getOrderedSatelliteKeys(selectedLayers: string[] = []): string[] {
 }
 
 const ANALYSIS_VISION_MODELS = [
-    "openai/gpt-oss-120b",
     "meta-llama/llama-4-maverick-17b-128e-instruct",
     "meta-llama/llama-4-scout-17b-16e-instruct",
-    "qwen/qwen3-32b",
 ];
 
 /** Generate a WMS GetMap URL for a given layer + bbox. */
@@ -1877,11 +1885,24 @@ async function generateSatelliteImages(
             message: `Baixando imagem ${sat.label}...`,
         });
 
-        let basePng: Buffer;
-        try {
-            basePng = await fetchWmsImageBuffer([sat.wmsLayer], paddedBbox, IMG_W, IMG_H);
-        } catch (err: any) {
-            console.warn(`[SIMCAR ANALYSIS] WMS ${sat.label} failed: ${err.message}`);
+        const candidateLayers = Array.from(new Set([sat.wmsLayer, ...(sat.wmsAliases || [])].filter(Boolean)));
+        let basePng: Buffer | null = null;
+        let resolvedLayer = "";
+        let lastLayerError = "unknown";
+
+        for (const layerName of candidateLayers) {
+            try {
+                basePng = await fetchWmsImageBuffer([layerName], paddedBbox, IMG_W, IMG_H);
+                resolvedLayer = layerName;
+                break;
+            } catch (err: any) {
+                lastLayerError = err.message || String(err);
+                console.warn(`[SIMCAR ANALYSIS] WMS ${sat.label} (${layerName}) failed: ${lastLayerError}`);
+            }
+        }
+
+        if (!basePng) {
+            console.warn(`[SIMCAR ANALYSIS] WMS ${sat.label} unavailable across candidates: ${candidateLayers.join(", ")}. Last error: ${lastLayerError}`);
             sendSSE(res, {
                 type: "progress", step: "generating_images",
                 percent: 10 + Math.round((step / totalSteps) * 40),
@@ -1889,6 +1910,9 @@ async function generateSatelliteImages(
             });
             step += 3;
             continue;
+        }
+        if (resolvedLayer && resolvedLayer !== sat.wmsLayer) {
+            console.log(`[SIMCAR ANALYSIS] ${sat.label} using fallback layer ${resolvedLayer} (primary=${sat.wmsLayer})`);
         }
 
         // 3 composites per satellite
