@@ -5556,7 +5556,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   {[
                     { label: 'Frontend', value: 'React 19 + Vite + Tailwind' },
                     { label: 'Backend', value: 'Node.js + Express + TypeScript' },
-                    { label: 'IA / Vision', value: 'Groq API (multi-modelo)' },
+                    { label: 'IA / Vision', value: 'Gemini 3 Pro (primário) + Groq (fallback)' },
                     { label: 'Auth', value: 'Firebase Auth + Firestore' },
                     { label: 'Geoespacial', value: 'Turf.js + Proj4 + WFS/WMS' },
                     { label: 'Imagens', value: 'Sharp + Cloudinary' },
@@ -5754,7 +5754,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                     <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                       <p className="text-xs uppercase tracking-wider text-slate-500">Modelos de IA</p>
-                      <p className="text-sm text-slate-200 mt-1">Groq API (modo automático e manual)</p>
+                      <p className="text-sm text-slate-200 mt-1">Gemini 3 Pro (primário) + Groq (fallback)</p>
                     </div>
                     <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                       <p className="text-xs uppercase tracking-wider text-slate-500">Conta atual</p>
