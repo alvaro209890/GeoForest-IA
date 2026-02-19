@@ -536,6 +536,67 @@ const renderRichText = (text: string) => {
   });
 };
 
+const renderAnalysisRichText = (text: string) => {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  return lines.map((line, i) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return <div key={`analysis-gap-${i}`} className="analysis-gap" />;
+    }
+
+    const divider = trimmed.match(/^[-_*]{3,}$/);
+    if (divider) {
+      return <div key={`analysis-divider-${i}`} className="analysis-divider" />;
+    }
+
+    const title = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    if (title) {
+      const level = title[1].length;
+      const klass = level === 1 ? 'analysis-h1' : level === 2 ? 'analysis-h2' : 'analysis-h3';
+      return (
+        <div key={`analysis-title-${i}`} className={klass}>
+          {renderInlineRichText(title[2])}
+        </div>
+      );
+    }
+
+    const numbered = trimmed.match(/^(\d+)[.)]\s+(.+)$/);
+    if (numbered) {
+      return (
+        <div key={`analysis-ol-${i}`} className="analysis-item">
+          <span className="analysis-marker">{numbered[1]}.</span>
+          <span className="analysis-content">{renderInlineRichText(numbered[2])}</span>
+        </div>
+      );
+    }
+
+    const bullet = trimmed.match(/^[-*•]\s+(.+)$/);
+    if (bullet) {
+      return (
+        <div key={`analysis-ul-${i}`} className="analysis-item">
+          <span className="analysis-marker">•</span>
+          <span className="analysis-content">{renderInlineRichText(bullet[1])}</span>
+        </div>
+      );
+    }
+
+    const quote = trimmed.match(/^>\s+(.+)$/);
+    if (quote) {
+      return (
+        <div key={`analysis-quote-${i}`} className="analysis-quote">
+          {renderInlineRichText(quote[1])}
+        </div>
+      );
+    }
+
+    return (
+      <p key={`analysis-p-${i}`} className="analysis-p">
+        {renderInlineRichText(line)}
+      </p>
+    );
+  });
+};
+
 const parseKmlGeometryOnClient = (kmlText: string): ParsedGeometry => {
   const matches = [...kmlText.matchAll(/<coordinates>([\s\S]*?)<\/coordinates>/gi)];
   if (!matches.length) {
@@ -4454,11 +4515,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         <div ref={simcarAnalysisChatRef} className="px-6 py-4 space-y-4 max-h-[500px] overflow-y-auto custom-scrollbar">
                           {simcarAnalysisMessages.map((msg, idx) => (
                             <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                              <div className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm whitespace-pre-wrap ${msg.role === 'user'
-                                ? 'bg-purple-600/20 text-purple-100 rounded-br-md'
-                                : 'bg-white/5 text-slate-200 rounded-bl-md'
+                              <div className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm ${msg.role === 'user'
+                                ? 'bg-purple-600/20 text-purple-100 rounded-br-md whitespace-pre-wrap'
+                                : 'bg-[#111a20]/80 border border-purple-500/20 text-slate-200 rounded-bl-md'
                                 }`}>
-                                {msg.text}
+                                {msg.role === 'ai' ? (
+                                  <div className="analysis-markdown">
+                                    {renderAnalysisRichText(msg.text)}
+                                  </div>
+                                ) : (
+                                  msg.text
+                                )}
                               </div>
                             </div>
                           ))}
@@ -5795,6 +5862,74 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           .chat-markdown a {
             color: #6ee7b7;
             text-decoration: underline;
+          }
+          .analysis-markdown {
+            color: #dbe7f5;
+            line-height: 1.6;
+          }
+          .analysis-markdown strong {
+            color: #f7fbff;
+            font-weight: 700;
+          }
+          .analysis-markdown em {
+            color: #c3d6f3;
+          }
+          .analysis-markdown code {
+            background: rgba(148, 163, 184, 0.14);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            border-radius: 6px;
+            padding: 0.08rem 0.35rem;
+            font-size: 0.82em;
+          }
+          .analysis-markdown .analysis-h1 {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-top: 0.15rem;
+          }
+          .analysis-markdown .analysis-h2 {
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #e3ecff;
+            margin-top: 0.25rem;
+          }
+          .analysis-markdown .analysis-h3 {
+            font-size: 0.84rem;
+            font-weight: 700;
+            color: #d0ddff;
+            margin-top: 0.2rem;
+          }
+          .analysis-markdown .analysis-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.45rem;
+          }
+          .analysis-markdown .analysis-item + .analysis-item {
+            margin-top: 0.25rem;
+          }
+          .analysis-markdown .analysis-marker {
+            flex-shrink: 0;
+            color: #a5b8d8;
+            min-width: 1rem;
+            text-align: right;
+          }
+          .analysis-markdown .analysis-content {
+            flex: 1;
+          }
+          .analysis-markdown .analysis-p + .analysis-p {
+            margin-top: 0.45rem;
+          }
+          .analysis-markdown .analysis-quote {
+            border-left: 2px solid rgba(168, 85, 247, 0.5);
+            padding-left: 0.7rem;
+            color: #c6d2e8;
+          }
+          .analysis-markdown .analysis-divider {
+            border-top: 1px solid rgba(148, 163, 184, 0.24);
+            margin: 0.45rem 0;
+          }
+          .analysis-markdown .analysis-gap {
+            height: 0.42rem;
           }
           body.theme-light {
             background: #edf7f1;

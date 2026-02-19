@@ -1702,6 +1702,8 @@ async function startServer() {
   });
 
   app.get("/api/runtime/version", (_req, res) => {
+    const requireGemini =
+      String(process.env.SIMCAR_REQUIRE_GEMINI || "").toLowerCase() === "true";
     res.json({
       ok: true,
       ts: Date.now(),
@@ -1712,6 +1714,9 @@ async function startServer() {
       hasMapSnapshot: true,
       hasMapCapabilities: true,
       hasKnowledgeHealth: true,
+      hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+      requireGemini,
+      geminiVisionModels: String(process.env.GEMINI_VISION_MODELS || "gemini-2.5-flash"),
     });
   });
 
