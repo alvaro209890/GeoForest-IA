@@ -1216,10 +1216,24 @@ const ANALYSIS_VISION_MODELS = [
     "meta-llama/llama-4-scout-17b-16e-instruct",
 ];
 const GEMINI_API_BASE = process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta";
-const GEMINI_VISION_MODELS = (process.env.GEMINI_VISION_MODELS || "gemini-2.5-flash")
+const GEMINI_VISION_MODELS = (
+    process.env.GEMINI_VISION_MODELS ||
+    "gemini-3-pro,nano-banana-pro,gemini-3-flash,gemini-2.5-flash"
+)
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
+const GEMINI_TEXT_SYNTHESIS_MODELS = (
+    process.env.GEMINI_TEXT_SYNTHESIS_MODELS ||
+    "gemini-3-pro,gemini-3-flash,gemini-2.5-pro,gemini-2.5-flash"
+)
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+const GEMINI_IMAGE_SHARE_RAW = Number(process.env.GEMINI_IMAGE_SHARE || "0.75");
+const GEMINI_IMAGE_SHARE = Number.isFinite(GEMINI_IMAGE_SHARE_RAW)
+    ? Math.min(0.95, Math.max(0.55, GEMINI_IMAGE_SHARE_RAW))
+    : 0.75;
 const SIMCAR_REQUIRE_GEMINI = String(process.env.SIMCAR_REQUIRE_GEMINI || "").toLowerCase() === "true";
 
 /** Generate a WMS GetMap URL for a given layer + bbox. */
@@ -1560,19 +1574,37 @@ function reduceImageSet(
     return images.filter((img) => img.caption.includes("Visão Geral"));
 }
 
-/** Split images in alternating order so Groq and Gemini receive near-equal subsets. */
-function splitImagesEvenlyByModel(images: AiImage[]): { groqImages: AiImage[]; geminiImages: AiImage[] } {
+/** Split images by provider weight, giving Gemini a larger share by default. */
+function splitImagesByProviderWeight(images: AiImage[]): { groqImages: AiImage[]; geminiImages: AiImage[] } {
     const groqImages: AiImage[] = [];
     const geminiImages: AiImage[] = [];
+
+    if (images.length <= 1) {
+        return { groqImages: images.slice(), geminiImages };
+    }
+
+    const total = images.length;
+    let targetGemini = Math.round(total * GEMINI_IMAGE_SHARE);
+    targetGemini = Math.min(total - 1, Math.max(1, targetGemini));
+
     images.forEach((img, idx) => {
-        if (idx % 2 === 0) groqImages.push(img);
-        else geminiImages.push(img);
+        // Proportional distribution along the sequence to avoid clustering.
+        const desiredGeminiByNow = Math.round((idx + 1) * (targetGemini / total));
+        if (geminiImages.length < desiredGeminiByNow) {
+            geminiImages.push(img);
+        } else {
+            groqImages.push(img);
+        }
     });
 
-    // Keep sizes close (difference <= 1) and avoid empty subset when possible.
-    if (geminiImages.length === 0 && groqImages.length > 1) {
-        const moved = groqImages.pop();
+    // Safety rebalance.
+    while (geminiImages.length < targetGemini && groqImages.length > 1) {
+        const moved = groqImages.shift();
         if (moved) geminiImages.push(moved);
+    }
+    while (groqImages.length === 0 && geminiImages.length > 1) {
+        const moved = geminiImages.pop();
+        if (moved) groqImages.push(moved);
     }
 
     return { groqImages, geminiImages };
@@ -1642,6 +1674,127 @@ async function continueTruncatedAnalysisText(
         );
         return currentText;
     }
+}
+
+function toGeminiContents(
+    messages: Array<{ role: string; content: any }>,
+): Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> {
+    const contents: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> = [];
+    for (const msg of messages) {
+        const text = normalizeAssistantContent(msg?.content).trim();
+        if (!text) continue;
+        const role = msg?.role === "assistant" ? "model" : "user";
+        contents.push({ role, parts: [{ text }] });
+    }
+    return contents;
+}
+
+async function callGeminiTextOnce(
+    model: string,
+    messages: Array<{ role: string; content: any }>,
+    maxOutputTokens = 4096,
+): Promise<{ content: string; finishReason: string }> {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error("GEMINI_API_KEY não configurada.");
+
+    const contents = toGeminiContents(messages);
+    if (contents.length === 0) {
+        throw new Error("Sem conteúdo textual para síntese Gemini.");
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90_000);
+    try {
+        const response = await fetch(
+            `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contents,
+                    generationConfig: {
+                        temperature: 0.1,
+                        maxOutputTokens: maxOutputTokens,
+                    },
+                }),
+                signal: controller.signal,
+            },
+        );
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`${model}: ${response.status} - ${text.slice(0, 320)}`);
+        }
+
+        const data = await response.json() as any;
+        const candidate = data?.candidates?.[0];
+        const content = (candidate?.content?.parts || [])
+            .map((p: any) => (typeof p?.text === "string" ? p.text : ""))
+            .filter(Boolean)
+            .join("\n")
+            .trim();
+        if (!content) {
+            const finish = String(candidate?.finishReason || "");
+            const blockReason = String(data?.promptFeedback?.blockReason || "");
+            throw new Error(`${model}: empty response${finish ? ` (finish=${finish})` : ""}${blockReason ? ` (block=${blockReason})` : ""}`);
+        }
+
+        return {
+            content,
+            finishReason: String(candidate?.finishReason || "STOP"),
+        };
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function callGeminiTextSynthesis(
+    messages: Array<{ role: string; content: any }>,
+    contextLabel: string,
+): Promise<string> {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        throw new Error("GEMINI_API_KEY não configurada para síntese.");
+    }
+
+    const MAX_CONTINUATIONS = 2;
+    let lastError = "";
+
+    for (const model of GEMINI_TEXT_SYNTHESIS_MODELS) {
+        try {
+            const first = await callGeminiTextOnce(model, messages, 4096);
+            let merged = first.content.trim();
+            let finishReason = first.finishReason;
+            let continuationsUsed = 0;
+            console.log(
+                `[SIMCAR ANALYSIS] Gemini synthesis ${contextLabel}: model=${model} finish=${finishReason} chars=${merged.length}`,
+            );
+
+            while (isTruncationFinishReason(finishReason) && continuationsUsed < MAX_CONTINUATIONS) {
+                continuationsUsed += 1;
+                const continuationMessages = [
+                    ...messages,
+                    { role: "assistant" as const, content: trimForContinuation(merged) || merged },
+                    { role: "user" as const, content: CONTINUATION_INSTRUCTION },
+                ];
+                const cont = await callGeminiTextOnce(model, continuationMessages, 4096);
+                merged = mergeContinuationText(merged, cont.content).trim();
+                finishReason = cont.finishReason;
+                console.log(
+                    `[SIMCAR ANALYSIS] Gemini synthesis continuation ${continuationsUsed}: model=${model} finish=${finishReason} chars=${merged.length}`,
+                );
+            }
+
+            if (merged) return merged;
+            lastError = `${model}: empty response`;
+        } catch (err: any) {
+            const isTimeout = err?.name === "AbortError";
+            lastError = `${model}: ${isTimeout ? "timeout (90s)" : (err?.message || String(err))}`;
+            console.warn(`[SIMCAR ANALYSIS] Gemini synthesis model failed (${model}): ${lastError}`);
+        }
+    }
+
+    throw new Error(`Gemini synthesis falhou para ${contextLabel}. Último erro: ${lastError}`);
 }
 
 async function resolveImageDataUrlForGemini(image: AiImage): Promise<string> {
@@ -1912,12 +2065,12 @@ async function analyzeWithGroqAndGemini(
         return callVisionAnalysis(images, prompt);
     }
 
-    const { groqImages, geminiImages } = splitImagesEvenlyByModel(images);
+    const { groqImages, geminiImages } = splitImagesByProviderWeight(images);
     const groqBatch = groqImages.length > 0 ? groqImages : images;
     const geminiBatch = geminiImages.length > 0 ? geminiImages : images;
 
     console.log(
-        `[SIMCAR ANALYSIS] ${contextLabel}: split Groq=${groqBatch.length}, Gemini=${geminiBatch.length}, total=${images.length}`,
+        `[SIMCAR ANALYSIS] ${contextLabel}: split Groq=${groqBatch.length}, Gemini=${geminiBatch.length}, total=${images.length}, gemini_share=${GEMINI_IMAGE_SHARE}`,
     );
 
     const [groqResult, geminiResult] = await Promise.allSettled([
@@ -1949,7 +2102,15 @@ async function analyzeWithGroqAndGemini(
 
     try {
         const mergePrompt = buildDualModelMergePrompt(contextLabel, groqText, geminiText);
-        return await callTextFollowUp([{ role: "user", content: mergePrompt }]);
+        try {
+            return await callGeminiTextSynthesis(
+                [{ role: "user", content: mergePrompt }],
+                `merge ${contextLabel}`,
+            );
+        } catch (gemErr: any) {
+            console.warn(`[SIMCAR ANALYSIS] Gemini merge synthesis failed for ${contextLabel}, fallback Groq: ${gemErr?.message || gemErr}`);
+            return await callTextFollowUp([{ role: "user", content: mergePrompt }]);
+        }
     } catch (err: any) {
         console.warn(`[SIMCAR ANALYSIS] Merge Groq+Gemini failed for ${contextLabel}: ${err.message}`);
         return [
@@ -2996,7 +3157,15 @@ async function processAnalysis(
             sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando análise temporal comparativa..." });
             try {
                 const synthesisPrompt = buildSynthesisPrompt(areaHa, layerSummaries, perSatelliteResults);
-                analysisText = await callTextFollowUp([{ role: "user", content: synthesisPrompt }]);
+                try {
+                    analysisText = await callGeminiTextSynthesis(
+                        [{ role: "user", content: synthesisPrompt }],
+                        "sintese temporal final",
+                    );
+                } catch (gemErr: any) {
+                    console.warn(`[SIMCAR ANALYSIS] Gemini temporal synthesis failed, fallback Groq: ${gemErr?.message || gemErr}`);
+                    analysisText = await callTextFollowUp([{ role: "user", content: synthesisPrompt }]);
+                }
                 const split = splitThinkProgress(analysisText);
                 if (split.thinkingText) {
                     sendSSE(res, {
