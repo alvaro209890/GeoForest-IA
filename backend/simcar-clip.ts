@@ -1801,6 +1801,7 @@ async function callGeminiTextOnce(
 async function callGeminiTextSynthesis(
     messages: Array<{ role: string; content: any }>,
     contextLabel: string,
+    maxTokens = 8192,
 ): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -1812,7 +1813,7 @@ async function callGeminiTextSynthesis(
 
     for (const model of GEMINI_TEXT_SYNTHESIS_MODELS) {
         try {
-            const first = await callGeminiTextOnce(model, messages, 4096);
+            const first = await callGeminiTextOnce(model, messages, maxTokens);
             let merged = first.content.trim();
             let finishReason = first.finishReason;
             let continuationsUsed = 0;
@@ -1827,7 +1828,7 @@ async function callGeminiTextSynthesis(
                     { role: "assistant" as const, content: trimForContinuation(merged) || merged },
                     { role: "user" as const, content: CONTINUATION_INSTRUCTION },
                 ];
-                const cont = await callGeminiTextOnce(model, continuationMessages, 4096);
+                const cont = await callGeminiTextOnce(model, continuationMessages, maxTokens);
                 merged = mergeContinuationText(merged, cont.content).trim();
                 finishReason = cont.finishReason;
                 console.log(
@@ -2011,25 +2012,70 @@ function buildDualModelMergePrompt(
     contextLabel: string,
     groqAnalysis: string,
     geminiAnalysis: string,
+    areaHa?: number,
+    layerSummaries?: LayerSummary[],
 ): string {
-    return [
-        "Você é a GeoForest IA e deve consolidar duas análises técnicas da MESMA área e do MESMO período.",
-        `Contexto do recorte: ${contextLabel}`,
+    const parts: string[] = [
+        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
+        "Você deve consolidar duas análises técnicas da MESMA área e do MESMO período em um laudo único e completo.",
+        `Contexto do recorte: **${contextLabel}**`,
         "",
-        "## Análise Groq",
-        groqAnalysis,
+        "---",
         "",
-        "## Análise Gemini",
+    ];
+
+    // Include full property context and knowledge base if available
+    if (areaHa !== undefined && layerSummaries && layerSummaries.length > 0) {
+        parts.push(
+            buildPropertyContext(areaHa, layerSummaries),
+            "",
+            "---",
+            "",
+        );
+    }
+
+    parts.push(
+        "## Análise do Modelo Gemini (primária)",
         geminiAnalysis,
         "",
-        "## Tarefa",
-        "Produza um texto único e técnico em português com:",
-        "1) Consensos principais entre os dois modelos.",
-        "2) Divergências relevantes e a hipótese mais provável.",
-        "3) Conclusão consolidada para este período.",
+        "## Análise do Modelo Groq (complementar)",
+        groqAnalysis,
         "",
-        "Seja objetivo e não repita integralmente os textos de origem.",
-    ].join("\n");
+        "---",
+        "",
+        "## Tarefa: Síntese Consolidada",
+        "",
+        "Produza um laudo técnico ÚNICO e COMPLETO em português, com a seguinte estrutura:",
+        "",
+        "### 1. Análise da Área Consolidada (AC)",
+        "- As áreas de AC correspondem a uso antrópico (pastagem, agricultura, solo exposto)?",
+        "- Algum trecho de AC apresenta textura de vegetação nativa?",
+        "- Descreva a localização de trechos discordantes.",
+        "",
+        "### 2. Análise da Vegetação Nativa (AVN)",
+        "- As áreas de AVN correspondem a vegetação nativa (floresta, cerrado, mata ciliar)?",
+        "- Algum trecho de AVN parece antropizado?",
+        "- Avalie integridade e conectividade da vegetação.",
+        "",
+        "### 3. Concordâncias e Discordâncias",
+        "- **✅ CONCORDA**: áreas onde os dois modelos concordam e a classificação coincide com a imagem.",
+        "- **❌ DISCORDA**: áreas onde há divergência. Indique a hipótese mais provável e a classificação correta.",
+        "- **⚠️ INCONCLUSIVO**: pontos onde a resolução do sensor ou diferença entre modelos impede conclusão robusta.",
+        "",
+        "### 4. Nível de Confiança",
+        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]** e justifique.",
+        "",
+        "### 5. Conclusão Consolidada + Recomendações",
+        "- Síntese final integrando os achados dos dois modelos.",
+        "- Recomendações práticas: vistoria, imagens complementares, retificação do CAR.",
+        "- Artigos relevantes do Código Florestal quando aplicável.",
+        "",
+        "---",
+        "Responda em **português**, use markdown, seja detalhado e técnico.",
+        "NÃO repita as análises originais integralmente — sintetize, compare e consolide.",
+    );
+
+    return parts.join("\n");
 }
 
 function splitThinkProgress(raw: string) {
@@ -2104,7 +2150,7 @@ async function callGeminiVisionAnalysis(
                             contents: [{ role: "user", parts }],
                             generationConfig: {
                                 temperature: 0.1,
-                                maxOutputTokens: currentImages.length > 3 ? 5200 : 3800,
+                                maxOutputTokens: currentImages.length > 3 ? 8192 : 6000,
                             },
                         }),
                         signal: controller.signal,
@@ -2154,6 +2200,8 @@ async function analyzeWithGroqAndGemini(
     images: AiImage[],
     prompt: string,
     contextLabel: string,
+    areaHa?: number,
+    layerSummaries?: LayerSummary[],
 ): Promise<string> {
     if (images.length === 0) {
         throw new Error(`Sem imagens para análise (${contextLabel}).`);
@@ -2235,9 +2283,9 @@ async function analyzeWithGroqAndGemini(
     // Only Groq succeeded (Gemini failed, but Groq worked as fallback)
     if (!geminiText && groqText) return groqText;
 
-    // Both succeeded — merge analyses
+    // Both succeeded — merge analyses with full context
     try {
-        const mergePrompt = buildDualModelMergePrompt(contextLabel, groqText, geminiText);
+        const mergePrompt = buildDualModelMergePrompt(contextLabel, groqText, geminiText, areaHa, layerSummaries);
         try {
             return await callGeminiTextSynthesis(
                 [{ role: "user", content: mergePrompt }],
@@ -3262,6 +3310,8 @@ async function processAnalysis(
                     satImages,
                     prompt,
                     `${sat.label} (${sat.year})`,
+                    areaHa,
+                    layerSummaries,
                 );
                 const split = splitThinkProgress(result);
                 if (split.thinkingText) {
@@ -3295,6 +3345,8 @@ async function processAnalysis(
                     aiImages,
                     prompt,
                     "Análise unificada multitemporal",
+                    areaHa,
+                    layerSummaries,
                 );
             } catch (err: any) {
                 console.error("[SIMCAR ANALYSIS] Legacy fallback also failed:", err.message);
@@ -3349,6 +3401,8 @@ async function processAnalysis(
                 aiImages,
                 prompt,
                 singleContext || "Análise de um único satélite",
+                areaHa,
+                layerSummaries,
             );
             const split = splitThinkProgress(analysisText);
             if (split.thinkingText) {
