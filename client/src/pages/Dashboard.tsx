@@ -321,6 +321,23 @@ type UserSettings = {
   twoFactorEnabled: boolean;
 };
 
+type SimcarClipHistoryItem = {
+  id: string;
+  timestamp: string;
+  filename: string;
+  downloadUrl: string;
+  totalFeatures: number;
+  propertyAreaHa: number;
+  layersWithData: number;
+  totalLayers: number;
+  jobId: string;
+  inputZipUrl?: string;
+  outputZipUrl?: string;
+  contextUrl?: string;
+  analysisImages?: Array<{ url: string; caption: string }>;
+  analysisMessages?: Array<{ role: 'ai' | 'user'; text: string; images?: string[] }>;
+};
+
 const DEFAULT_SETTINGS: UserSettings = {
   theme: 'Escuro (Floresta)',
   language: 'Português (BR)',
@@ -794,21 +811,7 @@ export default function Dashboard() {
   const simcarAnalysisChatRef = useRef<HTMLDivElement | null>(null);
 
   // ─── SIMCAR Clip History (for sidebar cards) ───
-  const [simcarClipHistory, setSimcarClipHistory] = useState<Array<{
-    id: string;
-    timestamp: string;
-    filename: string;
-    downloadUrl: string;
-    totalFeatures: number;
-    propertyAreaHa: number;
-    layersWithData: number;
-    totalLayers: number;
-    jobId: string;
-    inputZipUrl?: string;
-    outputZipUrl?: string;
-    analysisImages?: Array<{ url: string; caption: string }>;
-    analysisMessages?: Array<{ role: 'ai' | 'user'; text: string; images?: string[] }>;
-  }>>([]);
+  const [simcarClipHistory, setSimcarClipHistory] = useState<SimcarClipHistoryItem[]>([]);
 
   // ─── SIMCAR Satellite Selection ───
   const [simcarSelectedSatellites, setSimcarSelectedSatellites] = useState<Record<string, boolean>>({
@@ -863,6 +866,7 @@ export default function Dashboard() {
   const [conversationsRef, setConversationsRef] = useState<{
     collection: ReturnType<typeof collection>;
   } | null>(null);
+  const [simcarClipsRef, setSimcarClipsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
   const [settingsRef, setSettingsRef] = useState<DocumentReference | null>(null);
   const selectedSimcarClipLayerNames = useMemo(
@@ -955,10 +959,58 @@ export default function Dashboard() {
     return `Contexto de conversas anteriores (use apenas se ajudar na resposta atual):\n${others.join('\n')}`;
   };
 
+  const toIsoDateFromUnknown = (value: any) => {
+    if (!value) return new Date().toISOString();
+    if (typeof value === 'string') return value;
+    if (typeof value?.toDate === 'function') {
+      try {
+        return value.toDate().toISOString();
+      } catch {
+        return new Date().toISOString();
+      }
+    }
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
+  };
+
+  const persistSimcarClipHistoryEntry = useCallback(
+    async (clip: SimcarClipHistoryItem) => {
+      if (!simcarClipsRef) return;
+      const clipDocRef = doc(simcarClipsRef, clip.jobId);
+      await setDoc(
+        clipDocRef,
+        {
+          ...clip,
+          updatedAt: serverTimestamp(),
+          createdAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    },
+    [simcarClipsRef]
+  );
+
+  const patchPersistedSimcarClip = useCallback(
+    async (jobId: string, patch: Partial<SimcarClipHistoryItem>) => {
+      if (!simcarClipsRef || !jobId) return;
+      const clipDocRef = doc(simcarClipsRef, jobId);
+      await setDoc(
+        clipDocRef,
+        {
+          ...patch,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    },
+    [simcarClipsRef]
+  );
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       try {
         if (!currentUser) {
+          setSimcarClipsRef(null);
           setLocation('/');
           return;
         }
@@ -971,6 +1023,8 @@ export default function Dashboard() {
 
         const collRef = collection(db, 'users', currentUser.uid, 'conversations');
         setConversationsRef({ collection: collRef });
+        const simcarRef = collection(db, 'users', currentUser.uid, 'simcar_clips');
+        setSimcarClipsRef(simcarRef);
 
         const nextSettingsRef = doc(db, 'users', currentUser.uid, 'settings', 'preferences');
         setSettingsRef(nextSettingsRef);
@@ -994,6 +1048,36 @@ export default function Dashboard() {
             lastAttachmentType: (data as any).lastAttachmentType,
           });
         });
+
+        try {
+          const simcarSnap = await getDocs(query(simcarRef, orderBy('updatedAt', 'desc')));
+          const clips: SimcarClipHistoryItem[] = [];
+          simcarSnap.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            const rawDownloadUrl = data?.downloadUrl ? String(data.downloadUrl) : '';
+            const normalizedDownloadUrl =
+              rawDownloadUrl && rawDownloadUrl.startsWith('/api/') ? apiUrl(rawDownloadUrl) : rawDownloadUrl;
+            clips.push({
+              id: String(data?.id || docSnap.id),
+              timestamp: toIsoDateFromUnknown(data?.timestamp || data?.updatedAt || data?.createdAt),
+              filename: String(data?.filename || 'Recorte SIMCAR'),
+              downloadUrl: normalizedDownloadUrl,
+              totalFeatures: Number(data?.totalFeatures || 0),
+              propertyAreaHa: Number(data?.propertyAreaHa || 0),
+              layersWithData: Number(data?.layersWithData || 0),
+              totalLayers: Number(data?.totalLayers || 0),
+              jobId: String(data?.jobId || docSnap.id),
+              inputZipUrl: data?.inputZipUrl ? String(data.inputZipUrl) : undefined,
+              outputZipUrl: data?.outputZipUrl ? String(data.outputZipUrl) : undefined,
+              contextUrl: data?.contextUrl ? String(data.contextUrl) : undefined,
+              analysisImages: Array.isArray(data?.analysisImages) ? data.analysisImages : [],
+              analysisMessages: Array.isArray(data?.analysisMessages) ? data.analysisMessages : [],
+            });
+          });
+          setSimcarClipHistory(clips);
+        } catch (error) {
+          console.warn('Falha ao carregar histórico SIMCAR salvo:', error);
+        }
 
         if (list.length === 0) {
           await createConversation(collRef);
@@ -3506,7 +3590,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors group cursor-pointer mb-1"
                   onClick={() => {
                     // Load clip results + persisted analysis data
-                    setSimcarClipDownloadUrl(clip.downloadUrl);
+                    setSimcarClipDownloadUrl(clip.outputZipUrl || clip.downloadUrl);
                     setSimcarClipJobId(clip.jobId);
                     setSimcarClipSummary({
                       totalFeaturesClipped: clip.totalFeatures,
@@ -3540,8 +3624,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       fetch(apiUrl(`/api/simcar/clip/${clip.jobId}`), {
                         method: 'DELETE',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ imageUrls }),
+                        body: JSON.stringify({
+                          imageUrls,
+                          inputZipUrl: clip.inputZipUrl,
+                          outputZipUrl: clip.outputZipUrl,
+                          contextUrl: clip.contextUrl,
+                        }),
                       }).catch(() => { });
+                      if (simcarClipsRef) {
+                        void deleteDoc(doc(simcarClipsRef, clip.jobId)).catch(() => undefined);
+                      }
                       setSimcarClipHistory((prev) => prev.filter((c) => c.id !== clip.id));
                       // Clear active clip if it was this one
                       if (simcarClipJobId === clip.jobId) {
@@ -4032,27 +4124,38 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                   status: event.status,
                                 });
                               } else if (event.type === 'complete') {
-                                setSimcarClipDownloadUrl(event.downloadUrl);
+                                const resolvedDownloadUrl =
+                                  typeof event.downloadUrl === 'string' && event.downloadUrl.startsWith('/api/')
+                                    ? apiUrl(event.downloadUrl)
+                                    : String(event.downloadUrl || '');
+                                setSimcarClipDownloadUrl(resolvedDownloadUrl);
                                 setSimcarClipSummary(event.summary);
                                 // Extract jobId from download URL for AI analysis
                                 const match = event.downloadUrl?.match(/\/download\/(.+)$/);
                                 if (match) {
-                                  setSimcarClipJobId(match[1]);
-                                  // Push to clip history for sidebar cards
+                                  const nextJobId = match[1];
+                                  setSimcarClipJobId(nextJobId);
+                                  // Push to clip history for sidebar cards and persist in Firestore
                                   const summary = event.summary;
-                                  setSimcarClipHistory((prev) => [{
-                                    id: match[1],
+                                  const newClip: SimcarClipHistoryItem = {
+                                    id: nextJobId,
                                     timestamp: new Date().toISOString(),
                                     filename: `Recorte ${new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
-                                    downloadUrl: event.downloadUrl,
+                                    downloadUrl: resolvedDownloadUrl,
                                     totalFeatures: summary?.totalFeaturesClipped ?? 0,
                                     propertyAreaHa: summary?.propertyAreaHa ?? 0,
                                     layersWithData: summary?.layers?.filter((l: any) => l.features > 0).length ?? 0,
                                     totalLayers: summary?.layers?.length ?? 0,
-                                    jobId: match[1],
+                                    jobId: nextJobId,
                                     inputZipUrl: event.inputZipUrl || undefined,
                                     outputZipUrl: event.outputZipUrl || undefined,
-                                  }, ...prev]);
+                                    contextUrl: event.contextUrl || undefined,
+                                  };
+                                  setSimcarClipHistory((prev) => {
+                                    const filtered = prev.filter((c) => c.jobId !== nextJobId);
+                                    return [newClip, ...filtered];
+                                  });
+                                  void persistSimcarClipHistoryEntry(newClip);
                                 }
                               } else if (event.type === 'error') {
                                 setSimcarClipError(event.message);
@@ -4325,6 +4428,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               if (!simcarClipJobId) return;
                               const layers = Object.entries(simcarSelectedSatellites).filter(([, v]) => v).map(([k]) => k);
                               if (layers.length === 0) { setSimcarClipError('Selecione pelo menos uma imagem de satélite.'); return; }
+                              const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
                               setSimcarAnalysisProcessing(true);
                               setSimcarAnalysisProgress({ step: 'starting', percent: 0, message: 'Iniciando análise...' });
                               setSimcarAnalysisImages([]);
@@ -4333,7 +4437,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 const response = await fetch(apiUrl('/api/simcar/clip/analyze'), {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ jobId: simcarClipJobId, selectedLayers: layers }),
+                                  body: JSON.stringify({
+                                    jobId: simcarClipJobId,
+                                    selectedLayers: layers,
+                                    contextUrl: historyEntry?.contextUrl,
+                                    outputZipUrl: historyEntry?.outputZipUrl,
+                                  }),
                                 });
                                 const reader = response.body?.getReader();
                                 const decoder = new TextDecoder();
@@ -4365,6 +4474,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                               ? { ...c, analysisImages: event.images || [], analysisMessages: [{ role: 'ai' as const, text: event.analysis || '', images: (event.images || []).map((img: any) => img.url) }] }
                                               : c
                                           ));
+                                          void patchPersistedSimcarClip(simcarClipJobId, {
+                                            analysisImages: event.images || [],
+                                            analysisMessages: [{ role: 'ai', text: event.analysis || '', images: (event.images || []).map((img: any) => img.url) }],
+                                          });
                                         } else if (event.type === 'error') {
                                           setSimcarAnalysisMessages([{ role: 'ai', text: `❌ ${event.message}` }]);
                                           setSimcarAnalysisProgress(null);
@@ -4391,6 +4504,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               if (!simcarClipJobId) return;
                               const layers = Object.entries(simcarSelectedSatellites).filter(([, v]) => v).map(([k]) => k);
                               if (layers.length === 0) { setSimcarClipError('Selecione pelo menos uma imagem.'); return; }
+                              const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
                               setSimcarAnalysisProcessing(true);
                               setSimcarAnalysisProgress({ step: 'starting', percent: 0, message: 'Gerando imagens...' });
                               setSimcarAnalysisImages([]);
@@ -4398,7 +4512,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 const response = await fetch(apiUrl('/api/simcar/clip/analyze'), {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ jobId: simcarClipJobId, selectedLayers: layers, imageOnly: true }),
+                                  body: JSON.stringify({
+                                    jobId: simcarClipJobId,
+                                    selectedLayers: layers,
+                                    imageOnly: true,
+                                    contextUrl: historyEntry?.contextUrl,
+                                    outputZipUrl: historyEntry?.outputZipUrl,
+                                  }),
                                 });
                                 const reader = response.body?.getReader();
                                 const decoder = new TextDecoder();
@@ -4425,6 +4545,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                               ? { ...c, analysisImages: event.images || [] }
                                               : c
                                           ));
+                                          void patchPersistedSimcarClip(simcarClipJobId, {
+                                            analysisImages: event.images || [],
+                                          });
                                         } else if (event.type === 'error') {
                                           setSimcarClipError(event.message);
                                           setSimcarAnalysisProgress(null);
@@ -4570,9 +4693,27 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                       body: JSON.stringify({ messages: chatMessages }),
                                     });
                                     const data = await response.json();
-                                    setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: data.content || data.error || 'Sem resposta.' }]);
+                                    const aiText = data.content || data.error || 'Sem resposta.';
+                                    setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: aiText }]);
+                                    if (simcarClipJobId) {
+                                      const nextHistory = [
+                                        ...simcarAnalysisMessages,
+                                        { role: 'user' as const, text: userMsg },
+                                        { role: 'ai' as const, text: aiText },
+                                      ];
+                                      void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
+                                    }
                                   } catch (err: any) {
-                                    setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: `❌ ${err.message}` }]);
+                                    const aiText = `❌ ${err.message}`;
+                                    setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: aiText }]);
+                                    if (simcarClipJobId) {
+                                      const nextHistory = [
+                                        ...simcarAnalysisMessages,
+                                        { role: 'user' as const, text: userMsg },
+                                        { role: 'ai' as const, text: aiText },
+                                      ];
+                                      void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
+                                    }
                                   } finally {
                                     setSimcarAnalysisSending(false);
                                     setTimeout(() => {
@@ -4603,9 +4744,27 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     body: JSON.stringify({ messages: chatMessages }),
                                   });
                                   const data = await response.json();
-                                  setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: data.content || data.error || 'Sem resposta.' }]);
+                                  const aiText = data.content || data.error || 'Sem resposta.';
+                                  setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: aiText }]);
+                                  if (simcarClipJobId) {
+                                    const nextHistory = [
+                                      ...simcarAnalysisMessages,
+                                      { role: 'user' as const, text: userMsg },
+                                      { role: 'ai' as const, text: aiText },
+                                    ];
+                                    void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
+                                  }
                                 } catch (err: any) {
-                                  setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: `❌ ${err.message}` }]);
+                                  const aiText = `❌ ${err.message}`;
+                                  setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: aiText }]);
+                                  if (simcarClipJobId) {
+                                    const nextHistory = [
+                                      ...simcarAnalysisMessages,
+                                      { role: 'user' as const, text: userMsg },
+                                      { role: 'ai' as const, text: aiText },
+                                    ];
+                                    void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
+                                  }
                                 } finally {
                                   setSimcarAnalysisSending(false);
                                   setTimeout(() => {

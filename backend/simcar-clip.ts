@@ -85,7 +85,7 @@ const DIRECT_COPY_LAYERS = new Set(["AIR", "ATP"]);
 /* ─── Job Cache ──────────────────────────────────────────────── */
 
 type CachedJob = {
-    buffer: Buffer;
+    buffer?: Buffer;
     expiresAt: number;
     filename: string;
     /** Retained for AI analysis */
@@ -98,6 +98,7 @@ type CachedJob = {
     /** Cloudinary URLs for persisted download */
     inputZipUrl?: string;
     outputZipUrl?: string;
+    contextJsonUrl?: string;
 };
 const jobCache = new Map<string, CachedJob>();
 
@@ -739,6 +740,85 @@ type LayerSummary = {
     warning?: string;
 };
 
+type PersistedClipContextV1 = {
+    version: 1;
+    jobId: string;
+    savedAtIso: string;
+    filename: string;
+    bbox: [number, number, number, number];
+    polygon: Feature<Polygon | MultiPolygon>;
+    layerSummaries: LayerSummary[];
+    areaHa: number;
+    clippedGeometries: Record<string, Geometry[]>;
+    inputZipUrl?: string;
+    outputZipUrl?: string;
+};
+
+function mapToObjectGeometry(value: Map<string, Geometry[]>): Record<string, Geometry[]> {
+    const out: Record<string, Geometry[]> = {};
+    for (const [key, arr] of value.entries()) {
+        if (!Array.isArray(arr) || arr.length === 0) continue;
+        out[key] = arr;
+    }
+    return out;
+}
+
+function objectToMapGeometry(value: Record<string, Geometry[]> | null | undefined): Map<string, Geometry[]> {
+    const out = new Map<string, Geometry[]>();
+    if (!value || typeof value !== "object") return out;
+    for (const [key, arr] of Object.entries(value)) {
+        if (!Array.isArray(arr)) continue;
+        const cleaned = arr.filter((g) => g && typeof g === "object") as Geometry[];
+        if (cleaned.length > 0) out.set(key, cleaned);
+    }
+    return out;
+}
+
+function parsePersistedClipContext(raw: unknown): PersistedClipContextV1 | null {
+    if (!raw || typeof raw !== "object") return null;
+    const data = raw as any;
+    if (Number(data.version) !== 1) return null;
+    if (typeof data.jobId !== "string" || !data.jobId) return null;
+    if (!Array.isArray(data.bbox) || data.bbox.length !== 4) return null;
+    const bbox = data.bbox.map((v: unknown) => Number(v));
+    if (!bbox.every(Number.isFinite)) return null;
+    const polygonGeom = normalizePolygonGeometry(data.polygon?.geometry || data.polygon);
+    if (!polygonGeom) return null;
+    const polygon: Feature<Polygon | MultiPolygon> = {
+        type: "Feature",
+        properties: {},
+        geometry: polygonGeom,
+    };
+    const layerSummaries = Array.isArray(data.layerSummaries)
+        ? data.layerSummaries
+            .map((row: any) => ({
+                name: String(row?.name || ""),
+                source: row?.source === "property" ? "property" : "wfs",
+                features: Number(row?.features || 0),
+                areaHa:
+                    row?.areaHa === undefined || row?.areaHa === null
+                        ? undefined
+                        : Number(row.areaHa),
+                warning: row?.warning ? String(row.warning) : undefined,
+            }))
+            .filter((row: LayerSummary) => Boolean(row.name))
+        : [];
+    if (!layerSummaries.length) return null;
+    return {
+        version: 1,
+        jobId: data.jobId,
+        savedAtIso: typeof data.savedAtIso === "string" ? data.savedAtIso : new Date().toISOString(),
+        filename: typeof data.filename === "string" && data.filename ? data.filename : `SIMCAR_Recorte_${data.jobId}.zip`,
+        bbox: [bbox[0], bbox[1], bbox[2], bbox[3]],
+        polygon,
+        layerSummaries,
+        areaHa: Number(data.areaHa || 0),
+        clippedGeometries: mapToObjectGeometry(objectToMapGeometry(data.clippedGeometries)),
+        inputZipUrl: typeof data.inputZipUrl === "string" ? data.inputZipUrl : undefined,
+        outputZipUrl: typeof data.outputZipUrl === "string" ? data.outputZipUrl : undefined,
+    };
+}
+
 async function processClip(
     res: Response,
     propertyZip: Buffer,
@@ -1016,6 +1096,7 @@ async function processClip(
     // 7b. Upload ZIPs to Cloudinary for persistence
     let inputZipUrl: string | undefined;
     let outputZipUrl: string | undefined;
+    let contextJsonUrl: string | undefined;
     try {
         sendSSE(res, { type: "progress", layer: "UPLOAD", current: total, total, status: "uploading_cloudinary" });
         const [inUrl, outUrl] = await Promise.all([
@@ -1024,7 +1105,26 @@ async function processClip(
         ]);
         inputZipUrl = inUrl;
         outputZipUrl = outUrl;
-        console.log(`[SIMCAR CLIP] Cloudinary: input=${inUrl}, output=${outUrl}`);
+        const persistedContext: PersistedClipContextV1 = {
+            version: 1,
+            jobId,
+            savedAtIso: new Date().toISOString(),
+            filename,
+            bbox: jobBbox,
+            polygon: userPolygon,
+            layerSummaries,
+            areaHa,
+            clippedGeometries: mapToObjectGeometry(clippedGeometries),
+            inputZipUrl: inUrl,
+            outputZipUrl: outUrl,
+        };
+        const contextBuffer = Buffer.from(JSON.stringify(persistedContext), "utf8");
+        contextJsonUrl = await uploadRawBufferToCloudinary(
+            contextBuffer,
+            `simcar_context_${jobId.slice(0, 8)}.json`,
+            "application/json",
+        );
+        console.log(`[SIMCAR CLIP] Cloudinary: input=${inUrl}, output=${outUrl}, context=${contextJsonUrl}`);
     } catch (err: any) {
         console.error("[SIMCAR CLIP] Cloudinary ZIP upload error:", err.message);
         // Non-fatal: continue without Cloudinary URLs
@@ -1041,6 +1141,7 @@ async function processClip(
         clippedGeometries,
         inputZipUrl,
         outputZipUrl,
+        contextJsonUrl,
     });
 
     // 8. Send completion event
@@ -1052,6 +1153,7 @@ async function processClip(
         downloadUrl: `/api/simcar/clip/download/${jobId}`,
         inputZipUrl,
         outputZipUrl,
+        contextUrl: contextJsonUrl,
         summary: {
             propertyAreaHa: areaHa,
             crs: "EPSG:4674",
@@ -1385,8 +1487,12 @@ async function deleteFromCloudinary(secureUrl: string, resourceType: "image" | "
     }
 }
 
-/** Upload a raw Buffer (ZIP etc.) to Cloudinary. Returns secure_url. */
-async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promise<string> {
+/** Upload a raw Buffer (ZIP/JSON etc.) to Cloudinary. Returns secure_url. */
+async function uploadRawBufferToCloudinary(
+    buffer: Buffer,
+    filename: string,
+    mimeType: string,
+): Promise<string> {
     const apiKey = process.env.CLOUDINARY_API_KEY;
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
     const folder = process.env.CLOUDINARY_FOLDER;
@@ -1398,7 +1504,7 @@ async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promi
     if (folder) params.folder = folder;
     const signature = cloudinarySign(params);
 
-    const b64 = `data:application/zip;base64,${buffer.toString("base64")}`;
+    const b64 = `data:${mimeType};base64,${buffer.toString("base64")}`;
     const form = new FormData();
     form.append("file", b64);
     form.append("api_key", apiKey);
@@ -1415,6 +1521,10 @@ async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promi
         throw new Error(`Cloudinary raw error ${response.status}: ${text.slice(0, 200)}`);
     }
     return ((await response.json()) as { secure_url: string }).secure_url;
+}
+
+async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promise<string> {
+    return uploadRawBufferToCloudinary(buffer, filename, "application/zip");
 }
 
 type AiImage = { url?: string; dataUrl?: string; caption: string };
@@ -2177,16 +2287,183 @@ async function generateSatelliteImages(
     return images;
 }
 
+function getFeatureBbox(feature: Feature<Polygon | MultiPolygon>): [number, number, number, number] | null {
+    const coords = feature.geometry.type === "Polygon"
+        ? feature.geometry.coordinates.flat()
+        : feature.geometry.coordinates.flat(2);
+    if (!coords.length) return null;
+    const lngs = coords.map((c: any) => Number(c[0])).filter(Number.isFinite);
+    const lats = coords.map((c: any) => Number(c[1])).filter(Number.isFinite);
+    if (!lngs.length || !lats.length) return null;
+    return [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)];
+}
+
+function ringClosed(ring: number[][]): number[][] {
+    if (ring.length < 3) return ring;
+    const first = ring[0];
+    const last = ring[ring.length - 1];
+    if (first[0] === last[0] && first[1] === last[1]) return ring;
+    return [...ring, [first[0], first[1]]];
+}
+
+function parseCachedContextFromOutputZip(
+    zipBuffer: Buffer,
+    filename: string,
+    outputZipUrl?: string,
+): CachedJob | null {
+    const entries = extractZipEntries(zipBuffer);
+    const clippedGeometries = new Map<string, Geometry[]>();
+    const layerSummaries: LayerSummary[] = [];
+
+    for (const entry of entries) {
+        if (!entry.name.toLowerCase().endsWith(".shp")) continue;
+        const layerName = path.basename(entry.name, ".shp").toUpperCase();
+        const polygons = readFullShapefile(entry.data);
+        const geometries: Geometry[] = [];
+        let areaHa = 0;
+        for (const rings of polygons) {
+            const closed = rings.map((ring) => ringClosed(ring));
+            if (!closed.length || closed[0].length < 4) continue;
+            try {
+                const feat = turfPolygon(closed as any);
+                geometries.push(feat.geometry as Geometry);
+                areaHa += turfArea(feat) / 10000;
+            } catch {
+                // ignore malformed polygon
+            }
+        }
+        if (geometries.length > 0) clippedGeometries.set(layerName, geometries);
+        layerSummaries.push({
+            name: layerName,
+            source: DIRECT_COPY_LAYERS.has(layerName as any) ? "property" : "wfs",
+            features: geometries.length,
+            areaHa: Number(areaHa.toFixed(4)),
+        });
+    }
+
+    const propertyCandidates = ["ATP", "AIR"];
+    let propertyFeature: Feature<Polygon | MultiPolygon> | null = null;
+    for (const key of propertyCandidates) {
+        const geoms = clippedGeometries.get(key);
+        if (!geoms || geoms.length === 0) continue;
+        for (const geom of geoms) {
+            const polygonLike = toPolygonOrMultiFeature(geom);
+            if (!polygonLike) continue;
+            if (!propertyFeature) {
+                propertyFeature = polygonLike;
+                continue;
+            }
+            try {
+                const merged = turfUnion(turfFeatureCollection([propertyFeature, polygonLike]) as any) as
+                    | Feature<Polygon | MultiPolygon>
+                    | null;
+                if (merged) propertyFeature = merged;
+            } catch {
+                // keep partial
+            }
+        }
+        if (propertyFeature) break;
+    }
+
+    if (!propertyFeature) return null;
+    const bbox = getFeatureBbox(propertyFeature);
+    if (!bbox) return null;
+    const areaHa = Number((turfArea(propertyFeature) / 10000).toFixed(4));
+
+    return {
+        expiresAt: Date.now() + CACHE_TTL_MS,
+        filename,
+        bbox,
+        polygon: propertyFeature,
+        layerSummaries,
+        areaHa,
+        clippedGeometries,
+        outputZipUrl,
+    };
+}
+
+async function hydrateJobFromOutputZipUrl(jobId: string, outputZipUrl?: string): Promise<CachedJob | null> {
+    if (!outputZipUrl) return null;
+    try {
+        const response = await fetch(outputZipUrl);
+        if (!response.ok) {
+            throw new Error(`ZIP ${response.status}`);
+        }
+        const arr = await response.arrayBuffer();
+        const zipBuffer = Buffer.from(arr);
+        const hydrated = parseCachedContextFromOutputZip(
+            zipBuffer,
+            `SIMCAR_Recorte_${jobId}.zip`,
+            outputZipUrl,
+        );
+        if (!hydrated) {
+            throw new Error("Não foi possível reconstruir contexto pelo ZIP");
+        }
+        jobCache.set(jobId, hydrated);
+        return hydrated;
+    } catch (err: any) {
+        console.warn(`[SIMCAR ANALYSIS] zip hydrate failed for ${jobId}:`, err?.message || err);
+        return null;
+    }
+}
+
+async function hydrateJobFromPersistedContext(
+    jobId: string,
+    contextUrl?: string,
+): Promise<CachedJob | null> {
+    if (!contextUrl) return null;
+    try {
+        const response = await fetch(contextUrl);
+        if (!response.ok) {
+            throw new Error(`Contexto ${response.status}`);
+        }
+        const parsed = parsePersistedClipContext(await response.json());
+        if (!parsed) {
+            throw new Error("Formato de contexto inválido");
+        }
+        const clipMap = objectToMapGeometry(parsed.clippedGeometries);
+        const hydrated: CachedJob = {
+            expiresAt: Date.now() + CACHE_TTL_MS,
+            filename: parsed.filename,
+            bbox: parsed.bbox,
+            polygon: parsed.polygon,
+            layerSummaries: parsed.layerSummaries,
+            areaHa: parsed.areaHa,
+            clippedGeometries: clipMap,
+            inputZipUrl: parsed.inputZipUrl,
+            outputZipUrl: parsed.outputZipUrl,
+            contextJsonUrl: contextUrl,
+        };
+        jobCache.set(jobId, hydrated);
+        return hydrated;
+    } catch (err: any) {
+        console.warn(`[SIMCAR ANALYSIS] context hydrate failed for ${jobId}:`, err?.message || err);
+        return null;
+    }
+}
+
 /** Main analysis pipeline (called from the SSE endpoint). */
 async function processAnalysis(
     res: Response,
     jobId: string,
     selectedLayers: string[] = ["spot_2008"],
     aiAnalysis = true,
+    contextUrl?: string,
+    outputZipUrl?: string,
 ) {
-    const job = jobCache.get(jobId);
+    let job = jobCache.get(jobId);
+    if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
+        job = await hydrateJobFromPersistedContext(jobId, contextUrl);
+    }
+    if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && outputZipUrl) {
+        job = await hydrateJobFromOutputZipUrl(jobId, outputZipUrl);
+    }
     if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
-        sendSSE(res, { type: "error", message: "Job não encontrado ou expirado. Processe o recorte novamente." });
+        sendSSE(res, {
+            type: "error",
+            message:
+                "Job não encontrado no cache do servidor. Envie contextUrl salvo no Firebase/Cloudinary para reidratar ou gere o recorte novamente.",
+        });
         return;
     }
 
@@ -2449,6 +2726,14 @@ export function registerSimcarClipRoutes(app: Express) {
             });
             return;
         }
+        if (!cached.buffer) {
+            if (cached.outputZipUrl) {
+                res.redirect(cached.outputZipUrl);
+                return;
+            }
+            res.status(404).json({ error: "Arquivo do recorte não disponível no cache." });
+            return;
+        }
 
         res.setHeader("Content-Type", "application/zip");
         res.setHeader("Content-Disposition", `attachment; filename="${cached.filename}"`);
@@ -2465,7 +2750,13 @@ export function registerSimcarClipRoutes(app: Express) {
         res.flushHeaders();
 
         try {
-            const { jobId, selectedLayers, imageOnly } = req.body as { jobId?: string; selectedLayers?: string[]; imageOnly?: boolean };
+            const { jobId, selectedLayers, imageOnly, contextUrl, outputZipUrl } = req.body as {
+                jobId?: string;
+                selectedLayers?: string[];
+                imageOnly?: boolean;
+                contextUrl?: string;
+                outputZipUrl?: string;
+            };
             if (!jobId) {
                 sendSSE(res, { type: "error", message: "jobId é obrigatório." });
                 res.end();
@@ -2474,7 +2765,7 @@ export function registerSimcarClipRoutes(app: Express) {
 
             const layers = Array.isArray(selectedLayers) && selectedLayers.length > 0 ? selectedLayers : ["spot_2008"];
             console.log(`[SIMCAR ANALYSIS] Starting analysis for job: ${jobId}, layers: ${layers.join(",")}, aiAnalysis: ${!imageOnly}`);
-            await processAnalysis(res, jobId, layers, !imageOnly);
+            await processAnalysis(res, jobId, layers, !imageOnly, contextUrl, outputZipUrl);
         } catch (err: any) {
             console.error("[SIMCAR ANALYSIS] Unexpected error:", err);
             sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
@@ -2516,15 +2807,27 @@ export function registerSimcarClipRoutes(app: Express) {
     // Delete clip endpoint: removes Cloudinary resources + cache
     app.delete("/api/simcar/clip/:jobId", async (req: Request, res: Response) => {
         const { jobId } = req.params;
-        const { imageUrls } = req.body as { imageUrls?: string[] };
+        const { imageUrls, inputZipUrl, outputZipUrl, contextUrl } = req.body as {
+            imageUrls?: string[];
+            inputZipUrl?: string;
+            outputZipUrl?: string;
+            contextUrl?: string;
+        };
 
         try {
             const cached = jobCache.get(jobId);
             const deletions: Promise<void>[] = [];
 
             // Delete ZIPs from Cloudinary (raw type)
-            if (cached?.inputZipUrl) deletions.push(deleteFromCloudinary(cached.inputZipUrl, "raw"));
-            if (cached?.outputZipUrl) deletions.push(deleteFromCloudinary(cached.outputZipUrl, "raw"));
+            if (cached?.inputZipUrl || inputZipUrl) {
+                deletions.push(deleteFromCloudinary((cached?.inputZipUrl || inputZipUrl) as string, "raw"));
+            }
+            if (cached?.outputZipUrl || outputZipUrl) {
+                deletions.push(deleteFromCloudinary((cached?.outputZipUrl || outputZipUrl) as string, "raw"));
+            }
+            if (cached?.contextJsonUrl || contextUrl) {
+                deletions.push(deleteFromCloudinary((cached?.contextJsonUrl || contextUrl) as string, "raw"));
+            }
 
             // Delete analysis images from Cloudinary (image type)
             if (Array.isArray(imageUrls)) {
