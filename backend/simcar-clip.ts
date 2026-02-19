@@ -1234,6 +1234,17 @@ async function compositeOverlay(
     return `data:image/png;base64,${composited.toString("base64")}`;
 }
 
+/** Compress image for AI vision analysis: downscale + JPEG to reduce payload. */
+async function compressForVision(dataUrl: string): Promise<string> {
+    const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+    const buf = Buffer.from(base64, "base64");
+    const compressed = await sharp(buf)
+        .resize(800, 600, { fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 72 })
+        .toBuffer();
+    return `data:image/jpeg;base64,${compressed.toString("base64")}`;
+}
+
 /** Cloudinary commons */
 const CLOUDINARY_CLOUD = "da19dwpgk";
 
@@ -1341,67 +1352,113 @@ async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promi
     return ((await response.json()) as { secure_url: string }).secure_url;
 }
 
-/** Call Groq vision model with images. Multi-model fallback on failure. */
+/**
+ * Build content parts for vision API from images.
+ * Uses Cloudinary URLs when available, otherwise compressed base64.
+ */
+function buildVisionContentParts(
+    images: Array<{ url?: string; dataUrl?: string; caption: string }>,
+    prompt: string,
+): any[] {
+    const contentParts: any[] = [
+        { type: "text", text: prompt },
+    ];
+    for (const img of images) {
+        const imageUrl = img.url || img.dataUrl;
+        if (!imageUrl) continue;
+        contentParts.push({
+            type: "image_url",
+            image_url: { url: imageUrl },
+        });
+        contentParts.push({ type: "text", text: `[Legenda: ${img.caption}]` });
+    }
+    return contentParts;
+}
+
+/**
+ * Reduce image set for retry: keep only overview images (1 per satellite)
+ * instead of all 3 views per satellite.
+ */
+function reduceImageSet(
+    images: Array<{ url?: string; dataUrl?: string; caption: string }>,
+): Array<{ url?: string; dataUrl?: string; caption: string }> {
+    return images.filter((img) => img.caption.includes("Visão Geral"));
+}
+
+/** Call Groq vision model with images. Multi-model fallback + reduced-image retry. */
 async function callVisionAnalysis(
-    images: Array<{ dataUrl: string; caption: string }>,
+    images: Array<{ url?: string; dataUrl?: string; caption: string }>,
     prompt: string,
 ): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
 
-    const contentParts: any[] = [
-        { type: "text", text: prompt },
-    ];
-    for (const img of images) {
-        contentParts.push({
-            type: "image_url",
-            image_url: { url: img.dataUrl },
-        });
-        contentParts.push({ type: "text", text: `[Legenda: ${img.caption}]` });
+    const VISION_TIMEOUT_MS = 120_000; // 2 minutes
+    const maxTokens = images.length > 3 ? 6000 : 4000;
+
+    // Try full image set first, then reduced set (overview only) on failure
+    const imageSets = [images];
+    if (images.length > 3) {
+        imageSets.push(reduceImageSet(images));
     }
 
-    const messages = [
-        {
-            role: "user",
-            content: contentParts,
-        },
-    ];
-
     let lastError = "";
-    for (const model of ANALYSIS_VISION_MODELS) {
-        try {
-            console.log(`[SIMCAR ANALYSIS] Trying model: ${model}`);
-            const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${apiKey}`,
-                },
-                body: JSON.stringify({
-                    model,
-                    temperature: 0.1,
-                    max_tokens: 4000,
-                    messages,
-                }),
-            });
+    for (let attempt = 0; attempt < imageSets.length; attempt++) {
+        const currentImages = imageSets[attempt];
+        const contentParts = buildVisionContentParts(currentImages, prompt);
+        const messages = [{ role: "user", content: contentParts }];
 
-            if (!response.ok) {
-                const text = await response.text();
-                lastError = `${model}: ${response.status} - ${text.slice(0, 200)}`;
-                console.warn(`[SIMCAR ANALYSIS] Model ${model} failed:`, lastError);
-                continue;
-            }
+        if (attempt > 0) {
+            console.log(`[SIMCAR ANALYSIS] Retrying with reduced image set (${currentImages.length} images)...`);
+        }
 
-            const data = await response.json() as any;
-            const content = data?.choices?.[0]?.message?.content;
-            if (content) {
-                console.log(`[SIMCAR ANALYSIS] Success with model: ${model}`);
-                return String(content);
+        for (const model of ANALYSIS_VISION_MODELS) {
+            try {
+                console.log(`[SIMCAR ANALYSIS] Trying model: ${model} (${currentImages.length} images, attempt ${attempt + 1})`);
+
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), VISION_TIMEOUT_MS);
+
+                const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${apiKey}`,
+                    },
+                    body: JSON.stringify({
+                        model,
+                        temperature: 0.1,
+                        max_tokens: maxTokens,
+                        messages,
+                    }),
+                    signal: controller.signal,
+                });
+                clearTimeout(timeout);
+
+                if (!response.ok) {
+                    const text = await response.text();
+                    lastError = `${model}: ${response.status} - ${text.slice(0, 300)}`;
+                    console.warn(`[SIMCAR ANALYSIS] Model ${model} failed:`, lastError);
+                    // If payload too large (413/400), skip to reduced set immediately
+                    if ((response.status === 413 || response.status === 400) && attempt === 0 && imageSets.length > 1) {
+                        console.warn(`[SIMCAR ANALYSIS] Payload too large, switching to reduced image set`);
+                        break; // break inner model loop, go to next attempt
+                    }
+                    continue;
+                }
+
+                const data = await response.json() as any;
+                const content = data?.choices?.[0]?.message?.content;
+                if (content) {
+                    console.log(`[SIMCAR ANALYSIS] Success with model: ${model} (attempt ${attempt + 1})`);
+                    return String(content);
+                }
+                lastError = `${model}: empty response`;
+            } catch (err: any) {
+                const isTimeout = err.name === "AbortError";
+                lastError = `${model}: ${isTimeout ? "timeout (120s)" : err.message}`;
+                console.warn(`[SIMCAR ANALYSIS] Model ${model} ${isTimeout ? "timed out" : "exception"}:`, lastError);
             }
-            lastError = `${model}: empty response`;
-        } catch (err: any) {
-            lastError = `${model}: ${err.message}`;
-            console.warn(`[SIMCAR ANALYSIS] Model ${model} exception:`, err.message);
         }
     }
     throw new Error(`Todos os modelos falharam. Último erro: ${lastError}`);
@@ -1423,6 +1480,8 @@ async function callTextFollowUp(
     let lastError = "";
     for (const model of TEXT_MODELS) {
         try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 60_000);
             const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
                 method: "POST",
                 headers: {
@@ -1435,7 +1494,9 @@ async function callTextFollowUp(
                     max_tokens: 2000,
                     messages,
                 }),
+                signal: controller.signal,
             });
+            clearTimeout(timeout);
             if (!response.ok) {
                 const text = await response.text();
                 lastError = `${model}: ${text.slice(0, 200)}`;
@@ -1446,7 +1507,8 @@ async function callTextFollowUp(
             if (content) return String(content);
             lastError = `${model}: empty response`;
         } catch (err: any) {
-            lastError = `${model}: ${err.message}`;
+            const isTimeout = err.name === "AbortError";
+            lastError = `${model}: ${isTimeout ? "timeout (60s)" : err.message}`;
         }
     }
     throw new Error(`Falha nos modelos de texto. Último erro: ${lastError}`);
@@ -1720,8 +1782,8 @@ async function processAnalysis(
         return;
     }
 
-    // Step 2: Upload to Cloudinary
-    sendSSE(res, { type: "progress", step: "uploading_images", percent: 55, message: "Salvando imagens no Cloudinary..." });
+    // Step 2: Upload to Cloudinary (full quality for user viewing)
+    sendSSE(res, { type: "progress", step: "uploading_images", percent: 50, message: "Salvando imagens no Cloudinary..." });
 
     const cloudinaryUrls: Array<{ url: string; caption: string }> = [];
     try {
@@ -1731,6 +1793,11 @@ async function processAnalysis(
             const url = await uploadToCloudinary(img.dataUrl, filename);
             cloudinaryUrls.push({ url, caption: img.caption });
             console.log(`[SIMCAR ANALYSIS] Uploaded image ${i + 1}: ${url}`);
+            sendSSE(res, {
+                type: "progress", step: "uploading_images",
+                percent: 50 + Math.round(((i + 1) / imagesToAnalyze.length) * 10),
+                message: `Upload ${i + 1}/${imagesToAnalyze.length}...`,
+            });
         }
     } catch (err: any) {
         console.error("[SIMCAR ANALYSIS] Cloudinary upload error:", err.message);
@@ -1748,20 +1815,43 @@ async function processAnalysis(
         return;
     }
 
-    // Step 3: AI Analysis
+    // Step 3: Prepare images for AI (use Cloudinary URLs or compress base64 as fallback)
+    sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens para análise IA..." });
+
+    const aiImages: Array<{ url?: string; dataUrl?: string; caption: string }> = [];
+    if (cloudinaryUrls.length === imagesToAnalyze.length) {
+        // Use Cloudinary URLs — much lighter payload for the vision API
+        for (const cu of cloudinaryUrls) {
+            aiImages.push({ url: cu.url, caption: cu.caption });
+        }
+        console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs for vision API`);
+    } else {
+        // Fallback: compress base64 images to reduce payload
+        console.log(`[SIMCAR ANALYSIS] Cloudinary partial/failed, compressing ${imagesToAnalyze.length} images for vision API`);
+        for (const img of imagesToAnalyze) {
+            try {
+                const compressed = await compressForVision(img.dataUrl);
+                aiImages.push({ dataUrl: compressed, caption: img.caption });
+            } catch {
+                aiImages.push({ dataUrl: img.dataUrl, caption: img.caption });
+            }
+        }
+    }
+
+    // Step 4: AI Analysis
     sendSSE(res, { type: "progress", step: "analyzing", percent: 65, message: "IA analisando imagens (isso pode levar alguns segundos)..." });
 
     let analysisText: string;
     try {
         const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers);
-        analysisText = await callVisionAnalysis(imagesToAnalyze, prompt);
+        analysisText = await callVisionAnalysis(aiImages, prompt);
     } catch (err: any) {
         console.error("[SIMCAR ANALYSIS] AI analysis error:", err.message);
         sendSSE(res, { type: "error", message: `Erro na análise IA: ${err.message}` });
         return;
     }
 
-    // Step 4: Complete
+    // Step 5: Complete
     sendSSE(res, {
         type: "complete",
         percent: 100,

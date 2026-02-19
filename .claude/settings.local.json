@@ -13,7 +13,10 @@
       "Bash(taskkill:*)",
       "Bash(npm run build:*)",
       "Bash(NODE_ENV=production node:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(npx tsc:*)",
+      "Bash(pnpm dev:*)",
+      "Bash(pnpm dev:server:*)"
     ]
   }
 }
