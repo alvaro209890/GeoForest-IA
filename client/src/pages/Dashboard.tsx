@@ -3558,6 +3558,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   setSimcarAnalysisImages([]);
                   setSimcarAnalysisMessages([]);
                   setSimcarAnalysisProgress(null);
+                  setSimcarThinkingText('');
+                  setSimcarThinkingHidden(false);
                   setActiveView('simcar-clip');
                 }}
                 className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 transition-all duration-300 p-[1px] shadow-lg shadow-purple-900/30"
@@ -4626,6 +4628,44 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </section>
                     )}
 
+                    {/* AI Thinking Bubble (Top) */}
+                    {(simcarAnalysisProcessing || simcarThinkingText.trim()) && (
+                      <section className="relative rounded-2xl border border-purple-400/25 bg-[#101622]/75 backdrop-blur-md px-4 py-3">
+                        <div className="absolute -top-1.5 left-8 h-3 w-3 rotate-45 border-l border-t border-purple-400/25 bg-[#101622]/75" />
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                          <div className="flex items-center gap-2">
+                            <Brain size={14} className="text-purple-300" />
+                            <h3 className="font-semibold text-slate-200 text-xs uppercase tracking-wider">Pensamento da IA</h3>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSimcarThinkingHidden((prev) => !prev)}
+                              className="px-2.5 py-1 rounded-lg text-[10px] font-medium bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 transition-colors"
+                            >
+                              {simcarThinkingHidden ? 'Mostrar' : 'Esconder'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSimcarThinkingText('')}
+                              className="px-2.5 py-1 rounded-lg text-[10px] font-medium bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-300 transition-colors"
+                            >
+                              Apagar
+                            </button>
+                          </div>
+                        </div>
+                        {simcarThinkingHidden ? (
+                          <p className="text-xs text-slate-500 italic">Pensamento oculto.</p>
+                        ) : (
+                          <div className="max-h-44 overflow-y-auto custom-scrollbar rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                            <p className="text-xs leading-relaxed text-slate-300/85 whitespace-pre-wrap">
+                              {simcarThinkingText.trim() || 'Aguardando novos passos da análise...'}
+                            </p>
+                          </div>
+                        )}
+                      </section>
+                    )}
+
                     {/* AI Analysis Progress */}
                     {simcarAnalysisProcessing && simcarAnalysisProgress && (
                       <section className="bg-[#0e1216]/60 backdrop-blur-md border border-purple-500/20 rounded-2xl p-6">
@@ -4696,9 +4736,19 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 : 'bg-[#111a20]/80 border border-purple-500/20 text-slate-200 rounded-bl-md'
                                 }`}>
                                 {msg.role === 'ai' ? (
-                                  <div className="analysis-markdown">
-                                    {renderAnalysisRichText(msg.text)}
-                                  </div>
+                                  <>
+                                    {!simcarThinkingHidden && msg.thinkingText && (
+                                      <div className="mb-3 rounded-xl border border-purple-400/30 bg-purple-500/10 px-3 py-2">
+                                        <p className="text-[10px] uppercase tracking-wider text-purple-300 mb-1">Pensamento da IA</p>
+                                        <p className="text-xs leading-relaxed whitespace-pre-wrap text-slate-300/90">
+                                          {msg.thinkingText}
+                                        </p>
+                                      </div>
+                                    )}
+                                    <div className="analysis-markdown">
+                                      {renderAnalysisRichText(msg.text)}
+                                    </div>
+                                  </>
                                 ) : (
                                   msg.text
                                 )}
@@ -4731,6 +4781,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                   setSimcarAnalysisInput('');
                                   setSimcarAnalysisMessages((prev) => [...prev, { role: 'user', text: userMsg }]);
                                   setSimcarAnalysisSending(true);
+                                  appendSimcarThinking(`Pergunta complementar: ${userMsg}`);
+                                  setSimcarThinkingHidden(false);
 
                                   try {
                                     // Build chat history for context
@@ -4792,6 +4844,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 setSimcarAnalysisInput('');
                                 setSimcarAnalysisMessages((prev) => [...prev, { role: 'user', text: userMsg }]);
                                 setSimcarAnalysisSending(true);
+                                appendSimcarThinking(`Pergunta complementar: ${userMsg}`);
+                                setSimcarThinkingHidden(false);
 
                                 try {
                                   const chatMessages = simcarAnalysisMessages.map((m) => ({

@@ -1863,6 +1863,94 @@ async function analyzeWithGroqAndGemini(
 }
 
 /** Call Groq with text-only follow-up message. Multi-model fallback. */
+function normalizeAssistantContent(content: any): string {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+        return content
+            .map((part) => {
+                if (typeof part === "string") return part;
+                if (part && typeof part.text === "string") return part.text;
+                return "";
+            })
+            .filter(Boolean)
+            .join("\n");
+    }
+    return content == null ? "" : String(content);
+}
+
+function trimForContinuation(text: string): string {
+    const normalized = String(text || "").trim();
+    if (!normalized) return "";
+    const regex = /([.!?])(?=\s|$)|\n{2,}/g;
+    let lastBoundary = -1;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(normalized)) !== null) {
+        lastBoundary = match.index + match[0].length;
+    }
+    if (lastBoundary <= 0) {
+        return normalized;
+    }
+    return normalized.slice(0, lastBoundary).trim();
+}
+
+function mergeContinuationText(current: string, addition: string): string {
+    const base = String(current || "").trimEnd();
+    const next = String(addition || "").trim();
+    if (!next) return base;
+    if (!base) return next;
+    if (base.includes(next)) return base;
+    if (next.includes(base)) return next;
+
+    // Remove overlap when continuation repeats a fragment from the end.
+    const maxOverlap = Math.min(800, base.length, next.length);
+    for (let size = maxOverlap; size >= 40; size--) {
+        if (base.slice(-size) === next.slice(0, size)) {
+            return `${base}${next.slice(size)}`.trim();
+        }
+    }
+    return `${base}\n${next}`.trim();
+}
+
+async function callGroqTextOnce(
+    apiKey: string,
+    model: string,
+    messages: Array<{ role: string; content: any }>,
+    maxTokens: number,
+): Promise<{ content: string; finishReason: string }> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60_000);
+    try {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+                model,
+                temperature: 0.1,
+                max_tokens: maxTokens,
+                messages,
+            }),
+            signal: controller.signal,
+        });
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`${model}: ${response.status} - ${text.slice(0, 240)}`);
+        }
+        const data = await response.json() as any;
+        const choice = data?.choices?.[0];
+        const content = normalizeAssistantContent(choice?.message?.content).trim();
+        const finishReason = String(choice?.finish_reason || "stop");
+        if (!content) {
+            throw new Error(`${model}: empty response`);
+        }
+        return { content, finishReason };
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
 async function callTextFollowUp(
     messages: Array<{ role: string; content: any }>,
 ): Promise<string> {
@@ -1874,39 +1962,69 @@ async function callTextFollowUp(
         "meta-llama/llama-3.3-70b-versatile",
         "qwen/qwen3-32b",
     ];
+    const MAX_TOKENS = 2200;
+    const MAX_CONTINUATIONS = 2;
+    const continuationInstruction =
+        "Sua resposta anterior foi cortada. Continue EXATAMENTE de onde parou.\n" +
+        "Regras:\n" +
+        "- Nao repita o que ja foi escrito.\n" +
+        "- Mantenha o mesmo idioma, formato e nivel tecnico.\n" +
+        "- Entregue somente a continuacao a partir da proxima frase.\n" +
+        "- Nao invente dados novos fora do contexto ja fornecido.";
 
     let lastError = "";
     for (const model of TEXT_MODELS) {
         try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 60_000);
-            const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${apiKey}`,
-                },
-                body: JSON.stringify({
-                    model,
-                    temperature: 0.1,
-                    max_tokens: 2000,
-                    messages,
-                }),
-                signal: controller.signal,
-            });
-            clearTimeout(timeout);
-            if (!response.ok) {
-                const text = await response.text();
-                lastError = `${model}: ${text.slice(0, 200)}`;
-                continue;
+            const first = await callGroqTextOnce(apiKey, model, messages, MAX_TOKENS);
+            console.log(
+                `[SIMCAR ANALYSIS] Text model ${model} ok (finish=${first.finishReason}, chars=${first.content.length})`,
+            );
+
+            let activeModel = model;
+            let mergedContent = first.content;
+            let finishReason = first.finishReason;
+            let continuationsUsed = 0;
+
+            while (finishReason === "length" && continuationsUsed < MAX_CONTINUATIONS) {
+                continuationsUsed += 1;
+                const assistantSoFar = trimForContinuation(mergedContent);
+                const continuationMessages = [
+                    ...messages,
+                    { role: "assistant" as const, content: assistantSoFar || mergedContent },
+                    { role: "user" as const, content: continuationInstruction },
+                ];
+
+                let continuationObtained = false;
+                const continuationCandidates = [activeModel, ...TEXT_MODELS.filter((m) => m !== activeModel)];
+                for (const candidate of continuationCandidates) {
+                    try {
+                        const cont = await callGroqTextOnce(apiKey, candidate, continuationMessages, MAX_TOKENS);
+                        mergedContent = mergeContinuationText(mergedContent, cont.content);
+                        finishReason = cont.finishReason;
+                        activeModel = candidate;
+                        continuationObtained = true;
+                        console.log(
+                            `[SIMCAR ANALYSIS] Continuation ${continuationsUsed} via ${candidate} (finish=${finishReason}, chars=${mergedContent.length})`,
+                        );
+                        break;
+                    } catch (err: any) {
+                        const detail = err?.name === "AbortError" ? "timeout (60s)" : (err?.message || String(err));
+                        lastError = `${candidate}: ${detail}`;
+                        console.warn(`[SIMCAR ANALYSIS] Continuation failed (${candidate}): ${detail}`);
+                    }
+                }
+
+                if (!continuationObtained) {
+                    console.warn("[SIMCAR ANALYSIS] Continuation unavailable; retornando resposta parcial melhor-esforco.");
+                    break;
+                }
             }
-            const data = await response.json() as any;
-            const content = data?.choices?.[0]?.message?.content;
-            if (content) return String(content);
-            lastError = `${model}: empty response`;
+
+            return mergedContent.trim();
         } catch (err: any) {
             const isTimeout = err.name === "AbortError";
             lastError = `${model}: ${isTimeout ? "timeout (60s)" : err.message}`;
+            console.warn(`[SIMCAR ANALYSIS] Text model ${model} failed: ${lastError}`);
         }
     }
     throw new Error(`Falha nos modelos de texto. Último erro: ${lastError}`);
