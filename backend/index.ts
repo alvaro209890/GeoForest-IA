@@ -1714,6 +1714,7 @@ async function startServer() {
       hasMapSnapshot: true,
       hasMapCapabilities: true,
       hasKnowledgeHealth: true,
+      hasSimcarContextRehydrate: true,
       hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
       requireGemini,
       geminiVisionModels: String(process.env.GEMINI_VISION_MODELS || "gemini-2.5-flash"),
