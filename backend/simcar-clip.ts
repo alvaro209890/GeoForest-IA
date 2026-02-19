@@ -1218,10 +1218,10 @@ const ANALYSIS_VISION_MODELS = [
 ];
 const GEMINI_API_BASE = process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_VISION_FALLBACK_MODELS = [
+    "gemini-3-pro",
     "gemini-2.5-flash",
     "gemini-3-flash",
     "nano-banana-pro",
-    "gemini-3-pro",
 ];
 const GEMINI_TEXT_FALLBACK_MODELS = [
     "gemini-3-pro",
@@ -1266,12 +1266,12 @@ const GEMINI_TEXT_SYNTHESIS_MODELS = buildGeminiModelChain(
     process.env.GEMINI_TEXT_SYNTHESIS_MODELS || process.env.GEMINI_MODELS,
     GEMINI_TEXT_FALLBACK_MODELS,
 );
-const GEMINI_IMAGE_SHARE_INPUT = String(process.env.GEMINI_IMAGE_SHARE || "0.75").replace(",", ".");
+const GEMINI_IMAGE_SHARE_INPUT = String(process.env.GEMINI_IMAGE_SHARE || "1.0").replace(",", ".");
 const GEMINI_IMAGE_SHARE_RAW = Number(GEMINI_IMAGE_SHARE_INPUT);
 const GEMINI_IMAGE_SHARE = Number.isFinite(GEMINI_IMAGE_SHARE_RAW)
-    ? Math.min(0.95, Math.max(0.55, GEMINI_IMAGE_SHARE_RAW))
-    : 0.75;
-const SIMCAR_REQUIRE_GEMINI = String(process.env.SIMCAR_REQUIRE_GEMINI || "").toLowerCase() === "true";
+    ? Math.min(1.0, Math.max(0.55, GEMINI_IMAGE_SHARE_RAW))
+    : 1.0;
+const SIMCAR_REQUIRE_GEMINI = String(process.env.SIMCAR_REQUIRE_GEMINI || "true").toLowerCase() !== "false";
 
 export function getSimcarGeminiRuntimeConfig() {
     return {
@@ -1622,18 +1622,24 @@ function reduceImageSet(
     return images.filter((img) => img.caption.includes("Visão Geral"));
 }
 
-/** Split images by provider weight, giving Gemini a larger share by default. */
+/** Split images by provider weight, giving Gemini priority (all images by default). */
 function splitImagesByProviderWeight(images: AiImage[]): { groqImages: AiImage[]; geminiImages: AiImage[] } {
     const groqImages: AiImage[] = [];
     const geminiImages: AiImage[] = [];
 
+    // When share is 1.0, send ALL images to Gemini (Gemini-first approach).
+    if (GEMINI_IMAGE_SHARE >= 1.0) {
+        return { groqImages: [], geminiImages: images.slice() };
+    }
+
     if (images.length <= 1) {
-        return { groqImages: images.slice(), geminiImages };
+        // Single image always goes to Gemini (priority provider).
+        return { groqImages: [], geminiImages: images.slice() };
     }
 
     const total = images.length;
     let targetGemini = Math.round(total * GEMINI_IMAGE_SHARE);
-    targetGemini = Math.min(total - 1, Math.max(1, targetGemini));
+    targetGemini = Math.min(total, Math.max(1, targetGemini));
 
     images.forEach((img, idx) => {
         // Proportional distribution along the sequence to avoid clustering.
@@ -1649,10 +1655,6 @@ function splitImagesByProviderWeight(images: AiImage[]): { groqImages: AiImage[]
     while (geminiImages.length < targetGemini && groqImages.length > 1) {
         const moved = groqImages.shift();
         if (moved) geminiImages.push(moved);
-    }
-    while (groqImages.length === 0 && geminiImages.length > 1) {
-        const moved = geminiImages.pop();
-        if (moved) groqImages.push(moved);
     }
 
     return { groqImages, geminiImages };
@@ -1710,7 +1712,7 @@ async function continueTruncatedAnalysisText(
             { role: "assistant" as const, content: trimForContinuation(currentText) || currentText },
             { role: "user" as const, content: CONTINUATION_INSTRUCTION },
         ];
-        const continuation = await callTextFollowUp(continuationMessages);
+        const continuation = await callTextFollowUpGeminiFirst(continuationMessages, `continuation-${providerLabel}`);
         const merged = mergeContinuationText(currentText, continuation).trim();
         console.log(
             `[SIMCAR ANALYSIS] ${providerLabel} continuation merged (chars=${merged.length})`,
@@ -2158,49 +2160,82 @@ async function analyzeWithGroqAndGemini(
     }
 
     const hasGemini = Boolean(process.env.GEMINI_API_KEY);
-    if (SIMCAR_REQUIRE_GEMINI && !hasGemini) {
-        throw new Error("SIMCAR_REQUIRE_GEMINI=true, mas GEMINI_API_KEY não está configurada.");
+    const hasGroq = Boolean(process.env.GROQ_API_KEY);
+
+    if (!hasGemini && !hasGroq) {
+        throw new Error("Nenhuma API key configurada (GEMINI_API_KEY / GROQ_API_KEY).");
     }
+
+    // -- Gemini-first approach: always prioritize Gemini for image analysis --
+
     if (!hasGemini) {
-        console.warn("[SIMCAR ANALYSIS] GEMINI_API_KEY ausente; usando apenas Groq.");
+        console.warn("[SIMCAR ANALYSIS] GEMINI_API_KEY ausente; usando apenas Groq como fallback.");
         return callVisionAnalysis(images, prompt);
     }
 
     const { groqImages, geminiImages } = splitImagesByProviderWeight(images);
-    const groqBatch = groqImages.length > 0 ? groqImages : images;
+    // Gemini always gets at least all images; Groq only if share < 1.0
     const geminiBatch = geminiImages.length > 0 ? geminiImages : images;
+    const useGroqToo = hasGroq && groqImages.length > 0;
 
     console.log(
-        `[SIMCAR ANALYSIS] ${contextLabel}: split Groq=${groqBatch.length}, Gemini=${geminiBatch.length}, total=${images.length}, gemini_share=${GEMINI_IMAGE_SHARE}`,
+        `[SIMCAR ANALYSIS] ${contextLabel}: Gemini-first — Gemini=${geminiBatch.length}, Groq=${useGroqToo ? groqImages.length : 0}, total=${images.length}, gemini_share=${GEMINI_IMAGE_SHARE}`,
     );
 
-    const [groqResult, geminiResult] = await Promise.allSettled([
-        callVisionAnalysis(groqBatch, prompt),
-        callGeminiVisionAnalysis(geminiBatch, prompt),
-    ]);
+    // Primary: always call Gemini first with all (or most) images
+    let geminiText = "";
+    let geminiErr = "";
+    try {
+        geminiText = await callGeminiVisionAnalysis(geminiBatch, prompt);
+    } catch (err: any) {
+        geminiErr = String(err?.message || err);
+        console.warn(`[SIMCAR ANALYSIS] Gemini primary failed for ${contextLabel}: ${geminiErr}`);
+    }
 
-    const groqText = groqResult.status === "fulfilled" ? groqResult.value : "";
-    const geminiText = geminiResult.status === "fulfilled" ? geminiResult.value : "";
-    const groqOk = Boolean(groqText);
+    // If Gemini succeeded and Groq has no images, return Gemini directly
+    if (geminiText && !useGroqToo) {
+        console.log(`[SIMCAR ANALYSIS] ${contextLabel}: Gemini-only analysis OK`);
+        return geminiText;
+    }
+
+    // If Gemini succeeded and Groq also has images, run Groq for complementary analysis
+    let groqText = "";
+    if (useGroqToo) {
+        try {
+            groqText = await callVisionAnalysis(groqImages, prompt);
+        } catch (err: any) {
+            console.warn(`[SIMCAR ANALYSIS] Groq complementary failed for ${contextLabel}: ${err?.message || err}`);
+        }
+    }
+
     const geminiOk = Boolean(geminiText);
+    const groqOk = Boolean(groqText);
     console.log(
-        `[SIMCAR ANALYSIS] ${contextLabel}: provider_status groq=${groqOk ? "ok" : "fail"} gemini=${geminiOk ? "ok" : "fail"} requireGemini=${SIMCAR_REQUIRE_GEMINI}`,
+        `[SIMCAR ANALYSIS] ${contextLabel}: provider_status gemini=${geminiOk ? "ok" : "fail"} groq=${groqOk ? "ok" : "fail"}`,
     );
 
-    if (!groqText && !geminiText) {
-        const groqErr = groqResult.status === "rejected" ? String(groqResult.reason?.message || groqResult.reason) : "";
-        const geminiErr = geminiResult.status === "rejected" ? String(geminiResult.reason?.message || geminiResult.reason) : "";
-        throw new Error(`Groq e Gemini falharam para ${contextLabel}. Groq=${groqErr} | Gemini=${geminiErr}`);
+    // Both failed — try Groq as full fallback with all images
+    if (!geminiText && !groqText) {
+        if (hasGroq) {
+            console.warn(`[SIMCAR ANALYSIS] ${contextLabel}: Gemini failed, trying Groq full-fallback with all images`);
+            try {
+                return await callVisionAnalysis(images, prompt);
+            } catch (fallbackErr: any) {
+                throw new Error(
+                    `Gemini e Groq falharam para ${contextLabel}. Gemini=${geminiErr} | Groq=${fallbackErr?.message || fallbackErr}`,
+                );
+            }
+        }
+        throw new Error(`Gemini falhou para ${contextLabel}. Erro: ${geminiErr}`);
     }
-    if (SIMCAR_REQUIRE_GEMINI && !geminiText) {
-        const geminiErr = geminiResult.status === "rejected"
-            ? String(geminiResult.reason?.message || geminiResult.reason)
-            : "empty response";
-        throw new Error(`Gemini obrigatório e indisponível para ${contextLabel}. Erro Gemini: ${geminiErr}`);
-    }
-    if (groqText && !geminiText) return groqText;
-    if (!groqText && geminiText) return geminiText;
 
+    // Only Gemini succeeded
+    if (geminiText && !groqText) return geminiText;
+
+    // Only Groq succeeded (Gemini failed, but Groq worked as fallback)
+    if (!geminiText && groqText) return groqText;
+
+    // Both succeeded — merge analyses
     try {
         const mergePrompt = buildDualModelMergePrompt(contextLabel, groqText, geminiText);
         try {
@@ -2217,11 +2252,11 @@ async function analyzeWithGroqAndGemini(
         return [
             `## ${contextLabel}`,
             "",
-            "### Síntese Groq",
-            groqText,
-            "",
-            "### Síntese Gemini",
+            "### Análise Gemini (primária)",
             geminiText,
+            "",
+            "### Análise Groq (complementar)",
+            groqText,
         ].join("\n");
     }
 }
@@ -2313,6 +2348,22 @@ async function callGroqTextOnce(
     } finally {
         clearTimeout(timeout);
     }
+}
+
+/** Gemini-first text call: tries Gemini synthesis, falls back to Groq text models. */
+async function callTextFollowUpGeminiFirst(
+    messages: Array<{ role: string; content: any }>,
+    contextLabel = "text-followup",
+): Promise<string> {
+    const hasGemini = Boolean(process.env.GEMINI_API_KEY);
+    if (hasGemini) {
+        try {
+            return await callGeminiTextSynthesis(messages, contextLabel);
+        } catch (gemErr: any) {
+            console.warn(`[SIMCAR ANALYSIS] Gemini text first-attempt failed for ${contextLabel}, fallback Groq: ${gemErr?.message || gemErr}`);
+        }
+    }
+    return callTextFollowUp(messages);
 }
 
 async function callTextFollowUp(
@@ -3511,7 +3562,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 return;
             }
 
-            const reply = await callTextFollowUp(messages);
+            const reply = await callTextFollowUpGeminiFirst(messages, "chat");
             res.json({ content: reply });
         } catch (err: any) {
             console.error("[SIMCAR ANALYSIS CHAT] Error:", err);
