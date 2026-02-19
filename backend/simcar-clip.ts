@@ -1071,6 +1071,7 @@ const SEMA_WMS_AUTHKEY = process.env.SEMA_WMS_AUTHKEY || "541085de-9a2e-454e-bdb
 const SPOT_LAYER = "Mosaicos:MOSAICO_SPOT_SEPLAN";
 const LANDSAT5_2007_LAYER = process.env.WMS_LANDSAT5_2007 || "Mosaicos:LANDSAT_5_2007";
 const LANDSAT5_2008_LAYER = process.env.WMS_LANDSAT5_2008 || "Mosaicos:LANDSAT_5_2008";
+const LANDSAT5_2009_LAYER = process.env.WMS_LANDSAT5_2009 || "Mosaicos:LANDSAT_5_2009";
 
 /** Available satellite base layers for analysis. */
 const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]; label: string; year: number }> = {
@@ -1086,6 +1087,12 @@ const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]
         wmsAliases: ["Mosaicos:LANDSAT_5_2008", "Mosaicos:MOSAICO_LANDSAT5_2008"],
         label: "Landsat 5 (2008)",
         year: 2008,
+    },
+    landsat5_2009: {
+        wmsLayer: LANDSAT5_2009_LAYER,
+        wmsAliases: ["Mosaicos:LANDSAT_5_2009", "Mosaicos:MOSAICO_LANDSAT5_2009"],
+        label: "Landsat 5 (2009)",
+        year: 2009,
     },
 };
 
@@ -1105,6 +1112,11 @@ const ANALYSIS_VISION_MODELS = [
     "meta-llama/llama-4-maverick-17b-128e-instruct",
     "meta-llama/llama-4-scout-17b-16e-instruct",
 ];
+const GEMINI_API_BASE = process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_VISION_MODELS = (process.env.GEMINI_VISION_MODELS || "gemini-1.5-flash")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
 
 /** Generate a WMS GetMap URL for a given layer + bbox. */
 function buildWmsGetMapUrl(
@@ -1404,14 +1416,13 @@ async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promi
     return ((await response.json()) as { secure_url: string }).secure_url;
 }
 
+type AiImage = { url?: string; dataUrl?: string; caption: string };
+
 /**
  * Build content parts for vision API from images.
  * Uses Cloudinary URLs when available, otherwise compressed base64.
  */
-function buildVisionContentParts(
-    images: Array<{ url?: string; dataUrl?: string; caption: string }>,
-    prompt: string,
-): any[] {
+function buildVisionContentParts(images: AiImage[], prompt: string): any[] {
     const contentParts: any[] = [
         { type: "text", text: prompt },
     ];
@@ -1432,14 +1443,60 @@ function buildVisionContentParts(
  * instead of all 3 views per satellite.
  */
 function reduceImageSet(
-    images: Array<{ url?: string; dataUrl?: string; caption: string }>,
-): Array<{ url?: string; dataUrl?: string; caption: string }> {
+    images: AiImage[],
+): AiImage[] {
     return images.filter((img) => img.caption.includes("Visão Geral"));
+}
+
+/** Split images in alternating order so Groq and Gemini receive near-equal subsets. */
+function splitImagesEvenlyByModel(images: AiImage[]): { groqImages: AiImage[]; geminiImages: AiImage[] } {
+    const groqImages: AiImage[] = [];
+    const geminiImages: AiImage[] = [];
+    images.forEach((img, idx) => {
+        if (idx % 2 === 0) groqImages.push(img);
+        else geminiImages.push(img);
+    });
+
+    // Keep sizes close (difference <= 1) and avoid empty subset when possible.
+    if (geminiImages.length === 0 && groqImages.length > 1) {
+        const moved = groqImages.pop();
+        if (moved) geminiImages.push(moved);
+    }
+
+    return { groqImages, geminiImages };
+}
+
+function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
+    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) {
+        throw new Error("Formato de data URL inválido para Gemini.");
+    }
+    return { mimeType: match[1], base64: match[2] };
+}
+
+async function resolveImageDataUrlForGemini(image: AiImage): Promise<string> {
+    if (image.dataUrl) return image.dataUrl;
+    if (!image.url) throw new Error(`Imagem sem URL/dataUrl: ${image.caption}`);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    const response = await fetch(image.url, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Falha ao baixar imagem para Gemini (${response.status}): ${text.slice(0, 180)}`);
+    }
+
+    const contentType = response.headers.get("content-type") || "image/png";
+    const arr = await response.arrayBuffer();
+    const b64 = Buffer.from(arr).toString("base64");
+    return `data:${contentType};base64,${b64}`;
 }
 
 /** Call Groq vision model with images. Multi-model fallback + reduced-image retry. */
 async function callVisionAnalysis(
-    images: Array<{ url?: string; dataUrl?: string; caption: string }>,
+    images: AiImage[],
     prompt: string,
 ): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
@@ -1514,6 +1571,170 @@ async function callVisionAnalysis(
         }
     }
     throw new Error(`Todos os modelos falharam. Último erro: ${lastError}`);
+}
+
+function buildDualModelMergePrompt(
+    contextLabel: string,
+    groqAnalysis: string,
+    geminiAnalysis: string,
+): string {
+    return [
+        "Você é a GeoForest IA e deve consolidar duas análises técnicas da MESMA área e do MESMO período.",
+        `Contexto do recorte: ${contextLabel}`,
+        "",
+        "## Análise Groq",
+        groqAnalysis,
+        "",
+        "## Análise Gemini",
+        geminiAnalysis,
+        "",
+        "## Tarefa",
+        "Produza um texto único e técnico em português com:",
+        "1) Consensos principais entre os dois modelos.",
+        "2) Divergências relevantes e a hipótese mais provável.",
+        "3) Conclusão consolidada para este período.",
+        "",
+        "Seja objetivo e não repita integralmente os textos de origem.",
+    ].join("\n");
+}
+
+async function callGeminiVisionAnalysis(
+    images: AiImage[],
+    prompt: string,
+): Promise<string> {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error("GEMINI_API_KEY não configurada.");
+
+    const VISION_TIMEOUT_MS = 120_000;
+    const imageSets = [images];
+    if (images.length > 3) {
+        imageSets.push(reduceImageSet(images));
+    }
+
+    let lastError = "";
+    for (let attempt = 0; attempt < imageSets.length; attempt++) {
+        const currentImages = imageSets[attempt];
+        const parts: any[] = [{ text: prompt }];
+        for (const img of currentImages) {
+            const dataUrl = await resolveImageDataUrlForGemini(img);
+            const parsed = parseDataUrl(dataUrl);
+            parts.push({
+                inline_data: {
+                    mime_type: parsed.mimeType,
+                    data: parsed.base64,
+                },
+            });
+            parts.push({ text: `[Legenda: ${img.caption}]` });
+        }
+
+        for (const model of GEMINI_VISION_MODELS) {
+            try {
+                console.log(`[SIMCAR ANALYSIS] Trying Gemini model: ${model} (${currentImages.length} images, attempt ${attempt + 1})`);
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), VISION_TIMEOUT_MS);
+
+                const response = await fetch(
+                    `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            contents: [{ role: "user", parts }],
+                            generationConfig: {
+                                temperature: 0.1,
+                                maxOutputTokens: currentImages.length > 3 ? 3200 : 2200,
+                            },
+                        }),
+                        signal: controller.signal,
+                    },
+                );
+                clearTimeout(timeout);
+
+                if (!response.ok) {
+                    const text = await response.text();
+                    lastError = `${model}: ${response.status} - ${text.slice(0, 280)}`;
+                    console.warn(`[SIMCAR ANALYSIS] Gemini model ${model} failed:`, lastError);
+                    continue;
+                }
+
+                const data = await response.json() as any;
+                const content = (data?.candidates?.[0]?.content?.parts || [])
+                    .map((p: any) => (typeof p?.text === "string" ? p.text : ""))
+                    .filter(Boolean)
+                    .join("\n")
+                    .trim();
+
+                if (content) {
+                    console.log(`[SIMCAR ANALYSIS] Success with Gemini model: ${model} (attempt ${attempt + 1})`);
+                    return content;
+                }
+                const blockReason = data?.promptFeedback?.blockReason;
+                lastError = `${model}: empty response${blockReason ? ` (${blockReason})` : ""}`;
+            } catch (err: any) {
+                const isTimeout = err.name === "AbortError";
+                lastError = `${model}: ${isTimeout ? "timeout (120s)" : err.message}`;
+                console.warn(`[SIMCAR ANALYSIS] Gemini model ${model} ${isTimeout ? "timed out" : "exception"}:`, lastError);
+            }
+        }
+    }
+
+    throw new Error(`Gemini falhou. Último erro: ${lastError}`);
+}
+
+async function analyzeWithGroqAndGemini(
+    images: AiImage[],
+    prompt: string,
+    contextLabel: string,
+): Promise<string> {
+    if (images.length === 0) {
+        throw new Error(`Sem imagens para análise (${contextLabel}).`);
+    }
+
+    const hasGemini = Boolean(process.env.GEMINI_API_KEY);
+    if (!hasGemini) {
+        console.warn("[SIMCAR ANALYSIS] GEMINI_API_KEY ausente; usando apenas Groq.");
+        return callVisionAnalysis(images, prompt);
+    }
+
+    const { groqImages, geminiImages } = splitImagesEvenlyByModel(images);
+    const groqBatch = groqImages.length > 0 ? groqImages : images;
+    const geminiBatch = geminiImages.length > 0 ? geminiImages : images;
+
+    console.log(
+        `[SIMCAR ANALYSIS] ${contextLabel}: split Groq=${groqBatch.length}, Gemini=${geminiBatch.length}, total=${images.length}`,
+    );
+
+    const [groqResult, geminiResult] = await Promise.allSettled([
+        callVisionAnalysis(groqBatch, prompt),
+        callGeminiVisionAnalysis(geminiBatch, prompt),
+    ]);
+
+    const groqText = groqResult.status === "fulfilled" ? groqResult.value : "";
+    const geminiText = geminiResult.status === "fulfilled" ? geminiResult.value : "";
+
+    if (!groqText && !geminiText) {
+        const groqErr = groqResult.status === "rejected" ? String(groqResult.reason?.message || groqResult.reason) : "";
+        const geminiErr = geminiResult.status === "rejected" ? String(geminiResult.reason?.message || geminiResult.reason) : "";
+        throw new Error(`Groq e Gemini falharam para ${contextLabel}. Groq=${groqErr} | Gemini=${geminiErr}`);
+    }
+    if (groqText && !geminiText) return groqText;
+    if (!groqText && geminiText) return geminiText;
+
+    try {
+        const mergePrompt = buildDualModelMergePrompt(contextLabel, groqText, geminiText);
+        return await callTextFollowUp([{ role: "user", content: mergePrompt }]);
+    } catch (err: any) {
+        console.warn(`[SIMCAR ANALYSIS] Merge Groq+Gemini failed for ${contextLabel}: ${err.message}`);
+        return [
+            `## ${contextLabel}`,
+            "",
+            "### Síntese Groq",
+            groqText,
+            "",
+            "### Síntese Gemini",
+            geminiText,
+        ].join("\n");
+    }
 }
 
 /** Call Groq with text-only follow-up message. Multi-model fallback. */
@@ -1810,45 +2031,38 @@ function buildSynthesisPrompt(
         "",
         "## Sua Tarefa: Laudo Integrado Multi-temporal",
         "",
-        "Produza um laudo ÚNICO e COMPLETO que integre as análises acima. Estruture assim:",
+        "Produza um laudo ÚNICO e COMPLETO que integre as análises acima. Estruture exatamente assim:",
         "",
-        "### 1. Resumo por Satélite",
-        "Para cada satélite, resuma em 2-3 frases os achados principais da análise individual (AC e AVN).",
+        "### 1. Análise por Ano (obrigatória)",
+        `Crie um subtítulo para cada ano em **${years.join(", ")}** e descreva os achados de AC/AVN.`,
+        "Em cada ano, inclua: uso antrópico, integridade da vegetação, pontos de dúvida.",
         "",
-        "### 2. Análise Temporal Comparativa",
-        `Compare sistematicamente as imagens dos anos **${years.join(", ")}**:`,
+        "### 2. Conexões Entre os Anos (obrigatória)",
+        "Explique a linha do tempo conectando os anos entre si:",
+        "- O que permaneceu estável ao longo dos anos?",
+        "- Onde há indício de mudança (supressão ou regeneração)?",
+        "- Qual sequência temporal mais provável para essas mudanças?",
         "",
-        "#### a) Mudanças na Cobertura Vegetal",
-        "- Identifique áreas com **supressão** (vegetação → solo/pastagem) entre os anos.",
-        "- Identifique áreas com **regeneração** (solo → vegetação secundária).",
-        "- Estime áreas das mudanças (em hectares, proporção visual).",
+        "### 3. Comparação CAR x Histórico",
+        "- A Área Consolidada (AC) já estava consolidada no ano mais antigo?",
+        "- Há AC com sinal de vegetação nativa no passado?",
+        "- Há AVN com sinal de uso antrópico em algum ano?",
         "",
-        "#### b) Consistência do CAR vs. Histórico",
-        "- A Área Consolidada (AC) já existia como uso antrópico na imagem mais antiga?",
-        "- Alguma AC mostra vegetação nativa na imagem mais antiga (desmatamento posterior)?",
-        "- Alguma AVN já estava antropizada na imagem mais antiga?",
+        "### 4. Marco Temporal (Art. 68, Lei 12.651/2012)",
+        "- Referência: **22/07/2008**.",
+        "- Relacione explicitamente os anos anteriores e posteriores a 2008.",
         "",
-        "#### c) Marco Temporal — Art. 68 da Lei 12.651/2012",
-        "- Data de referência: **22/07/2008**.",
-        "- As áreas de AC já estavam consolidadas antes de julho/2008?",
-        "- Houve expansão agrícola/pecuária sobre vegetação nativa após 2008?",
+        "### 5. Concordâncias e Discordâncias Consolidadas",
+        "- **✅ CONCORDA**: quando os anos confirmam a classificação do CAR.",
+        "- **❌ DISCORDA**: quando algum ano contradiz o CAR (cite ano e evidência).",
+        "- **⚠️ INCONCLUSIVO**: quando a limitação do sensor impede conclusão robusta.",
         "",
-        "#### d) Diferenças entre Sensores",
-        "- Landsat 5 TM tem 30m; SPOT tem 2.5m. Não confundir resolução com mudança real.",
-        "- Onde as análises divergem por diferença de resolução, aponte explicitamente.",
+        "### 6. Nível de Confiança",
+        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]** e justifique.",
         "",
-        "### 3. Concordâncias e Discordâncias (Consolidadas)",
-        "- **✅ CONCORDA**: áreas onde TODAS as imagens confirmam a classificação do CAR.",
-        "- **❌ DISCORDA**: áreas onde alguma imagem contradiz a classificação. Indique qual ano e o que mostrou.",
-        "- **⚠️ INCONCLUSIVO**: áreas onde os satélites divergem por limitação de resolução.",
-        "",
-        "### 4. Nível de Confiança",
-        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]**.",
-        "Justifique com base na resolução, cobertura de nuvens, consistência entre sensores.",
-        "",
-        "### 5. Recomendações ao Analista",
-        "- Ações práticas: vistoria em campo, imagens complementares, retificação do CAR.",
-        "- Cite artigos do Código Florestal quando aplicável.",
+        "### 7. Conclusão Integrada + Recomendações",
+        "- Síntese final da linha do tempo citando todos os anos.",
+        "- Recomendações práticas: vistoria, imagens extras, retificação do CAR.",
         "",
         "---",
         "Responda em **português**, use markdown, seja detalhado e técnico.",
@@ -2017,7 +2231,6 @@ async function processAnalysis(
     // Step 3: Prepare images for AI (use Cloudinary URLs or compress base64 as fallback)
     sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens para análise IA..." });
 
-    type AiImage = { url?: string; dataUrl?: string; caption: string };
     const aiImages: AiImage[] = [];
     if (cloudinaryUrls.length === imagesToAnalyze.length) {
         for (const cu of cloudinaryUrls) {
@@ -2064,12 +2277,16 @@ async function processAnalysis(
             const progressPct = 65 + Math.round((satIdx / validKeys.length) * 20);
             sendSSE(res, {
                 type: "progress", step: "analyzing", percent: progressPct,
-                message: `IA analisando ${sat.label} (${satIdx + 1}/${validKeys.length})...`,
+                message: `IA (Groq + Gemini) analisando ${sat.label} (${satIdx + 1}/${validKeys.length})...`,
             });
 
             try {
                 const prompt = buildSingleSatellitePrompt(areaHa, layerSummaries, key);
-                const result = await callVisionAnalysis(satImages, prompt);
+                const result = await analyzeWithGroqAndGemini(
+                    satImages,
+                    prompt,
+                    `${sat.label} (${sat.year})`,
+                );
                 perSatelliteResults.push({ satelliteLabel: sat.label, year: sat.year, analysis: result });
                 console.log(`[SIMCAR ANALYSIS] ${sat.label} analysis complete (${result.length} chars)`);
             } catch (err: any) {
@@ -2090,7 +2307,11 @@ async function processAnalysis(
             sendSSE(res, { type: "progress", step: "analyzing", percent: 85, message: "Tentando análise unificada como fallback..." });
             try {
                 const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers);
-                analysisText = await callVisionAnalysis(aiImages, prompt);
+                analysisText = await analyzeWithGroqAndGemini(
+                    aiImages,
+                    prompt,
+                    "Análise unificada multitemporal",
+                );
             } catch (err: any) {
                 console.error("[SIMCAR ANALYSIS] Legacy fallback also failed:", err.message);
                 sendSSE(res, { type: "error", message: `Erro na análise IA: ${err.message}` });
@@ -2118,10 +2339,17 @@ async function processAnalysis(
         }
     } else {
         // ── SINGLE SATELLITE: direct analysis (original behavior) ──
-        sendSSE(res, { type: "progress", step: "analyzing", percent: 65, message: "IA analisando imagens (isso pode levar alguns segundos)..." });
+        sendSSE(res, { type: "progress", step: "analyzing", percent: 65, message: "IA (Groq + Gemini) analisando imagens..." });
         try {
             const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers);
-            analysisText = await callVisionAnalysis(aiImages, prompt);
+            const singleContext = validKeys
+                .map((k) => `${SATELLITE_LAYERS[k]?.label || k} (${SATELLITE_LAYERS[k]?.year || "?"})`)
+                .join(" / ");
+            analysisText = await analyzeWithGroqAndGemini(
+                aiImages,
+                prompt,
+                singleContext || "Análise de um único satélite",
+            );
         } catch (err: any) {
             console.error("[SIMCAR ANALYSIS] AI analysis error:", err.message);
             sendSSE(res, { type: "error", message: `Erro na análise IA: ${err.message}` });

@@ -754,6 +754,7 @@ export default function Dashboard() {
     spot_2008: true,
     landsat5_2007: false,
     landsat5_2008: false,
+    landsat5_2009: false,
   });
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
   const [mapRectSelection, setMapRectSelection] = useState<{
@@ -4234,11 +4235,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         {/* Satellite Selection */}
                         <div>
                           <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Selecione as imagens de satélite</h4>
-                          <div className="grid grid-cols-3 gap-2">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                             {[
                               { key: 'spot_2008', label: 'SPOT 2008', color: 'emerald' },
                               { key: 'landsat5_2007', label: 'Landsat 5 (2007)', color: 'blue' },
                               { key: 'landsat5_2008', label: 'Landsat 5 (2008)', color: 'cyan' },
+                              { key: 'landsat5_2009', label: 'Landsat 5 (2009)', color: 'teal' },
                             ].map((sat) => (
                               <button
                                 key={sat.key}
@@ -4252,6 +4254,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               </button>
                             ))}
                           </div>
+                          <p className="mt-2 text-[10px] text-slate-500">Para linha do tempo completa, selecione 3 anos diferentes (ex: 2007, 2008 e 2009).</p>
                         </div>
 
                         {/* Two Buttons: Analyze with AI + View Images */}
@@ -4418,7 +4421,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           </div>
                           <div>
                             <h3 className="font-semibold text-white text-sm">Análise IA do Recorte SIMCAR</h3>
-                            <p className="text-[10px] text-slate-500">Baseada em imagens SPOT 2008 + overlays AC/AVN</p>
+                            <p className="text-[10px] text-slate-500">Baseada nas imagens selecionadas (anos e sensores) + overlays AC/AVN</p>
                           </div>
                         </div>
 
