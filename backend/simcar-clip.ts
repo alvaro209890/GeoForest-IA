@@ -1191,15 +1191,15 @@ const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]
     // SPOT (high-res 2.5m)
     spot_2008: { wmsLayer: SPOT_LAYER, label: "SPOT 2008", year: 2008 },
     // Landsat 5 (30m) — 1984-2011
-    ...Object.fromEntries([1984,1985,1986,1987,1988,1989,1990,1991,1992,1993,1994,1995,1996,1997,1998,1999,2000,2003,2004,2005,2006,2007,2008,2009,2010,2011].map(
+    ...Object.fromEntries([1984, 1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011].map(
         (y) => [`landsat5_${y}`, buildSatLayer("LANDSAT5", y, "LANDSAT_5", "Landsat 5")]
     )),
     // Landsat 8 (30m) — 2013-2018
-    ...Object.fromEntries([2013,2014,2015,2016,2017,2018].map(
+    ...Object.fromEntries([2013, 2014, 2015, 2016, 2017, 2018].map(
         (y) => [`landsat8_${y}`, buildSatLayer("LANDSAT8", y, "LANDSAT_8", "Landsat 8")]
     )),
     // Sentinel-2 (10m) — 2016-2024
-    ...Object.fromEntries([2016,2017,2018,2019,2020,2021,2022,2023,2024].map(
+    ...Object.fromEntries([2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024].map(
         (y) => [`sentinel2_${y}`, buildSatLayer("SENTINEL2", y, "SENTINEL_2", "Sentinel-2")]
     )),
 };
@@ -3015,8 +3015,8 @@ function buildSingleSatellitePrompt(
     const sat = SATELLITE_LAYERS[satelliteKey];
     const sensor = satelliteKey.startsWith("sentinel2") ? "Sentinel-2 MSI (10m de resolução espacial)"
         : satelliteKey.startsWith("landsat8") ? "Landsat 8 OLI (30m de resolução espacial)"
-        : satelliteKey.startsWith("landsat5") ? "Landsat 5 TM (30m de resolução espacial)"
-        : "SPOT (2.5m de resolução espacial)";
+            : satelliteKey.startsWith("landsat5") ? "Landsat 5 TM (30m de resolução espacial)"
+                : "SPOT (2.5m de resolução espacial)";
 
     return [
         "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
@@ -3082,8 +3082,8 @@ function buildAnalysisPrompt(
         const imgBase = i * 3 + 1;
         const sensor = k.startsWith("sentinel2") ? "Sentinel-2 MSI (10m de resolução espacial)"
             : k.startsWith("landsat8") ? "Landsat 8 OLI (30m de resolução espacial)"
-            : k.startsWith("landsat5") ? "Landsat 5 TM (30m de resolução espacial)"
-            : "SPOT (2.5m de resolução espacial)";
+                : k.startsWith("landsat5") ? "Landsat 5 TM (30m de resolução espacial)"
+                    : "SPOT (2.5m de resolução espacial)";
         return [
             `#### ${sat.label} — ${sensor}`,
             `- Imagem ${imgBase}: Visão Geral — base ${sat.label} + contorno vermelho (propriedade) + AC (roxo) + AVN (amarelo)`,
@@ -3254,6 +3254,446 @@ function buildSynthesisPrompt(
         "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
         "NÃO repita as análises individuais integralmente — sintetize e compare.",
     ].join("\n");
+}
+
+/* ─── AUAS Analysis Pipeline ─────────────────────────────────── */
+
+/** Satellite keys used for AUAS analysis: only 2007 onwards, in chronological order. */
+const AUAS_SATELLITE_KEYS: string[] = [
+    "landsat5_2007",
+    "spot_2008",
+    "landsat5_2008",
+    "landsat5_2009",
+    "landsat5_2010",
+    "landsat5_2011",
+    "landsat8_2013",
+    "landsat8_2014",
+    "landsat8_2015",
+    "landsat8_2016",
+    "landsat8_2017",
+    "landsat8_2018",
+    "sentinel2_2016",
+    "sentinel2_2017",
+    "sentinel2_2018",
+    "sentinel2_2019",
+    "sentinel2_2020",
+    "sentinel2_2021",
+    "sentinel2_2022",
+    "sentinel2_2023",
+    "sentinel2_2024",
+].filter((k) => !!SATELLITE_LAYERS[k]);
+
+/**
+ * Generate composited satellite images for AUAS analysis.
+ * For each satellite, generates 1 image: AUAS (white) + property (red) overlay.
+ */
+async function generateAuasSatelliteImages(
+    res: Response,
+    job: CachedJob,
+): Promise<Array<{ dataUrl: string; caption: string }>> {
+    const { bbox, polygon: propertyPolygon, clippedGeometries } = job;
+    const paddedBbox = padBbox(bbox!, 0.10);
+    const IMG_W = 1200;
+    const IMG_H = 900;
+    const layerGeos = clippedGeometries ?? new Map<string, Geometry[]>();
+    const images: Array<{ dataUrl: string; caption: string }> = [];
+
+    const totalSteps = AUAS_SATELLITE_KEYS.length;
+    let step = 0;
+
+    for (const key of AUAS_SATELLITE_KEYS) {
+        const sat = SATELLITE_LAYERS[key];
+        if (!sat) { step++; continue; }
+
+        sendSSE(res, {
+            type: "progress", step: "generating_images",
+            percent: 10 + Math.round((step / totalSteps) * 40),
+            message: `Baixando imagem ${sat.label} para AUAS...`,
+        });
+
+        const candidateLayers = Array.from(new Set([sat.wmsLayer, ...(sat.wmsAliases || [])].filter(Boolean)));
+        let basePng: Buffer | null = null;
+        let lastLayerError = "unknown";
+
+        for (const layerName of candidateLayers) {
+            try {
+                basePng = await fetchWmsImageBuffer([layerName], paddedBbox, IMG_W, IMG_H);
+                break;
+            } catch (err: any) {
+                lastLayerError = err.message || String(err);
+                console.warn(`[AUAS ANALYSIS] WMS ${sat.label} (${layerName}) failed: ${lastLayerError}`);
+            }
+        }
+
+        if (!basePng) {
+            console.warn(`[AUAS ANALYSIS] WMS ${sat.label} unavailable. Last error: ${lastLayerError}`);
+            sendSSE(res, {
+                type: "progress", step: "generating_images",
+                percent: 10 + Math.round((step / totalSteps) * 40),
+                message: `Aviso: ${sat.label} indisponível, pulando...`,
+            });
+            step++;
+            continue;
+        }
+
+        // AUAS overlay: white fill + property outline
+        const auasSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+            { name: "AUAS", stroke: "#FFFFFF", fill: "rgba(255, 255, 255, 0.30)", strokeWidth: 2.5 },
+        ]);
+        images.push({ dataUrl: await compositeOverlay(basePng, auasSvg), caption: `${sat.label} — AUAS` });
+        step++;
+
+        sendSSE(res, {
+            type: "progress", step: "generating_images",
+            percent: 10 + Math.round((step / totalSteps) * 40),
+            message: `${sat.label}: imagem AUAS gerada ✓`,
+        });
+    }
+
+    return images;
+}
+
+/** Build prompt for a SINGLE satellite AUAS analysis (1 image per satellite). */
+function buildAuasSingleSatPrompt(
+    areaHa: number,
+    layerSummaries: LayerSummary[],
+    satelliteKey: string,
+): string {
+    const sat = SATELLITE_LAYERS[satelliteKey];
+    const sensor = satelliteKey.startsWith("sentinel2") ? "Sentinel-2 MSI (10m de resolução espacial)"
+        : satelliteKey.startsWith("landsat8") ? "Landsat 8 OLI (30m de resolução espacial)"
+            : satelliteKey.startsWith("landsat5") ? "Landsat 5 TM (30m de resolução espacial)"
+                : "SPOT (2.5m de resolução espacial)";
+
+    const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
+
+    return [
+        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
+        "Analise a imagem de satélite avaliando a AUAS (Área de Uso Alternativo do Solo) declarada no CAR.",
+        "",
+        "---",
+        "",
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
+        "",
+        auasSummary ? `| AUAS (Uso Alternativo do Solo) | ${auasSummary.areaHa?.toFixed(2) ?? '0'} ha — ${auasSummary.features ?? 0} feições |` : "",
+        "",
+        "---",
+        "",
+        `## Imagem: ${sat.label} — ${sensor}`,
+        "",
+        "**Legenda dos polígonos sobrepostos na imagem:**",
+        "- 🟥 **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP/AIR)",
+        "- ⬜ **Branco semi-transparente**: AUAS (Área de Uso Alternativo do Solo)",
+        "",
+        `A imagem mostra a base ${sat.label} com o polígono da AUAS em branco sobre o contorno da propriedade em vermelho.`,
+        "",
+        "---",
+        "",
+        "## Instruções de Análise",
+        "",
+        "### Análise da AUAS",
+        "- Observe a área demarcada em branco (AUAS). Descreva o que existe nessa área no ano da imagem.",
+        "- Havia VEGETAÇÃO NATIVA dentro da AUAS neste ano?",
+        "- A área aparenta ser de USO ANTRÓPICO (pastagem, agricultura, solo exposto)?",
+        "- Se há vegetação nativa, descreva: tipo aparente (floresta, cerrado, mata ciliar), cobertura do dossel, integridade.",
+        "- Compare a condição da AUAS com a área ao redor — está em continuidade com vegetação nativa maior?",
+        "",
+        "### Indicação temporal",
+        `- O ano da imagem é **${sat.year}**. O marco temporal de referência é **22/07/2008** (Art. 68, Lei 12.651/2012).`,
+        sat.year <= 2008
+            ? "- Esta é uma imagem PRÉ ou DO marco temporal. Descreva a condição da área como baseline."
+            : "- Esta é uma imagem PÓS marco temporal. Indique se há evidência de DESMATAMENTO RECENTE (solo exposto, queimada, vegetação suprimida) dentro da AUAS.",
+        "",
+        "### Conclusão Parcial",
+        "- **✅ USO CONSOLIDADO**: AUAS mostra uso antrópico neste ano (coerente com sua declaração).",
+        "- **❌ VEGETAÇÃO NATIVA**: AUAS mostra vegetação nativa neste ano (não deveria ser AUAS).",
+        "- **⚠️ INCONCLUSIVO**: resolução do sensor não permite afirmar com segurança.",
+        "",
+        "---",
+        "Responda em **português**, use markdown, seja OBJETIVO e CONCISO (máximo 300 palavras).",
+        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
+    ].join("\n");
+}
+
+/**
+ * Build the final synthesis prompt for AUAS analysis that combines
+ * per-satellite AUAS analyses with the previous AC/AVN analysis.
+ */
+function buildAuasFinalSynthesisPrompt(
+    areaHa: number,
+    layerSummaries: LayerSummary[],
+    perSatelliteAnalyses: Array<{ satelliteLabel: string; year: number; analysis: string }>,
+    previousAcAvnAnalysis?: string,
+): string {
+    const labels = perSatelliteAnalyses.map((a) => a.satelliteLabel);
+    const years = perSatelliteAnalyses.map((a) => a.year).sort();
+
+    const analysesBlock = perSatelliteAnalyses.map((a) => [
+        `### ${a.satelliteLabel} (${a.year})`,
+        "",
+        toSynthesisExcerpt(a.analysis),
+    ].join("\n")).join("\n\n---\n\n");
+
+    const parts: string[] = [
+        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
+        "",
+        "Você receberá análises individuais feitas por IA para diferentes imagens de satélite do MESMO imóvel rural,",
+        "focadas na **AUAS (Área de Uso Alternativo do Solo)** declarada no CAR.",
+        "",
+        "---",
+        "",
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
+        "",
+        "---",
+        "",
+        `## Análises AUAS por Ano (${labels.length} satélites: ${years[0]}–${years[years.length - 1]})`,
+        "",
+        analysesBlock,
+        "",
+    ];
+
+    if (previousAcAvnAnalysis) {
+        parts.push(
+            "---",
+            "",
+            "## Análise Anterior da Área Consolidada (AC) e Vegetação Nativa (AVN)",
+            "",
+            "A IA já analisou a AC e AVN deste imóvel. Este é o resumo:",
+            "",
+            toSynthesisExcerpt(previousAcAvnAnalysis, 3000),
+            "",
+        );
+    }
+
+    parts.push(
+        "---",
+        "",
+        "## Sua Tarefa: Laudo Integrado de AUAS",
+        "",
+        "Produza um laudo ÚNICO e COMPLETO. Seja objetivo.",
+        "",
+        "### 1. Linha do Tempo da AUAS",
+        `Para cada ano analisado (${years.join(", ")}), resuma o que foi observado dentro da AUAS:`,
+        "- Uso antrópico consolidado (pastagem, agricultura, construções)?",
+        "- Vegetação nativa presente?",
+        "- Evidência de desmatamento recente (solo exposto, queimada)?",
+        "",
+        "### 2. Identificação de Desmatamentos Irregulares",
+        "- O marco temporal é **22/07/2008** (Art. 68, Lei 12.651/2012).",
+        "- Se a AUAS tinha vegetação nativa em imagens de 2007 ou 2008, e em anos seguintes essa vegetação foi suprimida, identifique **EM QUE ANO** o desmatamento irregular ocorreu.",
+        "- Liste cada intervalo temporal onde houve supressão (ex: 'entre 2010 e 2013, porção norte da AUAS').",
+        "",
+        "### 3. Concordância com a Declaração de AUAS",
+        "- **✅ CONCORDA**: A AUAS declarada no CAR era de uso antrópico consolidado antes de julho/2008, coerente com a declaração.",
+        "- **❌ DISCORDA**: A AUAS declarada tinha vegetação nativa que foi suprimida após julho/2008. O desmatamento é irregular.",
+        "- **⚠️ PARCIALMENTE**: Parte da AUAS está correta, parte apresenta supressão irregular.",
+        "",
+    );
+
+    if (previousAcAvnAnalysis) {
+        parts.push(
+            "### 4. Integração com Análise AC/AVN",
+            "- Compare as conclusões da AUAS com as análises anteriores de AC e AVN.",
+            "- Há coerência entre o que a AC mostra e o que a AUAS declara?",
+            "- A AVN está íntegra nas áreas fora da AUAS?",
+            "- As áreas de discordância na AC correspondem a discordâncias na AUAS?",
+            "",
+        );
+    }
+
+    const nextSection = previousAcAvnAnalysis ? 5 : 4;
+    parts.push(
+        `### ${nextSection}. Nível de Confiança`,
+        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]** e justifique.",
+        "",
+        `### ${nextSection + 1}. Conclusão e Recomendações`,
+        "- Síntese final: a AUAS declarada está correta, incorreta ou parcialmente correta?",
+        "- Em quais anos após 2008 ocorreram desmatamentos irregulares (se houver)?",
+        "- Recomendações: vistoria, imagens complementares, retificação do CAR, notificação.",
+        "",
+        "---",
+        "Responda em **português**, use markdown, seja detalhado e técnico.",
+        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
+        "NÃO repita as análises individuais integralmente — sintetize e compare.",
+    );
+
+    return parts.join("\n");
+}
+
+/** Main AUAS analysis pipeline (called from the SSE endpoint). */
+async function processAuasAnalysis(
+    res: Response,
+    jobId: string,
+    previousAnalysis?: string,
+    contextUrl?: string,
+    outputZipUrl?: string,
+) {
+    let job = jobCache.get(jobId);
+    if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
+        job = (await hydrateJobFromPersistedContext(jobId, contextUrl)) ?? undefined;
+    }
+    if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && outputZipUrl) {
+        job = (await hydrateJobFromOutputZipUrl(jobId, outputZipUrl)) ?? undefined;
+    }
+    if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
+        sendSSE(res, {
+            type: "error",
+            message: "Job não encontrado. Envie contextUrl ou gere o recorte novamente.",
+        });
+        return;
+    }
+
+    const { layerSummaries, areaHa: propAreaHa } = job;
+    const areaHa = propAreaHa ?? 0;
+
+    // Check if AUAS exists in clipped geometries
+    const auasGeoms = job.clippedGeometries?.get("AUAS");
+    if (!auasGeoms || auasGeoms.length === 0) {
+        sendSSE(res, {
+            type: "error",
+            message: "Camada AUAS não encontrada no recorte. Verifique se o imóvel possui AUAS declarada no CAR.",
+        });
+        return;
+    }
+
+    // Step 1: Generate satellite images with AUAS overlay
+    sendSSE(res, { type: "progress", step: "generating_images", percent: 5, message: "Iniciando geração de imagens AUAS..." });
+
+    let imagesToAnalyze: Array<{ dataUrl: string; caption: string }>;
+    try {
+        imagesToAnalyze = await generateAuasSatelliteImages(res, job);
+    } catch (err: any) {
+        console.error("[AUAS ANALYSIS] Image generation error:", err.message);
+        sendSSE(res, { type: "error", message: `Erro ao gerar imagens AUAS: ${err.message}` });
+        return;
+    }
+
+    if (imagesToAnalyze.length === 0) {
+        sendSSE(res, { type: "error", message: "Nenhuma imagem AUAS foi gerada. Verifique a disponibilidade das camadas WMS." });
+        return;
+    }
+
+    // Step 2: Upload to Cloudinary
+    sendSSE(res, { type: "progress", step: "uploading_images", percent: 50, message: "Salvando imagens AUAS no Cloudinary..." });
+
+    const cloudinaryUrls: Array<{ url: string; caption: string }> = [];
+    try {
+        for (let i = 0; i < imagesToAnalyze.length; i++) {
+            const img = imagesToAnalyze[i];
+            const filename = `simcar_auas_${jobId.slice(0, 8)}_img${i + 1}`;
+            const url = await uploadToCloudinary(img.dataUrl, filename);
+            cloudinaryUrls.push({ url, caption: img.caption });
+            sendSSE(res, {
+                type: "progress", step: "uploading_images",
+                percent: 50 + Math.round(((i + 1) / imagesToAnalyze.length) * 10),
+                message: `Upload AUAS ${i + 1}/${imagesToAnalyze.length}...`,
+            });
+        }
+    } catch (err: any) {
+        console.error("[AUAS ANALYSIS] Cloudinary upload error:", err.message);
+    }
+
+    // Step 3: Prepare images for AI
+    sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens AUAS para análise IA..." });
+
+    const aiImages: AiImage[] = [];
+    if (cloudinaryUrls.length === imagesToAnalyze.length) {
+        for (const cu of cloudinaryUrls) {
+            aiImages.push({
+                url: getCloudinaryAiUrl(cu.url),
+                geminiUrl: getCloudinaryGeminiUrl(cu.url),
+                caption: cu.caption,
+            });
+        }
+    } else {
+        for (const img of imagesToAnalyze) {
+            try {
+                const compressed = await compressForVision(img.dataUrl);
+                aiImages.push({ dataUrl: compressed, caption: img.caption });
+            } catch {
+                aiImages.push({ dataUrl: img.dataUrl, caption: img.caption });
+            }
+        }
+    }
+
+    // Step 4: Per-satellite AI analysis
+    const perSatResults: Array<{ satelliteLabel: string; year: number; analysis: string }> = [];
+    const validKeys = AUAS_SATELLITE_KEYS.filter((k) => SATELLITE_LAYERS[k]);
+    let satIdx = 0;
+
+    for (const key of validKeys) {
+        const sat = SATELLITE_LAYERS[key];
+        if (!sat) continue;
+
+        const satImages = aiImages.filter((img) => img.caption.startsWith(sat.label));
+        if (satImages.length === 0) { satIdx++; continue; }
+
+        const progressPct = 65 + Math.round((satIdx / validKeys.length) * 20);
+        sendSSE(res, {
+            type: "progress", step: "analyzing", percent: progressPct,
+            message: `IA analisando AUAS em ${sat.label} (${satIdx + 1}/${validKeys.length})...`,
+        });
+
+        try {
+            const prompt = buildAuasSingleSatPrompt(areaHa, layerSummaries, key);
+            const result = await analyzeWithGroqAndGemini(satImages, prompt, `AUAS ${sat.label} (${sat.year})`);
+            const split = splitThinkProgress(result);
+            if (split.thinkingText) {
+                sendSSE(res, { type: "model_thinking", source: `AUAS ${sat.label}`, thinkingText: split.thinkingText });
+            }
+            perSatResults.push({ satelliteLabel: sat.label, year: sat.year, analysis: result });
+            console.log(`[AUAS ANALYSIS] ${sat.label} analysis complete (${result.length} chars)`);
+        } catch (err: any) {
+            console.error(`[AUAS ANALYSIS] ${sat.label} failed:`, err.message);
+            sendSSE(res, {
+                type: "progress", step: "analyzing", percent: progressPct,
+                message: `Aviso: análise AUAS de ${sat.label} falhou, continuando...`,
+            });
+        }
+        satIdx++;
+    }
+
+    perSatResults.sort((a, b) => a.year - b.year || a.satelliteLabel.localeCompare(b.satelliteLabel));
+
+    if (perSatResults.length === 0) {
+        sendSSE(res, { type: "error", message: "Nenhuma análise AUAS individual foi concluída com sucesso." });
+        return;
+    }
+
+    // Step 5: Final synthesis (combines AUAS + previous AC/AVN analysis)
+    sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando laudo integrado de AUAS..." });
+
+    let analysisText: string;
+    try {
+        const synthesisPrompt = buildAuasFinalSynthesisPrompt(areaHa, layerSummaries, perSatResults, previousAnalysis);
+        analysisText = await callBestTextSynthesis(
+            [{ role: "user", content: synthesisPrompt }],
+            "sintese AUAS final",
+        );
+        const split = splitThinkProgress(analysisText);
+        if (split.thinkingText) {
+            sendSSE(res, { type: "model_thinking", source: "Síntese AUAS", thinkingText: split.thinkingText });
+        }
+        console.log(`[AUAS ANALYSIS] Final synthesis complete (${analysisText.length} chars)`);
+    } catch (err: any) {
+        console.error("[AUAS ANALYSIS] Synthesis failed, concatenating:", err.message);
+        analysisText = perSatResults.map((r) => [
+            `## AUAS: ${r.satelliteLabel} (${r.year})`,
+            "",
+            r.analysis,
+        ].join("\n")).join("\n\n---\n\n");
+    }
+
+    // Step 6: Complete
+    const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
+    sendSSE(res, {
+        type: "complete",
+        percent: 100,
+        analysis: analysisText,
+        images: cloudinaryUrls,
+        layerSummaries: layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
+        auasAreaHa: auasSummary?.areaHa ?? 0,
+    });
 }
 
 /**
@@ -3888,6 +4328,37 @@ export function registerSimcarClipRoutes(app: Express) {
         res.setHeader("Content-Disposition", `attachment; filename="${cached.filename}"`);
         res.setHeader("Content-Length", cached.buffer.length.toString());
         res.send(cached.buffer);
+    });
+
+    // AUAS analysis endpoint (SSE stream)
+    app.post("/api/simcar/clip/analyze-auas", async (req: Request, res: Response) => {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        res.flushHeaders();
+
+        try {
+            const { jobId, previousAnalysis, contextUrl, outputZipUrl } = req.body as {
+                jobId?: string;
+                previousAnalysis?: string;
+                contextUrl?: string;
+                outputZipUrl?: string;
+            };
+            if (!jobId) {
+                sendSSE(res, { type: "error", message: "jobId é obrigatório." });
+                res.end();
+                return;
+            }
+
+            console.log(`[AUAS ANALYSIS] Starting AUAS analysis for job: ${jobId}`);
+            await processAuasAnalysis(res, jobId, previousAnalysis, contextUrl, outputZipUrl);
+        } catch (err: any) {
+            console.error("[AUAS ANALYSIS] Unexpected error:", err);
+            sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
+        } finally {
+            if (!res.writableEnded) res.end();
+        }
     });
 
     // AI analysis endpoint (SSE stream)
