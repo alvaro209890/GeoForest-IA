@@ -228,6 +228,7 @@ async function startServer() {
     [
       "/api/chat",
       "/api/chat-stream",
+      "/api/simcar/clip/import-vectorized",
       "/api/simcar/clip/analyze",
       "/api/simcar/clip/analyze-auas",
       "/api/simcar/clip/analyze/chat",
@@ -1441,6 +1442,18 @@ async function startServer() {
     ].join("\n"),
   };
 
+  const ASSISTANT_STYLE_SYSTEM_MESSAGE = {
+    role: "system" as const,
+    content: [
+      "## FORMATO DE RESPOSTA",
+      "- Responda em portugues claro, direto e tecnico.",
+      "- Quando houver comparacao de itens (anos, areas, limites, prazos, documentos), prefira tabela Markdown.",
+      "- Em tabela Markdown, use cabecalho + linha separadora e no maximo 6 colunas.",
+      "- Nao quebre celulas em multiplas linhas; mantenha cada celula curta e objetiva.",
+      "- Depois da tabela, inclua um bloco curto de conclusao pratica em 2 a 4 bullets.",
+    ].join("\n"),
+  };
+
   const callGroqChat = async (
     apiKey: string,
     model: string,
@@ -1530,6 +1543,7 @@ async function startServer() {
       }
       const knowledgeTelemetry = knowledgeBase.toTelemetry(knowledgeSelection, knowledgeSummaryUsed);
       messagesForModel = insertSystemContext(messagesForModel, GUARDRAIL_SYSTEM_MESSAGE);
+      messagesForModel = insertSystemContext(messagesForModel, ASSISTANT_STYLE_SYSTEM_MESSAGE);
 
       const useAuto = model === "auto" || (!model && autoModel);
       const hasImageInput = messagesForModel.some(
@@ -1717,6 +1731,7 @@ async function startServer() {
       }
       const knowledgeTelemetry = knowledgeBase.toTelemetry(knowledgeSelection, knowledgeSummaryUsed);
       messagesForModel = insertSystemContext(messagesForModel, GUARDRAIL_SYSTEM_MESSAGE);
+      messagesForModel = insertSystemContext(messagesForModel, ASSISTANT_STYLE_SYSTEM_MESSAGE);
 
       const useAuto = model === "auto" || (!model && AUTO_MODEL);
       const hasImageInput = messagesForModel.some(
@@ -1915,7 +1930,7 @@ async function startServer() {
           "Sua resposta anterior foi cortada. Continue EXATAMENTE de onde parou.\n" +
           "REGRAS:\n" +
           "- NÃƒO repita nenhum conteÃºdo jÃ¡ escrito.\n" +
-          "- Mantenha o mesmo idioma, tom, formato (markdown/bullets) e contexto tÃ©cnico.\n" +
+          "- Mantenha o mesmo idioma, tom, formato (markdown/bullets/tabelas) e contexto tÃ©cnico.\n" +
           "- Entregue SOMENTE a continuaÃ§Ã£o, comeÃ§ando da prÃ³xima palavra/frase.\n" +
           "- NÃƒO adicione informaÃ§Ãµes novas que nÃ£o faziam parte do raciocÃ­nio original.\n" +
           "- NÃƒO invente dados, normas ou fontes.";
