@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
 
-export type BillingProvider = "groq" | "gemini";
+export type BillingProvider = "groq" | "gemini" | "cloudinary";
 
 export type UsageRecordInput = {
   provider?: BillingProvider;
@@ -45,6 +45,12 @@ const BILLING_MARGIN = Number.parseFloat(process.env.BILLING_MARGIN || "1.40") |
 const MIN_CHARGE_BRL = Number.parseFloat(process.env.BILLING_MIN_CHARGE_BRL || "0.01") || 0.01;
 const USD_BRL_FALLBACK = Number.parseFloat(process.env.USD_BRL_FALLBACK || "5.2257") || 5.2257;
 const RATE_CACHE_MS = 8 * 60 * 60 * 1000;
+const CLOUDINARY_PLUS_MONTHLY_USD = Number.parseFloat(process.env.CLOUDINARY_PLUS_MONTHLY_USD || "99") || 99;
+const CLOUDINARY_PLUS_MONTHLY_CREDITS = Number.parseFloat(process.env.CLOUDINARY_PLUS_MONTHLY_CREDITS || "225") || 225;
+const CLOUDINARY_STORAGE_USD_PER_GB_MONTH = Number.parseFloat(process.env.CLOUDINARY_STORAGE_USD_PER_GB_MONTH || "") ||
+  (CLOUDINARY_PLUS_MONTHLY_USD / Math.max(1, CLOUDINARY_PLUS_MONTHLY_CREDITS));
+const CLOUDINARY_STORAGE_BILLING_DAYS = Number.parseFloat(process.env.CLOUDINARY_STORAGE_BILLING_DAYS || "30") || 30;
+const MIN_STORAGE_CHARGE_BRL = Number.parseFloat(process.env.BILLING_MIN_STORAGE_CHARGE_BRL || "0.001") || 0.001;
 
 const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   "openai/gpt-oss-20b": { base: { inputUsdPer1M: 0.1, outputUsdPer1M: 0.5 } },
@@ -155,6 +161,7 @@ function normalizeModelName(model: string): string {
 
 function inferProviderFromModel(model: string): BillingProvider {
   const normalized = normalizeModelName(model);
+  if (normalized.includes("cloudinary")) return "cloudinary";
   if (normalized.includes("gemini") || normalized.includes("banana")) return "gemini";
   return "groq";
 }
@@ -177,6 +184,37 @@ function getPricingTier(model: string, promptTokens: number): PricingTier {
 
 function roundCurrency(value: number): number {
   return Math.round((value + Number.EPSILON) * 10000) / 10000;
+}
+
+function normalizeStorageBillingDays(days?: number): number {
+  const parsed = Number(days);
+  if (!Number.isFinite(parsed) || parsed <= 0) return CLOUDINARY_STORAGE_BILLING_DAYS;
+  return Math.max(1, Math.min(365, Math.round(parsed)));
+}
+
+function computeCloudinaryStorageChargeBrl(args: {
+  bytesStored: number;
+  usdBrlRate: number;
+  billingDays?: number;
+}) {
+  const bytesStored = Math.max(0, Math.round(Number(args.bytesStored) || 0));
+  const billingDays = normalizeStorageBillingDays(args.billingDays);
+  const monthsFactor = billingDays / 30;
+  const gbStored = bytesStored / (1024 * 1024 * 1024);
+  const usdCost = gbStored * CLOUDINARY_STORAGE_USD_PER_GB_MONTH * monthsFactor;
+  const brlCostRaw = usdCost * args.usdBrlRate * BILLING_MARGIN;
+  const chargedBrl = bytesStored > 0
+    ? roundCurrency(Math.max(MIN_STORAGE_CHARGE_BRL, brlCostRaw))
+    : 0;
+  return {
+    bytesStored,
+    kbStored: bytesStored / 1024,
+    gbStored,
+    billingDays,
+    chargedBrl,
+    usdPerGbMonth: CLOUDINARY_STORAGE_USD_PER_GB_MONTH,
+    brlPerGbMonth: CLOUDINARY_STORAGE_USD_PER_GB_MONTH * args.usdBrlRate * BILLING_MARGIN,
+  };
 }
 
 function mergeUsageInputs(usageInputs: UsageRecordInput[], defaultEndpoint: string): UsageRecordInput[] {
@@ -256,26 +294,34 @@ export async function getUsdBrlRate(): Promise<{ rate: number; source: string }>
   try {
     const rate = await fetchUsdBrlRateFromBcb();
     rateCache = { value: rate, fetchedAt: now, source: "BCB_PTAX" };
-    await adminDb.doc("system/billing_config/current").set(
-      {
-        usdBrlRate: rate,
-        usdBrlSource: "BCB_PTAX",
-        margin: BILLING_MARGIN,
-        modelPricingUsd: MODEL_PRICING_USD,
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+    try {
+      await adminDb.doc("system/billing_config/current").set(
+        {
+          usdBrlRate: rate,
+          usdBrlSource: "BCB_PTAX",
+          margin: BILLING_MARGIN,
+          modelPricingUsd: MODEL_PRICING_USD,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (persistErr) {
+      console.warn("[BILLING] não foi possível persistir câmbio no Firestore:", persistErr);
+    }
     return { rate, source: "BCB_PTAX" };
   } catch (error) {
     console.warn("[BILLING] falha ao obter câmbio BCB, usando fallback:", error);
   }
 
-  const configSnap = await adminDb.doc("system/billing_config/current").get();
-  const storedRate = Number(configSnap.data()?.usdBrlRate);
-  if (Number.isFinite(storedRate) && storedRate > 0) {
-    rateCache = { value: storedRate, fetchedAt: now, source: "FIRESTORE_CACHE" };
-    return { rate: storedRate, source: "FIRESTORE_CACHE" };
+  try {
+    const configSnap = await adminDb.doc("system/billing_config/current").get();
+    const storedRate = Number(configSnap.data()?.usdBrlRate);
+    if (Number.isFinite(storedRate) && storedRate > 0) {
+      rateCache = { value: storedRate, fetchedAt: now, source: "FIRESTORE_CACHE" };
+      return { rate: storedRate, source: "FIRESTORE_CACHE" };
+    }
+  } catch (cacheErr) {
+    console.warn("[BILLING] Firestore indisponível para cache de câmbio, usando ENV_FALLBACK:", cacheErr);
   }
 
   rateCache = { value: USD_BRL_FALLBACK, fetchedAt: now, source: "ENV_FALLBACK" };
@@ -310,6 +356,18 @@ export async function getBillingPricingSnapshot() {
     usdBrlSource: source,
     modelPricingUsd: MODEL_PRICING_USD,
     modelPricingBrl: pricingBrl,
+    cloudinaryStorage: {
+      usdPerGbMonth: CLOUDINARY_STORAGE_USD_PER_GB_MONTH,
+      brlPerGbMonth: roundCurrency(CLOUDINARY_STORAGE_USD_PER_GB_MONTH * rate * BILLING_MARGIN),
+      brlPerMbMonth: roundCurrency((CLOUDINARY_STORAGE_USD_PER_GB_MONTH * rate * BILLING_MARGIN) / 1024),
+      brlPerKbMonth: roundCurrency((CLOUDINARY_STORAGE_USD_PER_GB_MONTH * rate * BILLING_MARGIN) / (1024 * 1024)),
+      billingWindowDays: CLOUDINARY_STORAGE_BILLING_DAYS,
+      minStorageChargeBrl: MIN_STORAGE_CHARGE_BRL,
+      sourcePlan: {
+        plusMonthlyUsd: CLOUDINARY_PLUS_MONTHLY_USD,
+        plusMonthlyCredits: CLOUDINARY_PLUS_MONTHLY_CREDITS,
+      },
+    },
     updatedAtIso: new Date().toISOString(),
   };
 }
@@ -573,6 +631,139 @@ export async function settleReservedCredits(args: {
     chargedBrl: charged,
     balanceAfterBrl: result.balanceAfterBrl,
     usage: normalizedUsage,
+  };
+}
+
+export async function estimateCloudinaryStorageReserve(args: {
+  bytesStored: number;
+  billingDays?: number;
+  safetyMultiplier?: number;
+}): Promise<number> {
+  const bytesStored = Math.max(0, Math.round(Number(args.bytesStored) || 0));
+  if (bytesStored <= 0) return 0;
+  const { rate } = await getUsdBrlRate();
+  const base = computeCloudinaryStorageChargeBrl({
+    bytesStored,
+    usdBrlRate: rate,
+    billingDays: args.billingDays,
+  }).chargedBrl;
+  const safety = Number.isFinite(args.safetyMultiplier as number)
+    ? Math.max(1, Number(args.safetyMultiplier))
+    : 1.1;
+  return roundCurrency(Math.max(MIN_STORAGE_CHARGE_BRL, base * safety));
+}
+
+export async function settleCloudinaryStorageReserve(args: {
+  uid: string;
+  requestId: string;
+  endpoint: string;
+  reservedBrl: number;
+  bytesStored: number;
+  assetKind?: string;
+  billingDays?: number;
+}): Promise<{ chargedBrl: number; balanceAfterBrl: number; usage: SettledUsageRecord[] }> {
+  const reserved = roundCurrency(Math.max(0, Number(args.reservedBrl) || 0));
+  const bytesStored = Math.max(0, Math.round(Number(args.bytesStored) || 0));
+  await ensureWallet(args.uid);
+  const { rate } = await getUsdBrlRate();
+  const computed = computeCloudinaryStorageChargeBrl({
+    bytesStored,
+    usdBrlRate: rate,
+    billingDays: args.billingDays,
+  });
+  const charged = computed.chargedBrl;
+  const releaseAmount = roundCurrency(Math.max(0, reserved - charged));
+  const extraDebit = roundCurrency(Math.max(0, charged - reserved));
+  const model = "cloudinary/storage";
+  const usageRecord: SettledUsageRecord = {
+    provider: "cloudinary",
+    model,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    costBrl: charged,
+    endpoint: args.endpoint,
+    estimated: false,
+  };
+
+  const result = await adminDb.runTransaction(async (tx) => {
+    const walletSnap = await tx.get(walletRef(args.uid));
+    const currentBalance = Number(walletSnap.data()?.balanceBrl || 0);
+    if (extraDebit > 0 && currentBalance < extraDebit) {
+      throw new BillingError(402, "INSUFFICIENT_CREDITS", "Saldo insuficiente para concluir a cobrança de armazenamento.");
+    }
+    const balanceAfter = roundCurrency(currentBalance + releaseAmount - extraDebit);
+
+    tx.set(
+      walletRef(args.uid),
+      {
+        balanceBrl: balanceAfter,
+        totalSpentBrl: FieldValue.increment(charged),
+        version: Number(walletSnap.data()?.version || 0) + 1,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    const summaryLedgerRef = ledgerCollection(args.uid).doc(`storage_${args.requestId}`);
+    tx.set(summaryLedgerRef, {
+      type: "usage_debit",
+      amountBrl: -charged,
+      balanceAfterBrl: balanceAfter,
+      requestId: args.requestId,
+      endpoint: args.endpoint,
+      provider: "cloudinary",
+      model,
+      assetKind: String(args.assetKind || "asset"),
+      bytesStored,
+      kbStored: roundCurrency(bytesStored / 1024),
+      gbStored: roundCurrency(bytesStored / (1024 * 1024 * 1024)),
+      billingDays: computed.billingDays,
+      usdPerGbMonth: computed.usdPerGbMonth,
+      brlPerGbMonth: roundCurrency(computed.brlPerGbMonth),
+      estimated: false,
+      usage: [usageRecord],
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    if (releaseAmount > 0) {
+      const releaseRef = ledgerCollection(args.uid).doc(`release_storage_${args.requestId}`);
+      tx.set(releaseRef, {
+        type: "reserve_release",
+        amountBrl: releaseAmount,
+        balanceAfterBrl: balanceAfter,
+        requestId: args.requestId,
+        endpoint: args.endpoint,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    }
+
+    const dateId = getDateId();
+    const usageRef = usageDailyCollection(args.uid).doc(dateId);
+    const key = safeModelKey(model);
+    const usageUpdate: Record<string, any> = {
+      date: dateId,
+      updatedAt: FieldValue.serverTimestamp(),
+      totalCostBrl: FieldValue.increment(charged),
+      totalRequests: FieldValue.increment(1),
+      [`models.${key}.model`]: model,
+      [`models.${key}.provider`]: "cloudinary",
+      [`models.${key}.inputTokens`]: FieldValue.increment(0),
+      [`models.${key}.outputTokens`]: FieldValue.increment(0),
+      [`models.${key}.costBrl`]: FieldValue.increment(charged),
+      [`models.${key}.requests`]: FieldValue.increment(1),
+      [`models.${key}.storageBytes`]: FieldValue.increment(bytesStored),
+      [`models.${key}.storageKb`]: FieldValue.increment(bytesStored / 1024),
+    };
+    tx.set(usageRef, usageUpdate, { merge: true });
+
+    return { balanceAfterBrl: balanceAfter };
+  });
+
+  return {
+    chargedBrl: charged,
+    balanceAfterBrl: result.balanceAfterBrl,
+    usage: [usageRecord],
   };
 }
 

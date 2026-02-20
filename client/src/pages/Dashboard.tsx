@@ -14,7 +14,6 @@ import {
   User,
   ChevronDown,
   Settings,
-  Bell,
   Shield,
   FileDown,
   Layers,
@@ -46,6 +45,15 @@ import {
   Clock,
   MousePointerClick,
   CheckCircle2,
+  Wallet,
+  TrendingDown,
+  TrendingUp,
+  Activity,
+  BarChart3,
+  Receipt,
+  ArrowUpRight,
+  ArrowDownRight,
+  DollarSign,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { fetchSignInMethodsForEmail, onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
@@ -1954,9 +1962,8 @@ export default function Dashboard() {
       reader.readAsDataURL(file);
     });
 
-    const res = await fetch(apiUrl('/api/upload-image'), {
+    const res = await apiFetch('/api/upload-image', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         dataUrl,
         filename: file.name,
@@ -1964,11 +1971,17 @@ export default function Dashboard() {
     });
 
     if (!res.ok) {
-      const text = await res.text();
-      throw new Error(text || 'Falha ao enviar imagem');
+      const payload = await readApiError(res);
+      if (payload?.code === 'INSUFFICIENT_CREDITS') {
+        handleInsufficientCredits(payload?.error);
+      }
+      throw new Error(payload?.error || 'Falha ao enviar imagem');
     }
 
     const data = await res.json();
+    if (data?.billing) {
+      applyBillingToWallet(data.billing as BillingResult);
+    }
     return data?.secure_url || null;
   };
 
@@ -1982,9 +1995,8 @@ export default function Dashboard() {
       reader.readAsDataURL(file);
     });
 
-    const res = await fetch(apiUrl('/api/upload-file'), {
+    const res = await apiFetch('/api/upload-file', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         dataUrl,
         filename: file.name,
@@ -1992,11 +2004,17 @@ export default function Dashboard() {
     });
 
     if (!res.ok) {
-      const text = await res.text();
-      throw new Error(text || 'Falha ao enviar PDF');
+      const payload = await readApiError(res);
+      if (payload?.code === 'INSUFFICIENT_CREDITS') {
+        handleInsufficientCredits(payload?.error);
+      }
+      throw new Error(payload?.error || 'Falha ao enviar PDF');
     }
 
     const data = await res.json();
+    if (data?.billing) {
+      applyBillingToWallet(data.billing as BillingResult);
+    }
     if (!data?.secure_url) return null;
     return {
       url: data.secure_url as string,
@@ -6541,212 +6559,230 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </div>
               </section>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6 space-y-4">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
-                      <Settings size={20} />
+              {/* ── Saldo e Créditos ── */}
+              <section className="relative group">
+                <div className="absolute inset-0 bg-emerald-500/5 rounded-2xl blur-sm" />
+                <div className="relative bg-[#0e1612]/80 backdrop-blur-xl border border-white/10 rounded-2xl p-6 md:p-8">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400">
+                        <Wallet size={22} />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-lg text-white">Meus Créditos</h3>
+                        <p className="text-xs text-slate-500">Cobrança por uso real. Sem plano mensal.</p>
+                      </div>
                     </div>
-                    <h3 className="font-semibold text-lg text-slate-200">Interface Geral</h3>
+                    <button
+                      type="button"
+                      onClick={() => setBillingTopupOpen(true)}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-emerald-500 text-white hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20"
+                    >
+                      <Plus size={16} />
+                      Adicionar créditos
+                    </button>
                   </div>
-                  <p className="text-sm text-slate-400">
-                    Preferências visuais (tema, fonte e idioma) foram removidas desta versão.
-                  </p>
-                </div>
 
-                <div className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6 space-y-4">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 rounded-lg bg-orange-500/10 text-orange-400">
-                      <FileDown size={20} />
-                    </div>
-                    <h3 className="font-semibold text-lg text-slate-200">Exportação</h3>
-                  </div>
-                  <div className="space-y-1">
-                    <CustomSelect
-                      label="Formato de Vetor"
-                      value={settings.exportFormat}
-                      onChange={(value: string) => updateSettings({ exportFormat: value })}
-                      options={['KML / KMZ', 'Shapefile (.shp)', 'GeoJSON', 'DXF (AutoCAD)']}
-                    />
-                    <ToggleSwitch
-                      label="Incluir metadados no relatório"
-                      sub="Adiciona data, hora e fonte das imagens"
-                      isActive={settings.includeMetadata}
-                      onToggle={(value: boolean) => updateSettings({ includeMetadata: value })}
-                    />
-                    <ToggleSwitch
-                      label="Comprimir arquivos grandes"
-                      sub="Gera .zip automaticamente acima de 50MB"
-                      isActive={settings.compressLarge}
-                      onToggle={(value: boolean) => updateSettings({ compressLarge: value })}
-                    />
-                  </div>
-                </div>
-
-                <div className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6 space-y-4">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
-                      <Bell size={20} />
-                    </div>
-                    <h3 className="font-semibold text-lg text-slate-200">Notificações</h3>
-                  </div>
-                  <div className="space-y-1">
-                    <ToggleSwitch
-                      label="Alertas de processamento"
-                      sub="Quando um mapa terminar de processar"
-                      isActive={settings.alertProcessing}
-                      onToggle={(value: boolean) => updateSettings({ alertProcessing: value })}
-                    />
-                    <ToggleSwitch
-                      label="Novos recursos da IA"
-                      sub="Atualizações semanais do sistema"
-                      isActive={settings.alertNewFeatures}
-                      onToggle={(value: boolean) => updateSettings({ alertNewFeatures: value })}
-                    />
-                    <ToggleSwitch
-                      label="Avisos de Queimadas"
-                      sub="Alertas em tempo real na sua área"
-                      isActive={settings.alertFires}
-                      onToggle={(value: boolean) => updateSettings({ alertFires: value })}
-                    />
-                  </div>
-                </div>
-
-                <div className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6 space-y-4 md:col-span-2">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 rounded-lg bg-red-500/10 text-red-400">
-                      <Shield size={20} />
-                    </div>
-                    <h3 className="font-semibold text-lg text-slate-200">Segurança e Assinatura</h3>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-3">
-                      <button
-                        type="button"
-                        onClick={onResetPassword}
-                        disabled={resettingPassword}
-                        className="w-full flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group disabled:opacity-60 disabled:cursor-not-allowed"
-                      >
-                        <span className="text-sm text-slate-300">{resettingPassword ? 'Enviando e-mail...' : 'Alterar Senha'}</span>
-                        {resettingPassword ? (
-                          <Loader2 size={16} className="text-slate-500 animate-spin" />
-                        ) : (
-                          <ChevronDown size={16} className="text-slate-500 -rotate-90 group-hover:text-white transition-colors" />
-                        )}
-                      </button>
-                      <button
-                        onClick={() => updateSettings({ twoFactorEnabled: !settings.twoFactorEnabled })}
-                        className="w-full flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
-                      >
-                        <div className="flex flex-col text-left">
-                          <span className="text-sm text-slate-300">Autenticação em 2 Etapas</span>
-                          <span className="text-[10px] text-emerald-400 flex items-center gap-1">
-                            {settings.twoFactorEnabled ? 'Ativado' : 'Desativado'}
+                  {/* Saldo principal */}
+                  <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-900/30 via-[#0e1612] to-slate-900/30 border border-emerald-500/20 p-6 mb-6">
+                    <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/5 rounded-full blur-3xl -mr-16 -mt-16" />
+                    <div className="relative">
+                      <p className="text-xs text-slate-400 uppercase tracking-widest font-medium mb-1">Saldo disponível</p>
+                      <p className="text-4xl font-bold text-white tracking-tight">
+                        {billingLoading ? (
+                          <span className="flex items-center gap-2">
+                            <Loader2 size={24} className="animate-spin text-emerald-400" />
+                            <span className="text-lg text-slate-400">Carregando...</span>
                           </span>
+                        ) : (
+                          formatBrl(billingMe?.wallet?.balanceBrl || 0)
+                        )}
+                      </p>
+                      {!billingLoading && (billingMe?.wallet?.balanceBrl || 0) < 2 && (
+                        <div className="flex items-center gap-2 mt-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                          <AlertTriangle size={14} className="text-amber-400 shrink-0" />
+                          <p className="text-xs text-amber-300">Saldo baixo. Algumas ações de IA podem ser bloqueadas.</p>
                         </div>
-                        <ChevronDown size={16} className="text-slate-500 -rotate-90 group-hover:text-white transition-colors" />
-                      </button>
-                    </div>
-                    <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-900/20 to-slate-900/40 border border-emerald-500/10 space-y-3">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Carteira IA</p>
-                          <p className="text-lg font-bold text-white mt-1">
-                            {billingLoading ? 'Carregando...' : formatBrl(billingMe?.wallet?.balanceBrl || 0)}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setBillingTopupOpen(true)}
-                          className="px-2.5 py-1 rounded text-xs bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 transition-colors border border-emerald-500/30"
-                        >
-                          Adicionar créditos
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-[11px]">
-                        <div className="rounded-md bg-black/30 border border-white/10 p-2">
-                          <p className="text-slate-500">Recarga total</p>
-                          <p className="text-slate-200">{formatBrl(billingMe?.wallet?.totalTopupBrl || 0)}</p>
-                        </div>
-                        <div className="rounded-md bg-black/30 border border-white/10 p-2">
-                          <p className="text-slate-500">Gasto total</p>
-                          <p className="text-slate-200">{formatBrl(billingMe?.wallet?.totalSpentBrl || 0)}</p>
-                        </div>
-                      </div>
-                      {(billingMe?.wallet?.balanceBrl || 0) < 2 && (
-                        <p className="text-[11px] text-amber-300">Saldo baixo. Algumas ações de IA podem ser bloqueadas.</p>
                       )}
                     </div>
                   </div>
-                </div>
-                <div className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6 space-y-4 md:col-span-2">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
-                      <FileDown size={20} />
+
+                  {/* Cards de resumo */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                    <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-4 hover:border-emerald-500/20 transition-colors">
+                      <div className="flex items-center gap-2 mb-2">
+                        <TrendingUp size={14} className="text-emerald-400" />
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Total recarregado</p>
+                      </div>
+                      <p className="text-base font-semibold text-white">{formatBrl(billingMe?.wallet?.totalTopupBrl || 0)}</p>
                     </div>
-                    <h3 className="font-semibold text-lg text-slate-200">Consumo e Modelos</h3>
+                    <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-4 hover:border-rose-500/20 transition-colors">
+                      <div className="flex items-center gap-2 mb-2">
+                        <TrendingDown size={14} className="text-rose-400" />
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Total gasto</p>
+                      </div>
+                      <p className="text-base font-semibold text-white">{formatBrl(billingMe?.wallet?.totalSpentBrl || 0)}</p>
+                    </div>
+                    <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-4 hover:border-blue-500/20 transition-colors">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Activity size={14} className="text-blue-400" />
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Gasto hoje</p>
+                      </div>
+                      <p className="text-base font-semibold text-white">{formatBrl(billingMe?.usageToday?.totalCostBrl || 0)}</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">{billingMe?.usageToday?.totalRequests || 0} requisições</p>
+                    </div>
+                    <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-4 hover:border-purple-500/20 transition-colors">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Cpu size={14} className="text-purple-400" />
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Tokens hoje</p>
+                      </div>
+                      <p className="text-xs font-medium text-emerald-300">{Number(billingMe?.usageToday?.totalInputTokens || 0).toLocaleString('pt-BR')} IN</p>
+                      <p className="text-xs font-medium text-blue-300">{Number(billingMe?.usageToday?.totalOutputTokens || 0).toLocaleString('pt-BR')} OUT</p>
+                    </div>
                   </div>
-                  <p className="text-sm text-slate-400">Cobrança por uso real de tokens/modelos. Sem plano mensal.</p>
+
+                  {/* Consumo por modelo + Histórico lado a lado */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                      <p className="text-xs uppercase tracking-wider text-slate-500">Hoje</p>
-                      <p className="text-sm text-slate-200 mt-1">
-                        {formatBrl(billingMe?.usageToday?.totalCostBrl || 0)} em {billingMe?.usageToday?.totalRequests || 0} requisições
-                      </p>
+                    {/* Consumo por modelo */}
+                    <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-5">
+                      <div className="flex items-center gap-2 mb-4">
+                        <BarChart3 size={16} className="text-emerald-400" />
+                        <h4 className="text-sm font-semibold text-slate-200">Consumo por Modelo</h4>
+                        <span className="text-[10px] text-slate-500 ml-auto">últimos 7 dias</span>
+                      </div>
+                      {billingMe?.modelSnapshot?.length ? (
+                        <div className="space-y-2 max-h-56 overflow-auto custom-scrollbar pr-1">
+                          {billingMe.modelSnapshot.slice(0, 10).map((item) => {
+                            const maxCost = Math.max(...(billingMe.modelSnapshot || []).map((m) => m.costBrl), 0.01);
+                            const pct = Math.min(100, (item.costBrl / maxCost) * 100);
+                            return (
+                              <div key={`${item.provider}-${item.model}`} className="group/row">
+                                <div className="flex items-center justify-between text-xs mb-1">
+                                  <span className="text-slate-300 truncate max-w-[55%] font-medium">{item.model}</span>
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-[10px] text-slate-500">{item.requests || 0} req</span>
+                                    <span className="text-slate-200 font-medium">{formatBrl(item.costBrl)}</span>
+                                  </div>
+                                </div>
+                                <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-500"
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center py-8 text-slate-500">
+                          <BarChart3 size={32} className="mb-2 opacity-30" />
+                          <p className="text-xs">Sem consumo registrado ainda.</p>
+                        </div>
+                      )}
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                      <p className="text-xs uppercase tracking-wider text-slate-500">Tokens Hoje</p>
-                      <p className="text-sm text-slate-200 mt-1">
-                        IN {Number(billingMe?.usageToday?.totalInputTokens || 0).toLocaleString('pt-BR')} • OUT {Number(billingMe?.usageToday?.totalOutputTokens || 0).toLocaleString('pt-BR')}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                      <p className="text-xs uppercase tracking-wider text-slate-500">USD/BRL</p>
-                      <p className="text-sm text-slate-200 mt-1">
-                        {Number(billingPricing?.usdBrlRate || 0).toFixed(4)} ({billingPricing?.usdBrlSource || 'n/d'})
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                      <p className="text-xs uppercase tracking-wider text-slate-500">Conta atual</p>
-                      <p className="text-sm text-slate-200 mt-1">{userProfile?.email || 'Usuário autenticado'}</p>
+
+                    {/* Histórico / Últimos lançamentos */}
+                    <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-5">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Receipt size={16} className="text-blue-400" />
+                        <h4 className="text-sm font-semibold text-slate-200">Histórico de Movimentações</h4>
+                      </div>
+                      {billingLedger.length ? (
+                        <div className="space-y-1 max-h-56 overflow-auto custom-scrollbar pr-1">
+                          {billingLedger.slice(0, 15).map((entry) => {
+                            const amount = Number(entry.amountBrl || 0);
+                            const isPositive = amount >= 0;
+                            const typeLabel: Record<string, string> = {
+                              topup_manual: 'Recarga manual',
+                              usage_debit: 'Uso de IA',
+                              reserve_hold: 'Reserva',
+                              reserve_release: 'Liberação reserva',
+                              refund: 'Reembolso',
+                            };
+                            const label = typeLabel[entry.type] || String(entry.type || 'Movimentação').replace(/_/g, ' ');
+                            const dateStr = entry.createdAt?.toDate
+                              ? entry.createdAt.toDate().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                              : entry.createdAt?._seconds
+                                ? new Date(entry.createdAt._seconds * 1000).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                                : '';
+                            return (
+                              <div
+                                key={entry.id}
+                                className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-white/[0.03] transition-colors"
+                              >
+                                <div className={`p-1.5 rounded-lg shrink-0 ${isPositive ? 'bg-emerald-500/10' : 'bg-rose-500/10'}`}>
+                                  {isPositive ? (
+                                    <ArrowUpRight size={14} className="text-emerald-400" />
+                                  ) : (
+                                    <ArrowDownRight size={14} className="text-rose-400" />
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium text-slate-200 truncate">{label}</p>
+                                  {dateStr && <p className="text-[10px] text-slate-500">{dateStr}</p>}
+                                  {entry.model && <p className="text-[10px] text-slate-600 truncate">{entry.model}</p>}
+                                </div>
+                                <span className={`text-xs font-semibold shrink-0 ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  {isPositive ? '+' : ''}{formatBrl(amount)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center py-8 text-slate-500">
+                          <Receipt size={32} className="mb-2 opacity-30" />
+                          <p className="text-xs">Sem movimentações recentes.</p>
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Consumo por modelo (7 dias)</p>
-                    {billingMe?.modelSnapshot?.length ? (
-                      <div className="space-y-1.5 max-h-44 overflow-auto custom-scrollbar pr-1">
-                        {billingMe.modelSnapshot.slice(0, 10).map((item) => (
-                          <div key={`${item.provider}-${item.model}`} className="flex items-center justify-between text-xs">
-                            <span className="text-slate-300 truncate max-w-[68%]">{item.model}</span>
-                            <span className="text-slate-400">{formatBrl(item.costBrl)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-slate-500">Sem consumo registrado ainda.</p>
-                    )}
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Últimos lançamentos</p>
-                    {billingLedger.length ? (
-                      <div className="space-y-1.5 max-h-40 overflow-auto custom-scrollbar pr-1 text-xs">
-                        {billingLedger.slice(0, 8).map((entry) => (
-                          <div key={entry.id} className="flex items-center justify-between">
-                            <span className="text-slate-300">
-                              {String(entry.type || 'entry').replace(/_/g, ' ')}
-                            </span>
-                            <span className={Number(entry.amountBrl || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}>
-                              {formatBrl(Number(entry.amountBrl || 0))}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-slate-500">Sem movimentações recentes.</p>
-                    )}
+
+                  {/* Câmbio */}
+                  <div className="mt-4 flex items-center gap-2 text-[11px] text-slate-500 px-1">
+                    <DollarSign size={12} />
+                    <span>Câmbio USD/BRL: {Number(billingPricing?.usdBrlRate || 0).toFixed(4)} ({billingPricing?.usdBrlSource || 'n/d'})</span>
                   </div>
                 </div>
-              </div>
+              </section>
+
+              {/* ── Segurança ── */}
+              <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6 space-y-4">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 rounded-lg bg-red-500/10 text-red-400">
+                    <Shield size={20} />
+                  </div>
+                  <h3 className="font-semibold text-lg text-slate-200">Segurança</h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={onResetPassword}
+                    disabled={resettingPassword}
+                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/10 transition-colors group disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <span className="text-sm text-slate-300">{resettingPassword ? 'Enviando e-mail...' : 'Alterar Senha'}</span>
+                    {resettingPassword ? (
+                      <Loader2 size={16} className="text-slate-500 animate-spin" />
+                    ) : (
+                      <ChevronDown size={16} className="text-slate-500 -rotate-90 group-hover:text-white transition-colors" />
+                    )}
+                  </button>
+                  <button
+                    onClick={() => updateSettings({ twoFactorEnabled: !settings.twoFactorEnabled })}
+                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/10 transition-colors group"
+                  >
+                    <div className="flex flex-col text-left">
+                      <span className="text-sm text-slate-300">Autenticação em 2 Etapas</span>
+                      <span className={`text-[10px] flex items-center gap-1 ${settings.twoFactorEnabled ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        {settings.twoFactorEnabled ? 'Ativado' : 'Desativado'}
+                      </span>
+                    </div>
+                    <ChevronDown size={16} className="text-slate-500 -rotate-90 group-hover:text-white transition-colors" />
+                  </button>
+                </div>
+              </section>
             </div>
           </div>
         )}
