@@ -13,6 +13,7 @@ import {
   buildUsageFromGroq,
   createManualTopup,
   createRequestId,
+  estimateCloudinaryStorageReserve,
   estimateReserveForModels,
   estimateTokensFromMessages,
   estimateTokensFromText,
@@ -21,6 +22,7 @@ import {
   getBillingPricingSnapshot,
   refundReserve,
   reserveCredits,
+  settleCloudinaryStorageReserve,
   settleReservedCredits,
 } from "./billing";
 import {
@@ -30,11 +32,41 @@ import {
   reprojectPolygon,
   reprojectBbox,
 } from "./geo-utils";
-import { isFirebaseConfigError } from "./firebase-admin";
+import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+function estimateBytesFromDataUrl(dataUrl: string): number {
+  const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return 0;
+  const base64Payload = String(match[2] || "").replace(/\s/g, "");
+  if (!base64Payload) return 0;
+  const padding = (base64Payload.match(/=+$/)?.[0]?.length || 0);
+  return Math.max(0, Math.floor((base64Payload.length * 3) / 4) - padding);
+}
+
+async function attachOptionalAuth(req: any, _res: any, next: any) {
+  try {
+    const header = String(req?.headers?.authorization || "").trim();
+    const match = header.match(/^Bearer\s+(.+)$/i);
+    const token = match?.[1]?.trim();
+    if (!token) {
+      next();
+      return;
+    }
+    const decoded = await adminAuth.verifyIdToken(token);
+    req.authUid = decoded.uid;
+  } catch (error) {
+    if (isFirebaseConfigError(error)) {
+      console.warn("[AUTH] Firebase não configurado para auth opcional.");
+    } else {
+      console.warn("[AUTH] Token opcional inválido, seguindo sem auth.");
+    }
+  }
+  next();
+}
 
 async function startServer() {
   const app = express();
@@ -205,6 +237,7 @@ async function startServer() {
     ],
     requireAuth,
   );
+  app.use(["/api/upload-image", "/api/upload-file"], attachOptionalAuth);
 
   registerWfsIntersectionRoutes(app);
   registerSimcarClipRoutes(app);
@@ -2028,8 +2061,14 @@ async function startServer() {
   });
 
   app.post("/api/upload-image", async (req, res) => {
+    let billingUid = "";
+    let billingRequestId = "";
+    let billingReserved = 0;
     try {
       console.log("[/api/upload-image] request received");
+      const uid = String(req.authUid || "");
+      const billingEnabled = Boolean(uid);
+      billingUid = uid;
       const cloudName = "da19dwpgk";
       const apiKey = process.env.CLOUDINARY_API_KEY;
       const apiSecret = process.env.CLOUDINARY_API_SECRET;
@@ -2046,6 +2085,23 @@ async function startServer() {
         console.error("[/api/upload-image] dataUrl missing");
         res.status(400).json({ error: "dataUrl Ã© obrigatÃ³rio." });
         return;
+      }
+
+      billingRequestId = createRequestId("cloudinary_img");
+      const estimatedBytes = Math.max(1, estimateBytesFromDataUrl(dataUrl));
+      if (billingEnabled) {
+        billingReserved = await estimateCloudinaryStorageReserve({
+          bytesStored: estimatedBytes,
+          safetyMultiplier: 1.12,
+        });
+        if (billingReserved > 0) {
+          await reserveCredits({
+            uid,
+            amountBrl: billingReserved,
+            requestId: billingRequestId,
+            endpoint: "/api/upload-image",
+          });
+        }
       }
 
       const timestamp = Math.floor(Date.now() / 1000);
@@ -2080,11 +2136,35 @@ async function startServer() {
       if (!response.ok) {
         const text = await response.text();
         console.error("[/api/upload-image] cloudinary error:", response.status, text);
+        if (billingReserved > 0) {
+          await refundReserve({
+            uid,
+            requestId: billingRequestId,
+            amountBrl: billingReserved,
+            endpoint: "/api/upload-image",
+            reason: "cloudinary_upload_failed",
+          });
+          billingReserved = 0;
+        }
         res.status(response.status).json({ error: text });
         return;
       }
 
       const data = await response.json();
+      const bytesStored = Math.max(1, Number(data?.bytes || estimatedBytes));
+      let billing: Awaited<ReturnType<typeof settleCloudinaryStorageReserve>> | null = null;
+      if (billingEnabled && billingReserved > 0) {
+        billing = await settleCloudinaryStorageReserve({
+          uid,
+          requestId: billingRequestId,
+          endpoint: "/api/upload-image",
+          reservedBrl: billingReserved,
+          bytesStored,
+          assetKind: "chat_image",
+        });
+        billingReserved = 0;
+      }
+
       console.log("[/api/upload-image] success:", data?.public_id);
       res.json({
         public_id: data.public_id,
@@ -2092,16 +2172,41 @@ async function startServer() {
         width: data.width,
         height: data.height,
         format: data.format,
+        bytes: bytesStored,
+        billing: billing || undefined,
       });
     } catch (error: any) {
+      if (billingUid && billingReserved > 0 && billingRequestId) {
+        try {
+          await refundReserve({
+            uid: billingUid,
+            requestId: billingRequestId,
+            amountBrl: billingReserved,
+            endpoint: "/api/upload-image",
+            reason: "exception",
+          });
+        } catch (refundErr) {
+          console.error("[/api/upload-image] refund error:", refundErr);
+        }
+      }
+      if (error instanceof BillingError) {
+        res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return;
+      }
       console.error("Erro no /api/upload-image:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });
     }
   });
 
   app.post("/api/upload-file", async (req, res) => {
+    let billingUid = "";
+    let billingRequestId = "";
+    let billingReserved = 0;
     try {
       console.log("[/api/upload-file] request received");
+      const uid = String(req.authUid || "");
+      const billingEnabled = Boolean(uid);
+      billingUid = uid;
       const cloudName = "da19dwpgk";
       const apiKey = process.env.CLOUDINARY_API_KEY;
       const apiSecret = process.env.CLOUDINARY_API_SECRET;
@@ -2128,6 +2233,22 @@ async function startServer() {
       const mimeType = match[1] || "application/pdf";
       const base64Payload = match[2];
       const fileBuffer = Buffer.from(base64Payload, "base64");
+
+      billingRequestId = createRequestId("cloudinary_file");
+      if (billingEnabled) {
+        billingReserved = await estimateCloudinaryStorageReserve({
+          bytesStored: Math.max(1, fileBuffer.length),
+          safetyMultiplier: 1.12,
+        });
+        if (billingReserved > 0) {
+          await reserveCredits({
+            uid,
+            amountBrl: billingReserved,
+            requestId: billingRequestId,
+            endpoint: "/api/upload-file",
+          });
+        }
+      }
 
       let extractedText = "";
       let pageCount = 0;
@@ -2182,11 +2303,35 @@ async function startServer() {
       if (!response.ok) {
         const text = await response.text();
         console.error("[/api/upload-file] cloudinary error:", response.status, text);
+        if (billingReserved > 0) {
+          await refundReserve({
+            uid,
+            requestId: billingRequestId,
+            amountBrl: billingReserved,
+            endpoint: "/api/upload-file",
+            reason: "cloudinary_upload_failed",
+          });
+          billingReserved = 0;
+        }
         res.status(response.status).json({ error: text });
         return;
       }
 
       const data = await response.json();
+      const bytesStored = Math.max(1, Number(data?.bytes || fileBuffer.length));
+      let billing: Awaited<ReturnType<typeof settleCloudinaryStorageReserve>> | null = null;
+      if (billingEnabled && billingReserved > 0) {
+        billing = await settleCloudinaryStorageReserve({
+          uid,
+          requestId: billingRequestId,
+          endpoint: "/api/upload-file",
+          reservedBrl: billingReserved,
+          bytesStored,
+          assetKind: "chat_file",
+        });
+        billingReserved = 0;
+      }
+
       console.log("[/api/upload-file] success:", data?.public_id);
       const secureUrl = String(data?.secure_url || "");
       const fallbackExt = String(data?.format || "pdf").toLowerCase();
@@ -2206,11 +2351,29 @@ async function startServer() {
         download_url: downloadUrl,
         original_filename: safeAttachmentName,
         format: data.format,
-        bytes: data.bytes,
+        bytes: bytesStored,
         pages: pageCount,
         extracted_text: extractedText.slice(0, 25000),
+        billing: billing || undefined,
       });
     } catch (error: any) {
+      if (billingUid && billingReserved > 0 && billingRequestId) {
+        try {
+          await refundReserve({
+            uid: billingUid,
+            requestId: billingRequestId,
+            amountBrl: billingReserved,
+            endpoint: "/api/upload-file",
+            reason: "exception",
+          });
+        } catch (refundErr) {
+          console.error("[/api/upload-file] refund error:", refundErr);
+        }
+      }
+      if (error instanceof BillingError) {
+        res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return;
+      }
       console.error("Erro no /api/upload-file:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });
     }

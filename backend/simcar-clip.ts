@@ -62,6 +62,7 @@ import {
     buildUsageFromGemini,
     buildUsageFromGroq,
     createRequestId,
+    estimateCloudinaryStorageReserve,
     estimateReserveForModels,
     estimateTokensFromMessages,
     estimateTokensFromText,
@@ -70,9 +71,10 @@ import {
     refundReserve,
     reserveCredits,
     runWithBillingUsageSession,
+    settleCloudinaryStorageReserve,
     settleReservedCredits,
 } from "./billing";
-import { requireAuth } from "./auth";
+import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -843,7 +845,7 @@ async function processClip(
     propertyZip: Buffer,
     requestedLayers: string[] | null,
     airIdentificacao?: string,
-): Promise<boolean> {
+): Promise<{ ok: boolean; cloudinaryStoredBytes: number }> {
     const startTime = Date.now();
     const layerNames = requestedLayers && requestedLayers.length > 0
         ? requestedLayers.filter((l) => (TEMPLATE_LAYERS as readonly string[]).includes(l))
@@ -859,7 +861,7 @@ async function processClip(
         userResult = parseUserShapefile(propertyZip);
     } catch (err: any) {
         sendSSE(res, { type: "error", message: err.message || "Erro ao processar shapefile do imÃ³vel." });
-        return false;
+        return { ok: false, cloudinaryStoredBytes: 0 };
     }
 
     const { polygon: userPolygon, geometry: userGeometry, areaHa } = userResult;
@@ -872,7 +874,7 @@ async function processClip(
         templateEntries = extractZipEntries(modeloBuffer);
     } catch (err: any) {
         sendSSE(res, { type: "error", message: "Arquivo Modelo.zip nÃ£o encontrado no servidor." });
-        return false;
+        return { ok: false, cloudinaryStoredBytes: 0 };
     }
 
     // 3. Extract template schemas and .prj files
@@ -895,7 +897,7 @@ async function processClip(
     } catch (err: any) {
         console.error("[SIMCAR CLIP] WFS capabilities error:", err.message);
         sendSSE(res, { type: "error", message: "ServiÃ§o WFS da SEMA-MT indisponÃ­vel." });
-        return false;
+        return { ok: false, cloudinaryStoredBytes: 0 };
     }
 
     // 5. Process each layer
@@ -1091,7 +1093,7 @@ async function processClip(
         zipBuffer = await buildOutputZip(templateEntries, clippedLayers, prjBuffers, xlsxBuffer);
     } catch (err: any) {
         sendSSE(res, { type: "error", message: `Erro ao montar ZIP: ${err.message}` });
-        return false;
+        return { ok: false, cloudinaryStoredBytes: 0 };
     }
 
     // 7. Cache the result (including geometry for AI analysis)
@@ -1116,6 +1118,7 @@ async function processClip(
     let inputZipUrl: string | undefined;
     let outputZipUrl: string | undefined;
     let contextJsonUrl: string | undefined;
+    let cloudinaryStoredBytes = 0;
     try {
         sendSSE(res, { type: "progress", layer: "UPLOAD", current: total, total, status: "uploading_cloudinary" });
         const [inUrl, outUrl] = await Promise.all([
@@ -1143,6 +1146,7 @@ async function processClip(
             `simcar_context_${jobId.slice(0, 8)}.json`,
             "application/json",
         );
+        cloudinaryStoredBytes = propertyZip.length + zipBuffer.length + contextBuffer.length;
         console.log(`[SIMCAR CLIP] Cloudinary: input=${inUrl}, output=${outUrl}, context=${contextJsonUrl}`);
     } catch (err: any) {
         console.error("[SIMCAR CLIP] Cloudinary ZIP upload error:", err.message);
@@ -1184,7 +1188,7 @@ async function processClip(
             layers: layerSummaries,
         },
     });
-    return true;
+    return { ok: true, cloudinaryStoredBytes };
 }
 
 /* â”€â”€â”€ AI Analysis Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
@@ -4354,6 +4358,27 @@ function buildEstimatedUsageForFallback(args: {
 
 /* â”€â”€â”€ Express Route Registration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
+async function attachOptionalAuth(req: Request, _res: Response, next: any) {
+    try {
+        const header = String(req.headers.authorization || "").trim();
+        const match = header.match(/^Bearer\s+(.+)$/i);
+        const token = match?.[1]?.trim();
+        if (!token) {
+            next();
+            return;
+        }
+        const decoded = await adminAuth.verifyIdToken(token);
+        req.authUid = decoded.uid;
+    } catch (error) {
+        if (isFirebaseConfigError(error)) {
+            console.warn("[AUTH] Firebase não configurado para auth opcional (simcar-clip).");
+        } else {
+            console.warn("[AUTH] Token opcional inválido em /api/simcar/clip.");
+        }
+    }
+    next();
+}
+
 export function registerSimcarClipRoutes(app: Express) {
     const sendSseHeaders = (res: Response) => {
         res.setHeader("Content-Type", "text/event-stream");
@@ -4411,10 +4436,12 @@ export function registerSimcarClipRoutes(app: Express) {
     });
 
     // SSE endpoint for clip processing
-    app.post("/api/simcar/clip", requireAuth, async (req: Request, res: Response) => {
+    app.post("/api/simcar/clip", attachOptionalAuth, async (req: Request, res: Response) => {
         let billingUid = "";
-        let billingRequestId = "";
-        let billingReserved = 0;
+        let operationRequestId = "";
+        let operationReserved = 0;
+        let storageRequestId = "";
+        let storageReserved = 0;
         // SSE headers
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
@@ -4424,11 +4451,11 @@ export function registerSimcarClipRoutes(app: Express) {
 
         try {
             const uid = String(req.authUid || "");
-            if (!uid) {
-                sendSSE(res, { type: "error", message: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
-                return;
-            }
+            const billingEnabled = Boolean(uid);
             billingUid = uid;
+            if (!billingEnabled) {
+                console.warn("[SIMCAR CLIP] Sem token válido; processando sem cobrança.");
+            }
             const body = req.body as {
                 propertyZip?: string;
                 filename?: string;
@@ -4462,22 +4489,42 @@ export function registerSimcarClipRoutes(app: Express) {
                 `size=${zipBuffer.length}, layers=${body.layerNames?.length || "all"}`,
             );
 
-            billingRequestId = createRequestId("simcar_clip");
-            billingReserved = await estimateReserveForModels({
-                models: [SIMCAR_OPERATION_BILLING_MODEL],
-                estimatedInputTokens: 2200,
-                estimatedOutputTokens: 700,
-                safetyMultiplier: 1.15,
-            });
-            await reserveCredits({
-                uid,
-                amountBrl: billingReserved,
-                requestId: billingRequestId,
-                endpoint: "/api/simcar/clip",
-            });
+            if (billingEnabled) {
+                operationRequestId = createRequestId("simcar_clip");
+                operationReserved = await estimateReserveForModels({
+                    models: [SIMCAR_OPERATION_BILLING_MODEL],
+                    estimatedInputTokens: 2200,
+                    estimatedOutputTokens: 700,
+                    safetyMultiplier: 1.15,
+                });
+                await reserveCredits({
+                    uid,
+                    amountBrl: operationReserved,
+                    requestId: operationRequestId,
+                    endpoint: "/api/simcar/clip",
+                });
 
-            const completed = await processClip(res, zipBuffer, body.layerNames || null, body.airIdentificacao || undefined);
-            if (completed && billingReserved > 0) {
+                storageRequestId = createRequestId("simcar_clip_storage");
+                const estimatedStorageBytes = Math.max(
+                    zipBuffer.length * 3,
+                    zipBuffer.length + 320_000,
+                );
+                storageReserved = await estimateCloudinaryStorageReserve({
+                    bytesStored: estimatedStorageBytes,
+                    safetyMultiplier: 1.2,
+                });
+                if (storageReserved > 0) {
+                    await reserveCredits({
+                        uid,
+                        amountBrl: storageReserved,
+                        requestId: storageRequestId,
+                        endpoint: "/api/simcar/clip",
+                    });
+                }
+            }
+
+            const clipResult = await processClip(res, zipBuffer, body.layerNames || null, body.airIdentificacao || undefined);
+            if (billingEnabled && clipResult.ok && operationReserved > 0) {
                 const fallbackUsage = buildEstimatedUsageForFallback({
                     endpoint: "/api/simcar/clip",
                     provider: "groq",
@@ -4487,35 +4534,81 @@ export function registerSimcarClipRoutes(app: Express) {
                 });
                 const billing = await settleReservedCredits({
                     uid,
-                    requestId: billingRequestId,
+                    requestId: operationRequestId,
                     endpoint: "/api/simcar/clip",
-                    reservedBrl: billingReserved,
+                    reservedBrl: operationReserved,
                     usageInputs: [fallbackUsage],
                 });
-                billingReserved = 0;
+                operationReserved = 0;
                 sendSSE(res, { type: "billing", billing });
-            } else if (billingReserved > 0) {
+            } else if (billingEnabled && operationReserved > 0) {
                 await refundReserve({
                     uid,
-                    requestId: billingRequestId,
-                    amountBrl: billingReserved,
+                    requestId: operationRequestId,
+                    amountBrl: operationReserved,
                     endpoint: "/api/simcar/clip",
                     reason: "clip_failed_or_invalid",
                 });
-                billingReserved = 0;
+                operationReserved = 0;
+            }
+
+            if (billingEnabled && clipResult.ok && storageReserved > 0) {
+                if (clipResult.cloudinaryStoredBytes > 0) {
+                    const storageBilling = await settleCloudinaryStorageReserve({
+                        uid,
+                        requestId: storageRequestId,
+                        endpoint: "/api/simcar/clip",
+                        reservedBrl: storageReserved,
+                        bytesStored: clipResult.cloudinaryStoredBytes,
+                        assetKind: "simcar_zip_bundle",
+                    });
+                    storageReserved = 0;
+                    sendSSE(res, { type: "billing", billing: storageBilling });
+                } else {
+                    await refundReserve({
+                        uid,
+                        requestId: storageRequestId,
+                        amountBrl: storageReserved,
+                        endpoint: "/api/simcar/clip",
+                        reason: "cloudinary_storage_not_persisted",
+                    });
+                    storageReserved = 0;
+                }
+            } else if (billingEnabled && storageReserved > 0) {
+                await refundReserve({
+                    uid,
+                    requestId: storageRequestId,
+                    amountBrl: storageReserved,
+                    endpoint: "/api/simcar/clip",
+                    reason: "clip_failed_or_invalid",
+                });
+                storageReserved = 0;
             }
         } catch (err: any) {
-            if (billingUid && billingReserved > 0 && billingRequestId) {
+            if (billingUid && operationReserved > 0 && operationRequestId) {
                 try {
                     await refundReserve({
                         uid: billingUid,
-                        requestId: billingRequestId,
-                        amountBrl: billingReserved,
+                        requestId: operationRequestId,
+                        amountBrl: operationReserved,
                         endpoint: "/api/simcar/clip",
                         reason: "exception",
                     });
                 } catch (refundErr) {
                     console.error("[SIMCAR CLIP] refund error:", refundErr);
+                }
+            }
+            if (billingUid && storageReserved > 0 && storageRequestId) {
+                try {
+                    await refundReserve({
+                        uid: billingUid,
+                        requestId: storageRequestId,
+                        amountBrl: storageReserved,
+                        endpoint: "/api/simcar/clip",
+                        reason: "exception",
+                    });
+                } catch (refundErr) {
+                    console.error("[SIMCAR CLIP] storage refund error:", refundErr);
                 }
             }
             if (err instanceof BillingError) {
