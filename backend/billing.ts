@@ -51,6 +51,7 @@ const CLOUDINARY_STORAGE_USD_PER_GB_MONTH = Number.parseFloat(process.env.CLOUDI
   (CLOUDINARY_PLUS_MONTHLY_USD / Math.max(1, CLOUDINARY_PLUS_MONTHLY_CREDITS));
 const CLOUDINARY_STORAGE_BILLING_DAYS = Number.parseFloat(process.env.CLOUDINARY_STORAGE_BILLING_DAYS || "30") || 30;
 const MIN_STORAGE_CHARGE_BRL = Number.parseFloat(process.env.BILLING_MIN_STORAGE_CHARGE_BRL || "0.001") || 0.001;
+const MAX_RESERVE_BRL = Number.parseFloat(process.env.BILLING_MAX_RESERVE_BRL || "10") || 10;
 
 const MODEL_PRICING_USD: Record<string, ModelPricing> = {
   "openai/gpt-oss-20b": { base: { inputUsdPer1M: 0.1, outputUsdPer1M: 0.5 } },
@@ -919,7 +920,8 @@ export async function estimateReserveForModels(args: {
   }
 
   const safety = Number.isFinite(args.safetyMultiplier) ? Math.max(1, Number(args.safetyMultiplier)) : 1.25;
-  return roundCurrency(Math.max(MIN_CHARGE_BRL, maxCost * safety));
+  const estimated = roundCurrency(Math.max(MIN_CHARGE_BRL, maxCost * safety));
+  return Math.min(estimated, MAX_RESERVE_BRL);
 }
 
 export function buildUsageFromGroq(model: string, usage: any, endpoint: string): UsageRecordInput {

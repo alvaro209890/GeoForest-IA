@@ -1754,7 +1754,7 @@ async function startServer() {
         models: startupCandidates,
         estimatedInputTokens: estimateTokensFromMessages(messagesForModel),
         estimatedOutputTokens: maxResponseTokensEstimate,
-        safetyMultiplier: 1.35,
+        safetyMultiplier: 1.15,
       });
       await reserveCredits({
         uid,
