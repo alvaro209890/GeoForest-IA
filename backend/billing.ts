@@ -179,6 +179,53 @@ function roundCurrency(value: number): number {
   return Math.round((value + Number.EPSILON) * 10000) / 10000;
 }
 
+function mergeUsageInputs(usageInputs: UsageRecordInput[], defaultEndpoint: string): UsageRecordInput[] {
+  const merged = new Map<string, UsageRecordInput>();
+  for (const raw of usageInputs || []) {
+    const model = normalizeModelName(raw.model);
+    if (!model) continue;
+    const provider = raw.provider || inferProviderFromModel(model);
+    const endpoint = String(raw.endpoint || defaultEndpoint || "");
+    const key = `${provider}|${model}|${endpoint}`;
+    const current = merged.get(key);
+    const inputTokens = sanitizeTokenCount(raw.inputTokens);
+    const outputTokens = sanitizeTokenCount(raw.outputTokens);
+    const estimated = Boolean(raw.estimated);
+    if (!current) {
+      merged.set(key, {
+        provider,
+        model,
+        endpoint,
+        inputTokens,
+        outputTokens,
+        estimated,
+      });
+      continue;
+    }
+    merged.set(key, {
+      provider,
+      model,
+      endpoint,
+      inputTokens: sanitizeTokenCount(current.inputTokens) + inputTokens,
+      outputTokens: sanitizeTokenCount(current.outputTokens) + outputTokens,
+      estimated: Boolean(current.estimated) && estimated,
+    });
+  }
+  return [...merged.values()].map((item) => {
+    const inTokens = sanitizeTokenCount(item.inputTokens);
+    const outTokens = sanitizeTokenCount(item.outputTokens);
+    if (inTokens > 0 || outTokens > 0) return item;
+    if (item.estimated) {
+      return {
+        ...item,
+        inputTokens: 1,
+        outputTokens: 1,
+      };
+    }
+    return item;
+  });
+}
+
 async function fetchUsdBrlRateFromBcb(): Promise<number> {
   const today = new Date();
   const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
@@ -421,8 +468,9 @@ export async function settleReservedCredits(args: {
   const reserved = roundCurrency(Math.max(0, args.reservedBrl));
   await ensureWallet(args.uid);
   const { rate } = await getUsdBrlRate();
+  const mergedInputs = mergeUsageInputs(args.usageInputs, args.endpoint);
 
-  const normalizedUsage: SettledUsageRecord[] = args.usageInputs
+  const normalizedUsage: SettledUsageRecord[] = mergedInputs
     .map((item) => {
       const model = normalizeModelName(item.model);
       if (!model) return null;

@@ -72,6 +72,7 @@ import {
     runWithBillingUsageSession,
     settleReservedCredits,
 } from "./billing";
+import { requireAuth } from "./auth";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -117,6 +118,8 @@ type CachedJob = {
     contextJsonUrl?: string;
 };
 const jobCache = new Map<string, CachedJob>();
+
+const SIMCAR_OPERATION_BILLING_MODEL = "openai/gpt-oss-20b";
 
 function pruneJobCache() {
     const now = Date.now();
@@ -840,7 +843,7 @@ async function processClip(
     propertyZip: Buffer,
     requestedLayers: string[] | null,
     airIdentificacao?: string,
-) {
+): Promise<boolean> {
     const startTime = Date.now();
     const layerNames = requestedLayers && requestedLayers.length > 0
         ? requestedLayers.filter((l) => (TEMPLATE_LAYERS as readonly string[]).includes(l))
@@ -856,7 +859,7 @@ async function processClip(
         userResult = parseUserShapefile(propertyZip);
     } catch (err: any) {
         sendSSE(res, { type: "error", message: err.message || "Erro ao processar shapefile do imÃ³vel." });
-        return;
+        return false;
     }
 
     const { polygon: userPolygon, geometry: userGeometry, areaHa } = userResult;
@@ -869,7 +872,7 @@ async function processClip(
         templateEntries = extractZipEntries(modeloBuffer);
     } catch (err: any) {
         sendSSE(res, { type: "error", message: "Arquivo Modelo.zip nÃ£o encontrado no servidor." });
-        return;
+        return false;
     }
 
     // 3. Extract template schemas and .prj files
@@ -892,7 +895,7 @@ async function processClip(
     } catch (err: any) {
         console.error("[SIMCAR CLIP] WFS capabilities error:", err.message);
         sendSSE(res, { type: "error", message: "ServiÃ§o WFS da SEMA-MT indisponÃ­vel." });
-        return;
+        return false;
     }
 
     // 5. Process each layer
@@ -1088,7 +1091,7 @@ async function processClip(
         zipBuffer = await buildOutputZip(templateEntries, clippedLayers, prjBuffers, xlsxBuffer);
     } catch (err: any) {
         sendSSE(res, { type: "error", message: `Erro ao montar ZIP: ${err.message}` });
-        return;
+        return false;
     }
 
     // 7. Cache the result (including geometry for AI analysis)
@@ -1181,6 +1184,7 @@ async function processClip(
             layers: layerSummaries,
         },
     });
+    return true;
 }
 
 /* â”€â”€â”€ AI Analysis Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
@@ -3616,7 +3620,7 @@ async function processAuasAnalysis(
     previousAnalysis?: string,
     contextUrl?: string,
     outputZipUrl?: string,
-) {
+): Promise<boolean> {
     let job = jobCache.get(jobId);
     if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
         job = (await hydrateJobFromPersistedContext(jobId, contextUrl)) ?? undefined;
@@ -3629,7 +3633,7 @@ async function processAuasAnalysis(
             type: "error",
             message: "Job nÃ£o encontrado. Envie contextUrl ou gere o recorte novamente.",
         });
-        return;
+        return false;
     }
 
     const { layerSummaries, areaHa: propAreaHa } = job;
@@ -3642,7 +3646,7 @@ async function processAuasAnalysis(
             type: "error",
             message: "Camada AUAS nÃ£o encontrada no recorte. Verifique se o imÃ³vel possui AUAS declarada no CAR.",
         });
-        return;
+        return false;
     }
 
     // Step 1: Generate satellite images with AUAS overlay
@@ -3654,12 +3658,12 @@ async function processAuasAnalysis(
     } catch (err: any) {
         console.error("[AUAS ANALYSIS] Image generation error:", err.message);
         sendSSE(res, { type: "error", message: `Erro ao gerar imagens AUAS: ${err.message}` });
-        return;
+        return false;
     }
 
     if (imagesToAnalyze.length === 0) {
         sendSSE(res, { type: "error", message: "Nenhuma imagem AUAS foi gerada. Verifique a disponibilidade das camadas WMS." });
-        return;
+        return false;
     }
 
     // Step 2: Upload to Cloudinary
@@ -3746,7 +3750,7 @@ async function processAuasAnalysis(
 
     if (perSatResults.length === 0) {
         sendSSE(res, { type: "error", message: "Nenhuma anÃ¡lise AUAS individual foi concluÃ­da com sucesso." });
-        return;
+        return false;
     }
 
     // Step 5: Final synthesis (combines AUAS + previous AC/AVN analysis)
@@ -3783,6 +3787,7 @@ async function processAuasAnalysis(
         layerSummaries: layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
         auasAreaHa: auasSummary?.areaHa ?? 0,
     });
+    return true;
 }
 
 /**
@@ -4048,7 +4053,7 @@ async function processAnalysis(
     aiAnalysis = true,
     contextUrl?: string,
     outputZipUrl?: string,
-) {
+): Promise<boolean> {
     let job = jobCache.get(jobId);
     if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
         job = (await hydrateJobFromPersistedContext(jobId, contextUrl)) ?? undefined;
@@ -4062,7 +4067,7 @@ async function processAnalysis(
             message:
                 "Job nÃ£o encontrado no cache do servidor. Envie contextUrl salvo no Firebase/Cloudinary para reidratar ou gere o recorte novamente.",
         });
-        return;
+        return false;
     }
 
     const { layerSummaries, areaHa: propAreaHa } = job;
@@ -4085,12 +4090,12 @@ async function processAnalysis(
     } catch (err: any) {
         console.error("[SIMCAR ANALYSIS] Image generation error:", err.message);
         sendSSE(res, { type: "error", message: `Erro ao gerar imagens: ${err.message}` });
-        return;
+        return false;
     }
 
     if (imagesToAnalyze.length === 0) {
         sendSSE(res, { type: "error", message: "Nenhuma imagem de satÃ©lite foi gerada. Verifique a disponibilidade das camadas WMS." });
-        return;
+        return false;
     }
 
     // Step 2: Upload to Cloudinary (full quality for user viewing)
@@ -4126,7 +4131,7 @@ async function processAnalysis(
             satellitesUsed: usedSatelliteKeys,
             satellitesMissing: missingSatelliteKeys,
         });
-        return;
+        return true;
     }
 
     // Step 3: Prepare images for AI (use Cloudinary URLs or compress base64 as fallback)
@@ -4242,7 +4247,7 @@ async function processAnalysis(
             } catch (err: any) {
                 console.error("[SIMCAR ANALYSIS] Legacy fallback also failed:", err.message);
                 sendSSE(res, { type: "error", message: `Erro na anÃ¡lise IA: ${err.message}` });
-                return;
+                return false;
             }
         } else if (perSatelliteResults.length === 1) {
             // Only one satellite succeeded â€” return its analysis directly (no synthesis needed)
@@ -4307,7 +4312,7 @@ async function processAnalysis(
         } catch (err: any) {
             console.error("[SIMCAR ANALYSIS] AI analysis error:", err.message);
             sendSSE(res, { type: "error", message: `Erro na anÃ¡lise IA: ${err.message}` });
-            return;
+            return false;
         }
     }
 
@@ -4327,6 +4332,24 @@ async function processAnalysis(
         satellitesUsed: usedSatelliteKeys,
         satellitesMissing: missingSatelliteKeys,
     });
+    return true;
+}
+
+function buildEstimatedUsageForFallback(args: {
+    endpoint: string;
+    model?: string;
+    provider: "groq" | "gemini";
+    inputTokens: number;
+    outputTokens: number;
+}) {
+    return {
+        provider: args.provider,
+        model: args.model || SIMCAR_OPERATION_BILLING_MODEL,
+        endpoint: args.endpoint,
+        inputTokens: Math.max(1, Math.round(args.inputTokens || 1)),
+        outputTokens: Math.max(1, Math.round(args.outputTokens || 1)),
+        estimated: true,
+    };
 }
 
 /* â”€â”€â”€ Express Route Registration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
@@ -4388,7 +4411,10 @@ export function registerSimcarClipRoutes(app: Express) {
     });
 
     // SSE endpoint for clip processing
-    app.post("/api/simcar/clip", async (req: Request, res: Response) => {
+    app.post("/api/simcar/clip", requireAuth, async (req: Request, res: Response) => {
+        let billingUid = "";
+        let billingRequestId = "";
+        let billingReserved = 0;
         // SSE headers
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
@@ -4397,6 +4423,12 @@ export function registerSimcarClipRoutes(app: Express) {
         res.flushHeaders();
 
         try {
+            const uid = String(req.authUid || "");
+            if (!uid) {
+                sendSSE(res, { type: "error", message: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+                return;
+            }
+            billingUid = uid;
             const body = req.body as {
                 propertyZip?: string;
                 filename?: string;
@@ -4430,8 +4462,66 @@ export function registerSimcarClipRoutes(app: Express) {
                 `size=${zipBuffer.length}, layers=${body.layerNames?.length || "all"}`,
             );
 
-            await processClip(res, zipBuffer, body.layerNames || null, body.airIdentificacao || undefined);
+            billingRequestId = createRequestId("simcar_clip");
+            billingReserved = await estimateReserveForModels({
+                models: [SIMCAR_OPERATION_BILLING_MODEL],
+                estimatedInputTokens: 2200,
+                estimatedOutputTokens: 700,
+                safetyMultiplier: 1.15,
+            });
+            await reserveCredits({
+                uid,
+                amountBrl: billingReserved,
+                requestId: billingRequestId,
+                endpoint: "/api/simcar/clip",
+            });
+
+            const completed = await processClip(res, zipBuffer, body.layerNames || null, body.airIdentificacao || undefined);
+            if (completed && billingReserved > 0) {
+                const fallbackUsage = buildEstimatedUsageForFallback({
+                    endpoint: "/api/simcar/clip",
+                    provider: "groq",
+                    model: SIMCAR_OPERATION_BILLING_MODEL,
+                    inputTokens: 1800 + Math.max(0, (body.layerNames?.length || TEMPLATE_LAYERS.length) * 25),
+                    outputTokens: 250,
+                });
+                const billing = await settleReservedCredits({
+                    uid,
+                    requestId: billingRequestId,
+                    endpoint: "/api/simcar/clip",
+                    reservedBrl: billingReserved,
+                    usageInputs: [fallbackUsage],
+                });
+                billingReserved = 0;
+                sendSSE(res, { type: "billing", billing });
+            } else if (billingReserved > 0) {
+                await refundReserve({
+                    uid,
+                    requestId: billingRequestId,
+                    amountBrl: billingReserved,
+                    endpoint: "/api/simcar/clip",
+                    reason: "clip_failed_or_invalid",
+                });
+                billingReserved = 0;
+            }
         } catch (err: any) {
+            if (billingUid && billingReserved > 0 && billingRequestId) {
+                try {
+                    await refundReserve({
+                        uid: billingUid,
+                        requestId: billingRequestId,
+                        amountBrl: billingReserved,
+                        endpoint: "/api/simcar/clip",
+                        reason: "exception",
+                    });
+                } catch (refundErr) {
+                    console.error("[SIMCAR CLIP] refund error:", refundErr);
+                }
+            }
+            if (err instanceof BillingError) {
+                sendSSE(res, { type: "error", message: err.message, code: err.code });
+                return;
+            }
             console.error("[SIMCAR CLIP] Unexpected error:", err);
             sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
         } finally {
@@ -4506,17 +4596,29 @@ export function registerSimcarClipRoutes(app: Express) {
 
             sendSseHeaders(res);
             console.log(`[AUAS ANALYSIS] Starting AUAS analysis for job: ${jobId}`);
+            let completed = false;
             await runWithBillingUsageSession(async () => {
-                await processAuasAnalysis(res, jobId, previousAnalysis, contextUrl, outputZipUrl);
+                completed = await processAuasAnalysis(res, jobId, previousAnalysis, contextUrl, outputZipUrl);
             });
             const usageInputs = getBillingUsageSessionRecords();
-            if (usageInputs.length > 0) {
+            if (usageInputs.length > 0 || completed) {
+                const usageForSettle = usageInputs.length > 0
+                    ? usageInputs
+                    : [
+                        buildEstimatedUsageForFallback({
+                            endpoint: "/api/simcar/clip/analyze-auas",
+                            provider: "gemini",
+                            model: SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL || "gemini-2.5-pro",
+                            inputTokens: 120_000,
+                            outputTokens: 5200,
+                        }),
+                    ];
                 const billing = await settleReservedCredits({
                     uid,
                     requestId: billingRequestId,
                     endpoint: "/api/simcar/clip/analyze-auas",
                     reservedBrl: billingReserved,
-                    usageInputs,
+                    usageInputs: usageForSettle,
                 });
                 billingReserved = 0;
                 sendSSE(res, { type: "billing", billing });
@@ -4618,17 +4720,29 @@ export function registerSimcarClipRoutes(app: Express) {
             console.log(`[SIMCAR ANALYSIS] Starting analysis for job: ${jobId}, layers: ${layers.join(",")}, aiAnalysis: ${aiAnalysis}`);
 
             if (aiAnalysis) {
+                let completed = false;
                 await runWithBillingUsageSession(async () => {
-                    await processAnalysis(res, jobId, layers, true, contextUrl, outputZipUrl);
+                    completed = await processAnalysis(res, jobId, layers, true, contextUrl, outputZipUrl);
                 });
                 const usageInputs = getBillingUsageSessionRecords();
-                if (usageInputs.length > 0) {
+                if (usageInputs.length > 0 || completed) {
+                    const usageForSettle = usageInputs.length > 0
+                        ? usageInputs
+                        : [
+                            buildEstimatedUsageForFallback({
+                                endpoint: "/api/simcar/clip/analyze",
+                                provider: "gemini",
+                                model: SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL || "gemini-2.5-pro",
+                                inputTokens: 90_000 + Math.max(1, layers.length) * 26_000,
+                                outputTokens: 4200,
+                            }),
+                        ];
                     const billing = await settleReservedCredits({
                         uid,
                         requestId: billingRequestId,
                         endpoint: "/api/simcar/clip/analyze",
                         reservedBrl: billingReserved,
-                        usageInputs,
+                        usageInputs: usageForSettle,
                     });
                     billingReserved = 0;
                     sendSSE(res, { type: "billing", billing });
@@ -4759,26 +4873,26 @@ export function registerSimcarClipRoutes(app: Express) {
                     await streamTextFollowUp(res, optimizedMessages);
                 });
                 const usageInputs = getBillingUsageSessionRecords();
-                if (usageInputs.length > 0) {
-                    const billing = await settleReservedCredits({
-                        uid,
-                        requestId: billingRequestId,
-                        endpoint: "/api/simcar/clip/analyze/chat",
-                        reservedBrl: billingReserved,
-                        usageInputs,
-                    });
-                    billingReserved = 0;
-                    sendSSE(res, { type: "billing", billing });
-                } else if (billingReserved > 0) {
-                    await refundReserve({
-                        uid,
-                        requestId: billingRequestId,
-                        amountBrl: billingReserved,
-                        endpoint: "/api/simcar/clip/analyze/chat",
-                        reason: "no_ai_usage",
-                    });
-                    billingReserved = 0;
-                }
+                const usageForSettle = usageInputs.length > 0
+                    ? usageInputs
+                    : [
+                        buildEstimatedUsageForFallback({
+                            endpoint: "/api/simcar/clip/analyze/chat",
+                            provider: "groq",
+                            model: GROQ_TEXT_MODELS[0] || "openai/gpt-oss-120b",
+                            inputTokens: Math.max(1, estimateTokensFromMessages(optimizedMessages)),
+                            outputTokens: 1800,
+                        }),
+                    ];
+                const billing = await settleReservedCredits({
+                    uid,
+                    requestId: billingRequestId,
+                    endpoint: "/api/simcar/clip/analyze/chat",
+                    reservedBrl: billingReserved,
+                    usageInputs: usageForSettle,
+                });
+                billingReserved = 0;
+                sendSSE(res, { type: "billing", billing });
                 if (!res.writableEnded) res.end();
                 return;
             }
