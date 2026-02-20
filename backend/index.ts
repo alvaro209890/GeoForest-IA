@@ -922,11 +922,33 @@ async function startServer() {
       const amountBrl = Number(req.body?.amountBrl);
       const idempotencyKey = String(req.body?.idempotencyKey || "");
       const topup = await createManualTopup({ uid, amountBrl, idempotencyKey });
-      const wallet = await getBillingMe(uid);
+      let wallet: Awaited<ReturnType<typeof getBillingMe>> | null = null;
+      try {
+        wallet = await getBillingMe(uid);
+      } catch (walletErr: any) {
+        const msg = String(walletErr?.message || walletErr || "");
+        // Não bloquear recarga por falha secundária de leitura de analytics/usage.
+        if (/FAILED_PRECONDITION/i.test(msg) && /requires an index/i.test(msg)) {
+          console.warn(
+            "[BILLING] getBillingMe falhou por índice após top-up; retornando carteira mínima.",
+            walletErr,
+          );
+        } else if (isFirebaseConfigError(walletErr)) {
+          console.warn("[BILLING] getBillingMe falhou por config Firebase após top-up.", walletErr);
+        } else {
+          throw walletErr;
+        }
+      }
       res.json({
         ok: true,
         topup,
-        wallet: wallet.wallet,
+        wallet: wallet?.wallet || {
+          balanceBrl: Number(topup.balanceAfterBrl || 0),
+          totalTopupBrl: null,
+          totalSpentBrl: null,
+          updatedAt: null,
+          version: null,
+        },
       });
     } catch (error: any) {
       if (error instanceof BillingError) {

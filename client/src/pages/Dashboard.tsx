@@ -4903,9 +4903,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       const controller = new AbortController();
                       simcarClipAbortRef.current = controller;
 
-                      const response = await fetch(apiUrl('/api/simcar/clip'), {
+                      const response = await apiFetch('/api/simcar/clip', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                           propertyZip: base64,
                           filename: simcarClipFile.name,
@@ -4914,6 +4913,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         }),
                         signal: controller.signal,
                       });
+
+                      if (!response.ok) {
+                        const err = await readApiError(response);
+                        throw new Error(err?.error || `Erro ${response.status}`);
+                      }
 
                       const reader = response.body?.getReader();
                       const decoder = new TextDecoder();
