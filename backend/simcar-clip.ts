@@ -3235,8 +3235,92 @@ function buildAnalysisPrompt(
         "- AVN_DENTRO_SHAPE_ANTROPIZADO = SIM | NAO | INCONCLUSIVO",
         "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA",
         "",
+        "Regra de comunicacao para o texto:",
+        "- Escreva em linguagem clara, direta e sem jargao desnecessario.",
+        "- Se AC_FORA_SHAPE = SIM e/ou AVN_DENTRO_SHAPE_ANTROPIZADO = SIM, comece a conclusao com alerta objetivo.",
+        "- Evite recomendacoes genericas que contradigam o veredito.",
+        "- Informe acao pratica imediata (o que revisar no shape e onde).",
+        "",
         "Não use tabela. Não inclua cadeia de raciocínio interna nem bloco <think>.",
     ].join("\n");
+}
+
+type AcAvnVerdict = "SIM" | "NAO" | "INCONCLUSIVO" | null;
+
+function extractAcAvnVerdict(text: string, field: "AC_FORA_SHAPE" | "AVN_DENTRO_SHAPE_ANTROPIZADO"): AcAvnVerdict {
+    const re = new RegExp(`${field}\\s*=\\s*(SIM|NAO|INCONCLUSIVO)`, "i");
+    const match = String(text || "").match(re);
+    if (!match) return null;
+    const value = String(match[1] || "").toUpperCase();
+    if (value === "SIM" || value === "NAO" || value === "INCONCLUSIVO") return value;
+    return null;
+}
+
+function buildUserFriendlyAcAvnGuidance(
+    acForaShape: AcAvnVerdict,
+    avnDentroShapeAntropizado: AcAvnVerdict,
+    missingSatellites: string[],
+): string {
+    const hasMissing = missingSatellites.length > 0;
+    const missingText = hasMissing ? `Imagens indisponiveis: ${missingSatellites.join(", ")}.` : "";
+
+    if (acForaShape === "SIM" && avnDentroShapeAntropizado === "SIM") {
+        return [
+            "## Resumo para o Usuario",
+            "- Foram identificadas duas inconformidades: area consolidada fora do shape AC e area antropizada dentro do shape AVN.",
+            hasMissing ? `- ${missingText}` : "",
+            "",
+            "## Recomendacao Operacional (Ajuste Automatico)",
+            "- Revisar e ampliar o shape de AC para incluir as areas antropizadas detectadas dentro do imovel.",
+            "- Revisar o shape de AVN e excluir os trechos sem mata detectados dentro do poligono declarado.",
+            "- Priorizar conferencia visual nos setores com maior contraste entre satelites (bordas e porcoes centrais).",
+        ].filter(Boolean).join("\n");
+    }
+
+    if (acForaShape === "SIM") {
+        return [
+            "## Resumo para o Usuario",
+            "- A analise indica area consolidada dentro do imovel que ficou fora do shape AC.",
+            hasMissing ? `- ${missingText}` : "",
+            "",
+            "## Recomendacao Operacional (Ajuste Automatico)",
+            "- Revisar o shape AC e incluir os trechos antropizados detectados fora do poligono atual.",
+            "- Manter o criterio AVN como esta, salvo verificacao adicional em campo.",
+        ].filter(Boolean).join("\n");
+    }
+
+    if (avnDentroShapeAntropizado === "SIM") {
+        return [
+            "## Resumo para o Usuario",
+            "- A analise indica trecho sem mata dentro do shape AVN.",
+            hasMissing ? `- ${missingText}` : "",
+            "",
+            "## Recomendacao Operacional (Ajuste Automatico)",
+            "- Revisar o shape AVN e retirar os trechos antropizados detectados no interior do poligono.",
+            "- Confirmar os limites com apoio de imagem de melhor resolucao e validacao tecnica.",
+        ].filter(Boolean).join("\n");
+    }
+
+    if (acForaShape === "NAO" && avnDentroShapeAntropizado === "NAO") {
+        return [
+            "## Resumo para o Usuario",
+            "- Nao foram identificadas inconformidades principais de AC fora do shape ou de area antropizada dentro de AVN.",
+            hasMissing ? `- ${missingText}` : "",
+            "",
+            "## Recomendacao Operacional (Ajuste Automatico)",
+            "- Manter os shapes atuais e registrar a analise como consistente com as imagens avaliadas.",
+            "- Reavaliar apenas se houver nova imagem com mudanca relevante.",
+        ].filter(Boolean).join("\n");
+    }
+
+    return [
+        "## Resumo para o Usuario",
+        "- Resultado parcialmente inconclusivo para uma ou mais regras principais de AC/AVN.",
+        hasMissing ? `- ${missingText}` : "",
+        "",
+        "## Recomendacao Operacional (Ajuste Automatico)",
+        "- Tratar os pontos sem certeza como INCONCLUSIVO e solicitar nova verificacao com imagem complementar.",
+    ].filter(Boolean).join("\n");
 }
 
 function normalizeAcAvnAnalysisOutput(
@@ -3336,6 +3420,13 @@ function normalizeAcAvnAnalysisOutput(
             "- Se a ausência dessas imagens impactar a certeza do diagnóstico, trate os pontos afetados como INCONCLUSIVO.",
         ].join("\n");
     }
+
+    const acForaShape = extractAcAvnVerdict(text, "AC_FORA_SHAPE");
+    const avnDentroShapeAntropizado = extractAcAvnVerdict(text, "AVN_DENTRO_SHAPE_ANTROPIZADO");
+    text += [
+        "",
+        buildUserFriendlyAcAvnGuidance(acForaShape, avnDentroShapeAntropizado, options.satellitesMissing),
+    ].join("\n");
 
     return text.trim();
 }
@@ -4676,9 +4767,9 @@ export function registerSimcarClipRoutes(app: Express) {
             billingRequestId = createRequestId("simcar_auas");
             billingReserved = await estimateReserveForModels({
                 models: simcarBillingModels,
-                estimatedInputTokens: 900_000,
-                estimatedOutputTokens: 48_000,
-                safetyMultiplier: 1.8,
+                estimatedInputTokens: 200_000,
+                estimatedOutputTokens: 12_000,
+                safetyMultiplier: 1.2,
             });
             await reserveCredits({
                 uid,
@@ -4797,9 +4888,9 @@ export function registerSimcarClipRoutes(app: Express) {
                 billingRequestId = createRequestId("simcar_analyze");
                 billingReserved = await estimateReserveForModels({
                     models: simcarBillingModels,
-                    estimatedInputTokens: 180_000 * satelliteFactor,
-                    estimatedOutputTokens: 12_000 * satelliteFactor,
-                    safetyMultiplier: 1.8,
+                    estimatedInputTokens: 80_000 * satelliteFactor,
+                    estimatedOutputTokens: 6_000 * satelliteFactor,
+                    safetyMultiplier: 1.2,
                 });
                 await reserveCredits({
                     uid,
@@ -4951,7 +5042,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 models: Array.from(new Set([...GROQ_TEXT_MODELS, ...SIMCAR_SYNTHESIS_TEXT_MODELS])),
                 estimatedInputTokens: estimateTokensFromMessages(optimizedMessages),
                 estimatedOutputTokens: 6600,
-                safetyMultiplier: 1.5,
+                safetyMultiplier: 1.2,
             });
             await reserveCredits({
                 uid,
