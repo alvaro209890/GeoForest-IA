@@ -229,6 +229,7 @@ const FRONT_MAP_CAPABILITIES_TTL_MS = 10 * 60 * 1000;
 const FRONT_MAP_CAPABILITIES_STORAGE_KEY = 'geoforest.map.capabilities.v1';
 const FRONT_INTERSECTION_RESULT_TTL_MS = 6 * 60 * 1000;
 const FRONT_INTERSECTION_RESULT_CACHE_MAX = 48;
+const SIMCAR_MANDATORY_LAYERS = new Set(['AIR', 'ATP']);
 const SIMCAR_FIXED_AC_AVN_SATELLITES: Array<{ key: string; label: string; sensor: string; year: number }> = [
   { key: 'landsat5_2006', label: 'Landsat 2006', sensor: 'Landsat 5', year: 2006 },
   { key: 'landsat5_2007', label: 'Landsat 2007', sensor: 'Landsat 5', year: 2007 },
@@ -261,49 +262,49 @@ const REQUIRED_MODELS: Array<{ id: string; label: string; capabilities: string[]
     id: 'meta-llama/llama-3.3-70b-versatile',
     label: 'Llama 3.3 70B',
     capabilities: ['text'],
-    description: 'EquilÃ­brio geral para anÃ¡lise tÃ©cnica e respostas longas em PT-BR.',
+    description: 'Equilíbrio geral para análise técnica e respostas longas em PT-BR.',
   },
   {
     id: 'meta-llama/llama-4-maverick-17b-128e-instruct',
     label: 'Llama 4 Maverick',
     capabilities: ['text', 'vision'],
-    description: 'Melhor para imagem/satÃ©lite + interpretaÃ§Ã£o contextual detalhada.',
+    description: 'Melhor para imagem/satélite + interpretação contextual detalhada.',
   },
   {
     id: 'meta-llama/llama-4-scout-17b-16e-instruct',
     label: 'Llama 4 Scout',
     capabilities: ['text', 'vision'],
-    description: 'RÃ¡pido para triagem visual e respostas curtas com boa precisÃ£o.',
+    description: 'Rápido para triagem visual e respostas curtas com boa precisão.',
   },
   {
     id: 'meta-llama/llama-guard-4-12b',
     label: 'Llama Guard 4 12B',
     capabilities: ['text'],
-    description: 'Focado em moderaÃ§Ã£o e seguranÃ§a; nÃ£o Ã© o principal para anÃ¡lise.',
+    description: 'Focado em moderação e segurança; não é o principal para análise.',
   },
   {
     id: 'qwen/qwen3-32b',
     label: 'Qwen 3 32B',
     capabilities: ['text'],
-    description: 'Bom para raciocÃ­nio estruturado, tabelas e extraÃ§Ã£o de dados.',
+    description: 'Bom para raciocínio estruturado, tabelas e extração de dados.',
   },
   {
     id: 'moonshotai/kimi-k2-instruct-0905',
     label: 'Kimi K2 Instruct (0905)',
     capabilities: ['text'],
-    description: 'Ã“timo para textos longos, sÃ­ntese e revisÃ£o de documentos.',
+    description: 'Ótimo para textos longos, síntese e revisão de documentos.',
   },
   {
     id: 'openai/gpt-oss-20b',
     label: 'GPT OSS 20B',
     capabilities: ['text'],
-    description: 'Modelo alternativo rÃ¡pido para tarefas gerais e QA tÃ©cnico.',
+    description: 'Modelo alternativo rápido para tarefas gerais e QA técnico.',
   },
   {
     id: 'openai/gpt-oss-120b',
     label: 'GPT OSS 120B',
     capabilities: ['text'],
-    description: 'Modelo grande para anÃ¡lises profundas, correlaÃ§Ã£o de mÃºltiplos anexos e sÃ­ntese tÃ©cnica longa.',
+    description: 'Modelo grande para análises profundas, correlação de múltiplos anexos e síntese técnica longa.',
   },
 ];
 
@@ -318,7 +319,7 @@ type Conversation = {
 const DEFAULT_ASSISTANT_MESSAGE: ChatMessage = {
   id: 'seed',
   role: 'ai',
-  text: 'OlÃ¡! Sou a GeoForest IA. Posso apoiar anÃ¡lises ambientais, processamento de imagens de satÃ©lite e interpretaÃ§Ã£o de dados florestais. Como posso ajudar hoje?',
+  text: 'Olá! Sou a GeoForest IA. Posso apoiar análises ambientais, processamento de imagens de satélite e interpretação de dados florestais. Como posso ajudar hoje?',
   time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
   meta: { model: 'auto' },
 };
@@ -415,11 +416,11 @@ type SimcarClipHistoryItem = {
 
 const DEFAULT_SETTINGS: UserSettings = {
   theme: 'Escuro (Floresta)',
-  language: 'PortuguÃªs (BR)',
-  fontSize: 'PadrÃ£o',
+  language: 'Português (BR)',
+  fontSize: 'Padrão',
   coordSystem: 'SIRGAS 2000 (Brasil)',
   unit: 'Hectares (ha)',
-  defaultLayer: 'SatÃ©lite (Alta Res.)',
+  defaultLayer: 'Satélite (Alta Res.)',
   exportFormat: 'KML / KMZ',
   includeMetadata: true,
   compressLarge: false,
@@ -505,11 +506,11 @@ const intersectionStatusLabel = (status: IntersectionStatus) => {
     case 'ok':
       return 'OK';
     case 'no_intersection':
-      return 'Sem interseÃ§Ã£o';
+      return 'Sem interseção';
     case 'not_in_wfs':
       return 'Fora do WFS';
     case 'invalid_layer':
-      return 'Camada invÃ¡lida';
+      return 'Camada inválida';
     case 'error':
       return 'Erro';
     default:
@@ -638,7 +639,7 @@ const renderRichText = (text: string) => {
     if (bulletMatch) {
       return (
         <div key={`line-${i}`} className="pl-2">
-          <span className="mr-2 text-emerald-300">â€¢</span>
+          <span className="mr-2 text-emerald-300">•</span>
           {renderInlineRichText(bulletMatch[1])}
         </div>
       );
@@ -685,11 +686,11 @@ const renderAnalysisRichText = (text: string) => {
       );
     }
 
-    const bullet = trimmed.match(/^[-*â€¢]\s+(.+)$/);
+    const bullet = trimmed.match(/^[-*•]\s+(.+)$/);
     if (bullet) {
       return (
         <div key={`analysis-ul-${i}`} className="analysis-item">
-          <span className="analysis-marker">â€¢</span>
+          <span className="analysis-marker">•</span>
           <span className="analysis-content">{renderInlineRichText(bullet[1])}</span>
         </div>
       );
@@ -715,7 +716,7 @@ const renderAnalysisRichText = (text: string) => {
 const parseKmlGeometryOnClient = (kmlText: string): ParsedGeometry => {
   const matches = [...kmlText.matchAll(/<coordinates>([\s\S]*?)<\/coordinates>/gi)];
   if (!matches.length) {
-    throw new Error('KML sem coordenadas vÃ¡lidas.');
+    throw new Error('KML sem coordenadas válidas.');
   }
   let minX = Infinity;
   let minY = Infinity;
@@ -742,7 +743,7 @@ const parseKmlGeometryOnClient = (kmlText: string): ParsedGeometry => {
     }
   }
   if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
-    throw new Error('NÃ£o foi possÃ­vel extrair bbox do KML.');
+    throw new Error('Não foi possível extrair bbox do KML.');
   }
   return { bbox: [minX, minY, maxX, maxY], polygon: bestPolygon };
 };
@@ -806,7 +807,7 @@ const parseZipShpGeometryOnClient = async (file: File): Promise<ParsedGeometry> 
     if (dataEnd > bytes.length) break;
     if (name.endsWith('.shp')) {
       if (method !== 0) {
-        throw new Error('ZIP com SHP comprimido nÃ£o suportado no frontend. RefaÃ§a ZIP sem compressÃ£o ou use backend novo.');
+        throw new Error('ZIP com SHP comprimido não suportado no frontend. Refaça ZIP sem compressão ou use backend novo.');
       }
       const dv = new DataView(arr, dataStart, compressedSize);
       const minX = dv.getFloat64(36, true);
@@ -814,7 +815,7 @@ const parseZipShpGeometryOnClient = async (file: File): Promise<ParsedGeometry> 
       const maxX = dv.getFloat64(52, true);
       const maxY = dv.getFloat64(60, true);
       if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
-        throw new Error('NÃ£o foi possÃ­vel extrair BBOX do shapefile.');
+        throw new Error('Não foi possível extrair BBOX do shapefile.');
       }
       const polygon = parseShpPolygon(dv, dataStart, compressedSize);
       return { bbox: [minX, minY, maxX, maxY], polygon };
@@ -883,7 +884,7 @@ export default function Dashboard() {
   const [mapSectionOpen, setMapSectionOpen] = useState<Record<string, boolean>>({ imagery: true, simcar: true, advanced: false });
   const [simcarSearchFilter, setSimcarSearchFilter] = useState('');
 
-  // â”€â”€â”€ SIMCAR Clip State â”€â”€â”€
+  // ─── SIMCAR Clip State ───
   const [simcarClipFile, setSimcarClipFile] = useState<File | null>(null);
   const [simcarClipLayers, setSimcarClipLayers] = useState<Array<{ name: string; category: string; selected: boolean }>>([]);
   const [simcarClipProcessing, setSimcarClipProcessing] = useState(false);
@@ -899,7 +900,7 @@ export default function Dashboard() {
   const [simcarAirId, setSimcarAirId] = useState('');
   const [simcarClipJobId, setSimcarClipJobId] = useState<string | null>(null);
 
-  // â”€â”€â”€ SIMCAR AI Analysis State â”€â”€â”€
+  // ─── SIMCAR AI Analysis State ───
   const [simcarAnalysisProcessing, setSimcarAnalysisProcessing] = useState(false);
   const [simcarAnalysisProgress, setSimcarAnalysisProgress] = useState<{ step: string; percent: number; message: string } | null>(null);
   const [simcarAgentLog, setSimcarAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
@@ -918,14 +919,14 @@ export default function Dashboard() {
   const [simcarAnalysisStartTime, setSimcarAnalysisStartTime] = useState<number | null>(null);
   const [simcarElapsed, setSimcarElapsed] = useState(0);
 
-  // â”€â”€â”€ SIMCAR AUAS Analysis State â”€â”€â”€
+  // ─── SIMCAR AUAS Analysis State ───
   const [simcarAuasProcessing, setSimcarAuasProcessing] = useState(false);
   const [simcarAuasProgress, setSimcarAuasProgress] = useState<{ step: string; percent: number; message: string } | null>(null);
   const [simcarAuasImages, setSimcarAuasImages] = useState<Array<{ url: string; caption: string }>>([]);
   const [simcarAuasMessages, setSimcarAuasMessages] = useState<SimcarAnalysisMessage[]>([]);
   const [simcarAuasAgentLog, setSimcarAuasAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
 
-  // â”€â”€â”€ SIMCAR Agent Log: elapsed timer â”€â”€â”€
+  // ─── SIMCAR Agent Log: elapsed timer ───
   useEffect(() => {
     if (simcarAnalysisProcessing) {
       setSimcarAnalysisStartTime(Date.now());
@@ -936,27 +937,27 @@ export default function Dashboard() {
     setSimcarAnalysisStartTime(null);
   }, [simcarAnalysisProcessing]);
 
-  // â”€â”€â”€ SIMCAR Agent Log: auto-scroll to active step â”€â”€â”€
+  // ─── SIMCAR Agent Log: auto-scroll to active step ───
   useEffect(() => {
     simcarAgentLogEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [simcarAgentLog]);
 
-  // â”€â”€â”€ SIMCAR Agent Log: group steps into phases â”€â”€â”€
+  // ─── SIMCAR Agent Log: group steps into phases ───
   type AgentPhase = { id: string; label: string; icon: 'satellite' | 'upload' | 'brain' | 'zap'; steps: typeof simcarAgentLog; allDone: boolean };
   const simcarGroupedPhases = useMemo((): AgentPhase[] => {
     const classify = (label: string): AgentPhase['icon'] => {
       const l = label.toLowerCase();
-      if (/baixando|imagem|renderizando|gerando|geraÃ§Ã£o|indisponÃ­vel/i.test(l)) return 'satellite';
+      if (/baixando|imagem|renderizando|gerando|geração|indisponível/i.test(l)) return 'satellite';
       if (/upload|cloudinary|salvando/i.test(l)) return 'upload';
-      if (/ia\s|preparando.*ia|sintetizando|analis|fallback|anÃ¡lise/i.test(l)) return 'brain';
+      if (/ia\s|preparando.*ia|sintetizando|analis|fallback|análise/i.test(l)) return 'brain';
       return 'zap';
     };
     const phaseOrder: AgentPhase['icon'][] = ['zap', 'satellite', 'upload', 'brain'];
     const phaseLabels: Record<AgentPhase['icon'], string> = {
-      zap: 'InicializaÃ§Ã£o',
-      satellite: 'GeraÃ§Ã£o de Imagens',
+      zap: 'Inicialização',
+      satellite: 'Geração de Imagens',
       upload: 'Upload ao Servidor',
-      brain: 'AnÃ¡lise por IA',
+      brain: 'Análise por IA',
     };
     const map = new Map<AgentPhase['icon'], typeof simcarAgentLog>();
     for (const step of simcarAgentLog) {
@@ -976,10 +977,10 @@ export default function Dashboard() {
       }));
   }, [simcarAgentLog]);
 
-  // â”€â”€â”€ SIMCAR Clip History (for sidebar cards) â”€â”€â”€
+  // ─── SIMCAR Clip History (for sidebar cards) ───
   const [simcarClipHistory, setSimcarClipHistory] = useState<SimcarClipHistoryItem[]>([]);
 
-  // â”€â”€â”€ SIMCAR Satellite Selection â”€â”€â”€
+  // ─── SIMCAR Satellite Selection ───
   const simcarFixedSatelliteKeys = useMemo(
     () => SIMCAR_FIXED_AC_AVN_SATELLITES.map((sat) => sat.key),
     []
@@ -1070,7 +1071,7 @@ export default function Dashboard() {
       if (useAuth) {
         const user = auth.currentUser;
         if (!user) {
-          throw new Error('UsuÃ¡rio nÃ£o autenticado.');
+          throw new Error('Usuário não autenticado.');
         }
         const token = await user.getIdToken();
         headers.set('Authorization', `Bearer ${token}`);
@@ -1095,7 +1096,7 @@ export default function Dashboard() {
   }, []);
 
   const handleInsufficientCredits = useCallback((message?: string) => {
-    toast.error(message || 'Saldo insuficiente. Adicione crÃ©ditos para continuar.');
+    toast.error(message || 'Saldo insuficiente. Adicione créditos para continuar.');
     setActiveView('settings');
   }, []);
 
@@ -1186,7 +1187,7 @@ export default function Dashboard() {
   const onManualTopup = useCallback(async () => {
     const amount = Number(String(billingTopupAmount || '').replace(',', '.'));
     if (!Number.isFinite(amount) || amount <= 0) {
-      toast.error('Informe um valor vÃ¡lido em reais.');
+      toast.error('Informe um valor válido em reais.');
       return;
     }
     setBillingTopupLoading(true);
@@ -1204,13 +1205,13 @@ export default function Dashboard() {
           handleInsufficientCredits(payload?.error);
           return;
         }
-        throw new Error(payload?.error || 'Erro ao adicionar crÃ©ditos.');
+        throw new Error(payload?.error || 'Erro ao adicionar créditos.');
       }
-      toast.success(`CrÃ©ditos adicionados: ${formatBrl(amount)}.`);
+      toast.success(`Créditos adicionados: ${formatBrl(amount)}.`);
       setBillingTopupOpen(false);
       await Promise.all([loadBillingMe(), loadBillingLedger()]);
     } catch (error: any) {
-      toast.error(error?.message || 'Falha ao adicionar crÃ©ditos.');
+      toast.error(error?.message || 'Falha ao adicionar créditos.');
     } finally {
       setBillingTopupLoading(false);
     }
@@ -1250,31 +1251,31 @@ export default function Dashboard() {
     () => ({
       role: 'system',
       content: [
-        `VocÃª Ã© a GeoForest IA, assistente tÃ©cnica de engenharia florestal e anÃ¡lise ambiental do estado de Mato Grosso.`,
-        `UsuÃ¡rio atual: ${userProfile?.fullName || 'UsuÃ¡rio'}.`,
+        `Você é a GeoForest IA, assistente técnica de engenharia florestal e análise ambiental do estado de Mato Grosso.`,
+        `Usuário atual: ${userProfile?.fullName || 'Usuário'}.`,
         '',
         '## REGRAS DE RESPOSTA',
-        '- Responda em portuguÃªs do Brasil, com foco tÃ©cnico, claro e orientado a aÃ§Ã£o.',
-        '- Respostas curtas e objetivas. SÃ³ aprofunde se o usuÃ¡rio pedir anÃ¡lise completa.',
+        '- Responda em português do Brasil, com foco técnico, claro e orientado a ação.',
+        '- Respostas curtas e objetivas. Só aprofunde se o usuário pedir análise completa.',
         '- Considere o contexto da conversa atual como prioridade.',
         '',
-        '## REGRAS ANTI-ALUCINAÃ‡ÃƒO (OBRIGATÃ“RIAS)',
-        '- NUNCA invente leis, normas, nÃºmeros de artigos, portarias, instruÃ§Ãµes normativas ou resoluÃ§Ãµes. Se nÃ£o souber o nÃºmero exato, diga "consulte a legislaÃ§Ã£o vigente" ao invÃ©s de chutar.',
-        '- NUNCA fabrique dados numÃ©ricos (Ã¡reas, percentuais, coordenadas, datas) que nÃ£o foram fornecidos pelo usuÃ¡rio ou pela Base de Conhecimento.',
-        '- NUNCA invente fontes, referÃªncias bibliogrÃ¡ficas, links ou nomes de documentos que nÃ£o existem.',
+        '## REGRAS ANTI-ALUCINAÇÃO (OBRIGATÓRIAS)',
+        '- NUNCA invente leis, normas, números de artigos, portarias, instruções normativas ou resoluções. Se não souber o número exato, diga "consulte a legislação vigente" ao invés de chutar.',
+        '- NUNCA fabrique dados numéricos (áreas, percentuais, coordenadas, datas) que não foram fornecidos pelo usuário ou pela Base de Conhecimento.',
+        '- NUNCA invente fontes, referências bibliográficas, links ou nomes de documentos que não existem.',
         '- Se a Base de Conhecimento foi fornecida, use APENAS ela como fonte. Cite a fonte no formato [nome_do_arquivo.md].',
-        '- Se NÃƒO houver informaÃ§Ã£o suficiente para responder, diga explicitamente: "NÃ£o tenho informaÃ§Ã£o suficiente sobre isso. Dados necessÃ¡rios: [lista]."',
-        '- Separe SEMPRE o que Ã© fato observÃ¡vel do que Ã© interpretaÃ§Ã£o ou hipÃ³tese.',
-        '- Classifique cada afirmaÃ§Ã£o tÃ©cnica com nÃ­vel de confianÃ§a: [ALTA], [MÃ‰DIA] ou [BAIXA].',
-        '- Quando citar legislaÃ§Ã£o, cite APENAS leis que vocÃª tem certeza absoluta (ex: Lei 12.651/2012 - CÃ³digo Florestal, Lei 9.605/1998 - Crimes Ambientais, LC 38/1995 - CÃ³digo Ambiental de MT). Para qualquer outra, diga "verificar na legislaÃ§Ã£o vigente".',
+        '- Se NÃO houver informação suficiente para responder, diga explicitamente: "Não tenho informação suficiente sobre isso. Dados necessários: [lista]."',
+        '- Separe SEMPRE o que é fato observável do que é interpretação ou hipótese.',
+        '- Classifique cada afirmação técnica com nível de confiança: [ALTA], [MÉDIA] ou [BAIXA].',
+        '- Quando citar legislação, cite APENAS leis que você tem certeza absoluta (ex: Lei 12.651/2012 - Código Florestal, Lei 9.605/1998 - Crimes Ambientais, LC 38/1995 - Código Ambiental de MT). Para qualquer outra, diga "verificar na legislação vigente".',
         '',
-        '## REGRAS ESPECÃFICAS PARA MAPAS E SATÃ‰LITE',
-        '- Para mapa/satÃ©lite, use BBOX/CRS/camada/ano informados para contextualizar a anÃ¡lise.',
-        '- Se houver evidÃªncia clara de desmatamento anterior a 22/07/2008, trate como Ã¡rea consolidada e cite a base legal (Art. 68, Lei 12.651/2012).',
-        '- Se faltarem dados para um diagnÃ³stico, diga exatamente quais dados faltam ao invÃ©s de especular.',
-        '- Quando o usuÃ¡rio pedir laudo ou relatÃ³rio, inclua as ressalvas tÃ©cnicas e limitaÃ§Ãµes da anÃ¡lise.',
-        '- CAMADAS DE OVERLAY: quando a imagem de mapa informar camadas de overlay ativas (ex: SIMCAR, CAR, Ã¡reas consolidadas, AUAs, APPs, reserva legal), considere estas camadas na sua anÃ¡lise. Elas sÃ£o sobreposiÃ§Ãµes vetoriais visÃ­veis na imagem e representam informaÃ§Ã£o geoespacial oficial. Mencione quais overlays estÃ£o presentes e como eles se relacionam com a Ã¡rea analisada.',
-        '- Exemplos de overlays comuns: simcar_area_consolidada (Ã¡reas de uso consolidado no SIMCAR), simcar_aua (Ãreas de Uso Alternativo), simcar_app (Ãreas de PreservaÃ§Ã£o Permanente), simcar_rl (Reserva Legal), car_* (limites de imÃ³veis do CAR).',
+        '## REGRAS ESPECÍFICAS PARA MAPAS E SATÉLITE',
+        '- Para mapa/satélite, use BBOX/CRS/camada/ano informados para contextualizar a análise.',
+        '- Se houver evidência clara de desmatamento anterior a 22/07/2008, trate como área consolidada e cite a base legal (Art. 68, Lei 12.651/2012).',
+        '- Se faltarem dados para um diagnóstico, diga exatamente quais dados faltam ao invés de especular.',
+        '- Quando o usuário pedir laudo ou relatório, inclua as ressalvas técnicas e limitações da análise.',
+        '- CAMADAS DE OVERLAY: quando a imagem de mapa informar camadas de overlay ativas (ex: SIMCAR, CAR, áreas consolidadas, AUAs, APPs, reserva legal), considere estas camadas na sua análise. Elas são sobreposições vetoriais visíveis na imagem e representam informação geoespacial oficial. Mencione quais overlays estão presentes e como eles se relacionam com a área analisada.',
+        '- Exemplos de overlays comuns: simcar_area_consolidada (áreas de uso consolidado no SIMCAR), simcar_aua (Áreas de Uso Alternativo), simcar_app (Áreas de Preservação Permanente), simcar_rl (Reserva Legal), car_* (limites de imóveis do CAR).',
       ].join('\n'),
     }),
     [userProfile?.fullName]
@@ -1542,7 +1543,7 @@ export default function Dashboard() {
           });
           setSimcarClipHistory(clips);
         } catch (error) {
-          console.warn('Falha ao carregar histÃ³rico SIMCAR salvo:', error);
+          console.warn('Falha ao carregar histórico SIMCAR salvo:', error);
         }
 
         if (list.length === 0) {
@@ -1553,7 +1554,7 @@ export default function Dashboard() {
         }
       } catch (error) {
         console.error('Erro ao carregar perfil:', error);
-        toast.error('Erro ao carregar perfil do usuÃ¡rio');
+        toast.error('Erro ao carregar perfil do usuário');
       } finally {
         setLoading(false);
       }
@@ -1799,7 +1800,7 @@ export default function Dashboard() {
         }
       }
 
-      toast.success('Chat excluÃ­do');
+      toast.success('Chat excluído');
     } catch (error: any) {
       toast.error(error?.message || 'Erro ao excluir chat');
     }
@@ -1837,13 +1838,13 @@ export default function Dashboard() {
 
     const currentUser = auth.currentUser;
     if (!currentUser) {
-      toast.error('UsuÃ¡rio nÃ£o autenticado');
+      toast.error('Usuário não autenticado');
       return;
     }
 
     const email = (currentUser.email || userProfile?.email || '').trim();
     if (!email) {
-      toast.error('E-mail nÃ£o encontrado para redefiniÃ§Ã£o de senha');
+      toast.error('E-mail não encontrado para redefinição de senha');
       return;
     }
 
@@ -1857,7 +1858,7 @@ export default function Dashboard() {
       }
 
       await sendPasswordResetEmail(auth, email);
-      toast.success(`E-mail de redefiniÃ§Ã£o enviado para ${email}`);
+      toast.success(`E-mail de redefinição enviado para ${email}`);
     } catch (error: any) {
       const code = String(error?.code || '');
       switch (code) {
@@ -1865,16 +1866,16 @@ export default function Dashboard() {
           toast.error('Muitas tentativas. Aguarde alguns minutos e tente novamente.');
           break;
         case 'auth/invalid-email':
-          toast.error('E-mail invÃ¡lido.');
+          toast.error('E-mail inválido.');
           break;
         case 'auth/missing-email':
-          toast.error('E-mail ausente para redefiniÃ§Ã£o de senha.');
+          toast.error('E-mail ausente para redefinição de senha.');
           break;
         case 'auth/operation-not-allowed':
-          toast.error('RedefiniÃ§Ã£o de senha nÃ£o habilitada no Firebase Auth (Email/Senha).');
+          toast.error('Redefinição de senha não habilitada no Firebase Auth (Email/Senha).');
           break;
         default:
-          toast.error(error?.message || 'Erro ao enviar e-mail de redefiniÃ§Ã£o.');
+          toast.error(error?.message || 'Erro ao enviar e-mail de redefinição.');
           break;
       }
     } finally {
@@ -1920,7 +1921,7 @@ export default function Dashboard() {
     setPendingMapContext(undefined);
     setQueuedFiles(valid.slice(0, 10));
     if (invalidCount > 0) {
-      toast.error(`${invalidCount} arquivo(s) ignorado(s): formato nÃ£o suportado.`);
+      toast.error(`${invalidCount} arquivo(s) ignorado(s): formato não suportado.`);
     }
   };
 
@@ -2104,7 +2105,7 @@ export default function Dashboard() {
       setTimeout(() => {
         refreshMapPreview(chosenLayer, mapBbox);
       }, 0);
-      toast.error(error?.message || 'Falha ao carregar capabilities. Usando catÃ¡logo fixo.');
+      toast.error(error?.message || 'Falha ao carregar capabilities. Usando catálogo fixo.');
     } finally {
       setMapLoading(false);
     }
@@ -2179,7 +2180,7 @@ export default function Dashboard() {
     new Promise<void>((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve();
-      img.onerror = () => reject(new Error('Falha ao prÃ©-carregar imagem.'));
+      img.onerror = () => reject(new Error('Falha ao pré-carregar imagem.'));
       img.src = src;
     });
 
@@ -2231,22 +2232,22 @@ export default function Dashboard() {
           payload = await res.json();
         } catch {
           const text = await res.text();
-          throw new Error(text || 'Falha ao carregar prÃ©via do mapa');
+          throw new Error(text || 'Falha ao carregar prévia do mapa');
         }
         if (payload?.availableLayers?.length) {
           const fallbackLayer = String(payload.availableLayers[0] || '');
           if (fallbackLayer) {
             setSelectedMapLayer(fallbackLayer);
-            toast.error(`Layer invÃ¡lida. Usando '${fallbackLayer}'.`);
+            toast.error(`Layer inválida. Usando '${fallbackLayer}'.`);
             await refreshMapPreview(fallbackLayer, effectiveBbox);
             return;
           }
         }
-        throw new Error(payload?.error || 'Falha ao carregar prÃ©via do mapa');
+        throw new Error(payload?.error || 'Falha ao carregar prévia do mapa');
       }
       const data = await res.json();
       const dataUrl = String(data?.dataUrl || '');
-      if (!dataUrl) throw new Error('PrÃ©via do mapa nÃ£o retornou imagem.');
+      if (!dataUrl) throw new Error('Prévia do mapa não retornou imagem.');
       await preloadImage(dataUrl);
       storeMapPreviewCache(cacheKey, dataUrl);
       setMapPreviewDataUrl(dataUrl);
@@ -2260,7 +2261,7 @@ export default function Dashboard() {
       }
       storeMapPreviewCache(cacheKey, directUrl);
       setMapPreviewDataUrl(directUrl);
-      toast.error('WMS via backend falhou. Usando prÃ©via direta do WMS.');
+      toast.error('WMS via backend falhou. Usando prévia direta do WMS.');
     } finally {
       setMapPreviewLoading(false);
     }
@@ -2700,7 +2701,7 @@ export default function Dashboard() {
     new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('Falha ao carregar imagem para anotaÃ§Ã£o.'));
+      img.onerror = () => reject(new Error('Falha ao carregar imagem para anotação.'));
       img.src = src;
     });
 
@@ -2986,7 +2987,7 @@ export default function Dashboard() {
 
       const data = await res.json();
       const dataUrl = String(data?.dataUrl || '');
-      if (!dataUrl) throw new Error('Imagem do mapa nÃ£o retornou dataUrl');
+      if (!dataUrl) throw new Error('Imagem do mapa não retornou dataUrl');
 
       const file = await createAnnotatedMapFile(dataUrl, bbox, mapPolygon, `mapa-${Date.now()}.png`);
 
@@ -3004,7 +3005,7 @@ export default function Dashboard() {
         capturedAtIso: baseMapContext.capturedAtIso,
       });
       setMapDialogOpen(false);
-      toast.success('Ãrea do mapa anexada ao chat com demarcaÃ§Ã£o do polÃ­gono');
+      toast.success('Área do mapa anexada ao chat com demarcação do polígono');
     } catch (error: any) {
       const directUrl = buildDirectWmsGetMapUrl(selectedMapLayer, bbox, 1280, 960, 'image/png');
       try {
@@ -3017,7 +3018,7 @@ export default function Dashboard() {
         setPendingMapImageUrl(null);
         setPendingMapContext(baseMapContext);
         setMapDialogOpen(false);
-        toast.error('Captura backend falhou, mas a imagem com demarcaÃ§Ã£o foi gerada via fallback.');
+        toast.error('Captura backend falhou, mas a imagem com demarcação foi gerada via fallback.');
       } catch {
         if (imagePreview) URL.revokeObjectURL(imagePreview);
         setImageFile(null);
@@ -3026,7 +3027,7 @@ export default function Dashboard() {
         setPendingMapImageUrl(directUrl);
         setPendingMapContext(baseMapContext);
         setMapDialogOpen(false);
-        toast.error('NÃ£o foi possÃ­vel rasterizar a demarcaÃ§Ã£o no fallback. URL direta mantida.');
+        toast.error('Não foi possível rasterizar a demarcação no fallback. URL direta mantida.');
       }
     } finally {
       setMapCapturing(false);
@@ -3048,7 +3049,7 @@ export default function Dashboard() {
         setMapOriginalPolygonBbox(geom.bbox);
         setMapPolygon(geom.polygon || []);
         await refreshMapPreview(undefined, geom.bbox);
-        toast.success('Ãrea do KML carregada no frontend');
+        toast.success('Área do KML carregada no frontend');
         return;
       }
       if (fileName.endsWith('.zip')) {
@@ -3071,7 +3072,7 @@ export default function Dashboard() {
             ]
           );
           await refreshMapPreview(undefined, geom.bbox);
-          toast.success('Ãrea do shapefile ZIP carregada no frontend');
+          toast.success('Área do shapefile ZIP carregada no frontend');
           return;
         } catch (localErr) {
           // Fallback to backend parser if frontend parser can't handle this zip flavor or CRS.
@@ -3080,7 +3081,7 @@ export default function Dashboard() {
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(new Error('Falha ao ler arquivo de Ã¡rea'));
+        reader.onerror = () => reject(new Error('Falha ao ler arquivo de área'));
         reader.readAsDataURL(file);
       });
       const res = await fetch(apiUrl('/api/geometry/bbox'), {
@@ -3090,14 +3091,14 @@ export default function Dashboard() {
       });
       if (!res.ok) {
         if (res.status === 404) {
-          throw new Error('Endpoint /api/geometry/bbox nÃ£o encontrado. Atualize o backend na Render.');
+          throw new Error('Endpoint /api/geometry/bbox não encontrado. Atualize o backend na Render.');
         }
         const text = await res.text();
-        throw new Error(text || 'Falha ao processar arquivo de Ã¡rea');
+        throw new Error(text || 'Falha ao processar arquivo de área');
       }
       const data = await res.json();
       const bbox = data?.bbox as [number, number, number, number];
-      if (!bbox || bbox.length !== 4) throw new Error('BBox invÃ¡lida retornada do arquivo');
+      if (!bbox || bbox.length !== 4) throw new Error('BBox inválida retornada do arquivo');
       const poly = Array.isArray(data?.polygon)
         ? (data.polygon as Array<[number, number]>).filter(
           (p) => Array.isArray(p) && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]))
@@ -3117,9 +3118,9 @@ export default function Dashboard() {
           ]
       );
       await refreshMapPreview(undefined, bbox);
-      toast.success('Ãrea carregada do arquivo e aplicada no mapa');
+      toast.success('Área carregada do arquivo e aplicada no mapa');
     } catch (error: any) {
-      toast.error(error?.message || 'Erro ao carregar arquivo de Ã¡rea');
+      toast.error(error?.message || 'Erro ao carregar arquivo de área');
     }
   };
 
@@ -3180,7 +3181,7 @@ export default function Dashboard() {
     }
     const cleanText = raw.replace(thinkRegex, '').trim();
     return {
-      cleanText: cleanText || 'Desculpe, nÃ£o consegui formular uma resposta.',
+      cleanText: cleanText || 'Desculpe, não consegui formular uma resposta.',
       thinkingText: thinkParts.join('\n\n').trim(),
     };
   }, []);
@@ -3324,7 +3325,7 @@ export default function Dashboard() {
           } else if (event.type === 'billing' && event.billing) {
             applyBillingToWallet(event.billing as BillingResult);
           } else if (event.type === 'error') {
-            throw new Error(String(event.message || 'Erro no stream de anÃ¡lise.'));
+            throw new Error(String(event.message || 'Erro no stream de análise.'));
           }
         }
       }
@@ -3356,7 +3357,7 @@ export default function Dashboard() {
         }
       }
     } catch (err: any) {
-      const aiText = `âŒ ${err.message || 'Erro ao processar resposta.'}`;
+      const aiText = `❌ ${err.message || 'Erro ao processar resposta.'}`;
       setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: aiText }]);
       if (simcarClipJobId) {
         const nextHistory = [
@@ -3451,14 +3452,14 @@ export default function Dashboard() {
       try {
         localImagePreviewForChat = await readFileAsDataUrl(selectedImageFiles[0]);
       } catch (error: any) {
-        toast.error(error.message || 'Erro ao preparar prÃ©via da imagem');
+        toast.error(error.message || 'Erro ao preparar prévia da imagem');
       }
     }
 
     let userPayloadText = userText;
     if (selectedImageFiles.length || selectedMapImageUrl) {
       const overlayLines = (pendingMapContext?.activeOverlays || []).map(
-        (o) => `  â€¢ ${o.title} (${o.name})`
+        (o) => `  • ${o.title} (${o.name})`
       );
       const intersectionSummaryLines = (pendingMapContext?.intersectionSummary?.layers || [])
         .slice(0, 12)
@@ -3468,22 +3469,22 @@ export default function Dashboard() {
         );
       const mapContextBlock = pendingMapContext
         ? [
-          'Contexto tÃ©cnico da imagem de mapa:',
+          'Contexto técnico da imagem de mapa:',
           `- Camada base WMS: ${pendingMapContext.layerName}`,
-          pendingMapContext.layerTitle ? `- TÃ­tulo da camada base: ${pendingMapContext.layerTitle}` : '',
+          pendingMapContext.layerTitle ? `- Título da camada base: ${pendingMapContext.layerTitle}` : '',
           pendingMapContext.layerGroup ? `- Grupo: ${pendingMapContext.layerGroup}` : '',
           pendingMapContext.inferredYear ? `- Ano da imagem base: ${pendingMapContext.inferredYear}` : '',
           `- BBOX (minX,minY,maxX,maxY): ${pendingMapContext.bbox.join(', ')}`,
           `- CRS: ${pendingMapContext.crs}`,
           `- Fonte: ${pendingMapContext.source}`,
           pendingMapContext.width && pendingMapContext.height
-            ? `- ResoluÃ§Ã£o de captura: ${pendingMapContext.width}x${pendingMapContext.height} px`
+            ? `- Resolução de captura: ${pendingMapContext.width}x${pendingMapContext.height} px`
             : '',
           pendingMapContext.capturedAtIso
             ? `- Data/hora de captura (ISO): ${pendingMapContext.capturedAtIso}`
             : '',
           overlayLines.length
-            ? `- Camadas de overlay ativas (${overlayLines.length} camadas sobrepostas Ã  imagem base):\n${overlayLines.join('\n')}`
+            ? `- Camadas de overlay ativas (${overlayLines.length} camadas sobrepostas à imagem base):\n${overlayLines.join('\n')}`
             : '- Camadas de overlay ativas: nenhuma',
           pendingMapContext.intersectionSummary
             ? `- Intersecao WFS (ha/% por camada) sobre o poligono importado:\n` +
@@ -3491,9 +3492,9 @@ export default function Dashboard() {
             `  Data/hora do calculo (ISO): ${pendingMapContext.intersectionSummary.computedAtIso}\n` +
             `${intersectionSummaryLines.length ? intersectionSummaryLines.join('\n') : '  - sem linhas de intersecao'}`
             : '- Intersecao WFS: sem calculo WFS disponivel.',
-          '- ObservaÃ§Ã£o: a imagem pode conter demarcaÃ§Ã£o vetorial da Ã¡rea de interesse.' +
+          '- Observação: a imagem pode conter demarcação vetorial da área de interesse.' +
           (overlayLines.length
-            ? ' As camadas de overlay listadas acima estÃ£o visÃ­veis na imagem e devem ser consideradas na anÃ¡lise (ex: limites de CAR, Ã¡reas consolidadas, AUAs, APPs, reservas legais, SIMCAR, etc.).'
+            ? ' As camadas de overlay listadas acima estão visíveis na imagem e devem ser consideradas na análise (ex: limites de CAR, áreas consolidadas, AUAs, APPs, reservas legais, SIMCAR, etc.).'
             : ''),
         ]
           .filter(Boolean)
@@ -3502,14 +3503,14 @@ export default function Dashboard() {
       const attachmentList = [
         ...selectedImageFiles.map((f) => `- Imagem: ${f.name}`),
         ...selectedPdfFiles.map((f) => `- PDF: ${f.name}`),
-        ...(selectedMapImageUrl ? ['- Imagem de mapa WMS com demarcaÃ§Ã£o de polÃ­gono'] : []),
+        ...(selectedMapImageUrl ? ['- Imagem de mapa WMS com demarcação de polígono'] : []),
       ].join('\n');
       userPayloadText =
         `${userText || 'Analise a imagem anexada.'}
 
 ` +
-        'Contexto: a imagem foi anexada pelo usuÃ¡rio para interpretaÃ§Ã£o ambiental/florestal. ' +
-        'Descreva achados objetivos, limitaÃ§Ãµes e prÃ³ximos dados necessÃ¡rios.' +
+        'Contexto: a imagem foi anexada pelo usuário para interpretação ambiental/florestal. ' +
+        'Descreva achados objetivos, limitações e próximos dados necessários.' +
         `\n\nTotal de anexos: ${totalAttachments}` +
         (attachmentList ? `\nArquivos anexados:\n${attachmentList}` : '') +
         (mapContextBlock ? `\n\n${mapContextBlock}` : '');
@@ -3522,7 +3523,7 @@ export default function Dashboard() {
 ` +
         `Total de anexos: ${totalAttachments}
 ` +
-        'O documento estÃ¡ em processamento. FaÃ§a anÃ¡lise preliminar e refine com o texto extraÃ­do quando disponÃ­vel.';
+        'O documento está em processamento. Faça análise preliminar e refine com o texto extraído quando disponível.';
     }
 
     const userMessage: ChatMessage = {
@@ -3649,30 +3650,30 @@ export default function Dashboard() {
       ? {
         role: 'system',
         content: [
-          '## MODO DE ANÃLISE VISUAL',
+          '## MODO DE ANÁLISE VISUAL',
           'Siga esta estrutura rigorosamente:',
           '',
-          '**1. DescriÃ§Ã£o objetiva** â€” Descreva APENAS o que Ã© visÃ­vel na imagem (cores, padrÃµes, texturas, feiÃ§Ãµes). NÃƒO interprete ainda.',
-          '**2. Achados tÃ©cnicos** â€” Liste os achados com evidÃªncia visual especÃ­fica. Para cada um, indique o que na imagem sustenta a afirmaÃ§Ã£o.',
-          '**3. InterpretaÃ§Ã£o** â€” Para cada achado, forneÃ§a a interpretaÃ§Ã£o ambiental/florestal com nÃ­vel de confianÃ§a [ALTA/MÃ‰DIA/BAIXA] e justificativa.',
-          '**4. LimitaÃ§Ãµes e incertezas** â€” O que NÃƒO Ã© possÃ­vel afirmar com esta imagem. Quais dados adicionais seriam necessÃ¡rios.',
-          '**5. RecomendaÃ§Ãµes** â€” PrÃ³ximas aÃ§Ãµes prÃ¡ticas de curto prazo.',
+          '**1. Descrição objetiva** — Descreva APENAS o que é visível na imagem (cores, padrões, texturas, feições). NÃO interprete ainda.',
+          '**2. Achados técnicos** — Liste os achados com evidência visual específica. Para cada um, indique o que na imagem sustenta a afirmação.',
+          '**3. Interpretação** — Para cada achado, forneça a interpretação ambiental/florestal com nível de confiança [ALTA/MÉDIA/BAIXA] e justificativa.',
+          '**4. Limitações e incertezas** — O que NÃO é possível afirmar com esta imagem. Quais dados adicionais seriam necessários.',
+          '**5. Recomendações** — Próximas ações práticas de curto prazo.',
           '',
-          'REGRAS CRÃTICAS para anÃ¡lise visual:',
-          '- NÃƒO afirme espÃ©cies vegetais especÃ­ficas a partir de imagem de satÃ©lite â€” use termos como "vegetaÃ§Ã£o arbÃ³rea densa", "vegetaÃ§Ã£o rasteira", "solo exposto".',
-          '- NÃƒO fabrique valores de NDVI, Ã¡rea em hectares ou percentuais a menos que tenham sido calculados e fornecidos.',
-          '- NÃƒO identifique propriedades, fazendas ou proprietÃ¡rios a menos que o usuÃ¡rio tenha informado.',
-          '- Se a resoluÃ§Ã£o da imagem nÃ£o permite uma conclusÃ£o, diga isso explicitamente.',
-          '- Se houver contexto geoespacial (BBOX/CRS/camada/ano), use explicitamente no raciocÃ­nio.',
-          '- Se houver evidÃªncia clara de desmatamento anterior a 22/07/2008, indique como possÃ­vel Ã¡rea consolidada (Art. 68, Lei 12.651/2012) com nÃ­vel de confianÃ§a.',
+          'REGRAS CRÍTICAS para análise visual:',
+          '- NÃO afirme espécies vegetais específicas a partir de imagem de satélite — use termos como "vegetação arbórea densa", "vegetação rasteira", "solo exposto".',
+          '- NÃO fabrique valores de NDVI, área em hectares ou percentuais a menos que tenham sido calculados e fornecidos.',
+          '- NÃO identifique propriedades, fazendas ou proprietários a menos que o usuário tenha informado.',
+          '- Se a resolução da imagem não permite uma conclusão, diga isso explicitamente.',
+          '- Se houver contexto geoespacial (BBOX/CRS/camada/ano), use explicitamente no raciocínio.',
+          '- Se houver evidência clara de desmatamento anterior a 22/07/2008, indique como possível área consolidada (Art. 68, Lei 12.651/2012) com nível de confiança.',
           '',
           'CAMADAS DE OVERLAY NA IMAGEM:',
-          '- Se o contexto tÃ©cnico listar camadas de overlay ativas, elas estÃ£o VISÃVEIS na imagem como sobreposiÃ§Ãµes vetoriais.',
-          '- Identifique visualmente onde os limites/polÃ­gonos dos overlays aparecem na imagem.',
-          '- Correlacione o que vocÃª vÃª na imagem base (satÃ©lite) com as informaÃ§Ãµes das camadas sobrepostas.',
-          '- Exemplos: se a camada "simcar_area_consolidada" estÃ¡ ativa, procure na imagem as Ã¡reas marcadas como consolidadas e compare com o uso do solo visÃ­vel.',
-          '- Se a camada de CAR estÃ¡ ativa, identifique os limites dos imÃ³veis rurais e analise o cumprimento das obrigaÃ§Ãµes (APP, RL).',
-          '- Se a camada de AUA (Ãrea de Uso Alternativo) estÃ¡ ativa, verifique se a supressÃ£o autorizada estÃ¡ dentro dos limites indicados.',
+          '- Se o contexto técnico listar camadas de overlay ativas, elas estão VISÍVEIS na imagem como sobreposições vetoriais.',
+          '- Identifique visualmente onde os limites/polígonos dos overlays aparecem na imagem.',
+          '- Correlacione o que você vê na imagem base (satélite) com as informações das camadas sobrepostas.',
+          '- Exemplos: se a camada "simcar_area_consolidada" está ativa, procure na imagem as áreas marcadas como consolidadas e compare com o uso do solo visível.',
+          '- Se a camada de CAR está ativa, identifique os limites dos imóveis rurais e analise o cumprimento das obrigações (APP, RL).',
+          '- Se a camada de AUA (Área de Uso Alternativo) está ativa, verifique se a supressão autorizada está dentro dos limites indicados.',
         ].join('\n'),
       }
       : null;
@@ -3696,7 +3697,7 @@ export default function Dashboard() {
               ? userPayloadText
               : `${m.text || 'Imagem anexada.'}
 
-Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
+Arquivo de imagem previamente anexado pelo usuário.`;
           return {
             role: 'user',
             content: [
@@ -3710,7 +3711,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
             return { role: 'user', content: userPayloadText };
           }
           const historicalPdfContext =
-            `PDF previamente anexado pelo usuÃ¡rio.
+            `PDF previamente anexado pelo usuário.
 ` +
             `Nome do arquivo: ${m.meta.fileName || 'documento.pdf'}
 ` +
@@ -3789,7 +3790,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
       }
 
       if (!res.body) {
-        throw new Error('Resposta de streaming invÃ¡lida');
+        throw new Error('Resposta de streaming inválida');
       }
 
       const reader = res.body.getReader();
@@ -3866,7 +3867,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
       const aiMessage: ChatMessage = {
         id: typingId,
         role: 'ai',
-        text: finalContent || 'Desculpe, nÃ£o consegui responder agora.',
+        text: finalContent || 'Desculpe, não consegui responder agora.',
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         meta: {
           model: usedModel,
@@ -4009,7 +4010,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                 {msg.role === 'ai' && msg.meta?.billing && (
                   <div className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-2 text-[10px] text-slate-300 space-y-1">
                     <p>
-                      Custo: <span className="text-emerald-300">{formatBrl(msg.meta.billing.chargedBrl || 0)}</span> · Saldo:{' '}
+                      Custo: <span className="text-emerald-300">{formatBrl(msg.meta.billing.chargedBrl || 0)}</span> • Saldo:{' '}
                       <span className="text-emerald-300">{formatBrl(msg.meta.billing.balanceAfterBrl || 0)}</span>
                     </p>
                     {Array.isArray(msg.meta.billing.usage) && msg.meta.billing.usage.length > 0 && (
@@ -4017,7 +4018,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                         {msg.meta.billing.usage
                           .slice(0, 2)
                           .map((u) => `${u.model} (${(Number(u.inputTokens || 0) + Number(u.outputTokens || 0)).toLocaleString('pt-BR')} tok)`)
-                          .join(' · ')}
+                          .join(' • ')}
                       </p>
                     )}
                   </div>
@@ -4055,9 +4056,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                 <p className="text-sm leading-relaxed whitespace-pre-wrap text-slate-300/90">
                   {liveThinkingText ||
                     [
-                      'Lendo sua solicitaÃ§Ã£o',
+                      'Lendo sua solicitação',
                       'Analisando contexto ambiental',
-                      'Selecionando estratÃ©gia de resposta',
+                      'Selecionando estratégia de resposta',
                       'Consolidando resultado',
                     ][processingHintIndex]}
                 </p>
@@ -4281,7 +4282,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
 
         <div className="px-4 mb-6 space-y-2">
           {activeView === 'simcar-clip' ? (
-            /* â”€â”€â”€ SIMCAR Mode: Modo Assistente + Novo Recorte â”€â”€â”€ */
+            /* ─── SIMCAR Mode: Modo Assistente + Novo Recorte ─── */
             <>
               <button
                 onClick={() => setActiveView('chat')}
@@ -4321,7 +4322,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
               </button>
             </>
           ) : (
-            /* â”€â”€â”€ Chat Mode: Novo Chat + Recorte SIMCAR â”€â”€â”€ */
+            /* ─── Chat Mode: Novo Chat + Recorte SIMCAR ─── */
             <>
               <button
                 onClick={() => createConversation()}
@@ -4372,7 +4373,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
 
         <div className="flex-1 overflow-y-auto px-4 space-y-1 custom-scrollbar">
           {activeView === 'simcar-clip' ? (
-            /* â”€â”€â”€ SIMCAR Clip History Cards â”€â”€â”€ */
+            /* ─── SIMCAR Clip History Cards ─── */
             simcarClipHistory.length > 0 ? (
               simcarClipHistory.map((clip) => (
                 <div
@@ -4412,7 +4413,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                   <div className="flex-1 min-w-0 xl:block lg:hidden">
                     <p className="text-sm text-slate-200 truncate">{clip.filename}</p>
                     <p className="text-[10px] text-slate-500">
-                      {clip.layersWithData}/{clip.totalLayers} camadas â€¢ {clip.totalFeatures} feiÃ§Ãµes
+                      {clip.layersWithData}/{clip.totalLayers} camadas • {clip.totalFeatures} feições
                     </p>
                   </div>
                   <button
@@ -4458,11 +4459,11 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Scissors size={32} className="text-slate-600 mb-3" />
                 <p className="text-sm text-slate-400">Nenhum recorte ainda</p>
-                <p className="text-[10px] text-slate-600 mt-1">Clique em "Novo Recorte" para comeÃ§ar</p>
+                <p className="text-[10px] text-slate-600 mt-1">Clique em "Novo Recorte" para começar</p>
               </div>
             )
           ) : (
-            /* â”€â”€â”€ Chat Conversation List â”€â”€â”€ */
+            /* ─── Chat Conversation List ─── */
             filteredConversations.map((conv) => (
               <div
                 key={conv.id}
@@ -4517,7 +4518,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
           >
             <Settings size={18} className={`transition-colors ${activeView === 'settings' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
             <span className="text-sm text-slate-300 group-hover:text-white transition-colors xl:block lg:hidden">
-              ConfiguraÃ§Ãµes
+              Configurações
             </span>
           </button>
           <div className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group">
@@ -4531,7 +4532,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
               </span>
             </div>
             <div className="flex-1 text-left overflow-hidden xl:block lg:hidden">
-              <p className="text-sm font-medium text-white truncate">{userProfile?.fullName || 'UsuÃ¡rio'}</p>
+              <p className="text-sm font-medium text-white truncate">{userProfile?.fullName || 'Usuário'}</p>
               <p className="text-xs text-emerald-400/70">{userProfile?.email || 'Plano Pro'}</p>
             </div>
             <LogOut size={18} className="text-slate-500 group-hover:text-red-400 transition-colors xl:block lg:hidden" />
@@ -4554,7 +4555,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
             <div className="flex items-center gap-2">
               <Zap size={16} className="text-emerald-400 fill-current" />
               <span className="font-medium text-slate-200">
-                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'features' ? 'Funcionalidades' : 'ConfiguraÃ§Ãµes'}
+                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
               </span>
               {activeView === 'chat' && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide">
@@ -4582,7 +4583,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSend())}
-                    placeholder="Descreva sua anÃ¡lise ambiental ou anexe um mapa..."
+                    placeholder="Descreva sua análise ambiental ou anexe um mapa..."
                     className="w-full bg-transparent text-slate-200 placeholder:text-slate-500 px-4 py-4 min-h-[60px] max-h-[200px] resize-none focus:outline-none text-sm leading-relaxed custom-scrollbar"
                     rows={1}
                     style={{ height: input ? `${Math.min(input.split('\n').length * 24 + 32, 200)}px` : '60px' }}
@@ -4612,7 +4613,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                           </p>
                           <p className="text-[10px] text-slate-500">
                             {queuedFiles.length > 0
-                              ? 'MÃºltiplos anexos prontos para envio'
+                              ? 'Múltiplos anexos prontos para envio'
                               : imageFile || pendingMapImageUrl
                                 ? 'Imagem pronta para envio'
                                 : 'PDF pronto para envio'}
@@ -4623,7 +4624,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                           onClick={() => clearAttachments()}
                           className="ml-1 h-6 w-6 shrink-0 rounded-md text-slate-500 hover:text-red-300 hover:bg-red-500/10"
                         >
-                          âœ•
+                          ✕
                         </button>
                       </div>
                     </div>
@@ -4669,7 +4670,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                         {modelMenuOpen && (
                           <div className="absolute left-0 bottom-full mb-2 w-80 rounded-2xl bg-[#0d1612]/95 border border-white/10 shadow-2xl backdrop-blur-xl z-[120] overflow-hidden">
                             <div className="px-4 py-3 border-b border-white/10">
-                              <p className="text-[10px] uppercase tracking-wider text-slate-500">SeleÃ§Ã£o de modelo</p>
+                              <p className="text-[10px] uppercase tracking-wider text-slate-500">Seleção de modelo</p>
                               <p className="text-xs text-slate-300 mt-1">Escolha manualmente ou use Auto</p>
                             </div>
                             <div className="max-h-80 overflow-auto custom-scrollbar p-2 space-y-1">
@@ -4735,7 +4736,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                   </div>
                 </div>
                 <div className="text-center mt-2">
-                  <p className="text-[10px] text-slate-600">A IA pode cometer erros. Verifique informaÃ§Ãµes crÃ­ticas.</p>
+                  <p className="text-[10px] text-slate-600">A IA pode cometer erros. Verifique informações críticas.</p>
                 </div>
               </div>
             </div>
@@ -4749,8 +4750,8 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <Scissors size={20} />
                   </div>
                   <div>
-                    <h2 className="font-semibold text-lg text-slate-200">Recorte AutomÃ¡tico SIMCAR</h2>
-                    <p className="text-xs text-slate-400">Envie o shapefile do imÃ³vel e receba as camadas SIMCAR recortadas</p>
+                    <h2 className="font-semibold text-lg text-slate-200">Recorte Automático SIMCAR</h2>
+                    <p className="text-xs text-slate-400">Envie o shapefile do imóvel e receba as camadas SIMCAR recortadas</p>
                   </div>
                 </div>
 
@@ -4826,7 +4827,14 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                           Todos
                         </button>
                         <button
-                          onClick={() => setSimcarClipLayers((prev) => prev.map((l) => ({ ...l, selected: false })))}
+                          onClick={() =>
+                            setSimcarClipLayers((prev) =>
+                              prev.map((l) => ({
+                                ...l,
+                                selected: SIMCAR_MANDATORY_LAYERS.has(l.name) ? true : false,
+                              })),
+                            )
+                          }
                           className="text-[10px] text-slate-400 hover:text-slate-300 transition-colors"
                         >
                           Nenhum
@@ -4839,18 +4847,22 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                           key={layer.name}
                           onClick={() =>
                             setSimcarClipLayers((prev) =>
-                              prev.map((l) => (l.name === layer.name ? { ...l, selected: !l.selected } : l)),
+                              prev.map((l) => {
+                                if (l.name !== layer.name) return l;
+                                if (SIMCAR_MANDATORY_LAYERS.has(l.name)) return { ...l, selected: true };
+                                return { ...l, selected: !l.selected };
+                              }),
                             )
                           }
                           className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs transition-colors ${layer.selected
                             ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20'
                             : 'bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10'
-                            }`}
+                            } ${SIMCAR_MANDATORY_LAYERS.has(layer.name) ? 'ring-1 ring-amber-400/35' : ''}`}
                         >
                           {layer.selected ? <CheckSquare size={12} /> : <Square size={12} />}
                           <span className="truncate">{layer.name}</span>
                           {layer.category === 'property' && (
-                            <span className="text-[9px] text-amber-400 ml-auto">â—</span>
+                            <span className="text-[9px] text-amber-300 ml-auto font-semibold">FIXO</span>
                           )}
                         </button>
                       ))}
@@ -4861,7 +4873,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                 {/* AIR Identification Input */}
                 <div className="mb-4">
                   <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
-                    NÂº IdentificaÃ§Ã£o da AIR *
+                    Nº Identificação da AIR *
                   </label>
                   <input
                     type="text"
@@ -4870,7 +4882,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     placeholder="Ex: MT-5107768-4D6B3C22B5FE4..."
                     className="w-full px-4 py-2.5 rounded-xl bg-black/30 border border-white/10 text-white text-sm placeholder-slate-500 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none transition-colors"
                   />
-                  <p className="text-[10px] text-slate-500 mt-1">SerÃ¡ preenchido no campo IDENTIFIC da camada AIR</p>
+                  <p className="text-[10px] text-slate-500 mt-1">Será preenchido no campo IDENTIFIC da camada AIR</p>
                 </div>
 
                 {/* Process Button */}
@@ -4967,7 +4979,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                     newClip.contextUrl ? `- Contexto JSON: ${newClip.contextUrl}` : '',
                                   ].filter(Boolean);
                                   const selectedLayersLabel =
-                                    selectedLayers.length > 0 ? selectedLayers.join(', ') : 'todas as camadas padrÃ£o';
+                                    selectedLayers.length > 0 ? selectedLayers.join(', ') : 'todas as camadas padrão';
                                   void appendSimcarEntriesToConversation(
                                     newClip,
                                     [
@@ -4982,9 +4994,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                       {
                                         role: 'ai',
                                         text: [
-                                          `Recorte concluÃ­do (job ${nextJobId}).`,
-                                          `FeiÃ§Ãµes recortadas: ${newClip.totalFeatures}.`,
-                                          `Ãrea do imÃ³vel: ${newClip.propertyAreaHa.toFixed(2)} ha.`,
+                                          `Recorte concluído (job ${nextJobId}).`,
+                                          `Feições recortadas: ${newClip.totalFeatures}.`,
+                                          `Área do imóvel: ${newClip.propertyAreaHa.toFixed(2)} ha.`,
                                           `Camadas com dados: ${newClip.layersWithData}/${newClip.totalLayers}.`,
                                           cloudinaryFiles.length > 0
                                             ? `Arquivos no Cloudinary:\n${cloudinaryFiles.join('\n')}`
@@ -4998,7 +5010,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                     { title: newClip.filename }
                                   );
                                 } else {
-                                  setSimcarClipError('Recorte gerado, mas nÃ£o foi possÃ­vel identificar o job para salvar histÃ³rico.');
+                                  setSimcarClipError('Recorte gerado, mas não foi possível identificar o job para salvar histórico.');
                                 }
                               } else if (event.type === 'error') {
                                 setSimcarClipError(event.message);
@@ -5069,11 +5081,11 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                       <span className="text-sm font-semibold text-emerald-400 tabular-nums min-w-[3ch] text-right">{pct}%</span>
                     </div>
                     <p className="text-[10px] text-slate-500 mt-2">
-                      {simcarClipProgress.status === 'fetching' && 'Buscando feiÃ§Ãµes do WFS...'}
-                      {simcarClipProgress.status === 'clipping' && 'Recortando feiÃ§Ãµes...'}
-                      {simcarClipProgress.status === 'copying_property' && 'Copiando polÃ­gono do imÃ³vel...'}
+                      {simcarClipProgress.status === 'fetching' && 'Buscando feições do WFS...'}
+                      {simcarClipProgress.status === 'clipping' && 'Recortando feições...'}
+                      {simcarClipProgress.status === 'copying_property' && 'Copiando polígono do imóvel...'}
                       {simcarClipProgress.status === 'building_zip' && 'Montando arquivo ZIP...'}
-                      {simcarClipProgress.status === 'no_wfs_match' && 'Camada nÃ£o encontrada no WFS'}
+                      {simcarClipProgress.status === 'no_wfs_match' && 'Camada não encontrada no WFS'}
                     </p>
                   </section>
                 );
@@ -5082,7 +5094,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
               {/* Error */}
               {simcarClipError && (
                 <section className="bg-red-900/20 border border-red-500/20 rounded-2xl p-6">
-                  <p className="text-sm text-red-300">âŒ {simcarClipError}</p>
+                  <p className="text-sm text-red-300">❌ {simcarClipError}</p>
                 </section>
               )}
 
@@ -5099,10 +5111,10 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     {/* Summary Cards */}
                     <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       {[
-                        { label: 'Ãrea ImÃ³vel', value: `${propertyAreaHa.toFixed(2)} ha`, color: 'text-amber-400', bg: 'bg-amber-500/10' },
+                        { label: 'Área Imóvel', value: `${propertyAreaHa.toFixed(2)} ha`, color: 'text-amber-400', bg: 'bg-amber-500/10' },
                         { label: 'Camadas com Dados', value: `${withData.length} / ${layers.length}`, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-                        { label: 'FeiÃ§Ãµes Recortadas', value: String(totalFeatures), color: 'text-blue-400', bg: 'bg-blue-500/10' },
-                        { label: 'Ãrea Recortada', value: `${totalAreaHa.toFixed(2)} ha`, color: 'text-purple-400', bg: 'bg-purple-500/10' },
+                        { label: 'Feições Recortadas', value: String(totalFeatures), color: 'text-blue-400', bg: 'bg-blue-500/10' },
+                        { label: 'Área Recortada', value: `${totalAreaHa.toFixed(2)} ha`, color: 'text-purple-400', bg: 'bg-purple-500/10' },
                       ].map((card) => (
                         <div key={card.label} className={`${card.bg} border border-white/5 rounded-xl p-4 text-center`}>
                           <p className={`text-lg font-bold ${card.color}`}>{card.value}</p>
@@ -5118,9 +5130,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                           <Download size={20} />
                         </div>
                         <div className="flex-1">
-                          <h3 className="font-semibold text-white">Recorte ConcluÃ­do</h3>
+                          <h3 className="font-semibold text-white">Recorte Concluído</h3>
                           <p className="text-xs text-slate-400">
-                            Processado em {(simcarClipSummary.processingTimeMs / 1000).toFixed(1)}s â€¢ CRS: {simcarClipSummary.crs}
+                            Processado em {(simcarClipSummary.processingTimeMs / 1000).toFixed(1)}s • CRS: {simcarClipSummary.crs}
                           </p>
                         </div>
                         <a
@@ -5145,9 +5157,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                 <tr className="border-b border-white/10">
                                   <th className="text-left py-2 text-slate-400 font-medium">Camada</th>
                                   <th className="text-center py-2 text-slate-400 font-medium">Origem</th>
-                                  <th className="text-right py-2 text-slate-400 font-medium">FeiÃ§Ãµes</th>
-                                  <th className="text-right py-2 text-slate-400 font-medium">Ãrea (ha)</th>
-                                  <th className="text-right py-2 text-slate-400 font-medium">% ImÃ³vel</th>
+                                  <th className="text-right py-2 text-slate-400 font-medium">Feições</th>
+                                  <th className="text-right py-2 text-slate-400 font-medium">Área (ha)</th>
+                                  <th className="text-right py-2 text-slate-400 font-medium">% Imóvel</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -5166,12 +5178,12 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                           ? 'bg-amber-500/10 text-amber-400'
                                           : 'bg-blue-500/10 text-blue-400'
                                           }`}>
-                                          {layer.source === 'property' ? 'ImÃ³vel' : 'WFS'}
+                                          {layer.source === 'property' ? 'Imóvel' : 'WFS'}
                                         </span>
                                       </td>
                                       <td className="py-2 text-right text-emerald-400 font-medium">{layer.features}</td>
-                                      <td className="py-2 text-right text-slate-300">{layer.areaHa ? layer.areaHa.toFixed(2) : 'â€”'}</td>
-                                      <td className="py-2 text-right text-slate-400">{pct !== null ? `${pct.toFixed(1)}%` : 'â€”'}</td>
+                                      <td className="py-2 text-right text-slate-300">{layer.areaHa ? layer.areaHa.toFixed(2) : '—'}</td>
+                                      <td className="py-2 text-right text-slate-400">{pct !== null ? `${pct.toFixed(1)}%` : '—'}</td>
                                     </tr>
                                   );
                                 })}
@@ -5182,7 +5194,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                   <td className="py-2 text-right text-emerald-400">{totalFeatures}</td>
                                   <td className="py-2 text-right text-emerald-300">{totalAreaHa.toFixed(2)}</td>
                                   <td className="py-2 text-right text-emerald-300">
-                                    {propertyAreaHa > 0 ? `${((totalAreaHa / propertyAreaHa) * 100).toFixed(1)}%` : 'â€”'}
+                                    {propertyAreaHa > 0 ? `${((totalAreaHa / propertyAreaHa) * 100).toFixed(1)}%` : '—'}
                                   </td>
                                 </tr>
                               </tbody>
@@ -5195,14 +5207,14 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                       {withoutData.length > 0 && (
                         <div>
                           <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
-                            Camadas sem dados na Ã¡rea ({withoutData.length})
+                            Camadas sem dados na área ({withoutData.length})
                           </p>
                           <div className="flex flex-wrap gap-1.5">
                             {withoutData.map((layer: any) => (
                               <span
                                 key={layer.name}
                                 className="px-2 py-1 rounded-lg bg-white/5 text-[10px] text-slate-500 font-mono"
-                                title={layer.warning || 'Nenhuma feiÃ§Ã£o encontrada na Ã¡rea do imÃ³vel'}
+                                title={layer.warning || 'Nenhuma feição encontrada na área do imóvel'}
                               >
                                 {layer.name}
                                 {layer.warning && <span className="text-amber-400/50 ml-1">!</span>}
@@ -5269,8 +5281,8 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                               const layers = simcarFixedSatelliteKeys;
                               const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
                               setSimcarAnalysisProcessing(true);
-                              setSimcarAnalysisProgress({ step: 'starting', percent: 0, message: 'Iniciando anÃ¡lise...' });
-                              setSimcarAgentLog([{ label: 'Iniciando anÃ¡lise...', done: false, kind: 'step' }]);
+                              setSimcarAnalysisProgress({ step: 'starting', percent: 0, message: 'Iniciando análise...' });
+                              setSimcarAgentLog([{ label: 'Iniciando análise...', done: false, kind: 'step' }]);
                               setSimcarAnalysisImages([]);
                               setSimcarAnalysisMessages([]);
                               setSimcarThinkingText('');
@@ -5325,7 +5337,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                             setSimcarThinkingHidden(false);
                                             // Add thinking snippet to agent log (first 120 chars)
                                             const snippet = thought.replace(/\s+/g, ' ').slice(0, 120);
-                                            const label = source ? `${source}: ${snippet}â€¦` : `${snippet}â€¦`;
+                                            const label = source ? `${source}: ${snippet}…` : `${snippet}…`;
                                             setSimcarAgentLog((prev) => [
                                               ...prev,
                                               { label, done: true, kind: 'thinking' as const },
@@ -5380,12 +5392,12 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                           void appendSimcarEntriesToConversation(clipForConversation, [
                                             {
                                               role: 'user',
-                                              text: `Solicitei anÃ¡lise AC/AVN para o recorte ${simcarClipJobId} com as imagens: ${layers.join(', ')}.`,
+                                              text: `Solicitei análise AC/AVN para o recorte ${simcarClipJobId} com as imagens: ${layers.join(', ')}.`,
                                             },
                                             {
                                               role: 'ai',
                                               text: [
-                                                `AnÃ¡lise AC/AVN concluÃ­da para o recorte ${simcarClipJobId}.`,
+                                                `Análise AC/AVN concluída para o recorte ${simcarClipJobId}.`,
                                                 imageLinks.length > 0 ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}` : '',
                                                 aiMessage.text,
                                               ]
@@ -5400,13 +5412,13 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                             handleInsufficientCredits(String(event.message || 'Saldo insuficiente.'));
                                             return;
                                           }
-                                          const errorText = `âŒ ${event.message}`;
+                                          const errorText = `❌ ${event.message}`;
                                           setSimcarAnalysisMessages([{ role: 'ai', text: errorText }]);
                                           if (historyEntry) {
                                             void appendSimcarEntriesToConversation(historyEntry, [
                                               {
                                                 role: 'user',
-                                                text: `Solicitei anÃ¡lise AC/AVN para o recorte ${simcarClipJobId} com as imagens: ${layers.join(', ')}.`,
+                                                text: `Solicitei análise AC/AVN para o recorte ${simcarClipJobId} com as imagens: ${layers.join(', ')}.`,
                                               },
                                               { role: 'ai', text: errorText },
                                             ]);
@@ -5418,13 +5430,13 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                   }
                                 }
                               } catch (err: any) {
-                                const errorText = `âŒ ${err.message || 'Erro inesperado.'}`;
+                                const errorText = `❌ ${err.message || 'Erro inesperado.'}`;
                                 setSimcarAnalysisMessages([{ role: 'ai', text: errorText }]);
                                 if (historyEntry) {
                                   void appendSimcarEntriesToConversation(historyEntry, [
                                     {
                                       role: 'user',
-                                      text: `Solicitei anÃ¡lise AC/AVN para o recorte ${simcarClipJobId} com as imagens: ${layers.join(', ')}.`,
+                                      text: `Solicitei análise AC/AVN para o recorte ${simcarClipJobId} com as imagens: ${layers.join(', ')}.`,
                                     },
                                     { role: 'ai', text: errorText },
                                   ]);
@@ -5504,12 +5516,12 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                               [
                                                 {
                                                   role: 'user',
-                                                  text: `Solicitei apenas a geraÃ§Ã£o de imagens para o recorte ${simcarClipJobId} com as camadas: ${layers.join(', ')}.`,
+                                                  text: `Solicitei apenas a geração de imagens para o recorte ${simcarClipJobId} com as camadas: ${layers.join(', ')}.`,
                                                 },
                                                 {
                                                   role: 'ai',
                                                   text: [
-                                                    `GeraÃ§Ã£o de imagens concluÃ­da para o recorte ${simcarClipJobId}.`,
+                                                    `Geração de imagens concluída para o recorte ${simcarClipJobId}.`,
                                                     imageLinks.length > 0
                                                       ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}`
                                                       : 'Nenhuma imagem retornada.',
@@ -5524,9 +5536,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                             void appendSimcarEntriesToConversation(historyEntry, [
                                               {
                                                 role: 'user',
-                                                text: `Solicitei apenas a geraÃ§Ã£o de imagens para o recorte ${simcarClipJobId} com as camadas: ${layers.join(', ')}.`,
+                                                text: `Solicitei apenas a geração de imagens para o recorte ${simcarClipJobId} com as camadas: ${layers.join(', ')}.`,
                                               },
-                                              { role: 'ai', text: `âŒ ${event.message}` },
+                                              { role: 'ai', text: `❌ ${event.message}` },
                                             ]);
                                           }
                                           setSimcarAnalysisProgress(null);
@@ -5541,9 +5553,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                   void appendSimcarEntriesToConversation(historyEntry, [
                                     {
                                       role: 'user',
-                                      text: `Solicitei apenas a geraÃ§Ã£o de imagens para o recorte ${simcarClipJobId} com as camadas: ${layers.join(', ')}.`,
+                                      text: `Solicitei apenas a geração de imagens para o recorte ${simcarClipJobId} com as camadas: ${layers.join(', ')}.`,
                                     },
-                                    { role: 'ai', text: `âŒ ${err.message || 'Erro ao gerar imagens.'}` },
+                                    { role: 'ai', text: `❌ ${err.message || 'Erro ao gerar imagens.'}` },
                                   ]);
                                 }
                               } finally {
@@ -5561,7 +5573,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                       </section>
                     )}
 
-                    {/* â”€â”€ AnÃ¡lise de AUAS Button (shown after AC/AVN analysis is done) â”€â”€ */}
+                    {/* ── Análise de AUAS Button (shown after AC/AVN analysis is done) ── */}
                     {simcarAnalysisMessages.length > 0 && !simcarAuasProcessing && !simcarAuasMessages.length && (
                       <section className="px-4">
                         <button
@@ -5573,8 +5585,8 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                               .map((m) => m.text)
                               .join('\n\n---\n\n');
                             setSimcarAuasProcessing(true);
-                            setSimcarAuasProgress({ step: 'starting', percent: 0, message: 'Iniciando anÃ¡lise de AUAS...' });
-                            setSimcarAuasAgentLog([{ label: 'Iniciando anÃ¡lise AUAS...', done: false, kind: 'step' }]);
+                            setSimcarAuasProgress({ step: 'starting', percent: 0, message: 'Iniciando análise de AUAS...' });
+                            setSimcarAuasAgentLog([{ label: 'Iniciando análise AUAS...', done: false, kind: 'step' }]);
                             setSimcarAuasImages([]);
                             setSimcarAuasMessages([]);
                             try {
@@ -5621,7 +5633,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                         const thought = String(event.thinkingText || '').trim();
                                         if (thought) {
                                           const snippet = thought.replace(/\s+/g, ' ').slice(0, 120);
-                                          const label = source ? `${source}: ${snippet}â€¦` : `${snippet}â€¦`;
+                                          const label = source ? `${source}: ${snippet}…` : `${snippet}…`;
                                           setSimcarAuasAgentLog((prev) => [
                                             ...prev,
                                             { label, done: true, kind: 'thinking' as const },
@@ -5661,12 +5673,12 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                             [
                                               {
                                                 role: 'user',
-                                                text: `Solicitei anÃ¡lise de AUAS para o recorte ${simcarClipJobId}.`,
+                                                text: `Solicitei análise de AUAS para o recorte ${simcarClipJobId}.`,
                                               },
                                               {
                                                 role: 'ai',
                                                 text: [
-                                                  `AnÃ¡lise de AUAS concluÃ­da para o recorte ${simcarClipJobId}.`,
+                                                  `Análise de AUAS concluída para o recorte ${simcarClipJobId}.`,
                                                   imageLinks.length > 0
                                                     ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}`
                                                     : '',
@@ -5685,11 +5697,11 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                           handleInsufficientCredits(String(event.message || 'Saldo insuficiente.'));
                                           return;
                                         }
-                                        const errorText = `âŒ ${event.message}`;
+                                        const errorText = `❌ ${event.message}`;
                                         setSimcarAuasMessages([{ role: 'ai', text: errorText }]);
                                         if (historyEntry) {
                                           void appendSimcarEntriesToConversation(historyEntry, [
-                                            { role: 'user', text: `Solicitei anÃ¡lise de AUAS para o recorte ${simcarClipJobId}.` },
+                                            { role: 'user', text: `Solicitei análise de AUAS para o recorte ${simcarClipJobId}.` },
                                             { role: 'ai', text: errorText },
                                           ]);
                                         }
@@ -5700,11 +5712,11 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                 }
                               }
                             } catch (err: any) {
-                              const errorText = `âŒ ${err.message || 'Erro inesperado.'}`;
+                              const errorText = `❌ ${err.message || 'Erro inesperado.'}`;
                               setSimcarAuasMessages([{ role: 'ai', text: errorText }]);
                               if (historyEntry) {
                                 void appendSimcarEntriesToConversation(historyEntry, [
-                                  { role: 'user', text: `Solicitei anÃ¡lise de AUAS para o recorte ${simcarClipJobId}.` },
+                                  { role: 'user', text: `Solicitei análise de AUAS para o recorte ${simcarClipJobId}.` },
                                   { role: 'ai', text: errorText },
                                 ]);
                               }
@@ -5717,19 +5729,19 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                           className="w-full py-3 rounded-xl font-medium text-sm bg-gradient-to-r from-white/10 to-slate-500/20 hover:from-white/15 hover:to-slate-400/25 text-white border border-white/15 shadow-lg shadow-black/20 transition-all duration-300 flex items-center justify-center gap-2"
                         >
                           <Layers size={16} />
-                          AnÃ¡lise de AUAS
+                          Análise de AUAS
                         </button>
                       </section>
                     )}
 
-                    {/* â”€â”€ AUAS Processing Progress â”€â”€ */}
+                    {/* ── AUAS Processing Progress ── */}
                     {simcarAuasProcessing && simcarAuasProgress && (
                       <section className="mx-4 rounded-xl border border-white/10 bg-[#0c1018]/90 p-4">
                         <div className="flex items-center gap-2 mb-2">
                           <div className="p-1 rounded-md bg-white/10">
                             <Layers size={12} className="text-white animate-pulse" />
                           </div>
-                          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">AnÃ¡lise AUAS em progresso</p>
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Análise AUAS em progresso</p>
                         </div>
                         <div className="w-full bg-white/5 rounded-full h-1.5 mb-2">
                           <div className="bg-gradient-to-r from-white/60 to-slate-300 h-full rounded-full transition-all duration-500" style={{ width: `${simcarAuasProgress.percent}%` }} />
@@ -5738,7 +5750,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                       </section>
                     )}
 
-                    {/* â”€â”€ BalÃ£o de Agente IA (durante a anÃ¡lise) â”€â”€ */}
+                    {/* ── Balão de Agente IA (durante a análise) ── */}
                     {simcarAnalysisProcessing && (() => {
                       const pct = simcarAnalysisProgress?.percent ?? 0;
                       const activeStep = simcarAgentLog.filter((s) => s.kind === 'step' && !s.done).at(-1);
@@ -5759,10 +5771,10 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                       };
                       return (
                         <section className="relative rounded-2xl border border-purple-500/30 bg-[#0c1018]/95 backdrop-blur-md px-5 py-4 shadow-2xl shadow-purple-900/20">
-                          {/* ponteiro do balÃ£o */}
+                          {/* ponteiro do balão */}
                           <div className="absolute -top-[7px] left-7 h-3.5 w-3.5 rotate-45 border-l border-t border-purple-500/30 bg-[#0c1018]" />
 
-                          {/* cabeÃ§alho */}
+                          {/* cabeçalho */}
                           <div className="flex items-center gap-3 mb-3">
                             <div className="relative flex-shrink-0">
                               <div className="p-2 rounded-xl bg-purple-500/15 text-purple-400">
@@ -5772,7 +5784,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                               <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-purple-400" />
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className="text-xs font-semibold text-slate-200">GeoForest IA â€” analisando...</p>
+                              <p className="text-xs font-semibold text-slate-200">GeoForest IA — analisando...</p>
                               <p className="text-[10px] text-slate-400 truncate">
                                 {activeStep?.label || simcarAnalysisProgress?.message || 'Preparando...'}
                               </p>
@@ -5846,7 +5858,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                                   )}
                                   {showCollapsed && (
                                     <div className="px-3 pb-1.5">
-                                      <span className="text-[10px] text-slate-600">{doneSteps.length} etapas concluÃ­das</span>
+                                      <span className="text-[10px] text-slate-600">{doneSteps.length} etapas concluídas</span>
                                     </div>
                                   )}
                                 </div>
@@ -5858,13 +5870,13 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                               <div className="rounded-lg border border-indigo-500/15 bg-indigo-500/[0.03] overflow-hidden">
                                 <div className="flex items-center gap-2 px-3 py-1.5 opacity-60">
                                   <span className="text-indigo-400 flex-shrink-0"><Cpu size={12} /></span>
-                                  <span className="text-[10px] font-semibold text-indigo-300/80">RaciocÃ­nio da IA</span>
+                                  <span className="text-[10px] font-semibold text-indigo-300/80">Raciocínio da IA</span>
                                   <span className="ml-auto text-[9px] text-slate-500 tabular-nums">{thinkingSteps.length}</span>
                                 </div>
                                 <div className="px-3 pb-2 space-y-0.5">
                                   {thinkingSteps.slice(-2).map((step, i) => (
                                     <p key={i} className="text-[10px] italic text-indigo-300/50 leading-snug truncate">
-                                      ðŸ’­ {step.label}
+                                      💭 {step.label}
                                     </p>
                                   ))}
                                   {thinkingSteps.length > 2 && (
@@ -5889,7 +5901,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                             <Brain size={18} />
                           </div>
                           <div>
-                            <h3 className="font-semibold text-white text-sm">AnÃ¡lise IA do Recorte SIMCAR</h3>
+                            <h3 className="font-semibold text-white text-sm">Análise IA do Recorte SIMCAR</h3>
                             <p className="text-[10px] text-slate-500">Baseada nas imagens selecionadas (anos e sensores) + overlays AC/AVN</p>
                           </div>
                         </div>
@@ -5959,7 +5971,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                       </section>
                     )}
 
-                    {/* â•â•â• AUAS Analysis Results â•â•â• */}
+                    {/* ═══ AUAS Analysis Results ═══ */}
                     {simcarAuasMessages.length > 0 && (
                       <section className="mx-4 mb-4 space-y-3">
                         {/* AUAS Header */}
@@ -5967,7 +5979,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                           <div className="p-1.5 rounded-lg bg-white/10">
                             <Layers size={14} className="text-white" />
                           </div>
-                          <h4 className="text-sm font-bold text-white">AnÃ¡lise de AUAS</h4>
+                          <h4 className="text-sm font-bold text-white">Análise de AUAS</h4>
                           <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-slate-500 font-medium">Uso Alternativo do Solo</span>
                         </div>
 
@@ -6006,7 +6018,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
           <div className="flex-1 overflow-y-auto px-6 py-8 custom-scrollbar">
             <div className="max-w-5xl mx-auto space-y-8 animate-fade-in-up">
 
-              {/* â•â•â• Hero â•â•â• */}
+              {/* ═══ Hero ═══ */}
               <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#0e1612] to-[#0a1a10] p-8 md:p-10">
                 <div className="absolute top-0 right-0 w-72 h-72 bg-emerald-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3 pointer-events-none" />
                 <div className="absolute bottom-0 left-0 w-48 h-48 bg-purple-500/8 rounded-full blur-3xl translate-y-1/3 -translate-x-1/4 pointer-events-none" />
@@ -6021,18 +6033,18 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     </div>
                     <p className="text-slate-400 max-w-2xl leading-relaxed">
                       Guia completo da plataforma de apoio a engenheiros florestais e analistas ambientais de Mato Grosso.
-                      Navegue pelas seÃ§Ãµes abaixo para aprender a usar cada funcionalidade.
+                      Navegue pelas seções abaixo para aprender a usar cada funcionalidade.
                     </p>
                   </div>
                 </div>
               </section>
 
-              {/* â•â•â• Quick Nav â•â•â• */}
+              {/* ═══ Quick Nav ═══ */}
               <nav className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {[
                   { id: 'chat', icon: Brain, label: 'Assistente IA', color: 'emerald' },
                   { id: 'simcar', icon: Scissors, label: 'Recorte SIMCAR', color: 'purple' },
-                  { id: 'analysis', icon: Satellite, label: 'AnÃ¡lise por IA', color: 'amber' },
+                  { id: 'analysis', icon: Satellite, label: 'Análise por IA', color: 'amber' },
                   { id: 'map', icon: Globe, label: 'Mapa WMS', color: 'blue' },
                 ].map((nav) => (
                   <button
@@ -6052,9 +6064,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                 ))}
               </nav>
 
-              {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-                   SECTION 1 â€” ASSISTENTE IA
-                 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+              {/* ═══════════════════════════════════════════════════════════════
+                   SECTION 1 — ASSISTENTE IA
+                 ═══════════════════════════════════════════════════════════════ */}
               <section id="manual-chat" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
                   onClick={() => setManualSection(manualSection === 'chat' ? null : 'chat')}
@@ -6074,9 +6086,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <div>
                       <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2"><span className="text-emerald-400">O que faz</span></h4>
                       <p className="text-sm text-slate-400 leading-relaxed">
-                        Um assistente de IA especializado em engenharia florestal, legislaÃ§Ã£o ambiental (federal e estadual de MT) e geoprocessamento.
-                        Ele consulta uma base de conhecimento com <strong className="text-slate-300">39 documentos regulatÃ³rios</strong> indexados, incluindo o CÃ³digo Florestal (Lei 12.651/2012),
-                        INs da SEMA-MT, ResoluÃ§Ãµes CONAMA, termos de referÃªncia e matrizes de decisÃ£o.
+                        Um assistente de IA especializado em engenharia florestal, legislação ambiental (federal e estadual de MT) e geoprocessamento.
+                        Ele consulta uma base de conhecimento com <strong className="text-slate-300">39 documentos regulatórios</strong> indexados, incluindo o Código Florestal (Lei 12.651/2012),
+                        INs da SEMA-MT, Resoluções CONAMA, termos de referência e matrizes de decisão.
                       </p>
                     </div>
 
@@ -6089,15 +6101,15 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center text-xs font-bold">2</span>
-                          <span>Digite sua pergunta na caixa de texto. Exemplos: <em className="text-slate-300">"Qual a reserva legal mÃ­nima no bioma Cerrado em MT?"</em> ou <em className="text-slate-300">"Explique o Art. 68 do CÃ³digo Florestal."</em></span>
+                          <span>Digite sua pergunta na caixa de texto. Exemplos: <em className="text-slate-300">"Qual a reserva legal mínima no bioma Cerrado em MT?"</em> ou <em className="text-slate-300">"Explique o Art. 68 do Código Florestal."</em></span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center text-xs font-bold">3</span>
-                          <span>Para analisar documentos, clique no Ã­cone de <strong className="text-slate-300">clipe</strong> e anexe um <strong className="text-slate-300">PDF</strong> ou <strong className="text-slate-300">imagem</strong>. A IA irÃ¡ ler e interpretar o conteÃºdo.</span>
+                          <span>Para analisar documentos, clique no ícone de <strong className="text-slate-300">clipe</strong> e anexe um <strong className="text-slate-300">PDF</strong> ou <strong className="text-slate-300">imagem</strong>. A IA irá ler e interpretar o conteúdo.</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center text-xs font-bold">4</span>
-                          <span>Use o seletor de modelo (canto inferior) para escolher entre <strong className="text-slate-300">modo automÃ¡tico</strong> (recomendado) ou um modelo especÃ­fico.</span>
+                          <span>Use o seletor de modelo (canto inferior) para escolher entre <strong className="text-slate-300">modo automático</strong> (recomendado) ou um modelo específico.</span>
                         </li>
                       </ol>
                     </div>
@@ -6105,9 +6117,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <div className="rounded-xl border border-emerald-500/10 bg-emerald-500/5 p-4">
                       <h4 className="text-sm font-semibold text-emerald-400 mb-2 flex items-center gap-2"><Lightbulb size={14} /> Dicas</h4>
                       <ul className="space-y-1.5 text-sm text-slate-400">
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-emerald-500 mt-1 shrink-0" />Seja especÃ­fico: "Qual a APP mÃ­nima para nascente em propriedade rural de 120 ha?" gera respostas melhores que "me fale sobre APP".</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-emerald-500 mt-1 shrink-0" />Envie prints de mapas do SIMCAR e peÃ§a para a IA interpretar o que vÃª.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-emerald-500 mt-1 shrink-0" />As conversas ficam salvas no Firestore â€” vocÃª pode retomÃ¡-las a qualquer momento pela barra lateral.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-emerald-500 mt-1 shrink-0" />Seja específico: "Qual a APP mínima para nascente em propriedade rural de 120 ha?" gera respostas melhores que "me fale sobre APP".</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-emerald-500 mt-1 shrink-0" />Envie prints de mapas do SIMCAR e peça para a IA interpretar o que vê.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-emerald-500 mt-1 shrink-0" />As conversas ficam salvas no Firestore — você pode retomá-las a qualquer momento pela barra lateral.</li>
                       </ul>
                     </div>
 
@@ -6118,9 +6130,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                 )}
               </section>
 
-              {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-                   SECTION 2 â€” RECORTE SIMCAR
-                 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+              {/* ═══════════════════════════════════════════════════════════════
+                   SECTION 2 — RECORTE SIMCAR
+                 ═══════════════════════════════════════════════════════════════ */}
               <section id="manual-simcar" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
                   onClick={() => setManualSection(manualSection === 'simcar' ? null : 'simcar')}
@@ -6129,8 +6141,8 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400"><Scissors size={22} /></div>
                     <div>
-                      <h2 className="font-semibold text-lg text-slate-200">2. Recorte AutomÃ¡tico SIMCAR</h2>
-                      <p className="text-xs text-slate-500 mt-0.5">Clipping de 28 camadas vetoriais pelo limite do imÃ³vel</p>
+                      <h2 className="font-semibold text-lg text-slate-200">2. Recorte Automático SIMCAR</h2>
+                      <p className="text-xs text-slate-500 mt-0.5">Clipping de 28 camadas vetoriais pelo limite do imóvel</p>
                     </div>
                   </div>
                   <ChevronDown size={18} className={`text-slate-500 transition-transform duration-200 ${manualSection === 'simcar' ? 'rotate-180' : ''}`} />
@@ -6140,8 +6152,8 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <div>
                       <h4 className="text-sm font-semibold text-slate-300 mb-3"><span className="text-purple-400">O que faz</span></h4>
                       <p className="text-sm text-slate-400 leading-relaxed">
-                        Recorta automaticamente todas as <strong className="text-slate-300">28 camadas</strong> do SIMCAR Digital (SEMA-MT) pelo contorno do seu imÃ³vel rural.
-                        O resultado Ã© um ZIP contendo shapefiles recortados e uma planilha Excel com os quantitativos por camada (Ã¡rea em hectares, nÃºmero de feiÃ§Ãµes, percentual do imÃ³vel).
+                        Recorta automaticamente todas as <strong className="text-slate-300">28 camadas</strong> do SIMCAR Digital (SEMA-MT) pelo contorno do seu imóvel rural.
+                        O resultado é um ZIP contendo shapefiles recortados e uma planilha Excel com os quantitativos por camada (área em hectares, número de feições, percentual do imóvel).
                       </p>
                     </div>
 
@@ -6151,25 +6163,25 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/15 text-purple-400 flex items-center justify-center text-xs font-bold">1</span>
                           <div>
-                            <strong className="text-slate-300">Prepare o shapefile</strong> â€” Exporte o polÃ­gono do imÃ³vel do QGIS/ArcGIS em formato <code className="text-purple-300 bg-purple-500/10 px-1.5 py-0.5 rounded text-xs">.zip</code> contendo pelo menos os arquivos <code className="text-purple-300 bg-purple-500/10 px-1.5 py-0.5 rounded text-xs">.shp</code>, <code className="text-purple-300 bg-purple-500/10 px-1.5 py-0.5 rounded text-xs">.shx</code> e <code className="text-purple-300 bg-purple-500/10 px-1.5 py-0.5 rounded text-xs">.prj</code>.
-                            O sistema aceita qualquer projeÃ§Ã£o UTM e reprojeta automaticamente para SIRGAS 2000 (EPSG:4674).
+                            <strong className="text-slate-300">Prepare o shapefile</strong> — Exporte o polígono do imóvel do QGIS/ArcGIS em formato <code className="text-purple-300 bg-purple-500/10 px-1.5 py-0.5 rounded text-xs">.zip</code> contendo pelo menos os arquivos <code className="text-purple-300 bg-purple-500/10 px-1.5 py-0.5 rounded text-xs">.shp</code>, <code className="text-purple-300 bg-purple-500/10 px-1.5 py-0.5 rounded text-xs">.shx</code> e <code className="text-purple-300 bg-purple-500/10 px-1.5 py-0.5 rounded text-xs">.prj</code>.
+                            O sistema aceita qualquer projeção UTM e reprojeta automaticamente para SIRGAS 2000 (EPSG:4674).
                           </div>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/15 text-purple-400 flex items-center justify-center text-xs font-bold">2</span>
-                          <span>Clique em <strong className="text-slate-300">"Recorte SIMCAR"</strong> na barra lateral e arraste o ZIP na Ã¡rea de upload (ou clique para selecionar).</span>
+                          <span>Clique em <strong className="text-slate-300">"Recorte SIMCAR"</strong> na barra lateral e arraste o ZIP na área de upload (ou clique para selecionar).</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/15 text-purple-400 flex items-center justify-center text-xs font-bold">3</span>
-                          <span>(Opcional) Preencha o campo <strong className="text-slate-300">"AIR / IdentificaÃ§Ã£o"</strong> â€” esse texto serÃ¡ gravado na camada AIR do shapefile de saÃ­da.</span>
+                          <span>(Opcional) Preencha o campo <strong className="text-slate-300">"AIR / Identificação"</strong> — esse texto será gravado na camada AIR do shapefile de saída.</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/15 text-purple-400 flex items-center justify-center text-xs font-bold">4</span>
-                          <span>Desmarque camadas que nÃ£o deseja processar (todas vÃªm selecionadas por padrÃ£o).</span>
+                          <span>Desmarque camadas que não deseja processar (todas vêm selecionadas por padrão).</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/15 text-purple-400 flex items-center justify-center text-xs font-bold">5</span>
-                          <span>Clique em <strong className="text-slate-300">"Processar Recorte"</strong> e aguarde. O progresso Ã© exibido em tempo real (SSE). O processamento leva entre 15-60 segundos dependendo do tamanho do imÃ³vel.</span>
+                          <span>Clique em <strong className="text-slate-300">"Processar Recorte"</strong> e aguarde. O progresso é exibido em tempo real (SSE). O processamento leva entre 15-60 segundos dependendo do tamanho do imóvel.</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/15 text-purple-400 flex items-center justify-center text-xs font-bold">6</span>
@@ -6179,7 +6191,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     </div>
 
                     <div>
-                      <h4 className="text-sm font-semibold text-slate-300 mb-3">Camadas incluÃ­das (28)</h4>
+                      <h4 className="text-sm font-semibold text-slate-300 mb-3">Camadas incluídas (28)</h4>
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                         {['AIR', 'ATP', 'APP', 'APP_LINHA_DAGUA', 'APP_NASCENTE', 'APP_RIO_ATE_10M',
                           'APP_RIO_10_A_50M', 'APP_RIO_50_A_200M', 'APP_RIO_200_A_600M', 'APP_RIO_ACIMA_600M',
@@ -6198,17 +6210,17 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <div className="rounded-xl border border-purple-500/10 bg-purple-500/5 p-4">
                       <h4 className="text-sm font-semibold text-purple-400 mb-2 flex items-center gap-2"><Lightbulb size={14} /> Dicas</h4>
                       <ul className="space-y-1.5 text-sm text-slate-400">
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-purple-500 mt-1 shrink-0" />Se o shapefile tiver mÃºltiplos polÃ­gonos, eles serÃ£o unidos automaticamente (Union) antes do recorte.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-purple-500 mt-1 shrink-0" />A planilha Excel contÃ©m os quantitativos prontos para inserir em laudos e relatÃ³rios tÃ©cnicos.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-purple-500 mt-1 shrink-0" />O histÃ³rico de recortes fica na barra lateral â€” clique para recarregar um resultado anterior.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-purple-500 mt-1 shrink-0" />Se o shapefile tiver múltiplos polígonos, eles serão unidos automaticamente (Union) antes do recorte.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-purple-500 mt-1 shrink-0" />A planilha Excel contém os quantitativos prontos para inserir em laudos e relatórios técnicos.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-purple-500 mt-1 shrink-0" />O histórico de recortes fica na barra lateral — clique para recarregar um resultado anterior.</li>
                       </ul>
                     </div>
 
                     <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-4">
-                      <h4 className="text-sm font-semibold text-amber-400 mb-2 flex items-center gap-2"><AlertTriangle size={14} /> AtenÃ§Ã£o</h4>
+                      <h4 className="text-sm font-semibold text-amber-400 mb-2 flex items-center gap-2"><AlertTriangle size={14} /> Atenção</h4>
                       <ul className="space-y-1.5 text-sm text-slate-400">
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />O ZIP deve conter ao menos os arquivos <code className="text-xs bg-white/5 px-1 rounded">.shp</code> e <code className="text-xs bg-white/5 px-1 rounded">.shx</code>. Sem o <code className="text-xs bg-white/5 px-1 rounded">.prj</code>, o sistema tentarÃ¡ assumir EPSG:4674.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />Se o GeoServer da SEMA estiver fora do ar, as camadas WFS ficarÃ£o vazias, mas o download serÃ¡ gerado mesmo assim.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />O ZIP deve conter ao menos os arquivos <code className="text-xs bg-white/5 px-1 rounded">.shp</code> e <code className="text-xs bg-white/5 px-1 rounded">.shx</code>. Sem o <code className="text-xs bg-white/5 px-1 rounded">.prj</code>, o sistema tentará assumir EPSG:4674.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />Se o GeoServer da SEMA estiver fora do ar, as camadas WFS ficarão vazias, mas o download será gerado mesmo assim.</li>
                       </ul>
                     </div>
 
@@ -6219,9 +6231,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                 )}
               </section>
 
-              {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-                   SECTION 3 â€” ANÃLISE POR IA
-                 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+              {/* ═══════════════════════════════════════════════════════════════
+                   SECTION 3 — ANÁLISE POR IA
+                 ═══════════════════════════════════════════════════════════════ */}
               <section id="manual-analysis" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
                   onClick={() => setManualSection(manualSection === 'analysis' ? null : 'analysis')}
@@ -6230,8 +6242,8 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400"><Satellite size={22} /></div>
                     <div>
-                      <h2 className="font-semibold text-lg text-slate-200">3. AnÃ¡lise de Imagens por IA</h2>
-                      <p className="text-xs text-slate-500 mt-0.5">VisÃ£o computacional sobre imagens de satÃ©lite + polÃ­gonos do CAR</p>
+                      <h2 className="font-semibold text-lg text-slate-200">3. Análise de Imagens por IA</h2>
+                      <p className="text-xs text-slate-500 mt-0.5">Visão computacional sobre imagens de satélite + polígonos do CAR</p>
                     </div>
                   </div>
                   <ChevronDown size={18} className={`text-slate-500 transition-transform duration-200 ${manualSection === 'analysis' ? 'rotate-180' : ''}`} />
@@ -6241,8 +6253,8 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <div>
                       <h4 className="text-sm font-semibold text-slate-300 mb-3"><span className="text-amber-400">O que faz</span></h4>
                       <p className="text-sm text-slate-400 leading-relaxed">
-                        ApÃ³s o recorte SIMCAR, gera imagens compostas (satÃ©lite + polÃ­gonos de Ãrea Consolidada, AVN e limite do imÃ³vel) e as envia para um modelo de <strong className="text-slate-300">visÃ£o computacional (IA)</strong> que produz um laudo tÃ©cnico automÃ¡tico.
-                        O laudo avalia a coerÃªncia entre a classificaÃ§Ã£o do CAR e o que Ã© visÃ­vel na imagem de satÃ©lite.
+                        Após o recorte SIMCAR, gera imagens compostas (satélite + polígonos de Área Consolidada, AVN e limite do imóvel) e as envia para um modelo de <strong className="text-slate-300">visão computacional (IA)</strong> que produz um laudo técnico automático.
+                        O laudo avalia a coerência entre a classificação do CAR e o que é visível na imagem de satélite.
                       </p>
                     </div>
 
@@ -6251,72 +6263,72 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                       <ol className="space-y-3 text-sm text-slate-400">
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-xs font-bold">1</span>
-                          <span>Primeiro, realize o <strong className="text-slate-300">Recorte SIMCAR</strong> (seÃ§Ã£o anterior). A anÃ¡lise depende dos resultados do recorte.</span>
+                          <span>Primeiro, realize o <strong className="text-slate-300">Recorte SIMCAR</strong> (seção anterior). A análise depende dos resultados do recorte.</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-xs font-bold">2</span>
                           <div>
-                            <span>Selecione as <strong className="text-slate-300">imagens de satÃ©lite</strong> desejadas:</span>
+                            <span>Selecione as <strong className="text-slate-300">imagens de satélite</strong> desejadas:</span>
                             <div className="mt-2 space-y-1.5">
-                              <div className="flex items-center gap-2 pl-2"><span className="w-2 h-2 rounded-full bg-amber-400" /><span><strong className="text-slate-300">SPOT 2008</strong> â€” 2.5m de resoluÃ§Ã£o (alta definiÃ§Ã£o)</span></div>
-                              <div className="flex items-center gap-2 pl-2"><span className="w-2 h-2 rounded-full bg-amber-400" /><span><strong className="text-slate-300">Landsat 5 (2007)</strong> â€” 30m de resoluÃ§Ã£o</span></div>
-                              <div className="flex items-center gap-2 pl-2"><span className="w-2 h-2 rounded-full bg-amber-400" /><span><strong className="text-slate-300">Landsat 5 (2008)</strong> â€” 30m de resoluÃ§Ã£o</span></div>
+                              <div className="flex items-center gap-2 pl-2"><span className="w-2 h-2 rounded-full bg-amber-400" /><span><strong className="text-slate-300">SPOT 2008</strong> — 2.5m de resolução (alta definição)</span></div>
+                              <div className="flex items-center gap-2 pl-2"><span className="w-2 h-2 rounded-full bg-amber-400" /><span><strong className="text-slate-300">Landsat 5 (2007)</strong> — 30m de resolução</span></div>
+                              <div className="flex items-center gap-2 pl-2"><span className="w-2 h-2 rounded-full bg-amber-400" /><span><strong className="text-slate-300">Landsat 5 (2008)</strong> — 30m de resolução</span></div>
                             </div>
                           </div>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-xs font-bold">3</span>
-                          <span>Clique em <strong className="text-slate-300">"Analisar com IA"</strong>. Para cada satÃ©lite, 3 imagens sÃ£o geradas: <em className="text-slate-300">VisÃ£o Geral</em>, <em className="text-slate-300">Ãrea Consolidada</em> e <em className="text-slate-300">AVN</em>.</span>
+                          <span>Clique em <strong className="text-slate-300">"Analisar com IA"</strong>. Para cada satélite, 3 imagens são geradas: <em className="text-slate-300">Visão Geral</em>, <em className="text-slate-300">Área Consolidada</em> e <em className="text-slate-300">AVN</em>.</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-xs font-bold">4</span>
-                          <span>A IA analisa as imagens e gera um laudo com: concordÃ¢ncias, discordÃ¢ncias, nÃ­vel de confianÃ§a e recomendaÃ§Ãµes ao analista.</span>
+                          <span>A IA analisa as imagens e gera um laudo com: concordâncias, discordâncias, nível de confiança e recomendações ao analista.</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-xs font-bold">5</span>
-                          <span>Use o <strong className="text-slate-300">chat de follow-up</strong> (abaixo do laudo) para fazer perguntas adicionais sobre a anÃ¡lise.</span>
+                          <span>Use o <strong className="text-slate-300">chat de follow-up</strong> (abaixo do laudo) para fazer perguntas adicionais sobre a análise.</span>
                         </li>
                       </ol>
                     </div>
 
                     <div>
-                      <h4 className="text-sm font-semibold text-slate-300 mb-3">AnÃ¡lise Multi-temporal (2+ satÃ©lites)</h4>
+                      <h4 className="text-sm font-semibold text-slate-300 mb-3">Análise Multi-temporal (2+ satélites)</h4>
                       <p className="text-sm text-slate-400 leading-relaxed mb-3">
-                        Quando vocÃª seleciona <strong className="text-slate-300">mais de um satÃ©lite</strong>, a IA realiza uma anÃ¡lise temporal comparativa adicional:
+                        Quando você seleciona <strong className="text-slate-300">mais de um satélite</strong>, a IA realiza uma análise temporal comparativa adicional:
                       </p>
                       <ul className="space-y-2 text-sm text-slate-400">
-                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">MudanÃ§as na cobertura:</strong> Detecta supressÃ£o de vegetaÃ§Ã£o ou regeneraÃ§Ã£o entre os anos.</li>
-                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">ConsistÃªncia do CAR:</strong> Verifica se a AC jÃ¡ existia na imagem mais antiga.</li>
-                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Art. 68 (marco 22/07/2008):</strong> Valida se o uso consolidado Ã© anterior ao marco legal.</li>
-                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">DiferenÃ§as de sensor:</strong> A IA considera que Landsat (30m) e SPOT (2.5m) tÃªm resoluÃ§Ãµes diferentes.</li>
+                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Mudanças na cobertura:</strong> Detecta supressão de vegetação ou regeneração entre os anos.</li>
+                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Consistência do CAR:</strong> Verifica se a AC já existia na imagem mais antiga.</li>
+                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Art. 68 (marco 22/07/2008):</strong> Valida se o uso consolidado é anterior ao marco legal.</li>
+                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Diferenças de sensor:</strong> A IA considera que Landsat (30m) e SPOT (2.5m) têm resoluções diferentes.</li>
                       </ul>
                     </div>
 
                     <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-4">
                       <h4 className="text-sm font-semibold text-amber-400 mb-2 flex items-center gap-2"><Lightbulb size={14} /> Dicas</h4>
                       <ul className="space-y-1.5 text-sm text-slate-400">
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />Para laudos, recomenda-se usar <strong className="text-slate-300">SPOT + pelo menos 1 Landsat</strong> para combinar alta resoluÃ§Ã£o com comparaÃ§Ã£o temporal.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />As imagens geradas ficam salvas no Cloudinary (nuvem) e podem ser acessadas pelo histÃ³rico na barra lateral.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />Se um satÃ©lite estiver indisponÃ­vel no WMS da SEMA, ele serÃ¡ pulado automaticamente e a anÃ¡lise continua com os demais.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />O laudo em Markdown pode ser copiado e colado diretamente em relatÃ³rios tÃ©cnicos.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />Para laudos, recomenda-se usar <strong className="text-slate-300">SPOT + pelo menos 1 Landsat</strong> para combinar alta resolução com comparação temporal.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />As imagens geradas ficam salvas no Cloudinary (nuvem) e podem ser acessadas pelo histórico na barra lateral.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />Se um satélite estiver indisponível no WMS da SEMA, ele será pulado automaticamente e a análise continua com os demais.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />O laudo em Markdown pode ser copiado e colado diretamente em relatórios técnicos.</li>
                       </ul>
                     </div>
 
                     <div>
-                      <h4 className="text-sm font-semibold text-slate-300 mb-3">Legenda das sobreposiÃ§Ãµes</h4>
+                      <h4 className="text-sm font-semibold text-slate-300 mb-3">Legenda das sobreposições</h4>
                       <div className="flex flex-wrap gap-4 text-sm">
                         <div className="flex items-center gap-2"><span className="w-4 h-3 rounded-sm border-2 border-red-500 bg-transparent" /><span className="text-slate-400">Contorno vermelho = Limite da propriedade (ATP)</span></div>
-                        <div className="flex items-center gap-2"><span className="w-4 h-3 rounded-sm bg-purple-500/40 border border-purple-500" /><span className="text-slate-400">Roxo semi-transparente = Ãrea Consolidada (AC)</span></div>
-                        <div className="flex items-center gap-2"><span className="w-4 h-3 rounded-sm bg-yellow-500/40 border border-yellow-500" /><span className="text-slate-400">Amarelo semi-transparente = VegetaÃ§Ã£o Nativa (AVN)</span></div>
+                        <div className="flex items-center gap-2"><span className="w-4 h-3 rounded-sm bg-purple-500/40 border border-purple-500" /><span className="text-slate-400">Roxo semi-transparente = Área Consolidada (AC)</span></div>
+                        <div className="flex items-center gap-2"><span className="w-4 h-3 rounded-sm bg-yellow-500/40 border border-yellow-500" /><span className="text-slate-400">Amarelo semi-transparente = Vegetação Nativa (AVN)</span></div>
                       </div>
                     </div>
                   </div>
                 )}
               </section>
 
-              {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-                   SECTION 4 â€” MAPA WMS
-                 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+              {/* ═══════════════════════════════════════════════════════════════
+                   SECTION 4 — MAPA WMS
+                 ═══════════════════════════════════════════════════════════════ */}
               <section id="manual-map" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
                   onClick={() => setManualSection(manualSection === 'map' ? null : 'map')}
@@ -6326,7 +6338,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400"><Globe size={22} /></div>
                     <div>
                       <h2 className="font-semibold text-lg text-slate-200">4. Mapa e Sensoriamento Remoto</h2>
-                      <p className="text-xs text-slate-500 mt-0.5">Visualizador de imagens WMS com interseÃ§Ã£o vetorial</p>
+                      <p className="text-xs text-slate-500 mt-0.5">Visualizador de imagens WMS com interseção vetorial</p>
                     </div>
                   </div>
                   <ChevronDown size={18} className={`text-slate-500 transition-transform duration-200 ${manualSection === 'map' ? 'rotate-180' : ''}`} />
@@ -6336,8 +6348,8 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <div>
                       <h4 className="text-sm font-semibold text-slate-300 mb-3"><span className="text-blue-400">O que faz</span></h4>
                       <p className="text-sm text-slate-400 leading-relaxed">
-                        MÃ³dulo de visualizaÃ§Ã£o de imagens de satÃ©lite do GeoServer da SEMA-MT via protocolo WMS.
-                        Permite selecionar camadas de diferentes sensores e anos, desenhar polÃ­gonos sobre a imagem e calcular interseÃ§Ãµes com camadas vetoriais WFS.
+                        Módulo de visualização de imagens de satélite do GeoServer da SEMA-MT via protocolo WMS.
+                        Permite selecionar camadas de diferentes sensores e anos, desenhar polígonos sobre a imagem e calcular interseções com camadas vetoriais WFS.
                       </p>
                     </div>
 
@@ -6346,7 +6358,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                       <ol className="space-y-3 text-sm text-slate-400">
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/15 text-blue-400 flex items-center justify-center text-xs font-bold">1</span>
-                          <span>No chat, clique no Ã­cone de <strong className="text-slate-300">mapa</strong> (na barra de entrada) para abrir o visualizador.</span>
+                          <span>No chat, clique no ícone de <strong className="text-slate-300">mapa</strong> (na barra de entrada) para abrir o visualizador.</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/15 text-blue-400 flex items-center justify-center text-xs font-bold">2</span>
@@ -6354,36 +6366,36 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/15 text-blue-400 flex items-center justify-center text-xs font-bold">3</span>
-                          <span>Ajuste o <strong className="text-slate-300">bbox</strong> (coordenadas do retÃ¢ngulo) para enquadrar sua Ã¡rea de interesse, ou use o modo de zoom interativo.</span>
+                          <span>Ajuste o <strong className="text-slate-300">bbox</strong> (coordenadas do retângulo) para enquadrar sua área de interesse, ou use o modo de zoom interativo.</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/15 text-blue-400 flex items-center justify-center text-xs font-bold">4</span>
-                          <span>Ative <strong className="text-slate-300">"Camadas de SobreposiÃ§Ã£o"</strong> (WFS) para visualizar vetores sobre a imagem e calcular interseÃ§Ãµes automaticamente.</span>
+                          <span>Ative <strong className="text-slate-300">"Camadas de Sobreposição"</strong> (WFS) para visualizar vetores sobre a imagem e calcular interseções automaticamente.</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/15 text-blue-400 flex items-center justify-center text-xs font-bold">5</span>
-                          <span>Clique em <strong className="text-slate-300">"Enviar para o Chat"</strong> para que a IA analise a imagem com contexto geogrÃ¡fico.</span>
+                          <span>Clique em <strong className="text-slate-300">"Enviar para o Chat"</strong> para que a IA analise a imagem com contexto geográfico.</span>
                         </li>
                       </ol>
                     </div>
 
                     <div>
-                      <h4 className="text-sm font-semibold text-slate-300 mb-3">Sensores disponÃ­veis</h4>
+                      <h4 className="text-sm font-semibold text-slate-300 mb-3">Sensores disponíveis</h4>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {[
-                          { sensor: 'Landsat 5 TM', res: '30m', period: '1984â€“2012', note: 'SÃ©ries histÃ³ricas de MT' },
-                          { sensor: 'Landsat 7 ETM+', res: '30m', period: '1999â€“presente', note: 'Gaps de SLC apÃ³s 2003' },
-                          { sensor: 'Landsat 8/9 OLI', res: '30m', period: '2013â€“presente', note: 'Qualidade radiomÃ©trica superior' },
-                          { sensor: 'Sentinel-2 MSI', res: '10m', period: '2015â€“presente', note: 'Melhor resoluÃ§Ã£o multispectral' },
-                          { sensor: 'SPOT', res: '2.5m', period: '2008', note: 'Maior detalhe para anÃ¡lise AC' },
-                          { sensor: 'CBERS-4/4A', res: '5â€“20m', period: '2014â€“presente', note: 'SatÃ©lite Brasilâ€“China' },
+                          { sensor: 'Landsat 5 TM', res: '30m', period: '1984–2012', note: 'Séries históricas de MT' },
+                          { sensor: 'Landsat 7 ETM+', res: '30m', period: '1999–presente', note: 'Gaps de SLC após 2003' },
+                          { sensor: 'Landsat 8/9 OLI', res: '30m', period: '2013–presente', note: 'Qualidade radiométrica superior' },
+                          { sensor: 'Sentinel-2 MSI', res: '10m', period: '2015–presente', note: 'Melhor resolução multispectral' },
+                          { sensor: 'SPOT', res: '2.5m', period: '2008', note: 'Maior detalhe para análise AC' },
+                          { sensor: 'CBERS-4/4A', res: '5–20m', period: '2014–presente', note: 'Satélite Brasil–China' },
                         ].map((s) => (
                           <div key={s.sensor} className="rounded-lg border border-white/5 bg-white/5 p-3">
                             <div className="flex items-center justify-between mb-1">
                               <span className="text-xs font-semibold text-slate-300">{s.sensor}</span>
                               <span className="text-[10px] text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded">{s.res}</span>
                             </div>
-                            <p className="text-[11px] text-slate-500">{s.period} â€” {s.note}</p>
+                            <p className="text-[11px] text-slate-500">{s.period} — {s.note}</p>
                           </div>
                         ))}
                       </div>
@@ -6392,9 +6404,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                 )}
               </section>
 
-              {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-                   SECTION 5 â€” FAQ
-                 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+              {/* ═══════════════════════════════════════════════════════════════
+                   SECTION 5 — FAQ
+                 ═══════════════════════════════════════════════════════════════ */}
               <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
                   onClick={() => setManualSection(manualSection === 'faq' ? null : 'faq')}
@@ -6404,7 +6416,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <div className="p-2.5 rounded-xl bg-slate-500/10 text-slate-400"><HelpCircle size={22} /></div>
                     <div>
                       <h2 className="font-semibold text-lg text-slate-200">5. Perguntas Frequentes</h2>
-                      <p className="text-xs text-slate-500 mt-0.5">DÃºvidas comuns sobre a plataforma</p>
+                      <p className="text-xs text-slate-500 mt-0.5">Dúvidas comuns sobre a plataforma</p>
                     </div>
                   </div>
                   <ChevronDown size={18} className={`text-slate-500 transition-transform duration-200 ${manualSection === 'faq' ? 'rotate-180' : ''}`} />
@@ -6414,35 +6426,35 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     {[
                       {
                         q: 'Que formato de shapefile devo usar no upload?',
-                        a: 'Um arquivo .zip contendo no mÃ­nimo .shp e .shx. Recomendamos incluir o .prj para que a projeÃ§Ã£o seja detectada automaticamente. Se o .prj estiver ausente, o sistema assume SIRGAS 2000 (EPSG:4674). ProjeÃ§Ãµes UTM sÃ£o reprojetadas automaticamente.',
+                        a: 'Um arquivo .zip contendo no mínimo .shp e .shx. Recomendamos incluir o .prj para que a projeção seja detectada automaticamente. Se o .prj estiver ausente, o sistema assume SIRGAS 2000 (EPSG:4674). Projeções UTM são reprojetadas automaticamente.',
                       },
                       {
-                        q: 'Posso usar shapefiles com mÃºltiplos polÃ­gonos?',
-                        a: 'Sim. Se o shapefile contiver mÃºltiplos polÃ­gonos, eles serÃ£o unidos automaticamente (Union) antes de realizar o recorte. O resultado final considera a geometria combinada.',
+                        q: 'Posso usar shapefiles com múltiplos polígonos?',
+                        a: 'Sim. Se o shapefile contiver múltiplos polígonos, eles serão unidos automaticamente (Union) antes de realizar o recorte. O resultado final considera a geometria combinada.',
                       },
                       {
                         q: 'Quanto tempo leva o processamento do recorte?',
-                        a: 'Entre 15 e 60 segundos, dependendo do tamanho do imÃ³vel e da disponibilidade do GeoServer da SEMA. Propriedades muito grandes (>50.000 ha) podem levar mais tempo por causa da paginaÃ§Ã£o WFS.',
+                        a: 'Entre 15 e 60 segundos, dependendo do tamanho do imóvel e da disponibilidade do GeoServer da SEMA. Propriedades muito grandes (>50.000 ha) podem levar mais tempo por causa da paginação WFS.',
                       },
                       {
                         q: 'O que acontece se o GeoServer da SEMA estiver fora do ar?',
-                        a: 'As camadas WFS ficarÃ£o sem dados (0 feiÃ§Ãµes), mas o ZIP serÃ¡ gerado normalmente com os shapefiles vazios. As camadas AIR e ATP (que copiam o polÃ­gono do imÃ³vel) sÃ£o geradas localmente e sempre funcionam.',
+                        a: 'As camadas WFS ficarão sem dados (0 feições), mas o ZIP será gerado normalmente com os shapefiles vazios. As camadas AIR e ATP (que copiam o polígono do imóvel) são geradas localmente e sempre funcionam.',
                       },
                       {
-                        q: 'Posso analisar imagens de satÃ©lite sem fazer o recorte primeiro?',
-                        a: 'NÃ£o. A anÃ¡lise por IA depende dos polÃ­gonos recortados (AC, AVN, ATP) do SIMCAR para criar as sobreposiÃ§Ãµes sobre as imagens. FaÃ§a o recorte primeiro, depois clique em "Analisar com IA".',
+                        q: 'Posso analisar imagens de satélite sem fazer o recorte primeiro?',
+                        a: 'Não. A análise por IA depende dos polígonos recortados (AC, AVN, ATP) do SIMCAR para criar as sobreposições sobre as imagens. Faça o recorte primeiro, depois clique em "Analisar com IA".',
                       },
                       {
-                        q: 'Por que a anÃ¡lise com mÃºltiplos satÃ©lites pode falhar?',
-                        a: 'Ao selecionar 3 satÃ©lites, sÃ£o geradas 9 imagens (3 views Ã— 3 satÃ©lites). Se o servidor WMS retornar erro para alguma camada (ex: Landsat indisponÃ­vel), ela Ã© pulada automaticamente. Se o payload for muito grande para a API de IA, o sistema reduz automaticamente para apenas as imagens de visÃ£o geral.',
+                        q: 'Por que a análise com múltiplos satélites pode falhar?',
+                        a: 'Ao selecionar 3 satélites, são geradas 9 imagens (3 views × 3 satélites). Se o servidor WMS retornar erro para alguma camada (ex: Landsat indisponível), ela é pulada automaticamente. Se o payload for muito grande para a API de IA, o sistema reduz automaticamente para apenas as imagens de visão geral.',
                       },
                       {
-                        q: 'As respostas da IA sÃ£o confiÃ¡veis para laudos oficiais?',
-                        a: 'A IA Ã© uma ferramenta de apoio. As respostas sÃ£o baseadas na legislaÃ§Ã£o e nas imagens, mas devem ser validadas pelo profissional responsÃ¡vel. A IA sempre indica o nÃ­vel de confianÃ§a (Alta/MÃ©dia/Baixa) e recomenda vistoria em campo quando necessÃ¡rio.',
+                        q: 'As respostas da IA são confiáveis para laudos oficiais?',
+                        a: 'A IA é uma ferramenta de apoio. As respostas são baseadas na legislação e nas imagens, mas devem ser validadas pelo profissional responsável. A IA sempre indica o nível de confiança (Alta/Média/Baixa) e recomenda vistoria em campo quando necessário.',
                       },
                       {
                         q: 'Meus dados ficam armazenados?',
-                        a: 'As conversas ficam no Firestore (vinculadas Ã  sua conta). Os shapefiles enviados e as imagens de anÃ¡lise ficam no Cloudinary. Ao excluir um recorte pela barra lateral, os dados sÃ£o removidos do Cloudinary e do cache do servidor.',
+                        a: 'As conversas ficam no Firestore (vinculadas à sua conta). Os shapefiles enviados e as imagens de análise ficam no Cloudinary. Ao excluir um recorte pela barra lateral, os dados são removidos do Cloudinary e do cache do servidor.',
                       },
                     ].map((item, i) => (
                       <div key={i} className="rounded-xl border border-white/5 bg-white/5 p-4">
@@ -6457,17 +6469,17 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                 )}
               </section>
 
-              {/* â•â•â• Stack TÃ©cnico â•â•â• */}
+              {/* ═══ Stack Técnico ═══ */}
               <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6">
                 <div className="flex items-center gap-3 mb-5">
                   <div className="p-2.5 rounded-xl bg-slate-500/10 text-slate-400"><Cpu size={22} /></div>
-                  <h3 className="font-semibold text-lg text-slate-200">Stack TecnolÃ³gico</h3>
+                  <h3 className="font-semibold text-lg text-slate-200">Stack Tecnológico</h3>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
                     { label: 'Frontend', value: 'React 19 + Vite + Tailwind' },
                     { label: 'Backend', value: 'Node.js + Express + TypeScript' },
-                    { label: 'IA / Vision', value: 'Gemini 3 Pro (primÃ¡rio) + Groq (fallback)' },
+                    { label: 'IA / Vision', value: 'Gemini 3 Pro (primário) + Groq (fallback)' },
                     { label: 'Auth', value: 'Firebase Auth + Firestore' },
                     { label: 'Geoespacial', value: 'Turf.js + Proj4 + WFS/WMS' },
                     { label: 'Imagens', value: 'Sharp + Cloudinary' },
@@ -6503,7 +6515,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     </button>
                   </div>
                   <div className="flex-1 text-center md:text-left space-y-2">
-                    <h2 className="text-2xl font-semibold text-white">{userProfile?.fullName || 'UsuÃ¡rio'}</h2>
+                    <h2 className="text-2xl font-semibold text-white">{userProfile?.fullName || 'Usuário'}</h2>
                     <p className="text-slate-400">{userProfile?.email || 'email@exemplo.com'}</p>
                     <div className="flex items-center justify-center md:justify-start gap-2 pt-2">
                       <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-medium border border-emerald-500/20">
@@ -6534,7 +6546,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <h3 className="font-semibold text-lg text-slate-200">Interface Geral</h3>
                   </div>
                   <p className="text-sm text-slate-400">
-                    PreferÃªncias visuais (tema, fonte e idioma) foram removidas desta versÃ£o.
+                    Preferências visuais (tema, fonte e idioma) foram removidas desta versão.
                   </p>
                 </div>
 
@@ -6543,7 +6555,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <div className="p-2 rounded-lg bg-orange-500/10 text-orange-400">
                       <FileDown size={20} />
                     </div>
-                    <h3 className="font-semibold text-lg text-slate-200">ExportaÃ§Ã£o</h3>
+                    <h3 className="font-semibold text-lg text-slate-200">Exportação</h3>
                   </div>
                   <div className="space-y-1">
                     <CustomSelect
@@ -6553,7 +6565,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                       options={['KML / KMZ', 'Shapefile (.shp)', 'GeoJSON', 'DXF (AutoCAD)']}
                     />
                     <ToggleSwitch
-                      label="Incluir metadados no relatÃ³rio"
+                      label="Incluir metadados no relatório"
                       sub="Adiciona data, hora e fonte das imagens"
                       isActive={settings.includeMetadata}
                       onToggle={(value: boolean) => updateSettings({ includeMetadata: value })}
@@ -6572,7 +6584,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
                       <Bell size={20} />
                     </div>
-                    <h3 className="font-semibold text-lg text-slate-200">NotificaÃ§Ãµes</h3>
+                    <h3 className="font-semibold text-lg text-slate-200">Notificações</h3>
                   </div>
                   <div className="space-y-1">
                     <ToggleSwitch
@@ -6583,13 +6595,13 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     />
                     <ToggleSwitch
                       label="Novos recursos da IA"
-                      sub="AtualizaÃ§Ãµes semanais do sistema"
+                      sub="Atualizações semanais do sistema"
                       isActive={settings.alertNewFeatures}
                       onToggle={(value: boolean) => updateSettings({ alertNewFeatures: value })}
                     />
                     <ToggleSwitch
                       label="Avisos de Queimadas"
-                      sub="Alertas em tempo real na sua Ã¡rea"
+                      sub="Alertas em tempo real na sua área"
                       isActive={settings.alertFires}
                       onToggle={(value: boolean) => updateSettings({ alertFires: value })}
                     />
@@ -6601,7 +6613,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <div className="p-2 rounded-lg bg-red-500/10 text-red-400">
                       <Shield size={20} />
                     </div>
-                    <h3 className="font-semibold text-lg text-slate-200">SeguranÃ§a e Assinatura</h3>
+                    <h3 className="font-semibold text-lg text-slate-200">Segurança e Assinatura</h3>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-3">
@@ -6623,7 +6635,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                         className="w-full flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
                       >
                         <div className="flex flex-col text-left">
-                          <span className="text-sm text-slate-300">AutenticaÃ§Ã£o em 2 Etapas</span>
+                          <span className="text-sm text-slate-300">Autenticação em 2 Etapas</span>
                           <span className="text-[10px] text-emerald-400 flex items-center gap-1">
                             {settings.twoFactorEnabled ? 'Ativado' : 'Desativado'}
                           </span>
@@ -6681,7 +6693,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                       <p className="text-xs uppercase tracking-wider text-slate-500">Tokens Hoje</p>
                       <p className="text-sm text-slate-200 mt-1">
-                        IN {Number(billingMe?.usageToday?.totalInputTokens || 0).toLocaleString('pt-BR')} · OUT {Number(billingMe?.usageToday?.totalOutputTokens || 0).toLocaleString('pt-BR')}
+                        IN {Number(billingMe?.usageToday?.totalInputTokens || 0).toLocaleString('pt-BR')} • OUT {Number(billingMe?.usageToday?.totalOutputTokens || 0).toLocaleString('pt-BR')}
                       </p>
                     </div>
                     <div className="rounded-xl border border-white/10 bg-white/5 p-4">
@@ -6741,7 +6753,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
               <div className="h-14 px-4 border-b border-white/10 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <MapIcon size={16} className="text-emerald-300" />
-                  <span className="text-sm text-white font-medium">Selecionar Ãrea no Mapa</span>
+                  <span className="text-sm text-white font-medium">Selecionar Área no Mapa</span>
                 </div>
                 <button
                   type="button"
@@ -6753,7 +6765,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] min-h-0 flex-1">
                 <div className="border-r border-white/10 overflow-auto custom-scrollbar flex flex-col">
-                  {/* â”€â”€ Section: Camada Base (Imagery) â”€â”€ */}
+                  {/* ── Section: Camada Base (Imagery) ── */}
                   <div className="border-b border-white/10">
                     <button
                       type="button"
@@ -6762,7 +6774,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     >
                       <div className="flex items-center gap-2">
                         <Layers size={14} className="text-emerald-400" />
-                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Imagens de SatÃ©lite</span>
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Imagens de Satélite</span>
                       </div>
                       <div className="flex items-center gap-2">
                         {selectedMapLayer && (
@@ -6829,7 +6841,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     )}
                   </div>
 
-                  {/* â”€â”€ Section: SIMCAR Digital Overlays â”€â”€ */}
+                  {/* ── Section: SIMCAR Digital Overlays ── */}
                   {simcarDigitalLayers.length > 0 && (
                     <div className="border-b border-white/10">
                       <button
@@ -6922,11 +6934,11 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     </div>
                   )}
 
-                  {/* â”€â”€ Section: WFS Intersection â”€â”€ */}
+                  {/* ── Section: WFS Intersection ── */}
                   <div className="border-b border-white/10">
                     <div className="px-4 py-3 flex items-center justify-between">
                       <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                        InterseÃ§Ã£o WFS (ha)
+                        Interseção WFS (ha)
                       </span>
                       {intersectionLoading ? (
                         <span className="text-[10px] text-emerald-300">calculando...</span>
@@ -7018,7 +7030,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     </div>
                   </div>
 
-                  {/* â”€â”€ Section: Advanced / Tools â”€â”€ */}
+                  {/* ── Section: Advanced / Tools ── */}
                   <div className="border-b border-white/10">
                     <button
                       type="button"
@@ -7027,7 +7039,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     >
                       <div className="flex items-center gap-2">
                         <Settings size={14} className="text-slate-400" />
-                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">AvanÃ§ado</span>
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Avançado</span>
                       </div>
                       <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.advanced ? '' : '-rotate-90'}`} />
                     </button>
@@ -7035,7 +7047,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                       <div className="px-3 pb-3 space-y-3">
                         <label className="inline-flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs cursor-pointer">
                           <FileText size={14} className="text-emerald-300" />
-                          Importar Ã¡rea (.kml/.zip)
+                          Importar área (.kml/.zip)
                           <input
                             type="file"
                             accept=".kml,.zip,application/vnd.google-earth.kml+xml,application/zip"
@@ -7060,14 +7072,14 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     )}
                   </div>
 
-                  {/* â”€â”€ Hint â”€â”€ */}
+                  {/* ── Hint ── */}
                   <div className="px-4 py-3">
                     <p className="text-[11px] text-slate-500 leading-relaxed">
-                      ðŸ–±ï¸ Arraste para mover, roda para zoom. PrÃ©via e snapshot carregados via WMS SEMA.
+                      🖱️ Arraste para mover, roda para zoom. Prévia e snapshot carregados via WMS SEMA.
                     </p>
                   </div>
 
-                  {/* â”€â”€ Action Buttons â”€â”€ */}
+                  {/* ── Action Buttons ── */}
                   <div className="mt-auto px-3 pb-3 space-y-2">
                     <button
                       type="button"
@@ -7078,7 +7090,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                         : 'bg-white/10 text-slate-300 hover:bg-white/15'
                         }`}
                     >
-                      {mapPreviewLoading ? 'Atualizando prÃ©via...' : 'Atualizar PrÃ©via'}
+                      {mapPreviewLoading ? 'Atualizando prévia...' : 'Atualizar Prévia'}
                     </button>
                     <div className="flex gap-2">
                       <button
@@ -7114,7 +7126,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                             : 'bg-white/10 text-slate-300 hover:bg-white/15'
                           }`}
                       >
-                        {mapRectZoomMode ? 'Cancelar Zoom' : 'Zoom RetÃ¢ngulo'}
+                        {mapRectZoomMode ? 'Cancelar Zoom' : 'Zoom Retângulo'}
                       </button>
                     </div>
                     <button
@@ -7126,7 +7138,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                         : 'bg-emerald-500 text-white hover:bg-emerald-400 shadow-lg shadow-emerald-500/20'
                         }`}
                     >
-                      {mapCapturing ? 'Capturando...' : 'ðŸ“¸ Capturar Ãrea VisÃ­vel'}
+                      {mapCapturing ? 'Capturando...' : '📸 Capturar Área Visível'}
                     </button>
                   </div>
                 </div>
@@ -7160,7 +7172,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                           <img
                             ref={mapPreviewImageRef}
                             src={mapPreviewDataUrl}
-                            alt="PrÃ©via WMS da Ã¡rea selecionada"
+                            alt="Prévia WMS da área selecionada"
                             className="max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain pointer-events-none transition-opacity duration-300"
                             style={{
                               ...(mapDragging
@@ -7172,7 +7184,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                           />
                         ) : (
                           <div className="max-h-[calc(82vh-130px)] max-w-full px-4 py-3 rounded-lg bg-black/35 text-xs text-slate-400">
-                            Carregando prÃ©via do mapa...
+                            Carregando prévia do mapa...
                           </div>
                         )}
                         {mapPolygonPoints && (
@@ -7200,7 +7212,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
                           <div className="flex flex-col items-center gap-2 bg-black/50 backdrop-blur-sm px-5 py-3 rounded-xl">
                             <div className="w-6 h-6 border-2 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin" />
-                            <span className="text-xs text-slate-300">Carregando prÃ©via...</span>
+                            <span className="text-xs text-slate-300">Carregando prévia...</span>
                           </div>
                         </div>
                       )}
@@ -7218,7 +7230,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                     </div>
                   ) : (
                     <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm px-6 text-center">
-                      Selecione uma camada e clique em "Atualizar PrÃ©via WMS".
+                      Selecione uma camada e clique em "Atualizar Prévia WMS".
                     </div>
                   )}
                 </div>
@@ -7240,7 +7252,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                   <X size={16} />
                 </button>
               </div>
-              <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500">
                 Informe o valor em BRL e confirme em <strong className="text-slate-300">Paguei</strong> para crédito instantâneo.
               </p>
               <div className="space-y-2">
