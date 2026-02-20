@@ -6634,10 +6634,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-4 hover:border-purple-500/20 transition-colors">
                       <div className="flex items-center gap-2 mb-2">
                         <Cpu size={14} className="text-purple-400" />
-                        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Tokens hoje</p>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Custo médio / req</p>
                       </div>
-                      <p className="text-xs font-medium text-emerald-300">{Number(billingMe?.usageToday?.totalInputTokens || 0).toLocaleString('pt-BR')} IN</p>
-                      <p className="text-xs font-medium text-blue-300">{Number(billingMe?.usageToday?.totalOutputTokens || 0).toLocaleString('pt-BR')} OUT</p>
+                      <p className="text-base font-semibold text-white">
+                        {(billingMe?.usageToday?.totalRequests || 0) > 0
+                          ? formatBrl((billingMe?.usageToday?.totalCostBrl || 0) / (billingMe?.usageToday?.totalRequests || 1))
+                          : 'R$ 0,00'}
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">por requisição hoje</p>
                     </div>
                   </div>
 
