@@ -344,6 +344,8 @@ type SimcarClipHistoryItem = {
   contextUrl?: string;
   analysisImages?: Array<{ url: string; caption: string }>;
   analysisMessages?: SimcarAnalysisMessage[];
+  auasAnalysisImages?: Array<{ url: string; caption: string }>;
+  auasAnalysisMessages?: SimcarAnalysisMessage[];
 };
 
 const DEFAULT_SETTINGS: UserSettings = {
@@ -932,6 +934,13 @@ export default function Dashboard() {
   const simcarAgentLogEndRef = useRef<HTMLDivElement | null>(null);
   const [simcarAnalysisStartTime, setSimcarAnalysisStartTime] = useState<number | null>(null);
   const [simcarElapsed, setSimcarElapsed] = useState(0);
+
+  // ─── SIMCAR AUAS Analysis State ───
+  const [simcarAuasProcessing, setSimcarAuasProcessing] = useState(false);
+  const [simcarAuasProgress, setSimcarAuasProgress] = useState<{ step: string; percent: number; message: string } | null>(null);
+  const [simcarAuasImages, setSimcarAuasImages] = useState<Array<{ url: string; caption: string }>>([]);
+  const [simcarAuasMessages, setSimcarAuasMessages] = useState<SimcarAnalysisMessage[]>([]);
+  const [simcarAuasAgentLog, setSimcarAuasAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
 
   // ─── SIMCAR Agent Log: elapsed timer ───
   useEffect(() => {
@@ -3606,8 +3615,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div key={msg.id} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-fade-in-up`}>
               <div
                 className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${msg.role === 'ai'
-                    ? 'bg-gradient-to-br from-emerald-500 to-green-700 shadow-lg shadow-emerald-900/50'
-                    : 'bg-slate-700'
+                  ? 'bg-gradient-to-br from-emerald-500 to-green-700 shadow-lg shadow-emerald-900/50'
+                  : 'bg-slate-700'
                   }`}
               >
                 {msg.role === 'ai' ? <Leaf size={14} className="text-white" /> : <User size={14} className="text-slate-300" />}
@@ -3635,14 +3644,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       }
                     }}
                     className={`mb-2 inline-flex max-w-[260px] items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] border ${msg.role === 'user'
-                        ? 'bg-emerald-700/45 border-emerald-300/30 text-emerald-50'
-                        : 'bg-[#0f1713] border-white/10 text-slate-200'
+                      ? 'bg-emerald-700/45 border-emerald-300/30 text-emerald-50'
+                      : 'bg-[#0f1713] border-white/10 text-slate-200'
                       } cursor-pointer hover:border-emerald-400/40`}
                   >
                     <div
                       className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${msg.meta?.fileType === 'pdf'
-                          ? 'bg-red-500/20 text-red-300'
-                          : 'bg-emerald-500/20 text-emerald-300'
+                        ? 'bg-red-500/20 text-red-300'
+                        : 'bg-emerald-500/20 text-emerald-300'
                         }`}
                     >
                       {msg.meta?.fileType === 'pdf' ? <FileText size={13} /> : <ImagePlus size={13} />}
@@ -4058,6 +4067,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     setSimcarThinkingHidden(false);
                     setSimcarLiveThinkingText('');
                     setSimcarLiveAnswerText('');
+                    // Restore AUAS analysis data if available
+                    setSimcarAuasImages(clip.auasAnalysisImages || []);
+                    setSimcarAuasMessages(clip.auasAnalysisMessages || []);
+                    setSimcarAuasProcessing(false);
                     setSimcarClipProcessing(false);
                     setSimcarAnalysisProcessing(false);
                     setSimcarClipError(null);
@@ -4865,9 +4878,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           {(() => {
                             const sensorGroups = [
                               { sensor: 'SPOT', color: 'emerald', desc: '2.5m', items: [{ key: 'spot_2008', year: 2008 }] },
-                              { sensor: 'Landsat 5', color: 'blue', desc: '30m · 1984–2011', items: [1984,1985,1986,1987,1988,1989,1990,1991,1992,1993,1994,1995,1996,1997,1998,1999,2000,2003,2004,2005,2006,2007,2008,2009,2010,2011].map((y) => ({ key: `landsat5_${y}`, year: y })) },
-                              { sensor: 'Landsat 8', color: 'cyan', desc: '30m · 2013–2018', items: [2013,2014,2015,2016,2017,2018].map((y) => ({ key: `landsat8_${y}`, year: y })) },
-                              { sensor: 'Sentinel-2', color: 'purple', desc: '10m · 2016–2024', items: [2016,2017,2018,2019,2020,2021,2022,2023,2024].map((y) => ({ key: `sentinel2_${y}`, year: y })) },
+                              { sensor: 'Landsat 5', color: 'blue', desc: '30m · 1984–2011', items: [1984, 1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011].map((y) => ({ key: `landsat5_${y}`, year: y })) },
+                              { sensor: 'Landsat 8', color: 'cyan', desc: '30m · 2013–2018', items: [2013, 2014, 2015, 2016, 2017, 2018].map((y) => ({ key: `landsat8_${y}`, year: y })) },
+                              { sensor: 'Sentinel-2', color: 'purple', desc: '10m · 2016–2024', items: [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024].map((y) => ({ key: `sentinel2_${y}`, year: y })) },
                             ];
                             const selectedCount = Object.values(simcarSelectedSatellites).filter(Boolean).length;
                             return (
@@ -4889,7 +4902,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                             className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all border ${selected
                                               ? `border-${group.color}-500/50 bg-${group.color}-500/20 text-${group.color}-300`
                                               : 'border-transparent bg-white/5 text-slate-500 hover:text-slate-300 hover:bg-white/10'
-                                            }`}
+                                              }`}
                                           >
                                             {sat.year}
                                           </button>
@@ -5098,6 +5111,126 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             Ver Imagens
                           </button>
                         </div>
+
+                        {/* ── Análise de AUAS Button ── */}
+                        {simcarAnalysisMessages.length > 0 && !simcarAuasProcessing && (
+                          <button
+                            onClick={async () => {
+                              if (!simcarClipJobId) return;
+                              const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
+                              // Get previous AC/AVN analysis text
+                              const previousAnalysis = simcarAnalysisMessages
+                                .filter((m) => m.role === 'ai')
+                                .map((m) => m.text)
+                                .join('\n\n---\n\n');
+                              setSimcarAuasProcessing(true);
+                              setSimcarAuasProgress({ step: 'starting', percent: 0, message: 'Iniciando análise de AUAS...' });
+                              setSimcarAuasAgentLog([{ label: 'Iniciando análise AUAS...', done: false, kind: 'step' }]);
+                              setSimcarAuasImages([]);
+                              setSimcarAuasMessages([]);
+                              try {
+                                const response = await fetch(apiUrl('/api/simcar/clip/analyze-auas'), {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({
+                                    jobId: simcarClipJobId,
+                                    previousAnalysis,
+                                    contextUrl: historyEntry?.contextUrl,
+                                    outputZipUrl: historyEntry?.outputZipUrl,
+                                  }),
+                                });
+                                const reader = response.body?.getReader();
+                                const decoder = new TextDecoder();
+                                let buf = '';
+                                if (reader) {
+                                  while (true) {
+                                    const { done, value } = await reader.read();
+                                    if (done) break;
+                                    buf += decoder.decode(value, { stream: true });
+                                    const lines = buf.split('\n');
+                                    buf = lines.pop() || '';
+                                    for (const line of lines) {
+                                      if (!line.startsWith('data: ')) continue;
+                                      try {
+                                        const event = JSON.parse(line.slice(6));
+                                        if (event.type === 'progress') {
+                                          const msg = String(event.message || '');
+                                          setSimcarAuasProgress({ step: event.step, percent: event.percent, message: msg });
+                                          setSimcarAuasAgentLog((prev) => {
+                                            const updated = prev.map((s) => s.done ? s : { ...s, done: true });
+                                            return [...updated, { label: msg, done: false, kind: 'step' as const }];
+                                          });
+                                        } else if (event.type === 'model_thinking') {
+                                          const source = event.source ? `[${event.source}]` : '';
+                                          const thought = String(event.thinkingText || '').trim();
+                                          if (thought) {
+                                            const snippet = thought.replace(/\s+/g, ' ').slice(0, 120);
+                                            const label = source ? `${source}: ${snippet}…` : `${snippet}…`;
+                                            setSimcarAuasAgentLog((prev) => [
+                                              ...prev,
+                                              { label, done: true, kind: 'thinking' as const },
+                                            ]);
+                                          }
+                                        } else if (event.type === 'complete') {
+                                          const parsed = splitThinkContent(String(event.analysis || ''));
+                                          const aiMessage: SimcarAnalysisMessage = {
+                                            role: 'ai',
+                                            text: parsed.cleanText,
+                                            thinkingText: parsed.thinkingText || undefined,
+                                            images: (event.images || []).map((img: any) => img.url),
+                                          };
+                                          setSimcarAuasImages(event.images || []);
+                                          setSimcarAuasMessages([aiMessage]);
+                                          setSimcarAuasProgress(null);
+                                          setSimcarAuasAgentLog((prev) => prev.map((s) => ({ ...s, done: true })));
+                                          // Persist to history
+                                          setSimcarClipHistory((prev) => prev.map((c) =>
+                                            c.jobId === simcarClipJobId
+                                              ? { ...c, auasAnalysisImages: event.images || [], auasAnalysisMessages: [aiMessage] }
+                                              : c
+                                          ));
+                                          void patchPersistedSimcarClip(simcarClipJobId, {
+                                            auasAnalysisImages: event.images || [],
+                                            auasAnalysisMessages: [aiMessage],
+                                          });
+                                        } else if (event.type === 'error') {
+                                          setSimcarAuasMessages([{ role: 'ai', text: `❌ ${event.message}` }]);
+                                          setSimcarAuasProgress(null);
+                                        }
+                                      } catch { }
+                                    }
+                                  }
+                                }
+                              } catch (err: any) {
+                                setSimcarAuasMessages([{ role: 'ai', text: `❌ ${err.message || 'Erro inesperado.'}` }]);
+                              } finally {
+                                setSimcarAuasProcessing(false);
+                                setSimcarAuasProgress(null);
+                              }
+                            }}
+                            disabled={!simcarClipJobId}
+                            className="w-full mt-3 py-3 rounded-xl font-medium text-sm bg-gradient-to-r from-white/10 to-slate-500/20 hover:from-white/15 hover:to-slate-400/25 text-white border border-white/15 shadow-lg shadow-black/20 transition-all duration-300 flex items-center justify-center gap-2"
+                          >
+                            <Layers size={16} />
+                            Análise de AUAS
+                          </button>
+                        )}
+
+                        {/* ── AUAS Processing Progress ── */}
+                        {simcarAuasProcessing && simcarAuasProgress && (
+                          <div className="mt-3 rounded-xl border border-white/10 bg-[#0c1018]/90 p-4">
+                            <div className="flex items-center gap-2 mb-2">
+                              <div className="p-1 rounded-md bg-white/10">
+                                <Layers size={12} className="text-white animate-pulse" />
+                              </div>
+                              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Análise AUAS em progresso</p>
+                            </div>
+                            <div className="w-full bg-white/5 rounded-full h-1.5 mb-2">
+                              <div className="bg-gradient-to-r from-white/60 to-slate-300 h-full rounded-full transition-all duration-500" style={{ width: `${simcarAuasProgress.percent}%` }} />
+                            </div>
+                            <p className="text-[10px] text-slate-500">{simcarAuasProgress.message}</p>
+                          </div>
+                        )}
                       </section>
                     )}
 
@@ -5121,126 +5254,125 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         brain: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20' },
                       };
                       return (
-                      <section className="relative rounded-2xl border border-purple-500/30 bg-[#0c1018]/95 backdrop-blur-md px-5 py-4 shadow-2xl shadow-purple-900/20">
-                        {/* ponteiro do balão */}
-                        <div className="absolute -top-[7px] left-7 h-3.5 w-3.5 rotate-45 border-l border-t border-purple-500/30 bg-[#0c1018]" />
+                        <section className="relative rounded-2xl border border-purple-500/30 bg-[#0c1018]/95 backdrop-blur-md px-5 py-4 shadow-2xl shadow-purple-900/20">
+                          {/* ponteiro do balão */}
+                          <div className="absolute -top-[7px] left-7 h-3.5 w-3.5 rotate-45 border-l border-t border-purple-500/30 bg-[#0c1018]" />
 
-                        {/* cabeçalho */}
-                        <div className="flex items-center gap-3 mb-3">
-                          <div className="relative flex-shrink-0">
-                            <div className="p-2 rounded-xl bg-purple-500/15 text-purple-400">
-                              <Brain size={16} />
+                          {/* cabeçalho */}
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className="relative flex-shrink-0">
+                              <div className="p-2 rounded-xl bg-purple-500/15 text-purple-400">
+                                <Brain size={16} />
+                              </div>
+                              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-purple-400 animate-ping opacity-75" />
+                              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-purple-400" />
                             </div>
-                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-purple-400 animate-ping opacity-75" />
-                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-purple-400" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-semibold text-slate-200">GeoForest IA — analisando...</p>
+                              <p className="text-[10px] text-slate-400 truncate">
+                                {activeStep?.label || simcarAnalysisProgress?.message || 'Preparando...'}
+                              </p>
+                            </div>
+                            <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                              <span className="text-xs font-bold text-purple-400 tabular-nums">{pct}%</span>
+                              <span className="text-[9px] text-slate-500 tabular-nums flex items-center gap-1">
+                                <Clock size={9} />
+                                {elMin > 0 ? `${elMin}m ${String(elSec).padStart(2, '0')}s` : `${elSec}s`}
+                              </span>
+                            </div>
                           </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs font-semibold text-slate-200">GeoForest IA — analisando...</p>
-                            <p className="text-[10px] text-slate-400 truncate">
-                              {activeStep?.label || simcarAnalysisProgress?.message || 'Preparando...'}
-                            </p>
-                          </div>
-                          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
-                            <span className="text-xs font-bold text-purple-400 tabular-nums">{pct}%</span>
-                            <span className="text-[9px] text-slate-500 tabular-nums flex items-center gap-1">
-                              <Clock size={9} />
-                              {elMin > 0 ? `${elMin}m ${String(elSec).padStart(2, '0')}s` : `${elSec}s`}
-                            </span>
-                          </div>
-                        </div>
 
-                        {/* barra de progresso com shimmer */}
-                        <div className="mb-3 bg-black/40 h-1.5 rounded-full overflow-hidden relative">
-                          <div
-                            className="h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden bg-gradient-to-r from-purple-500 to-indigo-400"
-                            style={{ width: `${pct}%` }}
-                          >
+                          {/* barra de progresso com shimmer */}
+                          <div className="mb-3 bg-black/40 h-1.5 rounded-full overflow-hidden relative">
                             <div
-                              className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent animate-[shimmer_1.5s_infinite]"
-                              style={{ backgroundSize: '200% 100%' }}
-                            />
+                              className="h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden bg-gradient-to-r from-purple-500 to-indigo-400"
+                              style={{ width: `${pct}%` }}
+                            >
+                              <div
+                                className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent animate-[shimmer_1.5s_infinite]"
+                                style={{ backgroundSize: '200% 100%' }}
+                              />
+                            </div>
                           </div>
-                        </div>
 
-                        {/* fases agrupadas */}
-                        <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
-                          {simcarGroupedPhases.map((phase) => {
-                            const colors = phaseColors[phase.icon] || phaseColors.zap;
-                            const activeSteps = phase.steps.filter((s) => !s.done);
-                            const doneSteps = phase.steps.filter((s) => s.done);
-                            const showCollapsed = phase.allDone && doneSteps.length > 2;
-                            return (
-                              <div key={phase.id} className={`rounded-lg border ${phase.allDone ? 'border-white/5 bg-white/[0.02]' : `${colors.border} bg-white/[0.03]`} overflow-hidden`}>
-                                {/* fase header */}
-                                <div className={`flex items-center gap-2 px-3 py-1.5 ${phase.allDone ? 'opacity-50' : ''}`}>
-                                  <span className={`${colors.text} flex-shrink-0`}>{phaseIcons[phase.icon]}</span>
-                                  <span className={`text-[10px] font-semibold ${phase.allDone ? 'text-slate-500' : 'text-slate-300'}`}>
-                                    {phase.label}
-                                  </span>
-                                  {phase.allDone ? (
-                                    <CheckCircle2 size={10} className="ml-auto text-emerald-500/70 flex-shrink-0" />
-                                  ) : (
-                                    <span className="ml-auto text-[9px] text-slate-500 tabular-nums">
-                                      {doneSteps.length}/{phase.steps.length}
+                          {/* fases agrupadas */}
+                          <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                            {simcarGroupedPhases.map((phase) => {
+                              const colors = phaseColors[phase.icon] || phaseColors.zap;
+                              const activeSteps = phase.steps.filter((s) => !s.done);
+                              const doneSteps = phase.steps.filter((s) => s.done);
+                              const showCollapsed = phase.allDone && doneSteps.length > 2;
+                              return (
+                                <div key={phase.id} className={`rounded-lg border ${phase.allDone ? 'border-white/5 bg-white/[0.02]' : `${colors.border} bg-white/[0.03]`} overflow-hidden`}>
+                                  {/* fase header */}
+                                  <div className={`flex items-center gap-2 px-3 py-1.5 ${phase.allDone ? 'opacity-50' : ''}`}>
+                                    <span className={`${colors.text} flex-shrink-0`}>{phaseIcons[phase.icon]}</span>
+                                    <span className={`text-[10px] font-semibold ${phase.allDone ? 'text-slate-500' : 'text-slate-300'}`}>
+                                      {phase.label}
                                     </span>
+                                    {phase.allDone ? (
+                                      <CheckCircle2 size={10} className="ml-auto text-emerald-500/70 flex-shrink-0" />
+                                    ) : (
+                                      <span className="ml-auto text-[9px] text-slate-500 tabular-nums">
+                                        {doneSteps.length}/{phase.steps.length}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* passos da fase */}
+                                  {!showCollapsed && (
+                                    <div className="px-3 pb-2 space-y-1">
+                                      {phase.steps.map((step, i) => (
+                                        <div
+                                          key={i}
+                                          className={`flex items-start gap-2 text-[11px] transition-all duration-300 ${step.done ? 'opacity-35' : 'opacity-100 pl-1 border-l-2 border-purple-400/50'
+                                            }`}
+                                        >
+                                          {step.done ? (
+                                            <CheckCircle2 size={10} className="mt-0.5 flex-shrink-0 text-emerald-400/70" />
+                                          ) : (
+                                            <Loader2 size={10} className="mt-0.5 flex-shrink-0 animate-spin text-purple-400" />
+                                          )}
+                                          <span className={`leading-snug ${step.done ? 'text-slate-500' : 'text-slate-200 font-medium'}`}>
+                                            {step.label}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {showCollapsed && (
+                                    <div className="px-3 pb-1.5">
+                                      <span className="text-[10px] text-slate-600">{doneSteps.length} etapas concluídas</span>
+                                    </div>
                                   )}
                                 </div>
+                              );
+                            })}
 
-                                {/* passos da fase */}
-                                {!showCollapsed && (
-                                  <div className="px-3 pb-2 space-y-1">
-                                    {phase.steps.map((step, i) => (
-                                      <div
-                                        key={i}
-                                        className={`flex items-start gap-2 text-[11px] transition-all duration-300 ${
-                                          step.done ? 'opacity-35' : 'opacity-100 pl-1 border-l-2 border-purple-400/50'
-                                        }`}
-                                      >
-                                        {step.done ? (
-                                          <CheckCircle2 size={10} className="mt-0.5 flex-shrink-0 text-emerald-400/70" />
-                                        ) : (
-                                          <Loader2 size={10} className="mt-0.5 flex-shrink-0 animate-spin text-purple-400" />
-                                        )}
-                                        <span className={`leading-snug ${step.done ? 'text-slate-500' : 'text-slate-200 font-medium'}`}>
-                                          {step.label}
-                                        </span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                                {showCollapsed && (
-                                  <div className="px-3 pb-1.5">
-                                    <span className="text-[10px] text-slate-600">{doneSteps.length} etapas concluídas</span>
-                                  </div>
-                                )}
+                            {/* thinking steps separados */}
+                            {thinkingSteps.length > 0 && (
+                              <div className="rounded-lg border border-indigo-500/15 bg-indigo-500/[0.03] overflow-hidden">
+                                <div className="flex items-center gap-2 px-3 py-1.5 opacity-60">
+                                  <span className="text-indigo-400 flex-shrink-0"><Cpu size={12} /></span>
+                                  <span className="text-[10px] font-semibold text-indigo-300/80">Raciocínio da IA</span>
+                                  <span className="ml-auto text-[9px] text-slate-500 tabular-nums">{thinkingSteps.length}</span>
+                                </div>
+                                <div className="px-3 pb-2 space-y-0.5">
+                                  {thinkingSteps.slice(-2).map((step, i) => (
+                                    <p key={i} className="text-[10px] italic text-indigo-300/50 leading-snug truncate">
+                                      💭 {step.label}
+                                    </p>
+                                  ))}
+                                  {thinkingSteps.length > 2 && (
+                                    <p className="text-[9px] text-indigo-400/30">+{thinkingSteps.length - 2} anteriores</p>
+                                  )}
+                                </div>
                               </div>
-                            );
-                          })}
+                            )}
 
-                          {/* thinking steps separados */}
-                          {thinkingSteps.length > 0 && (
-                            <div className="rounded-lg border border-indigo-500/15 bg-indigo-500/[0.03] overflow-hidden">
-                              <div className="flex items-center gap-2 px-3 py-1.5 opacity-60">
-                                <span className="text-indigo-400 flex-shrink-0"><Cpu size={12} /></span>
-                                <span className="text-[10px] font-semibold text-indigo-300/80">Raciocínio da IA</span>
-                                <span className="ml-auto text-[9px] text-slate-500 tabular-nums">{thinkingSteps.length}</span>
-                              </div>
-                              <div className="px-3 pb-2 space-y-0.5">
-                                {thinkingSteps.slice(-2).map((step, i) => (
-                                  <p key={i} className="text-[10px] italic text-indigo-300/50 leading-snug truncate">
-                                    💭 {step.label}
-                                  </p>
-                                ))}
-                                {thinkingSteps.length > 2 && (
-                                  <p className="text-[9px] text-indigo-400/30">+{thinkingSteps.length - 2} anteriores</p>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          <div ref={simcarAgentLogEndRef} />
-                        </div>
-                      </section>
+                            <div ref={simcarAgentLogEndRef} />
+                          </div>
+                        </section>
                       );
                     })()}
 
@@ -5403,6 +5535,45 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         })()}
                       </section>
                     )}
+
+                    {/* ═══ AUAS Analysis Results ═══ */}
+                    {simcarAuasMessages.length > 0 && (
+                      <section className="mx-4 mb-4 space-y-3">
+                        {/* AUAS Header */}
+                        <div className="flex items-center gap-2 px-2">
+                          <div className="p-1.5 rounded-lg bg-white/10">
+                            <Layers size={14} className="text-white" />
+                          </div>
+                          <h4 className="text-sm font-bold text-white">Análise de AUAS</h4>
+                          <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-slate-500 font-medium">Uso Alternativo do Solo</span>
+                        </div>
+
+                        {/* AUAS Images Gallery */}
+                        {simcarAuasImages.length > 0 && (
+                          <div className="px-2">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                              {simcarAuasImages.map((img, idx) => (
+                                <div key={idx} className="group relative rounded-lg overflow-hidden border border-white/8 bg-black/30">
+                                  <img src={img.url} alt={img.caption} className="w-full h-24 object-cover" loading="lazy" />
+                                  <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-1.5">
+                                    <p className="text-[8px] text-white/80 truncate">{img.caption}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* AUAS Analysis Text */}
+                        {simcarAuasMessages.map((msg, idx) => (
+                          <div key={idx} className="mx-2 rounded-xl border border-white/10 bg-[#0c1018]/80 p-4">
+                            <div className="prose prose-invert prose-sm max-w-none"
+                              dangerouslySetInnerHTML={{ __html: (window as any).marked?.parse?.(msg.text || '') || msg.text || '' }}
+                            />
+                          </div>
+                        ))}
+                      </section>
+                    )}
                   </>
                 );
               })()}
@@ -5447,11 +5618,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       setManualSection(manualSection === nav.id ? null : nav.id);
                       setTimeout(() => document.getElementById(`manual-${nav.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
                     }}
-                    className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
-                      manualSection === nav.id
-                        ? `bg-${nav.color}-500/10 border-${nav.color}-500/30 text-${nav.color}-400`
-                        : 'bg-white/5 border-white/5 text-slate-400 hover:border-white/15 hover:text-slate-200'
-                    }`}
+                    className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${manualSection === nav.id
+                      ? `bg-${nav.color}-500/10 border-${nav.color}-500/30 text-${nav.color}-400`
+                      : 'bg-white/5 border-white/5 text-slate-400 hover:border-white/15 hover:text-slate-200'
+                      }`}
                   >
                     <nav.icon size={18} />
                     <span className="text-sm font-medium">{nav.label}</span>
@@ -5595,10 +5765,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           'RESERVA_LEGAL', 'AREA_POUSIO', 'USO_RESTRITO', 'AREA_TOPO_DE_MORRO',
                           'SERVIDAO_ADMINISTRATIVA', 'AREA_ALTITUDE_1800M', 'AREA_BORDA_CHAPADA',
                           'AREA_DECLIVIDADE_25_A_45', 'AREA_INFRAESTRUTURA'].map((layer) => (
-                          <div key={layer} className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/5 text-[11px] text-slate-400 font-mono truncate" title={layer}>
-                            {layer}
-                          </div>
-                        ))}
+                            <div key={layer} className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/5 text-[11px] text-slate-400 font-mono truncate" title={layer}>
+                              {layer}
+                            </div>
+                          ))}
                       </div>
                     </div>
 
