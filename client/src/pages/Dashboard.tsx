@@ -49,7 +49,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
-import { onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
+import { fetchSignInMethodsForEmail, onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
 import {
   collection,
   doc,
@@ -758,32 +758,85 @@ const parseZipShpGeometryOnClient = async (file: File): Promise<ParsedGeometry> 
 };
 
 /** Extrai dos veredictos de concordância/discordância do texto de análise. */
+type VerdictValue = 'concorda' | 'discorda' | 'inconclusivo' | null;
+type ConfidenceValue = 'alta' | 'media' | 'baixa' | null;
+
 function extractAnalysisSummary(text: string): {
-  ac: 'concorda' | 'discorda' | 'inconclusivo' | null;
-  avn: 'concorda' | 'discorda' | 'inconclusivo' | null;
+  ac: VerdictValue;
+  avn: VerdictValue;
+  confidence: ConfidenceValue;
+  acDetail: string;
+  avnDetail: string;
+  years: number[];
 } {
-  const lines = text.split('\n');
-  let ac: 'concorda' | 'discorda' | 'inconclusivo' | null = null;
-  let avn: 'concorda' | 'discorda' | 'inconclusivo' | null = null;
-  for (const raw of lines) {
-    const l = raw.toLowerCase();
-    const isAC = (/área consolidada|\bac\b/).test(l) && !(/avn|vegetação nativa|vegeta..o nativa/).test(l);
-    const isAVN = (/\bavn\b|vegetação nativa|vegeta..o nativa/).test(l);
-    const concorda = raw.includes('✅') || (l.includes('concorda') && !l.includes('não concorda') && !l.includes('discorda'));
-    const discorda = raw.includes('❌') || l.includes('discorda');
-    const inconcl = raw.includes('⚠️') || l.includes('inconclusivo');
-    if (isAC && ac === null) {
-      if (inconcl) ac = 'inconclusivo';
-      else if (concorda) ac = 'concorda';
-      else if (discorda) ac = 'discorda';
-    }
-    if (isAVN && avn === null) {
-      if (inconcl) avn = 'inconclusivo';
-      else if (concorda) avn = 'concorda';
-      else if (discorda) avn = 'discorda';
+  // Split into paragraphs (2+ newlines) for block-level analysis
+  const paragraphs = text.split(/\n{2,}/);
+  let ac: VerdictValue = null;
+  let avn: VerdictValue = null;
+  let confidence: ConfidenceValue = null;
+  let acDetail = '';
+  let avnDetail = '';
+  const years = new Set<number>();
+
+  // years left empty — caller provides selected satellite years instead
+
+  const detectVerdict = (block: string): VerdictValue => {
+    const hasEmoji = (e: string) => block.includes(e);
+    const l = block.toLowerCase();
+    if (hasEmoji('⚠️') || l.includes('inconclusivo')) return 'inconclusivo';
+    if (hasEmoji('❌') || (l.includes('discorda') && !l.includes('não discorda'))) return 'discorda';
+    if (hasEmoji('✅') || (l.includes('concorda') && !l.includes('não concorda') && !l.includes('discorda'))) return 'concorda';
+    return null;
+  };
+
+  // Strategy 1: paragraph-level scanning (blocks mentioning AC or AVN)
+  for (const para of paragraphs) {
+    const l = para.toLowerCase();
+    const mentionsAC = /área consolidada|\bac\b/.test(l) && !/\bavn\b|vegetação nativa/.test(l);
+    const mentionsAVN = /\bavn\b|vegetação nativa|vegeta..o nativa/.test(l);
+    const verdict = detectVerdict(para);
+    if (mentionsAC && ac === null && verdict) { ac = verdict; acDetail = para.replace(/[#*_`]/g, '').trim().split('\n')[0].slice(0, 120); }
+    if (mentionsAVN && avn === null && verdict) { avn = verdict; avnDetail = para.replace(/[#*_`]/g, '').trim().split('\n')[0].slice(0, 120); }
+  }
+
+  // Strategy 2: line-level fallback for cases where paragraph is mixed
+  if (ac === null || avn === null) {
+    const lines = text.split('\n');
+    for (const raw of lines) {
+      const l = raw.toLowerCase();
+      const isACLine = /área consolidada|\bac\b/.test(l) && !/avn|vegetação nativa/.test(l);
+      const isAVNLine = /\bavn\b|vegetação nativa|vegeta..o nativa/.test(l);
+      const verdict = detectVerdict(raw);
+      if (isACLine && ac === null && verdict) { ac = verdict; acDetail = acDetail || raw.replace(/[#*_`✅❌⚠️]/g, '').trim().slice(0, 120); }
+      if (isAVNLine && avn === null && verdict) { avn = verdict; avnDetail = avnDetail || raw.replace(/[#*_`✅❌⚠️]/g, '').trim().slice(0, 120); }
     }
   }
-  return { ac, avn };
+
+  // Strategy 3: scan for "Concordâncias" section as a whole
+  if (ac === null || avn === null) {
+    const concordSection = text.match(/concordâncias?\s+e\s+discordâncias?[\s\S]{0,800}/i)?.[0] || '';
+    if (concordSection) {
+      const lines = concordSection.split('\n');
+      for (const raw of lines) {
+        const l = raw.toLowerCase();
+        const verdict = detectVerdict(raw);
+        if (verdict && ac === null && /área consolidada|\bac\b/i.test(l) && !/avn|vegetação nativa/i.test(l)) ac = verdict;
+        if (verdict && avn === null && /\bavn\b|vegetação nativa/i.test(l)) avn = verdict;
+      }
+    }
+  }
+
+  // Extract confidence level
+  const confMatch = text.match(/nível\s+de\s+confiança[:\s]*\*?\*?\[?(alta|média|media|baixa)\]?\*?\*?/i)
+    || text.match(/confiança[:\s]*\*?\*?\[?(alta|média|media|baixa)\]?\*?\*?/i);
+  if (confMatch) {
+    const v = confMatch[1].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (v === 'alta') confidence = 'alta';
+    else if (v === 'media') confidence = 'media';
+    else if (v === 'baixa') confidence = 'baixa';
+  }
+
+  return { ac, avn, confidence, acDetail, avnDetail, years: [...years].sort() };
 }
 
 export default function Dashboard() {
@@ -876,6 +929,60 @@ export default function Dashboard() {
   const simcarAnalysisChatRef = useRef<HTMLDivElement | null>(null);
   const simcarThinkingPanelRef = useRef<HTMLDivElement | null>(null);
   const simcarLiveAnswerPanelRef = useRef<HTMLDivElement | null>(null);
+  const simcarAgentLogEndRef = useRef<HTMLDivElement | null>(null);
+  const [simcarAnalysisStartTime, setSimcarAnalysisStartTime] = useState<number | null>(null);
+  const [simcarElapsed, setSimcarElapsed] = useState(0);
+
+  // ─── SIMCAR Agent Log: elapsed timer ───
+  useEffect(() => {
+    if (simcarAnalysisProcessing) {
+      setSimcarAnalysisStartTime(Date.now());
+      setSimcarElapsed(0);
+      const iv = setInterval(() => setSimcarElapsed((prev) => prev + 1), 1000);
+      return () => clearInterval(iv);
+    }
+    setSimcarAnalysisStartTime(null);
+  }, [simcarAnalysisProcessing]);
+
+  // ─── SIMCAR Agent Log: auto-scroll to active step ───
+  useEffect(() => {
+    simcarAgentLogEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [simcarAgentLog]);
+
+  // ─── SIMCAR Agent Log: group steps into phases ───
+  type AgentPhase = { id: string; label: string; icon: 'satellite' | 'upload' | 'brain' | 'zap'; steps: typeof simcarAgentLog; allDone: boolean };
+  const simcarGroupedPhases = useMemo((): AgentPhase[] => {
+    const classify = (label: string): AgentPhase['icon'] => {
+      const l = label.toLowerCase();
+      if (/baixando|imagem|renderizando|gerando|geração|indisponível/i.test(l)) return 'satellite';
+      if (/upload|cloudinary|salvando/i.test(l)) return 'upload';
+      if (/ia\s|preparando.*ia|sintetizando|analis|fallback|análise/i.test(l)) return 'brain';
+      return 'zap';
+    };
+    const phaseOrder: AgentPhase['icon'][] = ['zap', 'satellite', 'upload', 'brain'];
+    const phaseLabels: Record<AgentPhase['icon'], string> = {
+      zap: 'Inicialização',
+      satellite: 'Geração de Imagens',
+      upload: 'Upload ao Servidor',
+      brain: 'Análise por IA',
+    };
+    const map = new Map<AgentPhase['icon'], typeof simcarAgentLog>();
+    for (const step of simcarAgentLog) {
+      if (step.kind === 'thinking') continue; // thinking steps shown separately
+      const phase = classify(step.label);
+      if (!map.has(phase)) map.set(phase, []);
+      map.get(phase)!.push(step);
+    }
+    return phaseOrder
+      .filter((id) => map.has(id))
+      .map((id) => ({
+        id,
+        label: phaseLabels[id],
+        icon: id,
+        steps: map.get(id)!,
+        allDone: map.get(id)!.every((s) => s.done),
+      }));
+  }, [simcarAgentLog]);
 
   // ─── SIMCAR Clip History (for sidebar cards) ───
   const [simcarClipHistory, setSimcarClipHistory] = useState<SimcarClipHistoryItem[]>([]);
@@ -925,6 +1032,7 @@ export default function Dashboard() {
   const [liveThinkingTarget, setLiveThinkingTarget] = useState('');
   const thinkingTypingTimerRef = useRef<number | null>(null);
   const [aiThinking, setAiThinking] = useState(false);
+  const [resettingPassword, setResettingPassword] = useState(false);
   const [processingHintIndex, setProcessingHintIndex] = useState(0);
   const processingTimerRef = useRef<number | null>(null);
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
@@ -1461,16 +1569,52 @@ export default function Dashboard() {
   };
 
   const onResetPassword = async () => {
-    const email = auth.currentUser?.email || userProfile?.email;
-    if (!email) {
-      toast.error('Email não encontrado para redefinição de senha');
+    if (resettingPassword) return;
+
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      toast.error('Usuário não autenticado');
       return;
     }
+
+    const email = (currentUser.email || userProfile?.email || '').trim();
+    if (!email) {
+      toast.error('E-mail não encontrado para redefinição de senha');
+      return;
+    }
+
+    setResettingPassword(true);
     try {
+      const signInMethods = await fetchSignInMethodsForEmail(auth, email);
+      if (signInMethods.length > 0 && !signInMethods.includes('password')) {
+        const providerName = signInMethods.includes('google.com') ? 'Google' : 'provedor externo';
+        toast.error(`Sua conta usa login via ${providerName}. Altere a senha diretamente no provedor.`);
+        return;
+      }
+
       await sendPasswordResetEmail(auth, email);
-      toast.success(`Email de redefinição enviado para ${email}`);
+      toast.success(`E-mail de redefinição enviado para ${email}`);
     } catch (error: any) {
-      toast.error(error?.message || 'Erro ao enviar email de redefinição');
+      const code = String(error?.code || '');
+      switch (code) {
+        case 'auth/too-many-requests':
+          toast.error('Muitas tentativas. Aguarde alguns minutos e tente novamente.');
+          break;
+        case 'auth/invalid-email':
+          toast.error('E-mail inválido.');
+          break;
+        case 'auth/missing-email':
+          toast.error('E-mail ausente para redefinição de senha.');
+          break;
+        case 'auth/operation-not-allowed':
+          toast.error('Redefinição de senha não habilitada no Firebase Auth (Email/Senha).');
+          break;
+        default:
+          toast.error(error?.message || 'Erro ao enviar e-mail de redefinição.');
+          break;
+      }
+    } finally {
+      setResettingPassword(false);
     }
   };
 
@@ -4928,8 +5072,26 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     )}
 
                     {/* ── Balão de Agente IA (durante a análise) ── */}
-                    {simcarAnalysisProcessing && (
-                      <section className="relative rounded-2xl border border-purple-500/30 bg-[#0c1018]/90 backdrop-blur-md px-5 py-4 shadow-xl">
+                    {simcarAnalysisProcessing && (() => {
+                      const pct = simcarAnalysisProgress?.percent ?? 0;
+                      const activeStep = simcarAgentLog.filter((s) => s.kind === 'step' && !s.done).at(-1);
+                      const thinkingSteps = simcarAgentLog.filter((s) => s.kind === 'thinking');
+                      const elMin = Math.floor(simcarElapsed / 60);
+                      const elSec = simcarElapsed % 60;
+                      const phaseIcons: Record<string, React.ReactNode> = {
+                        satellite: <Satellite size={12} />,
+                        upload: <Upload size={12} />,
+                        brain: <Brain size={12} />,
+                        zap: <Zap size={12} />,
+                      };
+                      const phaseColors: Record<string, { bg: string; text: string; border: string }> = {
+                        zap: { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/20' },
+                        satellite: { bg: 'bg-cyan-500/10', text: 'text-cyan-400', border: 'border-cyan-500/20' },
+                        upload: { bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/20' },
+                        brain: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20' },
+                      };
+                      return (
+                      <section className="relative rounded-2xl border border-purple-500/30 bg-[#0c1018]/95 backdrop-blur-md px-5 py-4 shadow-2xl shadow-purple-900/20">
                         {/* ponteiro do balão */}
                         <div className="absolute -top-[7px] left-7 h-3.5 w-3.5 rotate-45 border-l border-t border-purple-500/30 bg-[#0c1018]" />
 
@@ -4942,40 +5104,115 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-purple-400 animate-ping opacity-75" />
                             <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-purple-400" />
                           </div>
-                          <div>
+                          <div className="min-w-0 flex-1">
                             <p className="text-xs font-semibold text-slate-200">GeoForest IA — analisando...</p>
-                            <p className="text-[10px] text-slate-500">Análise de imagens de satélite em tempo real</p>
+                            <p className="text-[10px] text-slate-400 truncate">
+                              {activeStep?.label || simcarAnalysisProgress?.message || 'Preparando...'}
+                            </p>
                           </div>
-                          <span className="ml-auto text-xs font-semibold text-purple-400 tabular-nums">
-                            {simcarAnalysisProgress?.percent ?? 0}%
-                          </span>
+                          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                            <span className="text-xs font-bold text-purple-400 tabular-nums">{pct}%</span>
+                            <span className="text-[9px] text-slate-500 tabular-nums flex items-center gap-1">
+                              <Clock size={9} />
+                              {elMin > 0 ? `${elMin}m ${String(elSec).padStart(2, '0')}s` : `${elSec}s`}
+                            </span>
+                          </div>
                         </div>
 
-                        {/* lista de passos */}
-                        <div className="space-y-1.5 max-h-52 overflow-y-auto custom-scrollbar pr-1">
-                          {simcarAgentLog.map((step, i) => (
-                            <div key={i} className={`flex items-start gap-2 text-[11px] transition-opacity ${step.done ? 'opacity-40' : 'opacity-100'}`}>
-                              {step.done ? (
-                                <CheckCircle2 size={11} className={`mt-0.5 flex-shrink-0 ${step.kind === 'thinking' ? 'text-indigo-400' : 'text-emerald-400'}`} />
-                              ) : (
-                                <Loader2 size={11} className="mt-0.5 flex-shrink-0 animate-spin text-purple-400" />
-                              )}
-                              <span className={`leading-snug ${step.kind === 'thinking' ? 'italic text-indigo-300/80' : step.done ? 'text-slate-400' : 'text-slate-200 font-medium'}`}>
-                                {step.kind === 'thinking' ? `💭 ${step.label}` : step.label}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* barra de progresso */}
-                        <div className="mt-3 bg-black/40 h-1 rounded-full overflow-hidden">
+                        {/* barra de progresso com shimmer */}
+                        <div className="mb-3 bg-black/40 h-1.5 rounded-full overflow-hidden relative">
                           <div
-                            className="bg-gradient-to-r from-purple-500 to-indigo-400 h-full rounded-full transition-all duration-700"
-                            style={{ width: `${simcarAnalysisProgress?.percent ?? 0}%` }}
-                          />
+                            className="h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden bg-gradient-to-r from-purple-500 to-indigo-400"
+                            style={{ width: `${pct}%` }}
+                          >
+                            <div
+                              className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent animate-[shimmer_1.5s_infinite]"
+                              style={{ backgroundSize: '200% 100%' }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* fases agrupadas */}
+                        <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                          {simcarGroupedPhases.map((phase) => {
+                            const colors = phaseColors[phase.icon] || phaseColors.zap;
+                            const activeSteps = phase.steps.filter((s) => !s.done);
+                            const doneSteps = phase.steps.filter((s) => s.done);
+                            const showCollapsed = phase.allDone && doneSteps.length > 2;
+                            return (
+                              <div key={phase.id} className={`rounded-lg border ${phase.allDone ? 'border-white/5 bg-white/[0.02]' : `${colors.border} bg-white/[0.03]`} overflow-hidden`}>
+                                {/* fase header */}
+                                <div className={`flex items-center gap-2 px-3 py-1.5 ${phase.allDone ? 'opacity-50' : ''}`}>
+                                  <span className={`${colors.text} flex-shrink-0`}>{phaseIcons[phase.icon]}</span>
+                                  <span className={`text-[10px] font-semibold ${phase.allDone ? 'text-slate-500' : 'text-slate-300'}`}>
+                                    {phase.label}
+                                  </span>
+                                  {phase.allDone ? (
+                                    <CheckCircle2 size={10} className="ml-auto text-emerald-500/70 flex-shrink-0" />
+                                  ) : (
+                                    <span className="ml-auto text-[9px] text-slate-500 tabular-nums">
+                                      {doneSteps.length}/{phase.steps.length}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* passos da fase */}
+                                {!showCollapsed && (
+                                  <div className="px-3 pb-2 space-y-1">
+                                    {phase.steps.map((step, i) => (
+                                      <div
+                                        key={i}
+                                        className={`flex items-start gap-2 text-[11px] transition-all duration-300 ${
+                                          step.done ? 'opacity-35' : 'opacity-100 pl-1 border-l-2 border-purple-400/50'
+                                        }`}
+                                      >
+                                        {step.done ? (
+                                          <CheckCircle2 size={10} className="mt-0.5 flex-shrink-0 text-emerald-400/70" />
+                                        ) : (
+                                          <Loader2 size={10} className="mt-0.5 flex-shrink-0 animate-spin text-purple-400" />
+                                        )}
+                                        <span className={`leading-snug ${step.done ? 'text-slate-500' : 'text-slate-200 font-medium'}`}>
+                                          {step.label}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {showCollapsed && (
+                                  <div className="px-3 pb-1.5">
+                                    <span className="text-[10px] text-slate-600">{doneSteps.length} etapas concluídas</span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          {/* thinking steps separados */}
+                          {thinkingSteps.length > 0 && (
+                            <div className="rounded-lg border border-indigo-500/15 bg-indigo-500/[0.03] overflow-hidden">
+                              <div className="flex items-center gap-2 px-3 py-1.5 opacity-60">
+                                <span className="text-indigo-400 flex-shrink-0"><Cpu size={12} /></span>
+                                <span className="text-[10px] font-semibold text-indigo-300/80">Raciocínio da IA</span>
+                                <span className="ml-auto text-[9px] text-slate-500 tabular-nums">{thinkingSteps.length}</span>
+                              </div>
+                              <div className="px-3 pb-2 space-y-0.5">
+                                {thinkingSteps.slice(-2).map((step, i) => (
+                                  <p key={i} className="text-[10px] italic text-indigo-300/50 leading-snug truncate">
+                                    💭 {step.label}
+                                  </p>
+                                ))}
+                                {thinkingSteps.length > 2 && (
+                                  <p className="text-[9px] text-indigo-400/30">+{thinkingSteps.length - 2} anteriores</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          <div ref={simcarAgentLogEndRef} />
                         </div>
                       </section>
-                    )}
+                      );
+                    })()}
 
                     {/* AI Analysis Chat */}
                     {simcarAnalysisMessages.length > 0 && (
@@ -5056,23 +5293,74 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         {/* ── Card de Resumo ── */}
                         {(() => {
                           const aiText = simcarAnalysisMessages.find((m) => m.role === 'ai')?.text ?? '';
-                          const { ac, avn } = extractAnalysisSummary(aiText);
-                          const chip = (v: typeof ac) => {
-                            if (v === 'concorda') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 border border-emerald-500/25 text-emerald-300"><CheckCircle2 size={9} /> Concorda</span>;
-                            if (v === 'discorda') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/15 border border-red-500/25 text-red-300">✕ Discorda</span>;
-                            if (v === 'inconclusivo') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 border border-amber-500/25 text-amber-300">⚠ Inconclusivo</span>;
-                            return <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] bg-white/5 border border-white/10 text-slate-500">—</span>;
+                          const { ac, avn, confidence, acDetail, avnDetail } = extractAnalysisSummary(aiText);
+                          if (!aiText) return null;
+                          const satYearMap: Record<string, string> = { spot_2008: 'SPOT 2008', landsat5_2007: 'Landsat 2007', landsat5_2008: 'Landsat 2008', landsat5_2009: 'Landsat 2009' };
+                          const selectedSatLabels = Object.entries(simcarSelectedSatellites).filter(([, v]) => v).map(([k]) => satYearMap[k] || k);
+                          const verdictConfig = {
+                            concorda: { label: 'Concorda', icon: <CheckCircle2 size={12} />, bg: 'bg-emerald-500/12', border: 'border-emerald-500/25', text: 'text-emerald-400', glow: 'shadow-emerald-500/10' },
+                            discorda: { label: 'Discorda', icon: <X size={12} />, bg: 'bg-red-500/12', border: 'border-red-500/25', text: 'text-red-400', glow: 'shadow-red-500/10' },
+                            inconclusivo: { label: 'Inconclusivo', icon: <AlertTriangle size={12} />, bg: 'bg-amber-500/12', border: 'border-amber-500/25', text: 'text-amber-400', glow: 'shadow-amber-500/10' },
                           };
-                          return (
-                            <div className="mx-6 mb-4 rounded-xl border border-white/8 bg-black/30 px-4 py-3 flex flex-col gap-2">
-                              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Resumo da análise IA</p>
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="text-[11px] text-slate-300">Área Consolidada (2008)</span>
-                                {chip(ac)}
+                          const confConfig: Record<string, { label: string; color: string }> = {
+                            alta: { label: 'Alta', color: 'text-emerald-400' },
+                            media: { label: 'Média', color: 'text-amber-400' },
+                            baixa: { label: 'Baixa', color: 'text-red-400' },
+                          };
+                          const renderVerdict = (label: string, verdict: VerdictValue, detail: string) => {
+                            const cfg = verdict ? verdictConfig[verdict] : null;
+                            return (
+                              <div className={`rounded-lg border p-3 transition-all ${cfg ? `${cfg.bg} ${cfg.border} shadow-md ${cfg.glow}` : 'bg-white/[0.03] border-white/8'}`}>
+                                <div className="flex items-center justify-between gap-2 mb-1">
+                                  <span className="text-[11px] font-medium text-slate-200">{label}</span>
+                                  {cfg ? (
+                                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${cfg.bg} ${cfg.border} border ${cfg.text}`}>
+                                      {cfg.icon} {cfg.label}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-white/5 border border-white/10 text-slate-500">
+                                      <Loader2 size={9} className="animate-spin" /> Sem dados
+                                    </span>
+                                  )}
+                                </div>
+                                {detail && (
+                                  <p className="text-[10px] text-slate-500 leading-relaxed line-clamp-2 mt-1">{detail}</p>
+                                )}
                               </div>
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="text-[11px] text-slate-300">Vegetação Nativa (2008)</span>
-                                {chip(avn)}
+                            );
+                          };
+                          const yearsLabel = selectedSatLabels.length > 0 ? selectedSatLabels.join(' · ') : '—';
+                          return (
+                            <div className="mx-6 mb-4 rounded-xl border border-purple-500/15 bg-gradient-to-b from-[#0c1018]/80 to-black/40 overflow-hidden">
+                              {/* header */}
+                              <div className="px-4 py-2.5 border-b border-white/5 flex items-center gap-2">
+                                <div className="p-1 rounded-md bg-purple-500/15">
+                                  <BarChart3 size={12} className="text-purple-400" />
+                                </div>
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Resumo da Análise IA</p>
+                                {selectedSatLabels.length > 0 && (
+                                  <span className="ml-auto text-[9px] text-slate-600 tabular-nums flex items-center gap-1">
+                                    <Satellite size={9} /> {yearsLabel}
+                                  </span>
+                                )}
+                              </div>
+                              {/* verdicts */}
+                              <div className="p-3 space-y-2">
+                                {renderVerdict('Área Consolidada (AC)', ac, acDetail)}
+                                {renderVerdict('Vegetação Nativa (AVN)', avn, avnDetail)}
+                                {/* confiança + footer */}
+                                <div className="flex items-center justify-between pt-1.5 border-t border-white/5">
+                                  <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                                    <Shield size={10} /> Nível de Confiança
+                                  </span>
+                                  {confidence ? (
+                                    <span className={`text-[10px] font-bold ${confConfig[confidence]?.color || 'text-slate-400'}`}>
+                                      {confConfig[confidence]?.label || confidence}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-slate-600">—</span>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           );
@@ -5689,11 +5977,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-3">
                       <button
+                        type="button"
                         onClick={onResetPassword}
-                        className="w-full flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
+                        disabled={resettingPassword}
+                        className="w-full flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group disabled:opacity-60 disabled:cursor-not-allowed"
                       >
-                        <span className="text-sm text-slate-300">Alterar Senha</span>
-                        <ChevronDown size={16} className="text-slate-500 -rotate-90 group-hover:text-white transition-colors" />
+                        <span className="text-sm text-slate-300">{resettingPassword ? 'Enviando e-mail...' : 'Alterar Senha'}</span>
+                        {resettingPassword ? (
+                          <Loader2 size={16} className="text-slate-500 animate-spin" />
+                        ) : (
+                          <ChevronDown size={16} className="text-slate-500 -rotate-90 group-hover:text-white transition-colors" />
+                        )}
                       </button>
                       <button
                         onClick={() => updateSettings({ twoFactorEnabled: !settings.twoFactorEnabled })}

@@ -1216,6 +1216,11 @@ const ANALYSIS_VISION_MODELS = [
     "meta-llama/llama-4-maverick-17b-128e-instruct",
     "meta-llama/llama-4-scout-17b-16e-instruct",
 ];
+const GROQ_TEXT_MODELS = [
+    "openai/gpt-oss-120b",
+    "meta-llama/llama-3.3-70b-versatile",
+    "qwen/qwen3-32b",
+];
 const GEMINI_API_BASE = process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_VISION_FALLBACK_MODELS = [
     "gemini-3-pro",
@@ -1272,28 +1277,113 @@ const GEMINI_IMAGE_SHARE = Number.isFinite(GEMINI_IMAGE_SHARE_RAW)
     ? Math.min(1.0, Math.max(0.55, GEMINI_IMAGE_SHARE_RAW))
     : 1.0;
 const SIMCAR_REQUIRE_GEMINI = String(process.env.SIMCAR_REQUIRE_GEMINI || "true").toLowerCase() !== "false";
+const SIMCAR_ANALYSIS_MODE = String(process.env.SIMCAR_ANALYSIS_MODE || "efficient").trim().toLowerCase();
+const SIMCAR_CHAT_MAX_MESSAGES = Number(process.env.SIMCAR_CHAT_MAX_MESSAGES || 10);
+const SIMCAR_CHAT_MAX_CHARS_PER_MESSAGE = Number(process.env.SIMCAR_CHAT_MAX_CHARS_PER_MESSAGE || 1400);
+const SIMCAR_CHAT_MAX_TOTAL_CHARS = Number(process.env.SIMCAR_CHAT_MAX_TOTAL_CHARS || 8500);
+const SIMCAR_SYNTHESIS_MAX_CHARS_PER_SAT = Number(process.env.SIMCAR_SYNTHESIS_MAX_CHARS_PER_SAT || 1800);
+const SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL = normalizeGeminiModelName(
+    process.env.SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL || "gemini-2.5-pro",
+);
+const SIMCAR_SYNTHESIS_TEXT_MODELS = (() => {
+    const explicit = buildGeminiModelChain(process.env.SIMCAR_SYNTHESIS_TEXT_MODELS, []);
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    const push = (raw: string) => {
+        const model = normalizeGeminiModelName(raw);
+        if (!model) return;
+        const key = model.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        ordered.push(model);
+    };
+    for (const model of explicit) push(model);
+    push(SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL);
+    for (const model of GEMINI_TEXT_SYNTHESIS_MODELS) push(model);
+    return ordered;
+})();
 
 /**
- * Groq free-tier rate-limit tracker.
- * When Groq returns 429, we record the timestamp and skip Groq for the
- * remainder of the current analysis run, falling back to Gemini instead.
- * Resets after GROQ_RATE_LIMIT_COOLDOWN_MS so future requests retry Groq.
+ * Groq rate-limit tracker PER MODEL.
+ * Each Groq model has independent limits; when a model returns 429 we put only
+ * that model in cooldown and continue trying other Groq models.
  */
-const GROQ_RATE_LIMIT_COOLDOWN_MS = 60_000; // 1 minute cooldown
-let groqRateLimitedAt = 0; // epoch ms when last rate-limited
+const GROQ_RATE_LIMIT_DEFAULT_COOLDOWN_MS = 60_000;
+const GROQ_RATE_LIMIT_MIN_COOLDOWN_MS = 8_000;
+const GROQ_RATE_LIMIT_MAX_COOLDOWN_MS = 180_000;
+const GROQ_RATE_LIMIT_RETRY_BUFFER_MS = 3_000;
+const groqModelRateLimitedUntil = new Map<string, number>();
 
-function isGroqRateLimited(): boolean {
-    if (groqRateLimitedAt === 0) return false;
-    if (Date.now() - groqRateLimitedAt > GROQ_RATE_LIMIT_COOLDOWN_MS) {
-        groqRateLimitedAt = 0; // cooldown expired, allow Groq again
+function getGroqModelRateLimitRemainingMs(model: string): number {
+    const key = String(model || "").trim().toLowerCase();
+    if (!key) return 0;
+    const until = groqModelRateLimitedUntil.get(key) || 0;
+    return Math.max(0, until - Date.now());
+}
+
+function isGroqModelRateLimited(model: string): boolean {
+    const key = String(model || "").trim().toLowerCase();
+    if (!key) return false;
+    const remaining = getGroqModelRateLimitRemainingMs(model);
+    if (remaining <= 0) {
+        groqModelRateLimitedUntil.delete(key);
         return false;
     }
     return true;
 }
 
-function markGroqRateLimited(): void {
-    groqRateLimitedAt = Date.now();
-    console.warn(`[SIMCAR ANALYSIS] Groq rate-limited. Switching to Gemini for ~${GROQ_RATE_LIMIT_COOLDOWN_MS / 1000}s.`);
+function hasAvailableGroqModels(models: string[]): boolean {
+    return models.some((model) => !isGroqModelRateLimited(model));
+}
+
+function getGroqRateLimitRemainingMs(models: string[]): number {
+    const waits = models
+        .map((model) => getGroqModelRateLimitRemainingMs(model))
+        .filter((ms) => ms > 0);
+    if (!waits.length) return 0;
+    return Math.min(...waits);
+}
+
+function extractRetryAfterMs(headers: Headers | undefined, body: string): number | null {
+    const header = headers?.get("retry-after");
+    if (header) {
+        const numeric = Number(header);
+        if (Number.isFinite(numeric) && numeric > 0) {
+            return numeric * 1000;
+        }
+        const parsedDate = Date.parse(header);
+        if (Number.isFinite(parsedDate)) {
+            const diff = parsedDate - Date.now();
+            if (diff > 0) return diff;
+        }
+    }
+
+    const normalized = String(body || "");
+    const tryAgainMatch = normalized.match(/try again in\s*([0-9]+(?:\.[0-9]+)?)\s*s/i);
+    if (tryAgainMatch) {
+        const seconds = Number(tryAgainMatch[1]);
+        if (Number.isFinite(seconds) && seconds > 0) {
+            return Math.ceil(seconds * 1000);
+        }
+    }
+    return null;
+}
+
+function markGroqModelRateLimited(model: string, retryAfterMs?: number | null): void {
+    const suggested = Number.isFinite(retryAfterMs as number) ? Number(retryAfterMs) + GROQ_RATE_LIMIT_RETRY_BUFFER_MS : 0;
+    const cooldownMs = Math.min(
+        GROQ_RATE_LIMIT_MAX_COOLDOWN_MS,
+        Math.max(
+            GROQ_RATE_LIMIT_MIN_COOLDOWN_MS,
+            suggested > 0 ? suggested : GROQ_RATE_LIMIT_DEFAULT_COOLDOWN_MS,
+        ),
+    );
+    const key = String(model || "").trim().toLowerCase();
+    if (!key) return;
+    groqModelRateLimitedUntil.set(key, Date.now() + cooldownMs);
+    console.warn(
+        `[SIMCAR ANALYSIS] Groq model ${model} rate-limited. Cooling down this model for ~${Math.ceil(cooldownMs / 1000)}s.`,
+    );
 }
 
 function isRateLimitError(status: number, body: string): boolean {
@@ -1301,9 +1391,13 @@ function isRateLimitError(status: number, body: string): boolean {
 }
 
 class GroqRateLimitError extends Error {
-    constructor(message: string) {
+    model?: string;
+    retryAfterMs?: number;
+    constructor(message: string, model?: string, retryAfterMs?: number) {
         super(message);
         this.name = "GroqRateLimitError";
+        this.model = model;
+        this.retryAfterMs = retryAfterMs;
     }
 }
 
@@ -1311,9 +1405,11 @@ export function getSimcarGeminiRuntimeConfig() {
     return {
         hasGeminiApiKey: Boolean(process.env.GEMINI_API_KEY),
         requireGemini: SIMCAR_REQUIRE_GEMINI,
+        analysisMode: SIMCAR_ANALYSIS_MODE,
         geminiApiBase: GEMINI_API_BASE,
         geminiVisionModels: GEMINI_VISION_MODELS,
         geminiTextSynthesisModels: GEMINI_TEXT_SYNTHESIS_MODELS,
+        synthesisPrimaryTextModel: SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL,
         geminiImageShare: GEMINI_IMAGE_SHARE,
     };
 }
@@ -1872,6 +1968,7 @@ async function callGeminiTextOnce(
 async function callGeminiTextSynthesis(
     messages: Array<{ role: string; content: any }>,
     contextLabel: string,
+    options?: { modelChain?: string[]; maxOutputTokens?: number },
 ): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -1879,11 +1976,17 @@ async function callGeminiTextSynthesis(
     }
 
     const MAX_CONTINUATIONS = 2;
+    const modelChain = Array.isArray(options?.modelChain) && options?.modelChain?.length
+        ? options.modelChain
+        : GEMINI_TEXT_SYNTHESIS_MODELS;
+    const maxOutputTokens = Number.isFinite(options?.maxOutputTokens)
+        ? Number(options?.maxOutputTokens)
+        : 8192;
     let lastError = "";
 
-    for (const model of GEMINI_TEXT_SYNTHESIS_MODELS) {
+    for (const model of modelChain) {
         try {
-            const first = await callGeminiTextOnce(model, messages, 8192);
+            const first = await callGeminiTextOnce(model, messages, maxOutputTokens);
             let merged = first.content.trim();
             let finishReason = first.finishReason;
             let continuationsUsed = 0;
@@ -1898,7 +2001,7 @@ async function callGeminiTextSynthesis(
                     { role: "assistant" as const, content: trimForContinuation(merged) || merged },
                     { role: "user" as const, content: CONTINUATION_INSTRUCTION },
                 ];
-                const cont = await callGeminiTextOnce(model, continuationMessages, 8192);
+                const cont = await callGeminiTextOnce(model, continuationMessages, maxOutputTokens);
                 merged = mergeContinuationText(merged, cont.content).trim();
                 finishReason = cont.finishReason;
                 console.log(
@@ -2012,6 +2115,7 @@ async function callVisionAnalysis(
     }
 
     let lastError = "";
+    let sawRateLimit = false;
     for (let attempt = 0; attempt < imageSets.length; attempt++) {
         const currentImages = imageSets[attempt];
         const contentParts = buildVisionContentParts(currentImages, prompt);
@@ -2022,6 +2126,13 @@ async function callVisionAnalysis(
         }
 
         for (const model of ANALYSIS_VISION_MODELS) {
+            if (isGroqModelRateLimited(model)) {
+                const waitSecs = Math.max(1, Math.ceil(getGroqModelRateLimitRemainingMs(model) / 1000));
+                sawRateLimit = true;
+                lastError = `${model}: rate-limited (~${waitSecs}s)`;
+                console.warn(`[SIMCAR ANALYSIS] Skipping Groq model ${model} (cooldown ~${waitSecs}s).`);
+                continue;
+            }
             try {
                 console.log(`[SIMCAR ANALYSIS] Trying model: ${model} (${currentImages.length} images, attempt ${attempt + 1})`);
 
@@ -2050,8 +2161,10 @@ async function callVisionAnalysis(
                     console.warn(`[SIMCAR ANALYSIS] Model ${model} failed:`, lastError);
                     // Detect Groq rate limit — mark and propagate immediately
                     if (isRateLimitError(response.status, text)) {
-                        markGroqRateLimited();
-                        throw new GroqRateLimitError(`Groq rate-limited: ${lastError}`);
+                        sawRateLimit = true;
+                        const retryAfterMs = extractRetryAfterMs(response.headers, text);
+                        markGroqModelRateLimited(model, retryAfterMs);
+                        continue;
                     }
                     // If payload too large (413/400), skip to reduced set immediately
                     if ((response.status === 413 || response.status === 400) && attempt === 0 && imageSets.length > 1) {
@@ -2077,12 +2190,15 @@ async function callVisionAnalysis(
                 }
                 lastError = `${model}: empty response`;
             } catch (err: any) {
-                if (err instanceof GroqRateLimitError) throw err; // propagate rate limit
                 const isTimeout = err.name === "AbortError";
                 lastError = `${model}: ${isTimeout ? "timeout (120s)" : err.message}`;
                 console.warn(`[SIMCAR ANALYSIS] Model ${model} ${isTimeout ? "timed out" : "exception"}:`, lastError);
             }
         }
+    }
+    if (sawRateLimit && !hasAvailableGroqModels(ANALYSIS_VISION_MODELS)) {
+        const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(ANALYSIS_VISION_MODELS) / 1000));
+        throw new GroqRateLimitError(`Todos os modelos de visão Groq estão em cooldown (~${waitSecs}s).`);
     }
     throw new Error(`Todos os modelos Groq falharam. Último erro: ${lastError}`);
 }
@@ -2251,7 +2367,7 @@ async function analyzeWithGroqAndGemini(
     // -- Groq-first approach: always try Groq first (free tier), only fall back to Gemini --
     // This avoids wasting Groq tokens by sending ALL images to a single provider.
 
-    const groqAvailable = hasGroq && !isGroqRateLimited();
+    const groqAvailable = hasGroq && hasAvailableGroqModels(ANALYSIS_VISION_MODELS);
 
     if (groqAvailable) {
         console.log(
@@ -2277,9 +2393,10 @@ async function analyzeWithGroqAndGemini(
                 `[SIMCAR ANALYSIS] ${contextLabel}: Groq failed${isRateLimit ? " (rate limit)" : ""}, falling back to Gemini`,
             );
         }
-    } else if (groqRateLimitedAt > 0) {
+    } else if (hasGroq) {
+        const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(ANALYSIS_VISION_MODELS) / 1000));
         console.log(
-            `[SIMCAR ANALYSIS] ${contextLabel}: Groq rate-limited, skipping directly to Gemini`,
+            `[SIMCAR ANALYSIS] ${contextLabel}: modelos Groq de visão em cooldown (~${waitSecs}s), pulando direto para Gemini`,
         );
     }
 
@@ -2292,7 +2409,7 @@ async function analyzeWithGroqAndGemini(
             console.warn(`[SIMCAR ANALYSIS] Gemini fallback also failed for ${contextLabel}: ${gemErrMsg}`);
 
             // Last resort: if Groq was rate-limited but cooldown may have passed, retry Groq
-            if (hasGroq && !groqAvailable && !isGroqRateLimited()) {
+            if (hasGroq && !groqAvailable && hasAvailableGroqModels(ANALYSIS_VISION_MODELS)) {
                 console.log(`[SIMCAR ANALYSIS] ${contextLabel}: Groq cooldown expired, retrying Groq as last resort`);
                 try {
                     return await callVisionAnalysis(images, prompt);
@@ -2309,9 +2426,10 @@ async function analyzeWithGroqAndGemini(
 
     // Only Groq available (no Gemini key) and Groq is rate-limited
     if (!hasGemini && hasGroq) {
+        const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(ANALYSIS_VISION_MODELS) / 1000));
         throw new Error(
             `Groq rate-limited e GEMINI_API_KEY ausente para ${contextLabel}. ` +
-            `Aguarde ~${Math.ceil(GROQ_RATE_LIMIT_COOLDOWN_MS / 1000)}s e tente novamente.`,
+            `Aguarde ~${waitSecs}s e tente novamente.`,
         );
     }
 
@@ -2367,6 +2485,54 @@ function mergeContinuationText(current: string, addition: string): string {
     return `${base}\n${next}`.trim();
 }
 
+function clampTextMiddle(text: string, maxChars: number): string {
+    const normalized = String(text || "").replace(/\s+/g, " ").trim();
+    if (!normalized) return "";
+    if (normalized.length <= maxChars) return normalized;
+    const head = Math.max(120, Math.floor(maxChars * 0.72));
+    const tail = Math.max(80, maxChars - head - 22);
+    return `${normalized.slice(0, head)}\n...[conteudo resumido]...\n${normalized.slice(-tail)}`;
+}
+
+function compactChatMessages(
+    rawMessages: Array<{ role: string; content: any }>,
+): Array<{ role: "user" | "assistant"; content: string }> {
+    const maxMessages = Math.max(4, SIMCAR_CHAT_MAX_MESSAGES);
+    const maxCharsPerMessage = Math.max(300, SIMCAR_CHAT_MAX_CHARS_PER_MESSAGE);
+    const maxTotalChars = Math.max(1800, SIMCAR_CHAT_MAX_TOTAL_CHARS);
+
+    const prepared = rawMessages
+        .map((msg) => {
+            const role = msg?.role === "assistant" ? "assistant" : "user";
+            const content = clampTextMiddle(normalizeAssistantContent(msg?.content), maxCharsPerMessage);
+            return { role, content };
+        })
+        .filter((msg) => Boolean(msg.content));
+
+    if (prepared.length === 0) return [];
+
+    const kept: Array<{ role: "user" | "assistant"; content: string }> = [];
+    let totalChars = 0;
+    for (let idx = prepared.length - 1; idx >= 0; idx--) {
+        const msg = prepared[idx];
+        const nextSize = totalChars + msg.content.length;
+        if (kept.length >= maxMessages || nextSize > maxTotalChars) break;
+        kept.push(msg);
+        totalChars = nextSize;
+    }
+    kept.reverse();
+
+    // Ensure at least one user turn survives (latest if needed).
+    if (!kept.some((m) => m.role === "user")) {
+        const fallbackUser = [...prepared].reverse().find((m) => m.role === "user");
+        if (fallbackUser) {
+            kept.push(fallbackUser);
+        }
+    }
+
+    return kept;
+}
+
 async function callGroqTextOnce(
     apiKey: string,
     model: string,
@@ -2393,8 +2559,13 @@ async function callGroqTextOnce(
         if (!response.ok) {
             const text = await response.text();
             if (isRateLimitError(response.status, text)) {
-                markGroqRateLimited();
-                throw new GroqRateLimitError(`Groq rate-limited: ${model}: ${response.status} - ${text.slice(0, 240)}`);
+                const retryAfterMs = extractRetryAfterMs(response.headers, text);
+                markGroqModelRateLimited(model, retryAfterMs);
+                throw new GroqRateLimitError(
+                    `Groq rate-limited: ${model}: ${response.status} - ${text.slice(0, 240)}`,
+                    model,
+                    retryAfterMs ?? undefined,
+                );
             }
             throw new Error(`${model}: ${response.status} - ${text.slice(0, 240)}`);
         }
@@ -2418,7 +2589,7 @@ async function callTextFollowUpGroqFirst(
 ): Promise<string> {
     const hasGroq = Boolean(process.env.GROQ_API_KEY);
     const hasGemini = Boolean(process.env.GEMINI_API_KEY);
-    const groqAvailable = hasGroq && !isGroqRateLimited();
+    const groqAvailable = hasGroq && hasAvailableGroqModels(GROQ_TEXT_MODELS);
 
     if (groqAvailable) {
         try {
@@ -2437,7 +2608,7 @@ async function callTextFollowUpGroqFirst(
         } catch (gemErr: any) {
             console.warn(`[SIMCAR ANALYSIS] Gemini text fallback failed for ${contextLabel}: ${gemErr?.message || gemErr}`);
             // Last resort: if Groq cooldown expired, retry
-            if (hasGroq && !groqAvailable && !isGroqRateLimited()) {
+            if (hasGroq && !groqAvailable && hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
                 return callTextFollowUp(messages);
             }
             throw gemErr;
@@ -2447,22 +2618,77 @@ async function callTextFollowUpGroqFirst(
     return callTextFollowUp(messages); // Groq-only path (no Gemini key)
 }
 
+/**
+ * Best-quality synthesis path:
+ * 1) Prefer Gemini with an explicit best-text chain.
+ * 2) Fallback to Groq text models only if Gemini fails/unavailable.
+ */
+async function callBestTextSynthesis(
+    messages: Array<{ role: string; content: any }>,
+    contextLabel = "text-synthesis",
+): Promise<string> {
+    const hasGemini = Boolean(process.env.GEMINI_API_KEY);
+    const hasGroq = Boolean(process.env.GROQ_API_KEY);
+    let geminiError = "";
+
+    if (hasGemini) {
+        try {
+            console.log(
+                `[SIMCAR ANALYSIS] ${contextLabel}: best-text synthesis via Gemini chain: ${SIMCAR_SYNTHESIS_TEXT_MODELS.join(", ")}`,
+            );
+            return await callGeminiTextSynthesis(messages, contextLabel, {
+                modelChain: SIMCAR_SYNTHESIS_TEXT_MODELS,
+                maxOutputTokens: 8192,
+            });
+        } catch (err: any) {
+            geminiError = err?.message || String(err);
+            console.warn(`[SIMCAR ANALYSIS] Best-text Gemini failed for ${contextLabel}: ${geminiError}`);
+        }
+    }
+
+    if (hasGroq) {
+        try {
+            if (!hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
+                const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(GROQ_TEXT_MODELS) / 1000));
+                console.warn(
+                    `[SIMCAR ANALYSIS] ${contextLabel}: Groq in cooldown (~${waitSecs}s), tentando fallback mesmo assim.`,
+                );
+            }
+            return await callTextFollowUp(messages);
+        } catch (groqErr: any) {
+            const groqError = groqErr?.message || String(groqErr);
+            if (geminiError) {
+                throw new Error(`Síntese falhou. Gemini=${geminiError} | Groq=${groqError}`);
+            }
+            throw groqErr;
+        }
+    }
+
+    if (geminiError) {
+        throw new Error(`Síntese falhou com Gemini: ${geminiError}`);
+    }
+    throw new Error("Nenhum provedor de texto configurado para síntese.");
+}
+
 async function callTextFollowUp(
     messages: Array<{ role: string; content: any }>,
 ): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
 
-    const TEXT_MODELS = [
-        "openai/gpt-oss-120b",
-        "meta-llama/llama-3.3-70b-versatile",
-        "qwen/qwen3-32b",
-    ];
     const MAX_TOKENS = 2200;
     const MAX_CONTINUATIONS = 2;
 
     let lastError = "";
-    for (const model of TEXT_MODELS) {
+    let sawRateLimit = false;
+    for (const model of GROQ_TEXT_MODELS) {
+        if (isGroqModelRateLimited(model)) {
+            const waitSecs = Math.max(1, Math.ceil(getGroqModelRateLimitRemainingMs(model) / 1000));
+            sawRateLimit = true;
+            lastError = `${model}: rate-limited (~${waitSecs}s)`;
+            console.warn(`[SIMCAR ANALYSIS] Skipping text model ${model} (cooldown ~${waitSecs}s).`);
+            continue;
+        }
         try {
             const first = await callGroqTextOnce(apiKey, model, messages, MAX_TOKENS);
             console.log(
@@ -2484,8 +2710,14 @@ async function callTextFollowUp(
                 ];
 
                 let continuationObtained = false;
-                const continuationCandidates = [activeModel, ...TEXT_MODELS.filter((m) => m !== activeModel)];
+                const continuationCandidates = [activeModel, ...GROQ_TEXT_MODELS.filter((m) => m !== activeModel)];
                 for (const candidate of continuationCandidates) {
+                    if (isGroqModelRateLimited(candidate)) {
+                        const waitSecs = Math.max(1, Math.ceil(getGroqModelRateLimitRemainingMs(candidate) / 1000));
+                        sawRateLimit = true;
+                        lastError = `${candidate}: rate-limited (~${waitSecs}s)`;
+                        continue;
+                    }
                     try {
                         const cont = await callGroqTextOnce(apiKey, candidate, continuationMessages, MAX_TOKENS);
                         mergedContent = mergeContinuationText(mergedContent, cont.content);
@@ -2498,9 +2730,9 @@ async function callTextFollowUp(
                         break;
                     } catch (err: any) {
                         if (err instanceof GroqRateLimitError) {
-                            // Rate-limited during continuation — return what we have so far
-                            console.warn(`[SIMCAR ANALYSIS] Groq rate-limited during continuation, returning partial text`);
-                            return mergedContent.trim();
+                            sawRateLimit = true;
+                            lastError = err?.message || `${candidate}: rate-limited`;
+                            continue;
                         }
                         const detail = err?.name === "AbortError" ? "timeout (60s)" : (err?.message || String(err));
                         lastError = `${candidate}: ${detail}`;
@@ -2516,11 +2748,19 @@ async function callTextFollowUp(
 
             return mergedContent.trim();
         } catch (err: any) {
-            if (err instanceof GroqRateLimitError) throw err; // propagate rate limit
+            if (err instanceof GroqRateLimitError) {
+                sawRateLimit = true;
+                lastError = err?.message || `${model}: rate-limited`;
+                continue;
+            }
             const isTimeout = err.name === "AbortError";
             lastError = `${model}: ${isTimeout ? "timeout (60s)" : err.message}`;
             console.warn(`[SIMCAR ANALYSIS] Text model ${model} failed: ${lastError}`);
         }
+    }
+    if (sawRateLimit && !hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
+        const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(GROQ_TEXT_MODELS) / 1000));
+        throw new GroqRateLimitError(`Todos os modelos de texto Groq estão em cooldown (~${waitSecs}s).`);
     }
     throw new Error(`Falha nos modelos de texto Groq. Último erro: ${lastError}`);
 }
@@ -2532,11 +2772,6 @@ async function streamTextFollowUp(
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
 
-    const TEXT_MODELS = [
-        "openai/gpt-oss-120b",
-        "meta-llama/llama-3.3-70b-versatile",
-        "qwen/qwen3-32b",
-    ];
     const MAX_TOKENS = 2200;
     const MAX_CONTINUATIONS = 2;
 
@@ -2569,6 +2804,15 @@ async function streamTextFollowUp(
 
         if (!upstream.ok || !upstream.body) {
             const text = await upstream.text();
+            if (isRateLimitError(upstream.status, text)) {
+                const retryAfterMs = extractRetryAfterMs(upstream.headers, text);
+                markGroqModelRateLimited(segmentModel, retryAfterMs);
+                throw new GroqRateLimitError(
+                    `groq ${segmentModel} ${upstream.status}: ${text.slice(0, 320)}`,
+                    segmentModel,
+                    retryAfterMs ?? undefined,
+                );
+            }
             throw new Error(`groq ${segmentModel} ${upstream.status}: ${text.slice(0, 320)}`);
         }
 
@@ -2620,7 +2864,10 @@ async function streamTextFollowUp(
     };
 
     let firstResult: { finishReason: string; segmentText: string } | null = null;
-    for (const candidate of TEXT_MODELS) {
+    for (const candidate of GROQ_TEXT_MODELS) {
+        if (isGroqModelRateLimited(candidate)) {
+            continue;
+        }
         try {
             firstResult = await streamModelSegment(candidate, messages);
             activeModel = candidate;
@@ -2630,6 +2877,10 @@ async function streamTextFollowUp(
         }
     }
     if (!firstResult) {
+        if (!hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
+            const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(GROQ_TEXT_MODELS) / 1000));
+            throw new GroqRateLimitError(`Todos os modelos de texto Groq estão em cooldown (~${waitSecs}s).`);
+        }
         throw new Error("Nenhum modelo disponível para iniciar resposta.");
     }
 
@@ -2650,8 +2901,9 @@ async function streamTextFollowUp(
         ];
 
         let contResult: { finishReason: string; segmentText: string } | null = null;
-        const candidates = [activeModel, ...TEXT_MODELS.filter((m) => m !== activeModel)];
+        const candidates = [activeModel, ...GROQ_TEXT_MODELS.filter((m) => m !== activeModel)];
         for (const candidate of candidates) {
+            if (isGroqModelRateLimited(candidate)) continue;
             try {
                 contResult = await streamModelSegment(candidate, continuationMessages);
                 activeModel = candidate;
@@ -2676,7 +2928,7 @@ async function streamTextFollowUp(
 
     writeChunk({
         type: "complete",
-        model: activeModel || TEXT_MODELS[0],
+        model: activeModel || GROQ_TEXT_MODELS[0],
         thinkingText: finalThinking,
         answerText: finalAnswer,
         content: finalContent,
@@ -2699,13 +2951,32 @@ function padBbox(
 }
 
 /** Build shared context block (property info + quantitative table). */
-function buildPropertyContext(areaHa: number, layerSummaries: LayerSummary[]): string {
+function buildPropertyContext(
+    areaHa: number,
+    layerSummaries: LayerSummary[],
+    options?: { compact?: boolean; maxRows?: number },
+): string {
+    const compact = Boolean(options?.compact);
+    const maxRows = Math.max(4, options?.maxRows ?? (compact ? 8 : 28));
     const acSummary = layerSummaries.find((l) => l.name === "AREA_CONSOLIDADA");
     const avnSummary = layerSummaries.find((l) => l.name === "AVN");
     const atpSummary = layerSummaries.find((l) => l.name === "ATP");
 
-    const quantRows = layerSummaries
+    const nonZeroRows = layerSummaries
         .filter((l) => l.features > 0)
+        .sort((a, b) => (b.areaHa ?? 0) - (a.areaHa ?? 0));
+
+    const alwaysKeep = new Set(["ATP", "AREA_CONSOLIDADA", "AVN"]);
+    const chosenRows = compact
+        ? [
+            ...nonZeroRows.filter((l) => alwaysKeep.has(l.name)),
+            ...nonZeroRows.filter((l) => !alwaysKeep.has(l.name)),
+        ]
+            .filter((l, idx, arr) => arr.findIndex((x) => x.name === l.name) === idx)
+            .slice(0, maxRows)
+        : nonZeroRows;
+
+    const quantRows = chosenRows
         .map((l) => {
             const pct = areaHa > 0 ? ((l.areaHa ?? 0) / areaHa * 100).toFixed(1) : "?";
             return `| ${l.name} | ${l.features} | ${l.areaHa?.toFixed(2) ?? '-'} ha | ${pct}% |`;
@@ -2721,10 +2992,13 @@ function buildPropertyContext(areaHa: number, layerSummaries: LayerSummary[]): s
         `| Vegetação Nativa (AVN) | ${avnSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((avnSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) — ${avnSummary?.features ?? 0} feições |`,
         atpSummary ? `| ATP (polígono declarado) | ${atpSummary.areaHa?.toFixed(2) ?? '-'} ha |` : "",
         "",
-        "### Quantitativos completos (SIMCAR Digital)",
+        compact ? "### Quantitativos-chave (SIMCAR Digital)" : "### Quantitativos completos (SIMCAR Digital)",
         "| Camada | Feições | Área | % do Imóvel |",
         "|--------|---------|------|-----------|",
         ...quantRows,
+        compact && nonZeroRows.length > chosenRows.length
+            ? `\n*Resumo reduzido para eficiência de tokens: exibindo ${chosenRows.length} de ${nonZeroRows.length} camadas com feições.*`
+            : "",
     ].join("\n");
 }
 
@@ -2745,7 +3019,7 @@ function buildSingleSatellitePrompt(
         "",
         "---",
         "",
-        buildPropertyContext(areaHa, layerSummaries),
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
         "",
         "---",
         "",
@@ -2783,6 +3057,7 @@ function buildSingleSatellitePrompt(
         "",
         "---",
         "Responda em **português**, use markdown, seja detalhado e técnico.",
+        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
     ].join("\n");
 }
 
@@ -2815,7 +3090,7 @@ function buildAnalysisPrompt(
         "",
         "---",
         "",
-        buildPropertyContext(areaHa, layerSummaries),
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
         "",
         "---",
         "",
@@ -2884,9 +3159,15 @@ function buildAnalysisPrompt(
         "",
         "---",
         "Responda em **português**, use markdown com seções e sub-seções.",
+        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
     );
 
     return parts.join("\n");
+}
+
+function toSynthesisExcerpt(text: string, maxChars = SIMCAR_SYNTHESIS_MAX_CHARS_PER_SAT): string {
+    const visible = splitThinkProgress(String(text || "")).answerText || String(text || "");
+    return clampTextMiddle(visible, Math.max(700, maxChars));
 }
 
 /**
@@ -2904,7 +3185,7 @@ function buildSynthesisPrompt(
     const analysesBlock = perSatelliteAnalyses.map((a) => [
         `### Análise: ${a.satelliteLabel} (${a.year})`,
         "",
-        a.analysis,
+        toSynthesisExcerpt(a.analysis),
     ].join("\n")).join("\n\n---\n\n");
 
     return [
@@ -2915,7 +3196,7 @@ function buildSynthesisPrompt(
         "",
         "---",
         "",
-        buildPropertyContext(areaHa, layerSummaries),
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
         "",
         "---",
         "",
@@ -2927,7 +3208,7 @@ function buildSynthesisPrompt(
         "",
         "## Sua Tarefa: Laudo Integrado Multi-temporal",
         "",
-        "Produza um laudo ÚNICO e COMPLETO que integre as análises acima. Estruture exatamente assim:",
+        "Produza um laudo ÚNICO e COMPLETO que integre as análises acima. Seja objetivo e evite repetições.",
         "",
         "### 1. Análise por Ano (obrigatória)",
         `Crie um subtítulo para cada ano em **${years.join(", ")}** e descreva os achados de AC/AVN.`,
@@ -2962,6 +3243,7 @@ function buildSynthesisPrompt(
         "",
         "---",
         "Responda em **português**, use markdown, seja detalhado e técnico.",
+        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
         "NÃO repita as análises individuais integralmente — sintetize e compare.",
     ].join("\n");
 }
@@ -3325,8 +3607,15 @@ async function processAnalysis(
 
     let analysisText: string;
 
-    if (isMultiSatellite) {
-        // ── MULTI-SATELLITE: analyze each satellite separately, then synthesize ──
+    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE !== "detailed") {
+        console.log(
+            `[SIMCAR ANALYSIS] Multi-satellite mode using efficient strategy (single unified call). ` +
+            `Set SIMCAR_ANALYSIS_MODE=detailed to enable per-satellite synthesis.`,
+        );
+    }
+
+    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE === "detailed") {
+        // ── MULTI-SATELLITE (detailed mode): analyze each satellite separately, then synthesize ──
         console.log(`[SIMCAR ANALYSIS] Multi-satellite mode: ${validKeys.length} satellites, analyzing individually...`);
 
         const perSatelliteResults: Array<{ satelliteLabel: string; year: number; analysis: string }> = [];
@@ -3403,7 +3692,7 @@ async function processAnalysis(
             sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando análise temporal comparativa..." });
             try {
                 const synthesisPrompt = buildSynthesisPrompt(areaHa, layerSummaries, perSatelliteResults);
-                analysisText = await callTextFollowUpGroqFirst(
+                analysisText = await callBestTextSynthesis(
                     [{ role: "user", content: synthesisPrompt }],
                     "sintese temporal final",
                 );
@@ -3427,8 +3716,16 @@ async function processAnalysis(
             }
         }
     } else {
-        // ── SINGLE SATELLITE: direct analysis (original behavior) ──
-        sendSSE(res, { type: "progress", step: "analyzing", percent: 65, message: "IA analisando imagens..." });
+        // ── EFFICIENT MODE (default) OR SINGLE SATELLITE: one unified call ──
+        const isUnifiedMulti = isMultiSatellite && SIMCAR_ANALYSIS_MODE !== "detailed";
+        sendSSE(res, {
+            type: "progress",
+            step: "analyzing",
+            percent: 65,
+            message: isUnifiedMulti
+                ? "IA analisando recorte multitemporal em chamada única (modo eficiente)..."
+                : "IA analisando imagens...",
+        });
         try {
             const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers);
             const singleContext = validKeys
@@ -3639,6 +3936,40 @@ export function registerSimcarClipRoutes(app: Express) {
                 return;
             }
 
+            const incomingChars = messages.reduce(
+                (acc, msg) => acc + normalizeAssistantContent((msg as any)?.content).length,
+                0,
+            );
+            const compactedMessages = compactChatMessages(messages);
+            const compactedChars = compactedMessages.reduce((acc, msg) => acc + msg.content.length, 0);
+            if (compactedMessages.length === 0) {
+                if (streamMode) {
+                    res.setHeader("Content-Type", "text/event-stream");
+                    res.setHeader("Cache-Control", "no-cache");
+                    res.setHeader("Connection", "keep-alive");
+                    sendSSE(res, { type: "error", message: "Sem contexto textual válido para análise." });
+                    if (!res.writableEnded) res.end();
+                    return;
+                }
+                res.status(400).json({ error: "Sem contexto textual válido para análise." });
+                return;
+            }
+            if (compactedMessages.length !== messages.length || compactedChars !== incomingChars) {
+                console.log(
+                    `[SIMCAR ANALYSIS CHAT] Context compacted: msgs ${messages.length} -> ${compactedMessages.length}, ` +
+                    `chars ${incomingChars} -> ${compactedChars}`,
+                );
+            }
+            const optimizedMessages = [
+                {
+                    role: "system",
+                    content:
+                        "Responda de forma objetiva e técnica. " +
+                        "Nao inclua bloco <think>, cadeia de raciocinio interna ou repeticoes longas.",
+                },
+                ...compactedMessages,
+            ];
+
             if (streamMode) {
                 res.setHeader("Content-Type", "text/event-stream");
                 res.setHeader("Cache-Control", "no-cache");
@@ -3646,12 +3977,12 @@ export function registerSimcarClipRoutes(app: Express) {
                 res.setHeader("X-Accel-Buffering", "no");
                 res.flushHeaders();
 
-                await streamTextFollowUp(res, messages);
+                await streamTextFollowUp(res, optimizedMessages);
                 if (!res.writableEnded) res.end();
                 return;
             }
 
-            const reply = await callTextFollowUpGroqFirst(messages, "chat");
+            const reply = await callTextFollowUpGroqFirst(optimizedMessages, "chat");
             res.json({ content: reply });
         } catch (err: any) {
             console.error("[SIMCAR ANALYSIS CHAT] Error:", err);
