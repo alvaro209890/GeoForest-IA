@@ -1576,6 +1576,7 @@ async function startServer() {
         estimatedInputTokens: estimateTokensFromMessages(messagesForModel),
         estimatedOutputTokens: maxTokens,
         safetyMultiplier: 1.3,
+        endpoint: "/api/chat",
       });
       await reserveCredits({
         uid,
@@ -1770,6 +1771,7 @@ async function startServer() {
         estimatedInputTokens: estimateTokensFromMessages(messagesForModel),
         estimatedOutputTokens: maxResponseTokensEstimate,
         safetyMultiplier: 1.15,
+        endpoint: "/api/chat-stream",
       });
       await reserveCredits({
         uid,

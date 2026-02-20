@@ -41,8 +41,10 @@ type ModelPricing = {
 
 const usageStorage = new AsyncLocalStorage<BillingSessionStore>();
 
-const BILLING_MARGIN = Number.parseFloat(process.env.BILLING_MARGIN || "1.40") || 1.4;
+const BILLING_MARGIN = Number.parseFloat(process.env.BILLING_MARGIN || "1.50") || 1.5;
 const MIN_CHARGE_BRL = Number.parseFloat(process.env.BILLING_MIN_CHARGE_BRL || "0.01") || 0.01;
+const BILLING_ASSISTANT_CHAT_MULTIPLIER =
+  Number.parseFloat(process.env.BILLING_ASSISTANT_CHAT_MULTIPLIER || "1.25") || 1.25;
 const USD_BRL_FALLBACK = Number.parseFloat(process.env.USD_BRL_FALLBACK || "5.2257") || 5.2257;
 const RATE_CACHE_MS = 8 * 60 * 60 * 1000;
 const CLOUDINARY_PLUS_MONTHLY_USD = Number.parseFloat(process.env.CLOUDINARY_PLUS_MONTHLY_USD || "99") || 99;
@@ -84,6 +86,18 @@ const MODEL_PRICING_USD: Record<string, ModelPricing> = {
 };
 
 let rateCache: { value: number; fetchedAt: number; source: string } | null = null;
+
+function normalizeEndpoint(endpoint?: string): string {
+  return String(endpoint || "").trim().toLowerCase();
+}
+
+function endpointCostMultiplier(endpoint?: string): number {
+  const normalized = normalizeEndpoint(endpoint);
+  if (normalized === "/api/chat" || normalized === "/api/chat-stream") {
+    return Math.max(1, BILLING_ASSISTANT_CHAT_MULTIPLIER);
+  }
+  return 1;
+}
 
 export class BillingError extends Error {
   statusCode: number;
@@ -352,6 +366,7 @@ export async function getBillingPricingSnapshot() {
 
   return {
     margin: BILLING_MARGIN,
+    assistantChatMultiplier: Math.max(1, BILLING_ASSISTANT_CHAT_MULTIPLIER),
     minChargeBrl: MIN_CHARGE_BRL,
     usdBrlRate: rate,
     usdBrlSource: source,
@@ -536,7 +551,13 @@ export async function settleReservedCredits(args: {
       const inputTokens = sanitizeTokenCount(item.inputTokens);
       const outputTokens = sanitizeTokenCount(item.outputTokens);
       const tier = getPricingTier(model, inputTokens);
-      const cost = ((inputTokens / 1_000_000) * tier.inputUsdPer1M + (outputTokens / 1_000_000) * tier.outputUsdPer1M) * rate * BILLING_MARGIN;
+      const endpoint = item.endpoint || args.endpoint;
+      const costMultiplier = endpointCostMultiplier(endpoint);
+      const cost =
+        ((inputTokens / 1_000_000) * tier.inputUsdPer1M + (outputTokens / 1_000_000) * tier.outputUsdPer1M) *
+        rate *
+        BILLING_MARGIN *
+        costMultiplier;
       return {
         provider: item.provider || inferProviderFromModel(model),
         model,
@@ -544,7 +565,7 @@ export async function settleReservedCredits(args: {
         outputTokens,
         totalTokens: inputTokens + outputTokens,
         costBrl: roundCurrency(Math.max(0, cost)),
-        endpoint: item.endpoint || args.endpoint,
+        endpoint,
         estimated: Boolean(item.estimated),
       } as SettledUsageRecord;
     })
@@ -904,6 +925,7 @@ export async function estimateReserveForModels(args: {
   estimatedInputTokens: number;
   estimatedOutputTokens: number;
   safetyMultiplier?: number;
+  endpoint?: string;
 }): Promise<number> {
   const { rate } = await getUsdBrlRate();
   const safeModels = args.models.map((model) => normalizeModelName(model)).filter(Boolean);
@@ -913,9 +935,14 @@ export async function estimateReserveForModels(args: {
   const estimateOutput = Math.max(1, sanitizeTokenCount(args.estimatedOutputTokens));
 
   let maxCost = 0;
+  const endpointMultiplier = endpointCostMultiplier(args.endpoint);
   for (const model of safeModels) {
     const tier = getPricingTier(model, estimateInput);
-    const cost = ((estimateInput / 1_000_000) * tier.inputUsdPer1M + (estimateOutput / 1_000_000) * tier.outputUsdPer1M) * rate * BILLING_MARGIN;
+    const cost =
+      ((estimateInput / 1_000_000) * tier.inputUsdPer1M + (estimateOutput / 1_000_000) * tier.outputUsdPer1M) *
+      rate *
+      BILLING_MARGIN *
+      endpointMultiplier;
     if (cost > maxCost) maxCost = cost;
   }
 
