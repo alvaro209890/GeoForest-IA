@@ -322,6 +322,8 @@ type Conversation = {
   updatedAt?: any;
   lastMessagePreview?: string;
   lastAttachmentType?: 'image' | 'pdf';
+  kind?: string;
+  simcarJobId?: string;
 };
 
 const DEFAULT_ASSISTANT_MESSAGE: ChatMessage = {
@@ -1160,6 +1162,7 @@ export default function Dashboard() {
   const simcarThinkingPanelRef = useRef<HTMLDivElement | null>(null);
   const simcarLiveAnswerPanelRef = useRef<HTMLDivElement | null>(null);
   const simcarAgentLogEndRef = useRef<HTMLDivElement | null>(null);
+  const simcarAnalysisAbortRef = useRef<AbortController | null>(null);
   const [simcarAnalysisStartTime, setSimcarAnalysisStartTime] = useState<number | null>(null);
   const [simcarElapsed, setSimcarElapsed] = useState(0);
 
@@ -1169,6 +1172,7 @@ export default function Dashboard() {
   const [simcarAuasImages, setSimcarAuasImages] = useState<Array<{ url: string; caption: string }>>([]);
   const [simcarAuasMessages, setSimcarAuasMessages] = useState<SimcarAnalysisMessage[]>([]);
   const [simcarAuasAgentLog, setSimcarAuasAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
+  const simcarAuasAbortRef = useRef<AbortController | null>(null);
   const [simcarResultImagePanelsOpen, setSimcarResultImagePanelsOpen] = useState<{ acAvn: boolean; auas: boolean }>({
     acAvn: false,
     auas: false,
@@ -1392,6 +1396,12 @@ export default function Dashboard() {
   }, [simcarUnifiedVectorizedProgress, simcarVectorizedStatus?.stage]);
 
   const resetSimcarDraft = useCallback((nextMode: 'auto-clip' | 'vectorized-analysis' = 'auto-clip') => {
+    simcarClipAbortRef.current?.abort();
+    simcarAnalysisAbortRef.current?.abort();
+    simcarAuasAbortRef.current?.abort();
+    simcarClipAbortRef.current = null;
+    simcarAnalysisAbortRef.current = null;
+    simcarAuasAbortRef.current = null;
     setSimcarClipMode(nextMode);
     setSimcarClipFile(null);
     setSimcarClipProcessing(false);
@@ -1864,13 +1874,15 @@ export default function Dashboard() {
         const snap = await getDocs(qs);
         const list: Conversation[] = [];
         snap.forEach((docSnap) => {
-          const data = docSnap.data() as Conversation;
+          const data = docSnap.data() as any;
           list.push({
             id: docSnap.id,
             title: data.title || 'Nova conversa',
             updatedAt: data.updatedAt,
             lastMessagePreview: data.lastMessagePreview,
             lastAttachmentType: (data as any).lastAttachmentType,
+            kind: typeof data?.kind === 'string' ? data.kind : undefined,
+            simcarJobId: typeof data?.simcarJobId === 'string' ? data.simcarJobId : undefined,
           });
         });
 
@@ -1933,7 +1945,8 @@ export default function Dashboard() {
           await createConversation(collRef);
         } else {
           setConversations(list);
-          await loadConversation(collRef, list[0].id);
+          const preferred = list.find((item) => item.kind !== 'simcar_recorte') || list[0];
+          await loadConversation(collRef, preferred.id);
         }
       } catch (error) {
         console.error('Erro ao carregar perfil:', error);
@@ -3850,6 +3863,8 @@ export default function Dashboard() {
       }
 
       try {
+        const controller = new AbortController();
+        simcarAnalysisAbortRef.current = controller;
         const response = await apiFetch('/api/simcar/clip/analyze', {
           method: 'POST',
           body: JSON.stringify({
@@ -3859,6 +3874,7 @@ export default function Dashboard() {
             contextUrl: historyEntry?.contextUrl,
             outputZipUrl: historyEntry?.outputZipUrl,
           }),
+          signal: controller.signal,
         });
         if (!response.ok) {
           const payload = await readApiError(response);
@@ -4067,6 +4083,7 @@ export default function Dashboard() {
         }
         return { ...result, ok: false, error: message };
       } finally {
+        simcarAnalysisAbortRef.current = null;
         setSimcarAnalysisProcessing(false);
         setSimcarAnalysisProgress(null);
       }
@@ -4127,6 +4144,8 @@ export default function Dashboard() {
       setSimcarAuasMessages([]);
 
       try {
+        const controller = new AbortController();
+        simcarAuasAbortRef.current = controller;
         const response = await apiFetch('/api/simcar/clip/analyze-auas', {
           method: 'POST',
           body: JSON.stringify({
@@ -4136,6 +4155,7 @@ export default function Dashboard() {
             contextUrl: historyEntry?.contextUrl,
             outputZipUrl: historyEntry?.outputZipUrl,
           }),
+          signal: controller.signal,
         });
         if (!response.ok) {
           const payload = await readApiError(response);
@@ -4307,6 +4327,7 @@ export default function Dashboard() {
         }
         return { ...result, ok: false, error: message };
       } finally {
+        simcarAuasAbortRef.current = null;
         setSimcarAuasProcessing(false);
         setSimcarAuasProgress(null);
       }
@@ -5066,6 +5087,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
   const isSimcarConversation = useCallback(
     (conv: Conversation) => {
+      if (String(conv.kind || '').toLowerCase() === 'simcar_recorte') return true;
+      if (String(conv.simcarJobId || '').trim()) return true;
       if (simcarConversationIds.has(conv.id)) return true;
       const title = String(conv.title || '').toLowerCase();
       const preview = String(conv.lastMessagePreview || '').toLowerCase();
@@ -5566,6 +5589,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (simcarClipJobId === clip.jobId) {
+                        simcarClipAbortRef.current?.abort();
+                        simcarAnalysisAbortRef.current?.abort();
+                        simcarAuasAbortRef.current?.abort();
+                      }
                       // Delete from Cloudinary + remove from state
                       const imageUrls = (clip.analysisImages || []).map((img) => img.url);
                       const auasImageUrls = (clip.auasAnalysisImages || []).map((img) => img.url);
@@ -5582,6 +5610,27 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       }).catch(() => { });
                       if (simcarClipsRef) {
                         void deleteDoc(doc(simcarClipsRef, clip.jobId)).catch(() => undefined);
+                      }
+                      if (conversationsRef) {
+                        const linkedConversationIds = new Set<string>();
+                        if (clip.conversationId) linkedConversationIds.add(clip.conversationId);
+                        for (const conv of conversations) {
+                          if (String(conv.simcarJobId || '').trim() === String(clip.jobId)) {
+                            linkedConversationIds.add(conv.id);
+                          }
+                        }
+                        for (const convId of linkedConversationIds) {
+                          void deleteDoc(doc(conversationsRef.collection, convId)).catch(() => undefined);
+                        }
+                        if (linkedConversationIds.size > 0) {
+                          setConversations((prev) => prev.filter((c) => !linkedConversationIds.has(c.id)));
+                          if (activeConversationId && linkedConversationIds.has(activeConversationId)) {
+                            setActiveConversationId(null);
+                            setActiveConversationRef(null);
+                            setMessages([DEFAULT_ASSISTANT_MESSAGE]);
+                            messagesRef.current = [DEFAULT_ASSISTANT_MESSAGE];
+                          }
+                        }
                       }
                       setSimcarClipHistory((prev) => prev.filter((c) => c.id !== clip.id));
                       // Clear active clip if it was this one
