@@ -1273,6 +1273,40 @@ const GEMINI_IMAGE_SHARE = Number.isFinite(GEMINI_IMAGE_SHARE_RAW)
     : 1.0;
 const SIMCAR_REQUIRE_GEMINI = String(process.env.SIMCAR_REQUIRE_GEMINI || "true").toLowerCase() !== "false";
 
+/**
+ * Groq free-tier rate-limit tracker.
+ * When Groq returns 429, we record the timestamp and skip Groq for the
+ * remainder of the current analysis run, falling back to Gemini instead.
+ * Resets after GROQ_RATE_LIMIT_COOLDOWN_MS so future requests retry Groq.
+ */
+const GROQ_RATE_LIMIT_COOLDOWN_MS = 60_000; // 1 minute cooldown
+let groqRateLimitedAt = 0; // epoch ms when last rate-limited
+
+function isGroqRateLimited(): boolean {
+    if (groqRateLimitedAt === 0) return false;
+    if (Date.now() - groqRateLimitedAt > GROQ_RATE_LIMIT_COOLDOWN_MS) {
+        groqRateLimitedAt = 0; // cooldown expired, allow Groq again
+        return false;
+    }
+    return true;
+}
+
+function markGroqRateLimited(): void {
+    groqRateLimitedAt = Date.now();
+    console.warn(`[SIMCAR ANALYSIS] Groq rate-limited. Switching to Gemini for ~${GROQ_RATE_LIMIT_COOLDOWN_MS / 1000}s.`);
+}
+
+function isRateLimitError(status: number, body: string): boolean {
+    return status === 429 || body.includes("rate_limit_exceeded") || body.includes("rate limit");
+}
+
+class GroqRateLimitError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "GroqRateLimitError";
+    }
+}
+
 export function getSimcarGeminiRuntimeConfig() {
     return {
         hasGeminiApiKey: Boolean(process.env.GEMINI_API_KEY),
@@ -1627,7 +1661,7 @@ function splitImagesByProviderWeight(images: AiImage[]): { groqImages: AiImage[]
     const groqImages: AiImage[] = [];
     const geminiImages: AiImage[] = [];
 
-    // When share is 1.0, send ALL images to Gemini (Gemini-first approach).
+    // When share is 1.0, send ALL images to Gemini (legacy split config).
     if (GEMINI_IMAGE_SHARE >= 1.0) {
         return { groqImages: [], geminiImages: images.slice() };
     }
@@ -1712,7 +1746,7 @@ async function continueTruncatedAnalysisText(
             { role: "assistant" as const, content: trimForContinuation(currentText) || currentText },
             { role: "user" as const, content: CONTINUATION_INSTRUCTION },
         ];
-        const continuation = await callTextFollowUpGeminiFirst(continuationMessages, `continuation-${providerLabel}`);
+        const continuation = await callTextFollowUpGroqFirst(continuationMessages, `continuation-${providerLabel}`);
         const merged = mergeContinuationText(currentText, continuation).trim();
         console.log(
             `[SIMCAR ANALYSIS] ${providerLabel} continuation merged (chars=${merged.length})`,
@@ -1974,6 +2008,11 @@ async function callVisionAnalysis(
                     const text = await response.text();
                     lastError = `${model}: ${response.status} - ${text.slice(0, 300)}`;
                     console.warn(`[SIMCAR ANALYSIS] Model ${model} failed:`, lastError);
+                    // Detect Groq rate limit — mark and propagate immediately
+                    if (isRateLimitError(response.status, text)) {
+                        markGroqRateLimited();
+                        throw new GroqRateLimitError(`Groq rate-limited: ${lastError}`);
+                    }
                     // If payload too large (413/400), skip to reduced set immediately
                     if ((response.status === 413 || response.status === 400) && attempt === 0 && imageSets.length > 1) {
                         console.warn(`[SIMCAR ANALYSIS] Payload too large, switching to reduced image set`);
@@ -1998,13 +2037,14 @@ async function callVisionAnalysis(
                 }
                 lastError = `${model}: empty response`;
             } catch (err: any) {
+                if (err instanceof GroqRateLimitError) throw err; // propagate rate limit
                 const isTimeout = err.name === "AbortError";
                 lastError = `${model}: ${isTimeout ? "timeout (120s)" : err.message}`;
                 console.warn(`[SIMCAR ANALYSIS] Model ${model} ${isTimeout ? "timed out" : "exception"}:`, lastError);
             }
         }
     }
-    throw new Error(`Todos os modelos falharam. Último erro: ${lastError}`);
+    throw new Error(`Todos os modelos Groq falharam. Último erro: ${lastError}`);
 }
 
 function buildDualModelMergePrompt(
@@ -2166,99 +2206,74 @@ async function analyzeWithGroqAndGemini(
         throw new Error("Nenhuma API key configurada (GEMINI_API_KEY / GROQ_API_KEY).");
     }
 
-    // -- Gemini-first approach: always prioritize Gemini for image analysis --
+    // -- Groq-first approach: always try Groq first (free tier), only fall back to Gemini --
+    // This avoids wasting Groq tokens by sending ALL images to a single provider.
 
-    if (!hasGemini) {
-        console.warn("[SIMCAR ANALYSIS] GEMINI_API_KEY ausente; usando apenas Groq como fallback.");
-        return callVisionAnalysis(images, prompt);
-    }
+    const groqAvailable = hasGroq && !isGroqRateLimited();
 
-    const { groqImages, geminiImages } = splitImagesByProviderWeight(images);
-    // Gemini always gets at least all images; Groq only if share < 1.0
-    const geminiBatch = geminiImages.length > 0 ? geminiImages : images;
-    const useGroqToo = hasGroq && groqImages.length > 0;
+    if (groqAvailable) {
+        console.log(
+            `[SIMCAR ANALYSIS] ${contextLabel}: Groq-first — sending all ${images.length} images to Groq`,
+        );
 
-    console.log(
-        `[SIMCAR ANALYSIS] ${contextLabel}: Gemini-first — Gemini=${geminiBatch.length}, Groq=${useGroqToo ? groqImages.length : 0}, total=${images.length}, gemini_share=${GEMINI_IMAGE_SHARE}`,
-    );
-
-    // Primary: always call Gemini first with all (or most) images
-    let geminiText = "";
-    let geminiErr = "";
-    try {
-        geminiText = await callGeminiVisionAnalysis(geminiBatch, prompt);
-    } catch (err: any) {
-        geminiErr = String(err?.message || err);
-        console.warn(`[SIMCAR ANALYSIS] Gemini primary failed for ${contextLabel}: ${geminiErr}`);
-    }
-
-    // If Gemini succeeded and Groq has no images, return Gemini directly
-    if (geminiText && !useGroqToo) {
-        console.log(`[SIMCAR ANALYSIS] ${contextLabel}: Gemini-only analysis OK`);
-        return geminiText;
-    }
-
-    // If Gemini succeeded and Groq also has images, run Groq for complementary analysis
-    let groqText = "";
-    if (useGroqToo) {
         try {
-            groqText = await callVisionAnalysis(groqImages, prompt);
+            return await callVisionAnalysis(images, prompt);
         } catch (err: any) {
-            console.warn(`[SIMCAR ANALYSIS] Groq complementary failed for ${contextLabel}: ${err?.message || err}`);
-        }
-    }
-
-    const geminiOk = Boolean(geminiText);
-    const groqOk = Boolean(groqText);
-    console.log(
-        `[SIMCAR ANALYSIS] ${contextLabel}: provider_status gemini=${geminiOk ? "ok" : "fail"} groq=${groqOk ? "ok" : "fail"}`,
-    );
-
-    // Both failed — try Groq as full fallback with all images
-    if (!geminiText && !groqText) {
-        if (hasGroq) {
-            console.warn(`[SIMCAR ANALYSIS] ${contextLabel}: Gemini failed, trying Groq full-fallback with all images`);
-            try {
-                return await callVisionAnalysis(images, prompt);
-            } catch (fallbackErr: any) {
-                throw new Error(
-                    `Gemini e Groq falharam para ${contextLabel}. Gemini=${geminiErr} | Groq=${fallbackErr?.message || fallbackErr}`,
-                );
-            }
-        }
-        throw new Error(`Gemini falhou para ${contextLabel}. Erro: ${geminiErr}`);
-    }
-
-    // Only Gemini succeeded
-    if (geminiText && !groqText) return geminiText;
-
-    // Only Groq succeeded (Gemini failed, but Groq worked as fallback)
-    if (!geminiText && groqText) return groqText;
-
-    // Both succeeded — merge analyses
-    try {
-        const mergePrompt = buildDualModelMergePrompt(contextLabel, groqText, geminiText);
-        try {
-            return await callGeminiTextSynthesis(
-                [{ role: "user", content: mergePrompt }],
-                `merge ${contextLabel}`,
+            const isRateLimit = err instanceof GroqRateLimitError;
+            const errMsg = String(err?.message || err);
+            console.warn(
+                `[SIMCAR ANALYSIS] Groq primary failed for ${contextLabel}${isRateLimit ? " (RATE LIMITED)" : ""}: ${errMsg}`,
             );
-        } catch (gemErr: any) {
-            console.warn(`[SIMCAR ANALYSIS] Gemini merge synthesis failed for ${contextLabel}, fallback Groq: ${gemErr?.message || gemErr}`);
-            return await callTextFollowUp([{ role: "user", content: mergePrompt }]);
+
+            // If Groq failed but NOT rate-limited and no Gemini, throw
+            if (!hasGemini) {
+                throw new Error(`Groq falhou para ${contextLabel} e GEMINI_API_KEY ausente. Erro: ${errMsg}`);
+            }
+
+            // Fall through to Gemini fallback
+            console.log(
+                `[SIMCAR ANALYSIS] ${contextLabel}: Groq failed${isRateLimit ? " (rate limit)" : ""}, falling back to Gemini`,
+            );
         }
-    } catch (err: any) {
-        console.warn(`[SIMCAR ANALYSIS] Merge Groq+Gemini failed for ${contextLabel}: ${err.message}`);
-        return [
-            `## ${contextLabel}`,
-            "",
-            "### Análise Gemini (primária)",
-            geminiText,
-            "",
-            "### Análise Groq (complementar)",
-            groqText,
-        ].join("\n");
+    } else if (groqRateLimitedAt > 0) {
+        console.log(
+            `[SIMCAR ANALYSIS] ${contextLabel}: Groq rate-limited, skipping directly to Gemini`,
+        );
     }
+
+    // -- Gemini fallback: Groq failed or is rate-limited --
+    if (hasGemini) {
+        try {
+            return await callGeminiVisionAnalysis(images, prompt);
+        } catch (gemErr: any) {
+            const gemErrMsg = String(gemErr?.message || gemErr);
+            console.warn(`[SIMCAR ANALYSIS] Gemini fallback also failed for ${contextLabel}: ${gemErrMsg}`);
+
+            // Last resort: if Groq was rate-limited but cooldown may have passed, retry Groq
+            if (hasGroq && !groqAvailable && !isGroqRateLimited()) {
+                console.log(`[SIMCAR ANALYSIS] ${contextLabel}: Groq cooldown expired, retrying Groq as last resort`);
+                try {
+                    return await callVisionAnalysis(images, prompt);
+                } catch (retryErr: any) {
+                    throw new Error(
+                        `Groq e Gemini falharam para ${contextLabel}. Groq=${retryErr?.message || retryErr} | Gemini=${gemErrMsg}`,
+                    );
+                }
+            }
+
+            throw new Error(`Gemini falhou para ${contextLabel}. Erro: ${gemErrMsg}`);
+        }
+    }
+
+    // Only Groq available (no Gemini key) and Groq is rate-limited
+    if (!hasGemini && hasGroq) {
+        throw new Error(
+            `Groq rate-limited e GEMINI_API_KEY ausente para ${contextLabel}. ` +
+            `Aguarde ~${Math.ceil(GROQ_RATE_LIMIT_COOLDOWN_MS / 1000)}s e tente novamente.`,
+        );
+    }
+
+    throw new Error(`Nenhum provedor disponível para ${contextLabel}.`);
 }
 
 /** Call Groq with text-only follow-up message. Multi-model fallback. */
@@ -2335,6 +2350,10 @@ async function callGroqTextOnce(
         });
         if (!response.ok) {
             const text = await response.text();
+            if (isRateLimitError(response.status, text)) {
+                markGroqRateLimited();
+                throw new GroqRateLimitError(`Groq rate-limited: ${model}: ${response.status} - ${text.slice(0, 240)}`);
+            }
             throw new Error(`${model}: ${response.status} - ${text.slice(0, 240)}`);
         }
         const data = await response.json() as any;
@@ -2350,20 +2369,40 @@ async function callGroqTextOnce(
     }
 }
 
-/** Gemini-first text call: tries Gemini synthesis, falls back to Groq text models. */
-async function callTextFollowUpGeminiFirst(
+/** Groq-first text call: tries Groq text models, falls back to Gemini synthesis if rate-limited. */
+async function callTextFollowUpGroqFirst(
     messages: Array<{ role: string; content: any }>,
     contextLabel = "text-followup",
 ): Promise<string> {
+    const hasGroq = Boolean(process.env.GROQ_API_KEY);
     const hasGemini = Boolean(process.env.GEMINI_API_KEY);
+    const groqAvailable = hasGroq && !isGroqRateLimited();
+
+    if (groqAvailable) {
+        try {
+            return await callTextFollowUp(messages);
+        } catch (err: any) {
+            const isRateLimit = err instanceof GroqRateLimitError;
+            console.warn(`[SIMCAR ANALYSIS] Groq text failed for ${contextLabel}${isRateLimit ? " (RATE LIMITED)" : ""}: ${err?.message || err}`);
+            if (!hasGemini) throw err;
+            // Fall through to Gemini
+        }
+    }
+
     if (hasGemini) {
         try {
             return await callGeminiTextSynthesis(messages, contextLabel);
         } catch (gemErr: any) {
-            console.warn(`[SIMCAR ANALYSIS] Gemini text first-attempt failed for ${contextLabel}, fallback Groq: ${gemErr?.message || gemErr}`);
+            console.warn(`[SIMCAR ANALYSIS] Gemini text fallback failed for ${contextLabel}: ${gemErr?.message || gemErr}`);
+            // Last resort: if Groq cooldown expired, retry
+            if (hasGroq && !groqAvailable && !isGroqRateLimited()) {
+                return callTextFollowUp(messages);
+            }
+            throw gemErr;
         }
     }
-    return callTextFollowUp(messages);
+
+    return callTextFollowUp(messages); // Groq-only path (no Gemini key)
 }
 
 async function callTextFollowUp(
@@ -2416,6 +2455,11 @@ async function callTextFollowUp(
                         );
                         break;
                     } catch (err: any) {
+                        if (err instanceof GroqRateLimitError) {
+                            // Rate-limited during continuation — return what we have so far
+                            console.warn(`[SIMCAR ANALYSIS] Groq rate-limited during continuation, returning partial text`);
+                            return mergedContent.trim();
+                        }
                         const detail = err?.name === "AbortError" ? "timeout (60s)" : (err?.message || String(err));
                         lastError = `${candidate}: ${detail}`;
                         console.warn(`[SIMCAR ANALYSIS] Continuation failed (${candidate}): ${detail}`);
@@ -2430,12 +2474,13 @@ async function callTextFollowUp(
 
             return mergedContent.trim();
         } catch (err: any) {
+            if (err instanceof GroqRateLimitError) throw err; // propagate rate limit
             const isTimeout = err.name === "AbortError";
             lastError = `${model}: ${isTimeout ? "timeout (60s)" : err.message}`;
             console.warn(`[SIMCAR ANALYSIS] Text model ${model} failed: ${lastError}`);
         }
     }
-    throw new Error(`Falha nos modelos de texto. Último erro: ${lastError}`);
+    throw new Error(`Falha nos modelos de texto Groq. Último erro: ${lastError}`);
 }
 
 async function streamTextFollowUp(
@@ -3253,7 +3298,7 @@ async function processAnalysis(
             const progressPct = 65 + Math.round((satIdx / validKeys.length) * 20);
             sendSSE(res, {
                 type: "progress", step: "analyzing", percent: progressPct,
-                message: `IA (Groq + Gemini) analisando ${sat.label} (${satIdx + 1}/${validKeys.length})...`,
+                message: `IA analisando ${sat.label} (${satIdx + 1}/${validKeys.length})...`,
             });
 
             try {
@@ -3309,15 +3354,10 @@ async function processAnalysis(
             sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando análise temporal comparativa..." });
             try {
                 const synthesisPrompt = buildSynthesisPrompt(areaHa, layerSummaries, perSatelliteResults);
-                try {
-                    analysisText = await callGeminiTextSynthesis(
-                        [{ role: "user", content: synthesisPrompt }],
-                        "sintese temporal final",
-                    );
-                } catch (gemErr: any) {
-                    console.warn(`[SIMCAR ANALYSIS] Gemini temporal synthesis failed, fallback Groq: ${gemErr?.message || gemErr}`);
-                    analysisText = await callTextFollowUp([{ role: "user", content: synthesisPrompt }]);
-                }
+                analysisText = await callTextFollowUpGroqFirst(
+                    [{ role: "user", content: synthesisPrompt }],
+                    "sintese temporal final",
+                );
                 const split = splitThinkProgress(analysisText);
                 if (split.thinkingText) {
                     sendSSE(res, {
@@ -3339,7 +3379,7 @@ async function processAnalysis(
         }
     } else {
         // ── SINGLE SATELLITE: direct analysis (original behavior) ──
-        sendSSE(res, { type: "progress", step: "analyzing", percent: 65, message: "IA (Groq + Gemini) analisando imagens..." });
+        sendSSE(res, { type: "progress", step: "analyzing", percent: 65, message: "IA analisando imagens..." });
         try {
             const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers);
             const singleContext = validKeys
@@ -3562,7 +3602,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 return;
             }
 
-            const reply = await callTextFollowUpGeminiFirst(messages, "chat");
+            const reply = await callTextFollowUpGroqFirst(messages, "chat");
             res.json({ content: reply });
         } catch (err: any) {
             console.error("[SIMCAR ANALYSIS CHAT] Error:", err);
