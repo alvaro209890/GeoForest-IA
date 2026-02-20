@@ -30,6 +30,7 @@ import {
   reprojectPolygon,
   reprojectBbox,
 } from "./geo-utils";
+import { isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -877,6 +878,13 @@ async function startServer() {
       const pricing = await getBillingPricingSnapshot();
       res.json(pricing);
     } catch (error: any) {
+      if (isFirebaseConfigError(error)) {
+        res.status(500).json({
+          error: "Firebase Admin não configurado no backend.",
+          code: "FIREBASE_CONFIG_ERROR",
+        });
+        return;
+      }
       console.error("Erro no /api/billing/pricing:", error);
       res.status(500).json({ error: error?.message || "Erro ao carregar pricing." });
     }
@@ -892,6 +900,13 @@ async function startServer() {
       const payload = await getBillingMe(uid);
       res.json(payload);
     } catch (error: any) {
+      if (isFirebaseConfigError(error)) {
+        res.status(500).json({
+          error: "Firebase Admin não configurado no backend.",
+          code: "FIREBASE_CONFIG_ERROR",
+        });
+        return;
+      }
       console.error("Erro no /api/billing/me:", error);
       res.status(500).json({ error: error?.message || "Erro ao carregar carteira." });
     }
@@ -918,6 +933,13 @@ async function startServer() {
         res.status(error.statusCode).json({ error: error.message, code: error.code });
         return;
       }
+      if (isFirebaseConfigError(error)) {
+        res.status(500).json({
+          error: "Firebase Admin não configurado no backend.",
+          code: "FIREBASE_CONFIG_ERROR",
+        });
+        return;
+      }
       console.error("Erro no /api/billing/topups/manual:", error);
       res.status(500).json({ error: error?.message || "Erro ao adicionar créditos." });
     }
@@ -934,6 +956,13 @@ async function startServer() {
       const entries = await getBillingLedger(uid, limit);
       res.json({ entries });
     } catch (error: any) {
+      if (isFirebaseConfigError(error)) {
+        res.status(500).json({
+          error: "Firebase Admin não configurado no backend.",
+          code: "FIREBASE_CONFIG_ERROR",
+        });
+        return;
+      }
       console.error("Erro no /api/billing/ledger:", error);
       res.status(500).json({ error: error?.message || "Erro ao carregar extrato." });
     }

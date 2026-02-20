@@ -1,5 +1,5 @@
-Ôªøimport type { NextFunction, Request, Response } from "express";
-import { adminAuth } from "./firebase-admin";
+import type { NextFunction, Request, Response } from "express";
+import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 
 export function extractBearerToken(req: Request): string | null {
   const header = String(req.headers.authorization || "").trim();
@@ -13,24 +13,23 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   try {
     const token = extractBearerToken(req);
     if (!token) {
-      res.status(401).json({ error: "Token de autentica√ß√£o obrigat√≥rio.", code: "UNAUTHENTICATED" });
+      res.status(401).json({ error: "Token de autenticaÁ„o obrigatÛrio.", code: "UNAUTHENTICATED" });
       return;
     }
     const decoded = await adminAuth.verifyIdToken(token);
     req.authUid = decoded.uid;
     next();
   } catch (error) {
-    const message = String((error as any)?.message || error || "");
-    if (/Unable to detect a Project Id/i.test(message)) {
-      console.error("[AUTH] Firebase Admin sem projectId. Configure FIREBASE_PROJECT_ID no backend.", error);
+    if (isFirebaseConfigError(error)) {
+      console.error("[AUTH] Firebase Admin sem credenciais v·lidas no backend.", error);
       res.status(500).json({
-        error: "Configura√ß√£o de autentica√ß√£o do servidor incompleta.",
+        error: "ConfiguraÁ„o de autenticaÁ„o do servidor incompleta.",
         code: "AUTH_CONFIG_ERROR",
       });
       return;
     }
-    console.error("[AUTH] Token inv√°lido:", error);
-    res.status(401).json({ error: "Token inv√°lido ou expirado.", code: "UNAUTHENTICATED" });
+    console.error("[AUTH] Token inv·lido:", error);
+    res.status(401).json({ error: "Token inv·lido ou expirado.", code: "UNAUTHENTICATED" });
   }
 }
 
