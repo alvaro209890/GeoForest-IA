@@ -1642,6 +1642,9 @@ const SIMCAR_SYNTHESIS_MAX_CHARS_PER_SAT = Number(process.env.SIMCAR_SYNTHESIS_M
 const SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL = normalizeGeminiModelName(
     process.env.SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL || "gemini-2.5-pro",
 );
+const SIMCAR_FINAL_UNIFIED_TEXT_MODEL = normalizeGeminiModelName(
+    process.env.SIMCAR_FINAL_UNIFIED_TEXT_MODEL || "gemini-3-pro",
+);
 const SIMCAR_SYNTHESIS_TEXT_MODELS = (() => {
     const explicit = buildGeminiModelChain(process.env.SIMCAR_SYNTHESIS_TEXT_MODELS, []);
     const seen = new Set<string>();
@@ -1657,6 +1660,21 @@ const SIMCAR_SYNTHESIS_TEXT_MODELS = (() => {
     for (const model of explicit) push(model);
     push(SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL);
     for (const model of GEMINI_TEXT_SYNTHESIS_MODELS) push(model);
+    return ordered;
+})();
+const SIMCAR_FINAL_UNIFIED_TEXT_MODELS = (() => {
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    const push = (raw: string) => {
+        const model = normalizeGeminiModelName(raw);
+        if (!model) return;
+        const key = model.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        ordered.push(model);
+    };
+    push(SIMCAR_FINAL_UNIFIED_TEXT_MODEL);
+    for (const model of SIMCAR_SYNTHESIS_TEXT_MODELS) push(model);
     return ordered;
 })();
 const FORCE_AC_AVN_UNIFIED_ANALYSIS = true;
@@ -1768,6 +1786,8 @@ export function getSimcarGeminiRuntimeConfig() {
         geminiVisionModels: GEMINI_VISION_MODELS,
         geminiTextSynthesisModels: GEMINI_TEXT_SYNTHESIS_MODELS,
         synthesisPrimaryTextModel: SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL,
+        finalUnifiedTextModel: SIMCAR_FINAL_UNIFIED_TEXT_MODEL,
+        finalUnifiedTextModels: SIMCAR_FINAL_UNIFIED_TEXT_MODELS,
         geminiImageShare: GEMINI_IMAGE_SHARE,
     };
 }
@@ -3057,19 +3077,26 @@ async function callTextFollowUpGroqFirst(
 async function callBestTextSynthesis(
     messages: Array<{ role: string; content: any }>,
     contextLabel = "text-synthesis",
+    options?: { modelChain?: string[]; maxOutputTokens?: number },
 ): Promise<string> {
     const hasGemini = Boolean(process.env.GEMINI_API_KEY);
     const hasGroq = Boolean(process.env.GROQ_API_KEY);
+    const modelChain = Array.isArray(options?.modelChain) && options.modelChain.length > 0
+        ? options.modelChain
+        : SIMCAR_SYNTHESIS_TEXT_MODELS;
+    const maxOutputTokens = Number.isFinite(options?.maxOutputTokens)
+        ? Number(options?.maxOutputTokens)
+        : 8192;
     let geminiError = "";
 
     if (hasGemini) {
         try {
             console.log(
-                `[SIMCAR ANALYSIS] ${contextLabel}: best-text synthesis via Gemini chain: ${SIMCAR_SYNTHESIS_TEXT_MODELS.join(", ")}`,
+                `[SIMCAR ANALYSIS] ${contextLabel}: best-text synthesis via Gemini chain: ${modelChain.join(", ")}`,
             );
             return await callGeminiTextSynthesis(messages, contextLabel, {
-                modelChain: SIMCAR_SYNTHESIS_TEXT_MODELS,
-                maxOutputTokens: 8192,
+                modelChain,
+                maxOutputTokens,
             });
         } catch (err: any) {
             geminiError = err?.message || String(err);
@@ -4657,6 +4684,89 @@ function buildAuasFinalSynthesisPrompt(
     return parts.join("\n");
 }
 
+function stripRoboticVerdictLines(text: string): string {
+    const cleaned = String(text || "")
+        .split("\n")
+        .filter((line) => {
+            const trimmed = line.trim();
+            if (!trimmed) return true;
+            if (/^[-*•]?\s*STATUS_FINAL\s*=/i.test(trimmed)) return false;
+            if (/^[-*•]?\s*ANO_PROVAVEL_INICIO_DESMATE\s*=/i.test(trimmed)) return false;
+            return true;
+        })
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    return cleaned;
+}
+
+function buildIntegratedAcAvnAuasPrompt(
+    previousAcAvnAnalysis: string,
+    auasSynthesisText: string,
+    options?: {
+        acAvnMeta?: any;
+        crossCheck?: AuasAvnCrossCheck | null;
+        firstDeforestationYear?: number | null;
+    },
+): string {
+    const acText = toSynthesisExcerpt(previousAcAvnAnalysis, 2600);
+    const auasText = toSynthesisExcerpt(auasSynthesisText, 2600);
+    const parts: string[] = [
+        "Você é a revisora final de um laudo técnico ambiental.",
+        "Unifique os resultados de AC/AVN e AUAS em um único parecer claro, natural e objetivo.",
+        "Não use linguagem robótica, não repita blocos longos e não copie os textos integralmente.",
+        "",
+        "## Base AC/AVN",
+        acText,
+        "",
+        "## Base AUAS",
+        auasText,
+        "",
+    ];
+
+    if (options?.acAvnMeta) {
+        parts.push(
+            "Metadados AC/AVN (apoio):",
+            clampTextMiddle(JSON.stringify(options.acAvnMeta), 900),
+            "",
+        );
+    }
+    if (options?.crossCheck) {
+        const cc = options.crossCheck;
+        parts.push(
+            "Cruzamento geométrico AUAS x AVN:",
+            `- AUAS total: ${cc.auasAreaHa.toFixed(2)} ha`,
+            `- AVN total: ${cc.avnAreaHa.toFixed(2)} ha`,
+            `- Interseção AUAS∩AVN: ${cc.overlapAreaHa.toFixed(2)} ha`,
+            "",
+        );
+    }
+    if (Number.isFinite(options?.firstDeforestationYear as number)) {
+        parts.push(
+            `Ano provável inicial de supressão já identificado: ${Number(options?.firstDeforestationYear)}.`,
+            "",
+        );
+    }
+
+    parts.push(
+        "Formato obrigatório:",
+        "## Resumo Geral",
+        "## Pontos Críticos (AC/AVN e AUAS)",
+        "## Veredito Integrado",
+        "## Próximas Ações",
+        "",
+        "Regras obrigatórias:",
+        "- Escrever em português técnico claro, em frases naturais.",
+        "- Não usar linhas no formato STATUS_FINAL = ...",
+        "- Não usar linhas no formato ANO_PROVAVEL_INICIO_DESMATE = ...",
+        "- Quando citar ano provável de desmate, escrever em frase corrida.",
+        "- Limite de tamanho: 260 a 420 palavras.",
+        "- Sem tabelas e sem bloco <think>.",
+    );
+
+    return parts.join("\n");
+}
+
 /** Main AUAS analysis pipeline (called from the SSE endpoint). */
 async function processAuasAnalysis(
     res: Response,
@@ -4812,7 +4922,7 @@ async function processAuasAnalysis(
     // Step 5: Final synthesis (combines AUAS + previous AC/AVN analysis)
     sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando laudo integrado de AUAS..." });
 
-    let analysisText: string;
+    let auasSynthesisText: string;
     const truncatedPreviousAnalysis = clampTextMiddle(previousAnalysis || "", 4200);
     const crossCheck = computeAuasAvnCrossCheck(job);
     const resolvedAcAvnMeta = resolveAuasAcAvnMeta(previousAnalysis, acAvnMeta);
@@ -4828,18 +4938,18 @@ async function processAuasAnalysis(
                 cloudWarnings,
             },
         );
-        analysisText = await callBestTextSynthesis(
+        auasSynthesisText = await callBestTextSynthesis(
             [{ role: "user", content: synthesisPrompt }],
             "sintese AUAS final",
         );
-        const split = splitThinkProgress(analysisText);
+        const split = splitThinkProgress(auasSynthesisText);
         if (split.thinkingText) {
             sendSSE(res, { type: "model_thinking", source: "SÃ­ntese AUAS", thinkingText: split.thinkingText });
         }
-        console.log(`[AUAS ANALYSIS] Final synthesis complete (${analysisText.length} chars)`);
+        console.log(`[AUAS ANALYSIS] Final synthesis complete (${auasSynthesisText.length} chars)`);
     } catch (err: any) {
         console.error("[AUAS ANALYSIS] Synthesis failed, concatenating:", err.message);
-        analysisText = perSatResults.map((r) => [
+        auasSynthesisText = perSatResults.map((r) => [
             `## AUAS: ${r.satelliteLabel} (${r.year})`,
             "",
             r.analysis,
@@ -4851,7 +4961,7 @@ async function processAuasAnalysis(
         year: item.year,
         verdict: extractAuasYearVerdict(item.analysis),
     }));
-    let firstDeforestationYear = extractFirstDeforestationYearFromText(analysisText);
+    let firstDeforestationYear = extractFirstDeforestationYearFromText(auasSynthesisText);
     if (!firstDeforestationYear) {
         const inferred = yearVerdicts
             .filter((item) => item.verdict === "DESMATAMENTO_RECENTE")
@@ -4859,12 +4969,61 @@ async function processAuasAnalysis(
             .sort((a, b) => a - b);
         firstDeforestationYear = inferred.length > 0 ? inferred[0] : null;
     }
+
+    let analysisText = auasSynthesisText;
+    if (truncatedPreviousAnalysis.trim()) {
+        sendSSE(res, {
+            type: "progress",
+            step: "analyzing",
+            percent: 94,
+            message: "IA unificando conclusoes de AC/AVN e AUAS em resumo final...",
+        });
+        try {
+            const unifiedPrompt = buildIntegratedAcAvnAuasPrompt(
+                truncatedPreviousAnalysis,
+                auasSynthesisText,
+                {
+                    acAvnMeta: resolvedAcAvnMeta,
+                    crossCheck,
+                    firstDeforestationYear,
+                },
+            );
+            const unified = await callBestTextSynthesis(
+                [{ role: "user", content: unifiedPrompt }],
+                "sintese final integrada AC_AVN_AUAS",
+                {
+                    modelChain: SIMCAR_FINAL_UNIFIED_TEXT_MODELS,
+                    maxOutputTokens: 4096,
+                },
+            );
+            const splitUnified = splitThinkProgress(unified);
+            if (splitUnified.thinkingText) {
+                sendSSE(res, {
+                    type: "model_thinking",
+                    source: "Sintese integrada final",
+                    thinkingText: splitUnified.thinkingText,
+                });
+            }
+            analysisText = stripRoboticVerdictLines(splitUnified.answerText || unified);
+            if (!analysisText.trim()) {
+                analysisText = stripRoboticVerdictLines(auasSynthesisText);
+            }
+            console.log(`[AUAS ANALYSIS] Integrated synthesis complete (${analysisText.length} chars)`);
+        } catch (err: any) {
+            console.warn(`[AUAS ANALYSIS] Integrated synthesis fallback to AUAS text: ${err?.message || err}`);
+            analysisText = stripRoboticVerdictLines(auasSynthesisText);
+        }
+    } else {
+        analysisText = stripRoboticVerdictLines(auasSynthesisText);
+    }
+
     const auasMeta = {
         yearVerdicts,
         firstDeforestationYear,
         auasAvnCrossCheck: crossCheck,
         acAvnContextSource:
             resolvedAcAvnMeta?.source === "derived_from_previous_analysis" ? "derived_from_previous_analysis" : "provided",
+        integratedSummaryModelChain: SIMCAR_FINAL_UNIFIED_TEXT_MODELS,
         cloudWarnings,
         satellitesUsed: usedSatelliteKeys,
         satellitesMissing: missingSatelliteKeys,
@@ -5549,6 +5708,7 @@ export function registerSimcarClipRoutes(app: Express) {
             ...GEMINI_VISION_MODELS,
             ...GROQ_TEXT_MODELS,
             ...SIMCAR_SYNTHESIS_TEXT_MODELS,
+            ...SIMCAR_FINAL_UNIFIED_TEXT_MODELS,
         ]),
     );
 
