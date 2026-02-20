@@ -990,9 +990,6 @@ export default function Dashboard() {
   // ─── SIMCAR Satellite Selection ───
   const [simcarSelectedSatellites, setSimcarSelectedSatellites] = useState<Record<string, boolean>>({
     spot_2008: true,
-    landsat5_2007: false,
-    landsat5_2008: false,
-    landsat5_2009: false,
   });
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
   const [mapRectSelection, setMapRectSelection] = useState<{
@@ -4865,26 +4862,59 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         {/* Satellite Selection */}
                         <div>
                           <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Selecione as imagens de satélite</h4>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            {[
-                              { key: 'spot_2008', label: 'SPOT 2008', color: 'emerald' },
-                              { key: 'landsat5_2007', label: 'Landsat 5 (2007)', color: 'blue' },
-                              { key: 'landsat5_2008', label: 'Landsat 5 (2008)', color: 'cyan' },
-                              { key: 'landsat5_2009', label: 'Landsat 5 (2009)', color: 'teal' },
-                            ].map((sat) => (
-                              <button
-                                key={sat.key}
-                                onClick={() => setSimcarSelectedSatellites((prev) => ({ ...prev, [sat.key]: !prev[sat.key] }))}
-                                className={`p-2.5 rounded-lg border text-xs font-medium transition-all ${simcarSelectedSatellites[sat.key]
-                                  ? `border-${sat.color}-500/50 bg-${sat.color}-500/15 text-${sat.color}-300`
-                                  : 'border-white/10 bg-white/5 text-slate-500 hover:text-slate-300 hover:bg-white/10'
-                                  }`}
-                              >
-                                {simcarSelectedSatellites[sat.key] ? '☑' : '☐'} {sat.label}
-                              </button>
-                            ))}
-                          </div>
-                          <p className="mt-2 text-[10px] text-slate-500">Para linha do tempo completa, selecione 3 anos diferentes (ex: 2007, 2008 e 2009).</p>
+                          {(() => {
+                            const sensorGroups = [
+                              { sensor: 'SPOT', color: 'emerald', desc: '2.5m', items: [{ key: 'spot_2008', year: 2008 }] },
+                              { sensor: 'Landsat 5', color: 'blue', desc: '30m · 1984–2011', items: [1984,1985,1986,1987,1988,1989,1990,1991,1992,1993,1994,1995,1996,1997,1998,1999,2000,2003,2004,2005,2006,2007,2008,2009,2010,2011].map((y) => ({ key: `landsat5_${y}`, year: y })) },
+                              { sensor: 'Landsat 8', color: 'cyan', desc: '30m · 2013–2018', items: [2013,2014,2015,2016,2017,2018].map((y) => ({ key: `landsat8_${y}`, year: y })) },
+                              { sensor: 'Sentinel-2', color: 'purple', desc: '10m · 2016–2024', items: [2016,2017,2018,2019,2020,2021,2022,2023,2024].map((y) => ({ key: `sentinel2_${y}`, year: y })) },
+                            ];
+                            const selectedCount = Object.values(simcarSelectedSatellites).filter(Boolean).length;
+                            return (
+                              <div className="space-y-2">
+                                {sensorGroups.map((group) => (
+                                  <div key={group.sensor} className="rounded-lg border border-white/8 bg-white/[0.02] overflow-hidden">
+                                    <div className="px-3 py-1.5 flex items-center gap-2 border-b border-white/5">
+                                      <Satellite size={11} className={`text-${group.color}-400`} />
+                                      <span className="text-[10px] font-semibold text-slate-300">{group.sensor}</span>
+                                      <span className="text-[9px] text-slate-600">{group.desc}</span>
+                                    </div>
+                                    <div className="p-2 flex flex-wrap gap-1">
+                                      {group.items.map((sat) => {
+                                        const selected = !!simcarSelectedSatellites[sat.key];
+                                        return (
+                                          <button
+                                            key={sat.key}
+                                            onClick={() => setSimcarSelectedSatellites((prev) => ({ ...prev, [sat.key]: !prev[sat.key] }))}
+                                            className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all border ${selected
+                                              ? `border-${group.color}-500/50 bg-${group.color}-500/20 text-${group.color}-300`
+                                              : 'border-transparent bg-white/5 text-slate-500 hover:text-slate-300 hover:bg-white/10'
+                                            }`}
+                                          >
+                                            {sat.year}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                ))}
+                                <div className="flex items-center justify-between">
+                                  <p className="text-[10px] text-slate-500">
+                                    {selectedCount === 0 ? 'Selecione pelo menos 1 imagem.' : `${selectedCount} imagem${selectedCount > 1 ? 's' : ''} selecionada${selectedCount > 1 ? 's' : ''}.`}
+                                    {selectedCount > 3 && <span className="text-amber-400/80 ml-1">Muitas imagens pode demorar mais.</span>}
+                                  </p>
+                                  {selectedCount > 0 && (
+                                    <button
+                                      onClick={() => setSimcarSelectedSatellites({})}
+                                      className="text-[9px] text-slate-600 hover:text-slate-400 underline"
+                                    >
+                                      Limpar
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         {/* Two Buttons: Analyze with AI + View Images */}
@@ -5295,8 +5325,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           const aiText = simcarAnalysisMessages.find((m) => m.role === 'ai')?.text ?? '';
                           const { ac, avn, confidence, acDetail, avnDetail } = extractAnalysisSummary(aiText);
                           if (!aiText) return null;
-                          const satYearMap: Record<string, string> = { spot_2008: 'SPOT 2008', landsat5_2007: 'Landsat 2007', landsat5_2008: 'Landsat 2008', landsat5_2009: 'Landsat 2009' };
-                          const selectedSatLabels = Object.entries(simcarSelectedSatellites).filter(([, v]) => v).map(([k]) => satYearMap[k] || k);
+                          const satKeyToLabel = (k: string) => {
+                            if (k === 'spot_2008') return 'SPOT 2008';
+                            const m = k.match(/^(landsat5|landsat8|sentinel2)_(\d+)$/);
+                            if (!m) return k;
+                            const sensors: Record<string, string> = { landsat5: 'L5', landsat8: 'L8', sentinel2: 'S2' };
+                            return `${sensors[m[1]] || m[1]} ${m[2]}`;
+                          };
+                          const selectedSatLabels = Object.entries(simcarSelectedSatellites).filter(([, v]) => v).map(([k]) => satKeyToLabel(k));
                           const verdictConfig = {
                             concorda: { label: 'Concorda', icon: <CheckCircle2 size={12} />, bg: 'bg-emerald-500/12', border: 'border-emerald-500/25', text: 'text-emerald-400', glow: 'shadow-emerald-500/10' },
                             discorda: { label: 'Discorda', icon: <X size={12} />, bg: 'bg-red-500/12', border: 'border-red-500/25', text: 'text-red-400', glow: 'shadow-red-500/10' },
