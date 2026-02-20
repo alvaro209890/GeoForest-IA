@@ -918,6 +918,39 @@ const normalizeBackendText = (rawText: string): string => {
   return normalized || String(rawText || '');
 };
 
+const removeRoboticAuasLines = (rawText: string): string => {
+  const text = String(rawText || '');
+  return text
+    .split('\n')
+    .filter((line) => {
+      const l = line.trim();
+      if (!l) return true;
+      if (/^[-*•]?\s*STATUS_FINAL\s*=/i.test(l)) return false;
+      if (/^[-*•]?\s*ANO_PROVAVEL_INICIO_DESMATE\s*=/i.test(l)) return false;
+      return true;
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+};
+
+const buildIntegratedVectorizedReport = (acAvnText: string, auasText: string): string => {
+  const acText = String(acAvnText || '').trim();
+  const auasClean = removeRoboticAuasLines(auasText);
+  return [
+    '## Analise Integrada SIMCAR',
+    '',
+    '### Validacao AC e AVN',
+    acText || 'Sem dados consolidados de AC/AVN.',
+    '',
+    '### Validacao AUAS',
+    auasClean || 'Sem dados consolidados de AUAS.',
+  ]
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+};
+
 const parseKmlGeometryOnClient = (kmlText: string): ParsedGeometry => {
   const matches = [...kmlText.matchAll(/<coordinates>([\s\S]*?)<\/coordinates>/gi)];
   if (!matches.length) {
@@ -1271,6 +1304,61 @@ export default function Dashboard() {
     [simcarClipLayers]
   );
   const selectedSimcarClipLayerCount = selectedSimcarClipLayerNames.length;
+  const simcarUnifiedVectorizedProgress = useMemo(() => {
+    if (!simcarVectorizedStatus) return null;
+    const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+    const acPercent = clamp(simcarAnalysisProgress?.percent ?? 0);
+    const auasPercent = clamp(simcarAuasProgress?.percent ?? 0);
+
+    if (simcarVectorizedStatus.stage === 'importing') {
+      return {
+        percent: 8,
+        phaseLabel: '1/3 Importando',
+        message: simcarVectorizedStatus.message,
+      };
+    }
+
+    if (simcarVectorizedStatus.stage === 'acavn') {
+      return {
+        percent: clamp(12 + acPercent * 0.43),
+        phaseLabel: '2/3 AC/AVN',
+        message: simcarAnalysisProgress?.message || simcarVectorizedStatus.message,
+      };
+    }
+
+    if (simcarVectorizedStatus.stage === 'auas') {
+      return {
+        percent: clamp(55 + auasPercent * 0.44),
+        phaseLabel: '3/3 AUAS',
+        message: simcarAuasProgress?.message || simcarVectorizedStatus.message,
+      };
+    }
+
+    if (simcarVectorizedStatus.stage === 'done') {
+      return {
+        percent: 100,
+        phaseLabel: 'Concluído',
+        message: simcarVectorizedStatus.message,
+      };
+    }
+
+    const fallback = simcarAuasProcessing
+      ? clamp(55 + auasPercent * 0.44)
+      : simcarAnalysisProcessing
+        ? clamp(12 + acPercent * 0.43)
+        : 0;
+    return {
+      percent: fallback,
+      phaseLabel: 'Falha',
+      message: simcarVectorizedStatus.message,
+    };
+  }, [
+    simcarAnalysisProcessing,
+    simcarAnalysisProgress,
+    simcarAuasProcessing,
+    simcarAuasProgress,
+    simcarVectorizedStatus,
+  ]);
 
   const formatBrl = useCallback((value: number) => {
     return Number(value || 0).toLocaleString('pt-BR', {
@@ -4317,14 +4405,47 @@ export default function Dashboard() {
 
       setSimcarAnalysisImages([]);
       setSimcarAnalysisMessages([]);
-      const finalCombinedText = auasResult.aiMessage?.text || 'Analise completa concluida.';
-      const imageLinks = (auasResult.images || []).map((img) => `- ${img.url}`);
+      const finalCombinedText = String(auasResult.aiMessage?.text || '').trim()
+        || buildIntegratedVectorizedReport(
+          acAvnResult.aiMessage?.text || '',
+          auasResult.aiMessage?.text || ''
+        );
+      const mergedImages = [...(acAvnResult.images || []), ...(auasResult.images || [])]
+        .filter((img, idx, arr) => img?.url && arr.findIndex((x) => x.url === img.url) === idx);
+      const finalAiMessage: SimcarAnalysisMessage = {
+        role: 'ai',
+        text: finalCombinedText,
+        thinkingText: auasResult.aiMessage?.thinkingText,
+        images: mergedImages.map((img) => img.url),
+      };
+      setSimcarAuasImages(mergedImages);
+      setSimcarAuasMessages([finalAiMessage]);
+      setSimcarClipHistory((prev) =>
+        prev.map((c) =>
+          c.jobId === jobId
+            ? {
+              ...c,
+              analysisMeta: acAvnResult.analysisMeta,
+              auasAnalysisImages: mergedImages,
+              auasAnalysisMessages: [finalAiMessage],
+              auasMeta: auasResult.auasMeta,
+            }
+            : c
+        )
+      );
+      void patchPersistedSimcarClip(jobId, {
+        analysisMeta: acAvnResult.analysisMeta,
+        auasAnalysisImages: mergedImages,
+        auasAnalysisMessages: [finalAiMessage],
+        auasMeta: auasResult.auasMeta,
+      });
+      const imageLinks = mergedImages.map((img) => `- ${img.url}`);
       await appendSimcarEntriesToConversation(
         {
           ...newClip,
           analysisMeta: acAvnResult.analysisMeta,
-          auasAnalysisImages: auasResult.images || [],
-          auasAnalysisMessages: auasResult.aiMessage ? [auasResult.aiMessage] : [],
+          auasAnalysisImages: mergedImages,
+          auasAnalysisMessages: [finalAiMessage],
           auasMeta: auasResult.auasMeta,
         },
         [
@@ -5850,7 +5971,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
                 )}
 
-                {simcarClipMode === 'vectorized-analysis' && simcarVectorizedStatus && (
+                {simcarClipMode === 'vectorized-analysis' && simcarVectorizedStatus && simcarUnifiedVectorizedProgress && (
                   <div
                     className={`mb-4 rounded-xl border p-3 ${
                       simcarVectorizedStatus.stage === 'error'
@@ -5860,17 +5981,30 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           : 'border-indigo-500/30 bg-indigo-500/10'
                     }`}
                   >
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
-                      Fluxo completo
-                    </p>
-                    <p className="mt-1 text-xs text-slate-200">
-                      {simcarVectorizedStatus.stage === 'importing' && '1/3 Importando'}
-                      {simcarVectorizedStatus.stage === 'acavn' && '2/3 AC/AVN'}
-                      {simcarVectorizedStatus.stage === 'auas' && '3/3 AUAS'}
-                      {simcarVectorizedStatus.stage === 'done' && 'Concluído'}
-                      {simcarVectorizedStatus.stage === 'error' && 'Falha'}
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
+                        Fluxo completo
+                      </p>
+                      <span className="text-xs font-semibold tabular-nums text-slate-200">
+                        {simcarUnifiedVectorizedProgress.percent}%
+                      </span>
+                    </div>
+                    <div className="mt-2 w-full bg-black/30 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          simcarVectorizedStatus.stage === 'error'
+                            ? 'bg-gradient-to-r from-red-500 to-rose-400'
+                            : simcarVectorizedStatus.stage === 'done'
+                              ? 'bg-gradient-to-r from-emerald-500 to-emerald-300'
+                              : 'bg-gradient-to-r from-indigo-500 to-cyan-400'
+                        }`}
+                        style={{ width: `${simcarUnifiedVectorizedProgress.percent}%` }}
+                      />
+                    </div>
+                    <p className="mt-2 text-xs text-slate-200">
+                      {simcarUnifiedVectorizedProgress.phaseLabel}
                       {' — '}
-                      {simcarVectorizedStatus.message}
+                      {simcarUnifiedVectorizedProgress.message}
                     </p>
                   </div>
                 )}
@@ -6307,7 +6441,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </section>
 
                     {/* Satellite Image Selection + Analysis Buttons */}
-                    {!simcarAnalysisProcessing && simcarAnalysisMessages.length === 0 && simcarAuasMessages.length === 0 && (
+                    {simcarClipMode === 'auto-clip' && !simcarAnalysisProcessing && simcarAnalysisMessages.length === 0 && simcarAuasMessages.length === 0 && (
                       <section className="bg-[#0e1216]/60 backdrop-blur-md border border-white/5 rounded-2xl p-5 space-y-4">
                         {/* ZIP Download Links */}
                         {(() => {
@@ -6395,7 +6529,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     )}
 
                     {/* ── Análise de AUAS Button (shown after AC/AVN analysis is done) ── */}
-                    {simcarAnalysisMessages.length > 0 && !simcarAuasProcessing && !simcarAuasMessages.length && (
+                    {simcarClipMode === 'auto-clip' && simcarAnalysisMessages.length > 0 && !simcarAuasProcessing && !simcarAuasMessages.length && (
                       <section className="px-4">
                         <button
                           onClick={async () => {
@@ -6422,7 +6556,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     )}
 
                     {/* ── AUAS Processing Progress ── */}
-                    {simcarAuasProcessing && simcarAuasProgress && (
+                    {simcarClipMode === 'auto-clip' && simcarAuasProcessing && simcarAuasProgress && (
                       <section className="mx-4 rounded-xl border border-white/10 bg-[#0c1018]/90 p-4">
                         <div className="flex items-center gap-2 mb-2">
                           <div className="p-1 rounded-md bg-white/10">
@@ -6438,7 +6572,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     )}
 
                     {/* ── Balão de Agente IA (durante a análise) ── */}
-                    {simcarAnalysisProcessing && (() => {
+                    {simcarClipMode === 'auto-clip' && simcarAnalysisProcessing && (() => {
                       const pct = simcarAnalysisProgress?.percent ?? 0;
                       const activeStep = simcarAgentLog.filter((s) => s.kind === 'step' && !s.done).at(-1);
                       const thinkingSteps = simcarAgentLog.filter((s) => s.kind === 'thinking');
