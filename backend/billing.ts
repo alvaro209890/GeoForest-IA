@@ -1,6 +1,6 @@
 ﻿import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
-import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
 
 export type BillingProvider = "groq" | "gemini";
@@ -281,6 +281,16 @@ function usageDailyCollection(uid: string) {
 
 function getDateId(now = new Date()): string {
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")}`;
+}
+
+function getRecentDateIds(days: number, now = new Date()): string[] {
+  const safeDays = Math.max(1, Math.floor(days || 1));
+  const ids: string[] = [];
+  for (let i = 0; i < safeDays; i++) {
+    const dt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i));
+    ids.push(getDateId(dt));
+  }
+  return ids;
 }
 
 function safeModelKey(model: string): string {
@@ -585,14 +595,20 @@ export async function getBillingMe(uid: string) {
   const todayUsageSnap = await usageDailyCollection(uid).doc(todayId).get();
   const todayUsage = todayUsageSnap.data() || {};
 
-  const recentUsageSnap = await usageDailyCollection(uid)
-    .orderBy(FieldPath.documentId(), "desc")
-    .limit(7)
-    .get();
+  // Avoid Firestore index requirements on orderBy(__name__) by reading
+  // deterministic daily docs directly (YYYY-MM-DD) for the last 7 UTC days.
+  const recentDateIds = getRecentDateIds(7);
+  const recentUsageDocs = await Promise.all(
+    recentDateIds.map(async (dateId) => {
+      const snap = await usageDailyCollection(uid).doc(dateId).get();
+      return snap.exists ? snap.data() || {} : null;
+    }),
+  );
   const modelAggregate = new Map<string, { provider: string; inputTokens: number; outputTokens: number; costBrl: number; requests: number }>();
 
-  for (const doc of recentUsageSnap.docs) {
-    const models = doc.data()?.models || {};
+  for (const usageData of recentUsageDocs) {
+    if (!usageData) continue;
+    const models = (usageData as any)?.models || {};
     for (const value of Object.values(models) as any[]) {
       const model = String(value?.model || "");
       if (!model) continue;
