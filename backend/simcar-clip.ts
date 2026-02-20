@@ -4314,11 +4314,14 @@ const AUAS_SATELLITE_KEYS: string[] = [
 
 /**
  * Generate composited satellite images for AUAS analysis.
- * For each satellite, generates 1 image: AUAS (white) + property (red) overlay.
+ * For each satellite:
+ * - with AUAS layer: generates 2 images (AUAS outline + contextual AC/AVN/AUAS overlay)
+ * - without AUAS layer: generates 1 property-context image for temporal inference mode.
  */
 async function generateAuasSatelliteImages(
     res: Response,
     job: CachedJob,
+    hasAuasLayer = true,
 ): Promise<{
     images: Array<{ dataUrl: string; caption: string }>;
     usedKeys: string[];
@@ -4403,11 +4406,38 @@ async function generateAuasSatelliteImages(
             // non-fatal
         }
 
-        // AUAS overlay: white fill + property outline
-        const auasSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
-            { name: "AUAS", stroke: "#FFFFFF", fill: "rgba(255, 255, 255, 0.30)", strokeWidth: 2.5 },
-        ]);
-        images.push({ dataUrl: await compositeOverlay(basePng, auasSvg), caption: `${sat.label} â€” AUAS` });
+        // AUAS overlay when available; otherwise analyze full property for potential non-vectorized AUAS
+        if (hasAuasLayer) {
+            // View 1: AUAS outline with very light fill to preserve texture for visual reading
+            const outlineSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+                { name: "AUAS", stroke: "#FFFFFF", fill: "rgba(255, 255, 255, 0.05)", strokeWidth: 3.0 },
+                { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.00)", strokeWidth: 1.4 },
+                { name: "AREA_CONSOLIDADA", stroke: "#A855F7", fill: "rgba(168, 85, 247, 0.00)", strokeWidth: 1.4 },
+            ]);
+            images.push({
+                dataUrl: await compositeOverlay(basePng, outlineSvg),
+                caption: `${sat.label} â€” AUAS contorno`,
+            });
+
+            // View 2: contextual overlays to improve discrimination between AC/AVN/AUAS
+            const contextSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+                { name: "AUAS", stroke: "#FFFFFF", fill: "rgba(255, 255, 255, 0.20)", strokeWidth: 2.2 },
+                { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.14)", strokeWidth: 1.3 },
+                { name: "AREA_CONSOLIDADA", stroke: "#A855F7", fill: "rgba(168, 85, 247, 0.12)", strokeWidth: 1.3 },
+            ]);
+            images.push({
+                dataUrl: await compositeOverlay(basePng, contextSvg),
+                caption: `${sat.label} â€” AUAS contexto`,
+            });
+        } else {
+            const propertySvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+                { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.20)", strokeWidth: 1.8 },
+            ]);
+            images.push({
+                dataUrl: await compositeOverlay(basePng, propertySvg),
+                caption: `${sat.label} â€” Propriedade (AUAS nao vetorizada)`,
+            });
+        }
         step++;
 
         sendSSE(res, {
@@ -4426,15 +4456,27 @@ function buildAuasSingleSatPrompt(
     layerSummaries: LayerSummary[],
     satelliteKey: string,
     cloudWarning?: { satellite: string; cloudScore: number },
+    options?: { hasAuasLayer?: boolean; baselineReferenceLabel?: string | null },
 ): string {
     const sat = SATELLITE_LAYERS[satelliteKey];
     const meta = getSatelliteMetadata(satelliteKey);
     const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
+    const hasAuasLayer = options?.hasAuasLayer !== false;
+    const baselineReferenceLabel = String(options?.baselineReferenceLabel || "").trim();
     const year = Number(sat?.year || 0);
     const isPreMarco = year <= 2008;
+    const baselineHint =
+        year > 2008
+            ? (baselineReferenceLabel
+                ? `Use a imagem de referencia de 2008 (${baselineReferenceLabel}) para comparar diretamente com ${sat.label}.`
+                : "Use 2008 como referencia temporal para comparar diretamente com a cena do ano avaliado.")
+            : "";
     return [
         "Você é analista técnica de AUAS para validação de CAR.",
-        `Avalie somente a área branca (AUAS) na imagem ${sat.label}.`,
+        hasAuasLayer
+            ? `Avalie somente a área branca (AUAS) na imagem ${sat.label}.`
+            : `Não há shape AUAS vetorizado no ZIP. Avalie a área da propriedade na imagem ${sat.label}, buscando indícios de supressão pós-2008 que caracterizem AUAS não vetorizada.`,
+        ...(baselineHint ? [baselineHint] : []),
         "",
         `Metadados do satélite: sensor=${meta.sensor}; resolução=${meta.spatialResolution}; revisita=${meta.revisitDays} dias.`,
         `Limitação operacional: ${meta.bestUseCase}.`,
@@ -4449,12 +4491,23 @@ function buildAuasSingleSatPrompt(
         buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
         "",
         `Referência legal: marco temporal em 22/07/2008. Esta cena é ${isPreMarco ? "pré-marco ou marco" : "pós-marco"}.`,
-        auasSummary ? `AUAS declarada: ${auasSummary.areaHa?.toFixed(2) ?? "0"} ha.` : "AUAS declarada sem quantitativo disponível.",
+        hasAuasLayer
+            ? (auasSummary ? `AUAS declarada: ${auasSummary.areaHa?.toFixed(2) ?? "0"} ha.` : "AUAS declarada sem quantitativo disponível.")
+            : "AUAS vetorizada: AUSENTE neste ZIP. Use 2008 como referência de cobertura e verifique conversão nos anos posteriores.",
+        ...(hasAuasLayer
+            ? [
+                "Considere como sinal principal somente mudanças DENTRO do shape AUAS.",
+                "Mudanças fora do shape AUAS não alteram o veredito da AUAS.",
+                "Evite falso positivo por solo exposto sazonal: confirme persistência temporal da mudança.",
+            ]
+            : [
+                "Sem shape AUAS, use a série temporal da propriedade para inferir possível AUAS não vetorizada.",
+            ]),
         "",
         "Responda em até 180 palavras, sem tabela, sem emoji e sem bloco <think>.",
         "Estrutura obrigatória:",
         "## Ano Avaliado",
-        "## Cobertura Dentro da AUAS",
+        hasAuasLayer ? "## Cobertura Dentro da AUAS" : "## Cobertura na Propriedade",
         "## Indícios de Supressão",
         "## Veredito do Ano",
         "",
@@ -4625,6 +4678,7 @@ function buildAuasFinalSynthesisPrompt(
         acAvnMeta?: any;
         crossCheck?: AuasAvnCrossCheck | null;
         cloudWarnings?: Array<{ satellite: string; cloudScore: number }>;
+        hasAuasLayer?: boolean;
     },
 ): string {
     const years = perSatelliteAnalyses.map((a) => a.year).sort();
@@ -4681,6 +4735,23 @@ function buildAuasFinalSynthesisPrompt(
             "",
         );
     }
+    if (options?.hasAuasLayer !== false) {
+        parts.push(
+            "AUAS vetorizada no ZIP: PRESENTE.",
+            "- Validar aderência entre limite do shape AUAS e padrão temporal observado nas imagens.",
+            "- Distinguir dois cenários: (1) passivo ambiental corretamente mapeado em AUAS; (2) divergência real de vetorização da AUAS.",
+            "- Só classificar inconsistência de vetorização quando houver incompatibilidade espacial/temporal clara dentro do shape AUAS.",
+            "",
+        );
+    }
+    if (options?.hasAuasLayer === false) {
+        parts.push(
+            "AUAS vetorizada no ZIP: AUSENTE.",
+            "- Avalie a série temporal na propriedade para identificar se há supressão pós-2008 que indique AUAS não vetorizada.",
+            "- Se houver indício consistente de supressão após 2008, declarar explicitamente: 'há AUAS não vetorizada'.",
+            "",
+        );
+    }
     if (options?.cloudWarnings && options.cloudWarnings.length > 0) {
         parts.push(
             "Avisos de nebulosidade/oclusão por satélite:",
@@ -4705,6 +4776,8 @@ function buildAuasFinalSynthesisPrompt(
         "- Se houver supressão confirmada após 22/07/2008 dentro da AUAS, tratar como PASSIVO AMBIENTAL identificado na AUAS (e não como erro automático de vetorização).",
         "- Nessa situação (supressão pós-2008 dentro da AUAS), evitar frases como 'invalida a declaração da AUAS'. Explicar que a AUAS está mapeando área de passivo e que exige regularização.",
         "- Use AUAS_INVALIDA somente quando houver inconsistência técnica de delimitação/cronologia da própria AUAS (ex.: AUAS em área sem evidência temporal compatível).",
+        "- Se AUAS vetorizada estiver ausente e houver evidência pós-2008, usar STATUS_FINAL = AUAS_PARCIAL e afirmar que há AUAS não vetorizada.",
+        "- Se AUAS vetorizada estiver ausente e não houver evidência pós-2008, informar explicitamente ausência de indício relevante de AUAS.",
         "- Se houver incerteza relevante por imagem/ano ausente ou qualidade da cena, declarar explicitamente INCONCLUSIVO no trecho afetado.",
         "- Em 'Não Conformidades Detectadas', citar intervalo de anos e localização aproximada quando houver supressão irregular.",
         "- Em 'Próximas Ações', listar no máximo 4 ações diretas e priorizadas.",
@@ -4749,6 +4822,32 @@ function normalizeAuasPassivoNarrative(text: string): string {
     return normalized.replace(/\n{3,}/g, "\n\n").trim();
 }
 
+function enforceAuasMissingVectorizationGuidance(
+    text: string,
+    hasAuasLayer: boolean,
+    yearVerdicts: Array<{ year: number; verdict: AuasYearVerdictLabel }>,
+    firstDeforestationYear: number | null,
+): string {
+    if (hasAuasLayer) return String(text || "");
+
+    const base = String(text || "").trim();
+    const hasPost2008Verdict = yearVerdicts.some(
+        (item) => item.year > 2008 && item.verdict === "DESMATAMENTO_RECENTE",
+    );
+    const hasPost2008Year = Number.isFinite(firstDeforestationYear as number) && Number(firstDeforestationYear) > 2008;
+    const hasPost2008Text = /(ap[oó]s\s*2008|p[oó]s-marco|desmat|supress[aã]o)/i.test(base) && /\b(2009|20[1-2]\d)\b/.test(base);
+    const hasEvidence = Boolean(hasPost2008Verdict || hasPost2008Year || hasPost2008Text);
+    const alreadyMentionsMissingVectorization = /(n[aã]o\s+vetorizad|aus[eê]ncia\s+de\s+auas\s+vetorizad|auas\s+vetorizada:\s+ausente)/i.test(base);
+
+    if (alreadyMentionsMissingVectorization) return base;
+
+    const mandatoryNote = hasEvidence
+        ? "Observação técnica obrigatória: o ZIP não possui shape AUAS vetorizado. A série temporal indica supressão após 2008 na propriedade, portanto há indício de AUAS não vetorizada (passivo ambiental a regularizar)."
+        : "Observação técnica obrigatória: o ZIP não possui shape AUAS vetorizado e, nesta análise, não houve indício consistente de supressão pós-2008 que confirme AUAS não vetorizada.";
+
+    return [base, "", mandatoryNote].filter(Boolean).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function buildIntegratedAcAvnAuasPrompt(
     previousAcAvnAnalysis: string,
     auasSynthesisText: string,
@@ -4756,6 +4855,7 @@ function buildIntegratedAcAvnAuasPrompt(
         acAvnMeta?: any;
         crossCheck?: AuasAvnCrossCheck | null;
         firstDeforestationYear?: number | null;
+        hasAuasLayer?: boolean;
     },
 ): string {
     const acText = toSynthesisExcerpt(previousAcAvnAnalysis, 2600);
@@ -4796,6 +4896,13 @@ function buildIntegratedAcAvnAuasPrompt(
             "",
         );
     }
+    if (options?.hasAuasLayer === false) {
+        parts.push(
+            "Contexto adicional: o ZIP não possui shape AUAS vetorizado.",
+            "Se houver evidência de supressão pós-2008, declarar que há AUAS não vetorizada (passivo ambiental).",
+            "",
+        );
+    }
 
     parts.push(
         "Formato obrigatório:",
@@ -4810,6 +4917,7 @@ function buildIntegratedAcAvnAuasPrompt(
         "- Não usar linhas no formato ANO_PROVAVEL_INICIO_DESMATE = ...",
         "- Quando citar ano provável de desmate, escrever em frase corrida.",
         "- Se AUAS indicar supressão pós-2008, descrever como passivo ambiental identificado na área AUAS (não como invalidação automática da AUAS).",
+        "- Quando AUAS vetorizada estiver ausente e houver supressão pós-2008, afirmar explicitamente que há AUAS não vetorizada.",
         "- Só usar linguagem de 'AUAS inválida' quando houver incoerência técnica de vetorização/delimitação, não apenas por existir passivo pós-marco.",
         "- Limite de tamanho: 260 a 420 palavras.",
         "- Sem tabelas e sem bloco <think>.",
@@ -4846,14 +4954,17 @@ async function processAuasAnalysis(
     const { layerSummaries, areaHa: propAreaHa } = job;
     const areaHa = propAreaHa ?? 0;
 
-    // Check if AUAS exists in clipped geometries
+    // AUAS can be absent in imported ZIP; in this case infer AUAS from temporal change after 2008.
     const auasGeoms = job.clippedGeometries?.get("AUAS");
-    if (!auasGeoms || auasGeoms.length === 0) {
+    const hasAuasLayer = Boolean(auasGeoms && auasGeoms.length > 0);
+    if (!hasAuasLayer) {
+        console.warn(`[AUAS ANALYSIS] AUAS layer absent for job ${jobId}; running temporal inference mode.`);
         sendSSE(res, {
-            type: "error",
-            message: "Camada AUAS nÃ£o encontrada no recorte. Verifique se o imÃ³vel possui AUAS declarada no CAR.",
+            type: "progress",
+            step: "generating_images",
+            percent: 4,
+            message: "AUAS nao vetorizada no ZIP. Analise temporal sera executada na propriedade para detectar supressao pos-2008.",
         });
-        return false;
     }
 
     // Step 1: Generate satellite images with AUAS overlay
@@ -4865,7 +4976,7 @@ async function processAuasAnalysis(
     let missingSatelliteKeys: string[] = [];
     let cloudWarnings: Array<{ satellite: string; cloudScore: number }> = [];
     try {
-        const generated = await generateAuasSatelliteImages(res, job);
+        const generated = await generateAuasSatelliteImages(res, job, hasAuasLayer);
         imagesToAnalyze = generated.images;
         usedSatelliteKeys = generated.usedKeys;
         missingSatelliteKeys = generated.missingKeys;
@@ -4926,6 +5037,21 @@ async function processAuasAnalysis(
         }
     }
 
+    const spot2008Label = SATELLITE_LAYERS.spot_2008?.label;
+    const landsat2008Label = SATELLITE_LAYERS.landsat5_2008?.label;
+    const pickBaselineImage = (label?: string) => {
+        if (!label) return undefined;
+        return (
+            aiImages.find((img) => img.caption.startsWith(label) && /contexto/i.test(img.caption)) ||
+            aiImages.find((img) => img.caption.startsWith(label))
+        );
+    };
+    const spot2008ReferenceImage = pickBaselineImage(spot2008Label);
+    const landsat2008ReferenceImage = pickBaselineImage(landsat2008Label);
+    const baselineReferenceImage = spot2008ReferenceImage || landsat2008ReferenceImage;
+    const baselineReferenceLabel =
+        baselineReferenceImage?.caption || spot2008Label || landsat2008Label || null;
+
     // Step 4: Per-satellite AI analysis
     const perSatResults: Array<{ satelliteLabel: string; year: number; analysis: string }> = [];
     const validKeys = AUAS_SATELLITE_KEYS.filter((k) => SATELLITE_LAYERS[k]);
@@ -4942,6 +5068,11 @@ async function processAuasAnalysis(
 
         const satImages = aiImages.filter((img) => img.caption.startsWith(sat.label));
         if (satImages.length === 0) { satIdx++; continue; }
+        let imagesForModel = satImages;
+        if (sat.year > 2008 && baselineReferenceImage) {
+            const hasBaselineAlready = satImages.some((img) => img.caption === baselineReferenceImage.caption);
+            imagesForModel = hasBaselineAlready ? satImages : [baselineReferenceImage, ...satImages];
+        }
 
         const progressPct = 65 + Math.round((satIdx / validKeys.length) * 20);
         sendSSE(res, {
@@ -4950,8 +5081,18 @@ async function processAuasAnalysis(
         });
 
         try {
-            const prompt = buildAuasSingleSatPrompt(areaHa, layerSummaries, key, cloudBySatellite.get(sat.label));
-            const result = await analyzeWithGroqAndGemini(satImages, prompt, `AUAS ${sat.label} (${sat.year})`);
+            const prompt = buildAuasSingleSatPrompt(
+                areaHa,
+                layerSummaries,
+                key,
+                cloudBySatellite.get(sat.label),
+                { hasAuasLayer, baselineReferenceLabel },
+            );
+            const result = await analyzeWithGroqAndGemini(
+                imagesForModel,
+                prompt,
+                `${hasAuasLayer ? "AUAS" : "AUAS inferida"} ${sat.label} (${sat.year})`,
+            );
             const split = splitThinkProgress(result);
             if (split.thinkingText) {
                 sendSSE(res, { type: "model_thinking", source: `AUAS ${sat.label}`, thinkingText: split.thinkingText });
@@ -4993,6 +5134,7 @@ async function processAuasAnalysis(
                 acAvnMeta: resolvedAcAvnMeta,
                 crossCheck,
                 cloudWarnings,
+                hasAuasLayer,
             },
         );
         auasSynthesisText = await callBestTextSynthesis(
@@ -5044,6 +5186,7 @@ async function processAuasAnalysis(
                     acAvnMeta: resolvedAcAvnMeta,
                     crossCheck,
                     firstDeforestationYear,
+                    hasAuasLayer,
                 },
             );
             const unified = await callBestTextSynthesis(
@@ -5075,6 +5218,10 @@ async function processAuasAnalysis(
         analysisText = stripRoboticVerdictLines(auasSynthesisText);
     }
 
+    const inferredAuasNotVectorized = !hasAuasLayer && (
+        (Number.isFinite(firstDeforestationYear as number) && Number(firstDeforestationYear) > 2008) ||
+        yearVerdicts.some((item) => item.year > 2008 && item.verdict === "DESMATAMENTO_RECENTE")
+    );
     const auasMeta = {
         yearVerdicts,
         firstDeforestationYear,
@@ -5082,11 +5229,19 @@ async function processAuasAnalysis(
         acAvnContextSource:
             resolvedAcAvnMeta?.source === "derived_from_previous_analysis" ? "derived_from_previous_analysis" : "provided",
         integratedSummaryModelChain: SIMCAR_FINAL_UNIFIED_TEXT_MODELS,
+        hasAuasVectorizedLayer: hasAuasLayer,
+        inferredAuasNotVectorized,
         cloudWarnings,
         satellitesUsed: usedSatelliteKeys,
         satellitesMissing: missingSatelliteKeys,
     };
     analysisText = normalizeAuasPassivoNarrative(analysisText);
+    analysisText = enforceAuasMissingVectorizationGuidance(
+        analysisText,
+        hasAuasLayer,
+        yearVerdicts,
+        firstDeforestationYear,
+    );
 
     // Step 6: Complete
     const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
