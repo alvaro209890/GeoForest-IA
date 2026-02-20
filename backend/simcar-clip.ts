@@ -1219,6 +1219,17 @@ const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]
     )),
 };
 
+const AC_AVN_FIXED_KEYS = [
+    "landsat5_2006",
+    "landsat5_2007",
+    "spot_2008",
+    "landsat5_2008",
+] as const;
+
+function getFixedAcAvnSatelliteKeys(): string[] {
+    return AC_AVN_FIXED_KEYS.filter((k) => Boolean(SATELLITE_LAYERS[k]));
+}
+
 function getOrderedSatelliteKeys(selectedLayers: string[] = []): string[] {
     const unique = Array.from(new Set(selectedLayers.filter((k) => SATELLITE_LAYERS[k])));
     if (unique.length === 0) return ["spot_2008"];
@@ -1321,6 +1332,7 @@ const SIMCAR_SYNTHESIS_TEXT_MODELS = (() => {
     for (const model of GEMINI_TEXT_SYNTHESIS_MODELS) push(model);
     return ordered;
 })();
+const FORCE_AC_AVN_UNIFIED_ANALYSIS = true;
 
 /**
  * Groq rate-limit tracker PER MODEL.
@@ -3175,104 +3187,149 @@ function buildAnalysisPrompt(
     selectedLayers?: string[],
 ): string {
     const validLayers = getOrderedSatelliteKeys(selectedLayers || []);
-    const isMultiYear = validLayers.length > 1;
-    const layerLabels = validLayers.map((k) => SATELLITE_LAYERS[k]?.label || k);
-    const layerYears = validLayers.map((k) => SATELLITE_LAYERS[k]?.year || 0).sort();
-
     const satDescriptions = validLayers.map((k, i) => {
         const sat = SATELLITE_LAYERS[k];
         const imgBase = i * 3 + 1;
-        const sensor = k.startsWith("sentinel2") ? "Sentinel-2 MSI (10m de resoluÃ§Ã£o espacial)"
-            : k.startsWith("landsat8") ? "Landsat 8 OLI (30m de resoluÃ§Ã£o espacial)"
-                : k.startsWith("landsat5") ? "Landsat 5 TM (30m de resoluÃ§Ã£o espacial)"
-                    : "SPOT (2.5m de resoluÃ§Ã£o espacial)";
         return [
-            `#### ${sat.label} â€” ${sensor}`,
-            `- Imagem ${imgBase}: VisÃ£o Geral â€” base ${sat.label} + contorno vermelho (propriedade) + AC (roxo) + AVN (amarelo)`,
-            `- Imagem ${imgBase + 1}: Ãrea Consolidada â€” base ${sat.label} + contorno vermelho + somente AC (roxo)`,
-            `- Imagem ${imgBase + 2}: AVN â€” base ${sat.label} + contorno vermelho + somente AVN (amarelo)`,
+            `### ${sat.label}`,
+            `- Imagem ${imgBase}: visão geral (propriedade + AC + AVN)`,
+            `- Imagem ${imgBase + 1}: foco AC (roxo)`,
+            `- Imagem ${imgBase + 2}: foco AVN (amarelo)`,
         ].join("\n");
     }).join("\n\n");
 
-    const parts: string[] = [
-        "VocÃª Ã© a **GeoForest IA**, especialista em sensoriamento remoto e anÃ¡lise ambiental para imÃ³veis rurais em Mato Grosso.",
-        "Realize uma anÃ¡lise tÃ©cnica comparando os dados vetoriais do CAR com as imagens de satÃ©lite.",
-        "",
-        "---",
+    return [
+        "Você é a GeoForest IA, perita em interpretação de satélite para validação de CAR.",
+        "A análise deve considerar somente áreas dentro do polígono da propriedade.",
         "",
         buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
         "",
-        "---",
+        "## Regras Técnicas Obrigatórias",
+        "- AC_FORA_SHAPE = SIM somente quando houver EVIDÊNCIA CLARA de uso antrópico dentro do imóvel e fora do polígono AC.",
+        "- Evidência clara: SPOT 2008 sozinho já confirma, ou ao menos 2 imagens Landsat concordando.",
+        "- AVN_FORA_SHAPE = IGNORAR sempre. Não reportar vegetação fora do shape AVN.",
+        "- AVN_DENTRO_SHAPE_ANTROPIZADO = SIM apenas quando houver área sem mata DENTRO do shape AVN.",
+        "- Se nuvem, sombra, baixa resolução ou ausência de imagem impedir certeza, use INCONCLUSIVO.",
         "",
-        "## Imagens Fornecidas",
-        "",
-        `Foram geradas imagens de **${layerLabels.join(", ")}**${isMultiYear ? ` (perÃ­odo ${layerYears[0]}â€“${layerYears[layerYears.length - 1]})` : ""}.`,
-        "",
-        "**Legenda:**",
-        "- ðŸŸ¥ **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
-        "- ðŸŸª **Roxo semi-transparente**: ÃREA CONSOLIDADA (AC)",
-        "- ðŸŸ¨ **Amarelo semi-transparente**: VEGETAÃ‡ÃƒO NATIVA (AVN)",
-        "",
+        "## Imagens Disponíveis",
         satDescriptions,
         "",
-        "---",
+        "## Formato Obrigatório da Resposta",
+        "Use EXATAMENTE estes títulos:",
+        "## Veredito Objetivo",
+        "## Evidências por Imagem",
+        "## Conclusão Técnica",
+        "## Recomendação Operacional",
         "",
-        "## InstruÃ§Ãµes de AnÃ¡lise",
+        "No bloco 'Veredito Objetivo', incluir obrigatoriamente:",
+        "- AC_FORA_SHAPE = SIM | NAO | INCONCLUSIVO",
+        "- AVN_FORA_SHAPE = IGNORAR",
+        "- AVN_DENTRO_SHAPE_ANTROPIZADO = SIM | NAO | INCONCLUSIVO",
+        "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA",
         "",
-        "### 3.1 AnÃ¡lise da Ãrea Consolidada (AC)",
-        "- Verifique se AC (roxo) corresponde a uso antrÃ³pico (pastagem, agricultura, solo exposto, construÃ§Ãµes).",
-        "- Identifique trechos de AC com textura de vegetaÃ§Ã£o nativa.",
-        "- Descreva localizaÃ§Ã£o de trechos discordantes.",
-        "",
-        "### 3.2 AnÃ¡lise da VegetaÃ§Ã£o Nativa (AVN)",
-        "- Verifique se AVN (amarelo) corresponde a vegetaÃ§Ã£o nativa.",
-        "- Identifique trechos de AVN antropizados.",
-        "- Avalie integridade e conectividade.",
-        "",
-    ];
+        "Não use tabela. Não inclua cadeia de raciocínio interna nem bloco <think>.",
+    ].join("\n");
+}
 
-    if (isMultiYear) {
-        parts.push(
-            "### 3.3 AnÃ¡lise Temporal (Multi-perÃ­odo)",
-            `Imagens de **${layerLabels.join(" e ")}**. Parte MAIS IMPORTANTE.`,
+function normalizeAcAvnAnalysisOutput(
+    rawText: string,
+    options: { satellitesUsed: string[]; satellitesMissing: string[] },
+): string {
+    const visible = splitThinkProgress(String(rawText || "")).answerText || String(rawText || "");
+    let text = visible.trim();
+    const used = options.satellitesUsed.length > 0 ? options.satellitesUsed.join(", ") : "nenhum";
+    const missing = options.satellitesMissing.length > 0 ? options.satellitesMissing.join(", ") : "nenhum";
+
+    if (!text) {
+        return [
+            "## Veredito Objetivo",
+            "- AC_FORA_SHAPE = INCONCLUSIVO",
+            "- AVN_FORA_SHAPE = IGNORAR",
+            "- AVN_DENTRO_SHAPE_ANTROPIZADO = INCONCLUSIVO",
+            "- CONFIANCA_GERAL = BAIXA",
             "",
-            "#### a) MudanÃ§as na cobertura vegetal",
-            "- SupressÃ£o (mata â†’ solo/pastagem) ou regeneraÃ§Ã£o entre os anos.",
-            "- Estime a Ã¡rea das mudanÃ§as.",
+            "## Evidências por Imagem",
+            `- Imagens utilizadas: ${used}.`,
+            `- Imagens indisponíveis: ${missing}.`,
+            "- Texto da IA ausente; impossível concluir com segurança.",
             "",
-            "#### b) ConsistÃªncia CAR vs. histÃ³rico",
-            "- AC existia na imagem mais antiga?",
-            "- AC mostra vegetaÃ§Ã£o nativa na imagem mais antiga (desmatamento posterior)?",
-            "- AVN jÃ¡ antropizada na imagem mais antiga?",
+            "## Conclusão Técnica",
+            "- Resultado inconclusivo por ausência de conteúdo analisável.",
             "",
-            "#### c) Art. 68 â€” Lei 12.651/2012 (marco: 22/07/2008)",
-            "- AC consolidada antes de julho/2008?",
-            "- ExpansÃ£o sobre vegetaÃ§Ã£o nativa apÃ³s 2008?",
-            "",
-            "#### d) DiferenÃ§as entre sensores",
-            "- Sentinel-2 10m vs Landsat 30m vs SPOT 2.5m â€” nÃ£o confundir resoluÃ§Ã£o com mudanÃ§a.",
-            "",
-        );
+            "## Recomendação Operacional",
+            "- Reprocessar o recorte e validar disponibilidade das imagens obrigatórias.",
+        ].join("\n");
     }
 
-    const n = isMultiYear ? 4 : 3;
-    parts.push(
-        `### 3.${n} ConcordÃ¢ncias e DiscordÃ¢ncias`,
-        "- **âœ… CONCORDA**: classificaÃ§Ã£o coincide com imagem.",
-        "- **âŒ DISCORDA**: classificaÃ§Ã£o nÃ£o condiz. Indique a classificaÃ§Ã£o correta.",
-        "",
-        `### 3.${n + 1} NÃ­vel de ConfianÃ§a: [ALTA], [MÃ‰DIA] ou [BAIXA]`,
-        "",
-        `### 3.${n + 2} RecomendaÃ§Ãµes ao Analista`,
-        "- AÃ§Ãµes prÃ¡ticas: vistoria, imagens complementares, retificaÃ§Ã£o do CAR.",
-        "- Artigos relevantes do CÃ³digo Florestal.",
-        "",
-        "---",
-        "Responda em **portuguÃªs**, use markdown com seÃ§Ãµes e sub-seÃ§Ãµes.",
-        "NÃ£o inclua cadeia de raciocÃ­nio interna nem bloco <think>; entregue sÃ³ a resposta final.",
-    );
+    const requiredSections = [
+        "## Veredito Objetivo",
+        "## Evidências por Imagem",
+        "## Conclusão Técnica",
+        "## Recomendação Operacional",
+    ];
+    for (const section of requiredSections) {
+        if (!text.toLowerCase().includes(section.toLowerCase())) {
+            if (section === "## Veredito Objetivo") {
+                text += [
+                    "",
+                    "## Veredito Objetivo",
+                    "- AC_FORA_SHAPE = INCONCLUSIVO",
+                    "- AVN_FORA_SHAPE = IGNORAR",
+                    "- AVN_DENTRO_SHAPE_ANTROPIZADO = INCONCLUSIVO",
+                    "- CONFIANCA_GERAL = BAIXA",
+                ].join("\n");
+                continue;
+            }
+            if (section === "## Evidências por Imagem") {
+                text += [
+                    "",
+                    "## Evidências por Imagem",
+                    `- Imagens utilizadas: ${used}.`,
+                    `- Imagens indisponíveis: ${missing}.`,
+                ].join("\n");
+                continue;
+            }
+            if (section === "## Conclusão Técnica") {
+                text += [
+                    "",
+                    "## Conclusão Técnica",
+                    "- Resultado complementado automaticamente por falta de seção obrigatória.",
+                ].join("\n");
+                continue;
+            }
+            if (section === "## Recomendação Operacional") {
+                text += [
+                    "",
+                    "## Recomendação Operacional",
+                    "- Revisar manualmente os pontos indicados e, se necessário, gerar novas cenas.",
+                ].join("\n");
+            }
+        }
+    }
 
-    return parts.join("\n");
+    const hasAc = /AC_FORA_SHAPE\s*=/i.test(text);
+    const hasAvnOut = /AVN_FORA_SHAPE\s*=/i.test(text);
+    const hasAvnIn = /AVN_DENTRO_SHAPE_ANTROPIZADO\s*=/i.test(text);
+    if (!hasAc || !hasAvnOut || !hasAvnIn) {
+        text += [
+            "",
+            "## Veredito Objetivo (Complemento Automático)",
+            `- AC_FORA_SHAPE = ${hasAc ? "MANTER O VEREDITO JÁ INFORMADO" : "INCONCLUSIVO"}`,
+            `- AVN_FORA_SHAPE = ${hasAvnOut ? "MANTER O VEREDITO JÁ INFORMADO" : "IGNORAR"}`,
+            `- AVN_DENTRO_SHAPE_ANTROPIZADO = ${hasAvnIn ? "MANTER O VEREDITO JÁ INFORMADO" : "INCONCLUSIVO"}`,
+        ].join("\n");
+    }
+
+    if (options.satellitesMissing.length > 0 && !/inconclusivo/i.test(text)) {
+        text += [
+            "",
+            "## Conclusão Técnica (Ajuste por Imagem Ausente)",
+            `- Imagens indisponíveis: ${missing}.`,
+            "- Se a ausência dessas imagens impactar a certeza do diagnóstico, trate os pontos afetados como INCONCLUSIVO.",
+        ].join("\n");
+    }
+
+    return text.trim();
 }
 
 function toSynthesisExcerpt(text: string, maxChars = SIMCAR_SYNTHESIS_MAX_CHARS_PER_SAT): string {
@@ -3462,106 +3519,30 @@ function buildAuasSingleSatPrompt(
     satelliteKey: string,
 ): string {
     const sat = SATELLITE_LAYERS[satelliteKey];
-    const sensorInfo: Record<string, { name: string; res: string; bandTips: string }> = {
-        sentinel2: {
-            name: "Sentinel-2 MSI",
-            res: "10m de resoluÃ§Ã£o espacial",
-            bandTips: "ResoluÃ§Ã£o alta (10m) permite identificar com clareza limites de desmatamento, bordas de vegetaÃ§Ã£o nativa remanescente, e padrÃµes de pasto/agricultura. Preste atenÃ§Ã£o a diferenÃ§as de textura e tonalidade entre vegetaÃ§Ã£o densa (escura e homogÃªnea) e uso antrÃ³pico (mais clara, padrÃµes geomÃ©tricos).",
-        },
-        landsat8: {
-            name: "Landsat 8 OLI",
-            res: "30m de resoluÃ§Ã£o espacial",
-            bandTips: "ResoluÃ§Ã£o de 30m â€” confiÃ¡vel para manchas de desmatamento maiores que ~1 ha. VegetaÃ§Ã£o nativa aparece como textura rugosa e verde-escura; Ã¡reas de pasto/recÃ©m-desmatadas aparecem mais homogÃªneas e claras. Solo exposto apresenta tons avermelhados ou amarelados.",
-        },
-        landsat5: {
-            name: "Landsat 5 TM",
-            res: "30m de resoluÃ§Ã£o espacial",
-            bandTips: "Sensor histÃ³rico fundamental â€” mesma resoluÃ§Ã£o do L8 (30m). Por ser imagem mais antiga, pode ter maior presenÃ§a de nuvens ou ruÃ­do atmosfÃ©rico. Foque em padrÃµes claros: verde-escuro homogÃªneo = mata nativa; padrÃµes geomÃ©tricos com tons mais claros = uso consolidado (pastagem, lavoura).",
-        },
-        spot: {
-            name: "SPOT",
-            res: "2.5m de resoluÃ§Ã£o espacial",
-            bandTips: "ResoluÃ§Ã£o MUITO ALTA (2.5m) â€” permite individualizar Ã¡rvores, cercas, estradas internas, corpos d'Ã¡gua pequenos. Esta Ã© a melhor imagem de referÃªncia para 2008 (ano do marco). Use-a como baseline detalhado: identifique com precisÃ£o quais parcelas da AUAS jÃ¡ estavam convertidas e quais mantinham vegetaÃ§Ã£o nativa.",
-        },
-    };
-    const sensorKey = satelliteKey.startsWith("sentinel2") ? "sentinel2"
-        : satelliteKey.startsWith("landsat8") ? "landsat8"
-            : satelliteKey.startsWith("landsat5") ? "landsat5" : "spot";
-    const sensor = sensorInfo[sensorKey];
-
     const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
-    const acSummary = layerSummaries.find((l) => l.name === "AC" || l.name === "Consolidada");
-    const avnSummary = layerSummaries.find((l) => l.name === "AVN" || /vegeta/i.test(l.name));
-
-    const isPreMarco = sat.year <= 2008;
-    const yearsAfterMarco = sat.year - 2008;
-
+    const year = Number(sat?.year || 0);
+    const isPreMarco = year <= 2008;
     return [
-        "VocÃª Ã© a **GeoForest IA**, perita em sensoriamento remoto e anÃ¡lise ambiental forense para imÃ³veis rurais em Mato Grosso.",
-        `Sua especialidade Ã© identificar mudanÃ§as de uso e cobertura do solo (LULC) usando imagens de satÃ©lite e correlacionar com as declaraÃ§Ãµes do CAR.`,
+        "Você é analista técnica de AUAS para validação de CAR.",
+        `Avalie somente a área branca (AUAS) na imagem ${sat.label}.`,
         "",
-        "---",
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
         "",
-        "## Contexto do ImÃ³vel",
+        `Referência legal: marco temporal em 22/07/2008. Esta cena é ${isPreMarco ? "pré-marco ou marco" : "pós-marco"}.`,
+        auasSummary ? `AUAS declarada: ${auasSummary.areaHa?.toFixed(2) ?? "0"} ha.` : "AUAS declarada sem quantitativo disponível.",
         "",
-        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
+        "Responda em até 180 palavras, sem tabela, sem emoji e sem bloco <think>.",
+        "Estrutura obrigatória:",
+        "## Ano Avaliado",
+        "## Cobertura Dentro da AUAS",
+        "## Indícios de Supressão",
+        "## Veredito do Ano",
         "",
-        "| Camada | InformaÃ§Ã£o |",
-        "| --- | --- |",
-        auasSummary ? `| **AUAS** (Uso Alternativo do Solo) | ${auasSummary.areaHa?.toFixed(2) ?? '0'} ha â€” ${auasSummary.features ?? 0} feiÃ§Ãµes |` : "",
-        acSummary ? `| **AC** (Ãrea Consolidada) | ${acSummary.areaHa?.toFixed(2) ?? '0'} ha â€” ${acSummary.features ?? 0} feiÃ§Ãµes |` : "",
-        avnSummary ? `| **AVN** (VegetaÃ§Ã£o Nativa) | ${avnSummary.areaHa?.toFixed(2) ?? '0'} ha â€” ${avnSummary.features ?? 0} feiÃ§Ãµes |` : "",
-        "",
-        "---",
-        "",
-        `## Imagem Analisada: ${sat.label} â€” ${sensor.name} (${sensor.res})`,
-        "",
-        `**Dicas de interpretaÃ§Ã£o para este sensor:** ${sensor.bandTips}`,
-        "",
-        "**Legenda visual dos polÃ­gonos na imagem:**",
-        "- ðŸŸ¥ **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP/AIR do CAR)",
-        "- â¬œ **Branco semi-transparente (preenchimento)**: **AUAS** â€” Ãrea de Uso Alternativo do Solo declarada no CAR",
-        "",
-        "---",
-        "",
-        "## Marco Legal de ReferÃªncia",
-        "",
-        "O **Art. 68 da Lei 12.651/2012** (CÃ³digo Florestal) estabelece que Ã¡reas rurais que jÃ¡ estavam consolidadas " +
-        "com atividades agrossilvipastoris atÃ© **22/07/2008** podem ser mantidas nessa condiÃ§Ã£o, desde que corretamente " +
-        "declaradas no CAR. A AUAS Ã© a camada do CAR que delimita essas Ã¡reas de uso alternativo.",
-        "",
-        `â±ï¸ **Ano desta imagem: ${sat.year}** â€” ` + (isPreMarco
-            ? `Esta imagem Ã© **${sat.year === 2008 ? 'DO' : 'ANTERIOR AO'}** marco temporal (22/07/2008). Serve como PROVA BASELINE do estado da terra antes/no marco.`
-            : `Esta imagem Ã© **${yearsAfterMarco} ano(s) APÃ“S** o marco temporal. Qualquer supressÃ£o de vegetaÃ§Ã£o nativa dentro da AUAS detectada NESTE ano indica irregularidade.`),
-        "",
-        "---",
-        "",
-        "## InstruÃ§Ãµes de AnÃ¡lise",
-        "",
-        "### 1. Estado da AUAS neste ano",
-        "Observe EXCLUSIVAMENTE a Ã¡rea demarcada em branco (AUAS) e descreva:",
-        "- **Cobertura predominante**: vegetaÃ§Ã£o nativa densa, vegetaÃ§Ã£o nativa rala/degradada, pasto, lavoura, solo exposto, Ã¡rea construÃ­da, espelho d'Ã¡gua, ou mista?",
-        "- **ProporÃ§Ã£o estimada**: qual % da AUAS estÃ¡ sob cada tipo de uso? (ex: 70% pasto, 20% vegetaÃ§Ã£o nativa, 10% solo exposto)",
-        "- **PadrÃµes geogrÃ¡ficos**: as Ã¡reas de uso antrÃ³pico estÃ£o concentradas em qual parte? (norte, sul, centro, bordas)",
-        "",
-        "### 2. Indicadores de Desmatamento",
-        "Procure evidÃªncias visuais de supressÃ£o recente:",
-        "- Solo exposto de formato geomÃ©trico (indicando corte raso)",
-        "- Bordas abruptas entre vegetaÃ§Ã£o nativa e Ã¡rea desmatada",
-        "- Queimadas (tons pretos/cinza com padrÃ£o de fogo)",
-        "- Estradas novas cortando vegetaÃ§Ã£o",
-        "- VegetaÃ§Ã£o secundÃ¡ria (capoeira) â€” indica desmatamento anterior com regeneraÃ§Ã£o parcial",
-        "",
-        "### 3. ConclusÃ£o Parcial para este ano",
-        "Use OBRIGATORIAMENTE um dos seguintes vereditos:",
-        "- **âœ… USO ANTRÃ“PICO CONSOLIDADO**: A AUAS mostra uso antrÃ³pico neste ano â€” coerente com a declaraÃ§Ã£o do CAR.",
-        "- **âŒ VEGETAÃ‡ÃƒO NATIVA PRESENTE**: A AUAS mostra vegetaÃ§Ã£o nativa significativa (>30%) â€” a declaraÃ§Ã£o de AUAS nesta Ã¡rea Ã© questionÃ¡vel.",
-        "- **ðŸ”´ DESMATAMENTO RECENTE DETECTADO**: EvidÃªncia clara de supressÃ£o recente dentro da AUAS (solo exposto, queimada, corte).",
-        "- **âš ï¸ INCONCLUSIVO**: ResoluÃ§Ã£o do sensor, cobertura de nuvens ou outros fatores impedem determinaÃ§Ã£o confiÃ¡vel.",
-        "",
-        "---",
-        "Responda em **portuguÃªs**, use markdown, seja OBJETIVO e TÃ‰CNICO (250â€“400 palavras).",
-        "NÃ£o inclua cadeia de raciocÃ­nio interna nem bloco <think>; entregue sÃ³ a resposta final.",
+        "No veredito, usar apenas um rótulo:",
+        "- CONSOLIDADO",
+        "- VEGETACAO_NATIVA_PRESENTE",
+        "- DESMATAMENTO_RECENTE",
+        "- INCONCLUSIVO",
     ].join("\n");
 }
 
@@ -3576,141 +3557,53 @@ function buildAuasFinalSynthesisPrompt(
     perSatelliteAnalyses: Array<{ satelliteLabel: string; year: number; analysis: string }>,
     previousAcAvnAnalysis?: string,
 ): string {
-    const labels = perSatelliteAnalyses.map((a) => a.satelliteLabel);
     const years = perSatelliteAnalyses.map((a) => a.year).sort();
     const preMarco = years.filter((y) => y <= 2008);
     const postMarco = years.filter((y) => y > 2008);
 
     const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
-    const acSummary = layerSummaries.find((l) => l.name === "AC" || l.name === "Consolidada");
-    const avnSummary = layerSummaries.find((l) => l.name === "AVN" || /vegeta/i.test(l.name));
-
-    const analysesBlock = perSatelliteAnalyses.map((a) => [
-        `### ${a.satelliteLabel} (${a.year})`,
-        "",
-        toSynthesisExcerpt(a.analysis),
-    ].join("\n")).join("\n\n---\n\n");
+    const analysesBlock = perSatelliteAnalyses
+        .map((a) => `- ${a.satelliteLabel} (${a.year}): ${toSynthesisExcerpt(a.analysis, 600)}`)
+        .join("\n");
 
     const parts: string[] = [
-        "VocÃª Ã© a **GeoForest IA**, perita em sensoriamento remoto e anÃ¡lise ambiental forense, especializada em imÃ³veis rurais de Mato Grosso.",
+        "Produza um laudo AUAS curto, técnico e claro.",
+        "Não usar tabela. Não usar emoji. Não incluir bloco <think>.",
+        "Tamanho obrigatório: entre 350 e 550 palavras.",
         "",
-        "Sua tarefa: produzir um **Laudo TÃ©cnico de AnÃ¡lise da AUAS** profissional e impactante, " +
-        "combinando as anÃ¡lises por satÃ©lite individuais com o contexto legal e ambiental do imÃ³vel.",
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
         "",
-        "---",
+        auasSummary ? `AUAS declarada: ${auasSummary.areaHa?.toFixed(2) ?? "0"} ha.` : "AUAS declarada sem quantitativo disponível.",
+        `Série temporal analisada: ${years[0]} a ${years[years.length - 1]}.`,
+        `Anos pré-marco (<=2008): ${preMarco.length ? preMarco.join(", ") : "nenhum"}.`,
+        `Anos pós-marco (>2008): ${postMarco.length ? postMarco.join(", ") : "nenhum"}.`,
         "",
-        "## Dados do ImÃ³vel",
-        "",
-        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
-        "",
-        "### Camadas do CAR relevantes para esta anÃ¡lise:",
-        "| Camada | Ãrea | FeiÃ§Ãµes |",
-        "| --- | --- | --- |",
-        auasSummary ? `| **AUAS** (Uso Alternativo do Solo) | ${auasSummary.areaHa?.toFixed(2) ?? 'â€”'} ha | ${auasSummary.features ?? 0} |` : "",
-        acSummary ? `| **AC** (Ãrea Consolidada) | ${acSummary.areaHa?.toFixed(2) ?? 'â€”'} ha | ${acSummary.features ?? 0} |` : "",
-        avnSummary ? `| **AVN** (VegetaÃ§Ã£o Nativa) | ${avnSummary.areaHa?.toFixed(2) ?? 'â€”'} ha | ${avnSummary.features ?? 0} |` : "",
-        "",
-        "---",
-        "",
-        `## AnÃ¡lises AUAS por SatÃ©lite (${labels.length} imagens: ${years[0]}â€“${years[years.length - 1]})`,
-        "",
-        `**Imagens prÃ©-marco (â‰¤2008):** ${preMarco.length > 0 ? preMarco.join(", ") : "nenhuma"} | **Imagens pÃ³s-marco (>2008):** ${postMarco.length > 0 ? postMarco.join(", ") : "nenhuma"}`,
-        "",
+        "Resumo das análises por ano:",
         analysesBlock,
         "",
     ];
 
     if (previousAcAvnAnalysis) {
         parts.push(
-            "---",
-            "",
-            "## ðŸ“‹ AnÃ¡lise Anterior â€” Ãrea Consolidada (AC) e VegetaÃ§Ã£o Nativa (AVN)",
-            "",
-            "**A IA jÃ¡ analisou as camadas AC e AVN deste imÃ³vel usando as mesmas imagens de satÃ©lite.**",
-            "Use este resultado como referÃªncia cruzada â€” as conclusÃµes da AUAS devem ser COERENTES com as da AC:",
-            "",
-            toSynthesisExcerpt(previousAcAvnAnalysis, 4000),
+            "Referência cruzada AC/AVN (resumo):",
+            toSynthesisExcerpt(previousAcAvnAnalysis, 2200),
             "",
         );
     }
 
     parts.push(
-        "---",
+        "Formato obrigatório de saída:",
+        "## Resumo Executivo",
+        "## Achados Objetivos por Ano",
+        "## Não Conformidades Detectadas",
+        "## Veredito Final AUAS",
+        "## Próximas Ações",
         "",
-        "## ðŸ“ PRODUZA O LAUDO TÃ‰CNICO COM A SEGUINTE ESTRUTURA:",
-        "",
-        "### ðŸ”° Resumo Executivo",
-        "Comece com um resumo impactante de 3â€“4 linhas: a AUAS declarada estÃ¡ correta, incorreta ou parcialmente correta?",
-        "Inclua a Ã¡rea total analisada, o perÃ­odo de cobertura e o veredito principal.",
-        "",
-        "### ðŸ“… Linha do Tempo",
-        `Crie uma tabela temporal com colunas: **Ano** | **Sensor** | **Cobertura da AUAS** | **Veredito** | **ObservaÃ§Ãµes**`,
-        `Os vereditos devem usar: âœ… Consolidado | âŒ Veg. Nativa | ðŸ”´ Desmatamento | âš ï¸ Inconclusivo`,
-        "",
-        `Para cada ano analisado (${years.join(", ")}), indique:`,
-        "- Qual era a cobertura predominante dentro da AUAS (pasto, lavoura, mata, misto)",
-        "- Se houve alguma mudanÃ§a visÃ­vel em relaÃ§Ã£o ao ano anterior",
-        "- Se hÃ¡ evidÃªncia de supressÃ£o recente de vegetaÃ§Ã£o nativa",
-        "",
-        "### ðŸ” DetecÃ§Ã£o de Desmatamentos Irregulares",
-        "",
-        "**Marco legal**: Art. 68 da Lei 12.651/2012 â€” Ã¡reas de uso alternativo consolidadas atÃ© 22/07/2008.",
-        "",
-        "Se a AUAS continha vegetaÃ§Ã£o nativa nas imagens de 2007â€“2008 (baseline) e essa vegetaÃ§Ã£o",
-        "foi suprimida em anos posteriores, identifique COM PRECISÃƒO:",
-        "- **Em qual intervalo de anos** ocorreu cada supressÃ£o (ex: \"entre 2013 e 2014\")",
-        "- **Em qual parte do polÃ­gono** (norte, sul, centro, porÃ§Ã£o X ha)",
-        "- **Qual a Ã¡rea aproximada** afetada pela supressÃ£o irregular",
-        "- **Tipo de evidÃªncia**: solo exposto geomÃ©trico, queimada, remoÃ§Ã£o parcial, etc.",
-        "",
-        "Se NÃƒO houve desmatamento irregular, declare explicitamente: \"Nenhum desmatamento irregular detectado.\"",
-        "",
-    );
-
-    if (previousAcAvnAnalysis) {
-        parts.push(
-            "### ðŸ”— IntegraÃ§Ã£o com AnÃ¡lise AC/AVN",
-            "",
-            "Este Ã© um dos pontos mais importantes â€” cruze os dados:",
-            "- A **AC** (Ãrea Consolidada) e a **AUAS** se sobrepÃµem? SÃ£o coerentes?",
-            "- Se a AC foi considerada \"concordante\" na anÃ¡lise anterior, a AUAS na mesma regiÃ£o tambÃ©m deve ser?",
-            "- Se houve discordÃ¢ncia na AC (vegetaÃ§Ã£o nativa onde deveria ser consolidada), a AUAS na mesma Ã¡rea confirma essa discordÃ¢ncia?",
-            "- A **AVN** estÃ¡ Ã­ntegra nas Ã¡reas fora da AUAS? HÃ¡ invasÃ£o de uso antrÃ³pico em Ã¡reas de AVN?",
-            "- Identifique CONTRADIÃ‡Ã•ES entre a anÃ¡lise AC/AVN e a AUAS (ex: AC diz consolidada, mas AUAS mostra mata)",
-            "",
-        );
-    }
-
-    const nextNum = previousAcAvnAnalysis ? 5 : 4;
-    parts.push(
-        `### ðŸŽ¯ Veredito Final sobre a AUAS`,
-        "",
-        "Use OBRIGATORIAMENTE um destes:",
-        "- **âœ… AUAS VÃLIDA**: Todo o polÃ­gono declarado como AUAS jÃ¡ era de uso antrÃ³pico consolidado em julho/2008. A declaraÃ§Ã£o do CAR estÃ¡ correta.",
-        "- **âŒ AUAS INVÃLIDA**: O polÃ­gono declarado como AUAS continha vegetaÃ§Ã£o nativa que foi ilegalmente suprimida apÃ³s julho/2008.",
-        "- **âš ï¸ AUAS PARCIALMENTE VÃLIDA**: Parte do polÃ­gono estÃ¡ correta (uso consolidado prÃ©-2008), mas [X] ha apresentam supressÃ£o irregular pÃ³s-2008.",
-        "",
-        `### ðŸ“Š NÃ­vel de ConfianÃ§a`,
-        "Classifique a confianÃ§a global: **[ALTA]**, **[MÃ‰DIA]** ou **[BAIXA]**.",
-        "Justifique com base na qualidade das imagens, cobertura temporal e consistÃªncia entre sensores.",
-        "",
-        `### ðŸ’¡ RecomendaÃ§Ãµes`,
-        "Liste aÃ§Ãµes concretas e priorizadas:",
-        "- Necessidade de vistoria em campo?",
-        "- Imagens adicionais (RapidEye, Planet, drones) para confirmar?",
-        "- RetificaÃ§Ã£o do CAR necessÃ¡ria?",
-        "- NotificaÃ§Ã£o ou autuaÃ§Ã£o cabÃ­vel?",
-        "- AnÃ¡lise de sobreposiÃ§Ã£o com Terras IndÃ­genas, UCs, APPs?",
-        "",
-        "---",
-        "",
-        "âš¡ **REGRAS DE FORMATAÃ‡ÃƒO:**",
-        "- Responda em **portuguÃªs**, use markdown rico (tabelas, emojis, negrito, listas)",
-        "- Seja **tÃ©cnico, detalhado e persuasivo** â€” imagine que este laudo serÃ¡ lido por um promotor do MP-MT",
-        "- NÃƒO repita as anÃ¡lises individuais na Ã­ntegra â€” sintetize, compare e conclua",
-        "- Use dados quantitativos sempre que possÃ­vel (Ã¡reas em ha, percentuais, intervalos de anos)",
-        "- O laudo deve ter entre 600 e 1200 palavras",
-        "- NÃ£o inclua cadeia de raciocÃ­nio interna nem bloco <think>; entregue sÃ³ a resposta final",
+        "Regras do conteúdo:",
+        "- No veredito final, usar somente: AUAS_VALIDA, AUAS_INVALIDA ou AUAS_PARCIAL.",
+        "- Se houver incerteza relevante por imagem/ano ausente ou qualidade da cena, declarar explicitamente INCONCLUSIVO no trecho afetado.",
+        "- Em 'Não Conformidades Detectadas', citar intervalo de anos e localização aproximada quando houver supressão irregular.",
+        "- Em 'Próximas Ações', listar no máximo 4 ações diretas e priorizadas.",
     );
 
     return parts.join("\n");
@@ -3900,13 +3793,19 @@ async function generateSatelliteImages(
     res: Response,
     job: CachedJob,
     selectedLayers: string[],
-): Promise<Array<{ dataUrl: string; caption: string }>> {
+): Promise<{
+    images: Array<{ dataUrl: string; caption: string }>;
+    usedKeys: string[];
+    missingKeys: string[];
+}> {
     const { bbox, polygon: propertyPolygon, clippedGeometries } = job;
     const paddedBbox = padBbox(bbox!, 0.10);
     const IMG_W = 1200;
     const IMG_H = 900;
     const layerGeos = clippedGeometries ?? new Map<string, Geometry[]>();
     const images: Array<{ dataUrl: string; caption: string }> = [];
+    const usedKeys: string[] = [];
+    const missingKeys: string[] = [];
 
     const validKeys = getOrderedSatelliteKeys(selectedLayers);
 
@@ -3939,6 +3838,7 @@ async function generateSatelliteImages(
 
         if (!basePng) {
             console.warn(`[SIMCAR ANALYSIS] WMS ${sat.label} unavailable across candidates: ${candidateLayers.join(", ")}. Last error: ${lastLayerError}`);
+            missingKeys.push(key);
             sendSSE(res, {
                 type: "progress", step: "generating_images",
                 percent: 10 + Math.round((step / totalSteps) * 40),
@@ -3947,6 +3847,7 @@ async function generateSatelliteImages(
             step += 3;
             continue;
         }
+        usedKeys.push(key);
         if (resolvedLayer && resolvedLayer !== sat.wmsLayer) {
             console.log(`[SIMCAR ANALYSIS] ${sat.label} using fallback layer ${resolvedLayer} (primary=${sat.wmsLayer})`);
         }
@@ -3981,7 +3882,7 @@ async function generateSatelliteImages(
         step++;
     }
 
-    return images;
+    return { images, usedKeys, missingKeys };
 }
 
 function getFeatureBbox(feature: Feature<Polygon | MultiPolygon>): [number, number, number, number] | null {
@@ -4171,8 +4072,16 @@ async function processAnalysis(
     sendSSE(res, { type: "progress", step: "generating_images", percent: 10, message: "Iniciando geraÃ§Ã£o de imagens..." });
 
     let imagesToAnalyze: Array<{ dataUrl: string; caption: string }>;
+    let usedSatelliteKeys: string[] = [];
+    let missingSatelliteKeys: string[] = [];
     try {
-        imagesToAnalyze = await generateSatelliteImages(res, job, selectedLayers);
+        const generated = await generateSatelliteImages(res, job, selectedLayers);
+        imagesToAnalyze = generated.images;
+        usedSatelliteKeys = generated.usedKeys;
+        missingSatelliteKeys = generated.missingKeys;
+        console.log(
+            `[SIMCAR ANALYSIS] Fixed AC/AVN set: requested=${selectedLayers.join(", ")}; used=${usedSatelliteKeys.join(", ") || "none"}; missing=${missingSatelliteKeys.join(", ") || "none"}`,
+        );
     } catch (err: any) {
         console.error("[SIMCAR ANALYSIS] Image generation error:", err.message);
         sendSSE(res, { type: "error", message: `Erro ao gerar imagens: ${err.message}` });
@@ -4213,6 +4122,9 @@ async function processAnalysis(
             percent: 100,
             images: cloudinaryUrls,
             layerSummaries: layerSummaries.filter((l) => ["AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
+            analysisRulesVersion: "acavn-fixed-v2",
+            satellitesUsed: usedSatelliteKeys,
+            satellitesMissing: missingSatelliteKeys,
         });
         return;
     }
@@ -4258,7 +4170,11 @@ async function processAnalysis(
         );
     }
 
-    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE === "detailed") {
+    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE === "detailed" && FORCE_AC_AVN_UNIFIED_ANALYSIS) {
+        console.log("[SIMCAR ANALYSIS] Detailed mode requested, but AC/AVN is forced to unified mode for token efficiency.");
+    }
+
+    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE === "detailed" && !FORCE_AC_AVN_UNIFIED_ANALYSIS) {
         // â”€â”€ MULTI-SATELLITE (detailed mode): analyze each satellite separately, then synthesize â”€â”€
         console.log(`[SIMCAR ANALYSIS] Multi-satellite mode: ${validKeys.length} satellites, analyzing individually...`);
 
@@ -4395,6 +4311,11 @@ async function processAnalysis(
         }
     }
 
+    analysisText = normalizeAcAvnAnalysisOutput(analysisText, {
+        satellitesUsed: usedSatelliteKeys.map((k) => SATELLITE_LAYERS[k]?.label || k),
+        satellitesMissing: missingSatelliteKeys.map((k) => SATELLITE_LAYERS[k]?.label || k),
+    });
+
     // Step 5: Complete
     sendSSE(res, {
         type: "complete",
@@ -4402,6 +4323,9 @@ async function processAnalysis(
         analysis: analysisText,
         images: cloudinaryUrls,
         layerSummaries: layerSummaries.filter((l) => ["AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
+        analysisRulesVersion: "acavn-fixed-v2",
+        satellitesUsed: usedSatelliteKeys,
+        satellitesMissing: missingSatelliteKeys,
     });
 }
 
@@ -4664,7 +4588,13 @@ export function registerSimcarClipRoutes(app: Express) {
                 return;
             }
 
-            const layers = Array.isArray(selectedLayers) && selectedLayers.length > 0 ? selectedLayers : ["spot_2008"];
+            const requestedLayers = Array.isArray(selectedLayers) ? selectedLayers : [];
+            const layers = getFixedAcAvnSatelliteKeys();
+            if (requestedLayers.length > 0) {
+                console.log(
+                    `[SIMCAR ANALYSIS] Ignoring user-selected layers (${requestedLayers.join(", ")}). Using fixed AC/AVN set (${layers.join(", ")}).`,
+                );
+            }
             const aiAnalysis = !imageOnly;
 
             if (aiAnalysis) {

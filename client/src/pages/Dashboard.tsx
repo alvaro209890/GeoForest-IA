@@ -229,6 +229,12 @@ const FRONT_MAP_CAPABILITIES_TTL_MS = 10 * 60 * 1000;
 const FRONT_MAP_CAPABILITIES_STORAGE_KEY = 'geoforest.map.capabilities.v1';
 const FRONT_INTERSECTION_RESULT_TTL_MS = 6 * 60 * 1000;
 const FRONT_INTERSECTION_RESULT_CACHE_MAX = 48;
+const SIMCAR_FIXED_AC_AVN_SATELLITES: Array<{ key: string; label: string; sensor: string; year: number }> = [
+  { key: 'landsat5_2006', label: 'Landsat 2006', sensor: 'Landsat 5', year: 2006 },
+  { key: 'landsat5_2007', label: 'Landsat 2007', sensor: 'Landsat 5', year: 2007 },
+  { key: 'spot_2008', label: 'SPOT 2008', sensor: 'SPOT', year: 2008 },
+  { key: 'landsat5_2008', label: 'Landsat 2008', sensor: 'Landsat 5', year: 2008 },
+];
 
 const buildDirectWmsGetMapUrl = (
   layerName: string,
@@ -974,9 +980,10 @@ export default function Dashboard() {
   const [simcarClipHistory, setSimcarClipHistory] = useState<SimcarClipHistoryItem[]>([]);
 
   // â”€â”€â”€ SIMCAR Satellite Selection â”€â”€â”€
-  const [simcarSelectedSatellites, setSimcarSelectedSatellites] = useState<Record<string, boolean>>({
-    spot_2008: true,
-  });
+  const simcarFixedSatelliteKeys = useMemo(
+    () => SIMCAR_FIXED_AC_AVN_SATELLITES.map((sat) => sat.key),
+    []
+  );
   const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
   const [mapRectSelection, setMapRectSelection] = useState<{
     left: number;
@@ -5234,60 +5241,24 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
 
                         {/* Satellite Selection */}
                         <div>
-                          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Selecione as imagens de satÃ©lite</h4>
-                          {(() => {
-                            const sensorGroups = [
-                              { sensor: 'SPOT', iconClass: 'text-emerald-400', desc: '2.5m', items: [{ key: 'spot_2008', year: 2008 }] },
-                              { sensor: 'Landsat 5', iconClass: 'text-blue-400', desc: '30m Â· 1984â€“2011', items: [1984, 1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011].map((y) => ({ key: `landsat5_${y}`, year: y })) },
-                              { sensor: 'Landsat 8', iconClass: 'text-cyan-400', desc: '30m Â· 2013â€“2018', items: [2013, 2014, 2015, 2016, 2017, 2018].map((y) => ({ key: `landsat8_${y}`, year: y })) },
-                              { sensor: 'Sentinel-2', iconClass: 'text-purple-400', desc: '10m Â· 2016â€“2024', items: [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024].map((y) => ({ key: `sentinel2_${y}`, year: y })) },
-                            ];
-                            const selectedCount = Object.values(simcarSelectedSatellites).filter(Boolean).length;
-                            return (
-                              <div className="space-y-2">
-                                {sensorGroups.map((group) => (
-                                  <div key={group.sensor} className="rounded-lg border border-white/8 bg-white/[0.02] overflow-hidden">
-                                    <div className="px-3 py-1.5 flex items-center gap-2 border-b border-white/5">
-                                      <Satellite size={11} className={group.iconClass} />
-                                      <span className="text-[10px] font-semibold text-slate-300">{group.sensor}</span>
-                                      <span className="text-[9px] text-slate-600">{group.desc}</span>
-                                    </div>
-                                    <div className="p-2 flex flex-wrap gap-1">
-                                      {group.items.map((sat) => {
-                                        const selected = !!simcarSelectedSatellites[sat.key];
-                                        return (
-                                          <button
-                                            key={sat.key}
-                                            onClick={() => setSimcarSelectedSatellites((prev) => ({ ...prev, [sat.key]: !prev[sat.key] }))}
-                                            className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all border ${selected
-                                              ? 'border-emerald-500/50 bg-emerald-500/20 text-emerald-300'
-                                              : 'border-transparent bg-white/5 text-slate-500 hover:text-slate-300 hover:bg-white/10'
-                                              }`}
-                                          >
-                                            {sat.year}
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-                                ))}
-                                <div className="flex items-center justify-between">
-                                  <p className="text-[10px] text-slate-500">
-                                    {selectedCount === 0 ? 'Selecione pelo menos 1 imagem.' : `${selectedCount} imagem${selectedCount > 1 ? 's' : ''} selecionada${selectedCount > 1 ? 's' : ''}.`}
-                                    {selectedCount > 3 && <span className="text-amber-400/80 ml-1">Muitas imagens pode demorar mais.</span>}
-                                  </p>
-                                  {selectedCount > 0 && (
-                                    <button
-                                      onClick={() => setSimcarSelectedSatellites({})}
-                                      className="text-[9px] text-slate-600 hover:text-slate-400 underline"
-                                    >
-                                      Limpar
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })()}
+                          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                            Imagens fixas da análise AC/AVN
+                          </h4>
+                          <div className="rounded-lg border border-white/8 bg-white/[0.02] p-3">
+                            <div className="flex flex-wrap gap-2">
+                              {SIMCAR_FIXED_AC_AVN_SATELLITES.map((sat) => (
+                                <span
+                                  key={sat.key}
+                                  className="px-2.5 py-1 rounded-md text-[10px] font-semibold border border-emerald-500/45 bg-emerald-500/20 text-emerald-300"
+                                >
+                                  {sat.label}
+                                </span>
+                              ))}
+                            </div>
+                            <p className="mt-2 text-[10px] text-slate-500">
+                              Conjunto fixo para validação técnica: Landsat 2006, Landsat 2007, SPOT 2008 e Landsat 2008.
+                            </p>
+                          </div>
                         </div>
 
                         {/* Two Buttons: Analyze with AI + View Images */}
@@ -5295,8 +5266,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                           <button
                             onClick={async () => {
                               if (!simcarClipJobId) return;
-                              const layers = Object.entries(simcarSelectedSatellites).filter(([, v]) => v).map(([k]) => k);
-                              if (layers.length === 0) { setSimcarClipError('Selecione pelo menos uma imagem de satÃ©lite.'); return; }
+                              const layers = simcarFixedSatelliteKeys;
                               const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
                               setSimcarAnalysisProcessing(true);
                               setSimcarAnalysisProgress({ step: 'starting', percent: 0, message: 'Iniciando anÃ¡lise...' });
@@ -5473,8 +5443,7 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                           <button
                             onClick={async () => {
                               if (!simcarClipJobId) return;
-                              const layers = Object.entries(simcarSelectedSatellites).filter(([, v]) => v).map(([k]) => k);
-                              if (layers.length === 0) { setSimcarClipError('Selecione pelo menos uma imagem.'); return; }
+                              const layers = simcarFixedSatelliteKeys;
                               const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
                               setSimcarAnalysisProcessing(true);
                               setSimcarAnalysisProgress({ step: 'starting', percent: 0, message: 'Gerando imagens...' });
@@ -6021,9 +5990,9 @@ Arquivo de imagem previamente anexado pelo usuÃ¡rio.`;
                         {/* AUAS Analysis Text */}
                         {simcarAuasMessages.map((msg, idx) => (
                           <div key={idx} className="mx-2 rounded-xl border border-white/10 bg-[#0c1018]/80 p-4">
-                            <div className="prose prose-invert prose-sm max-w-none"
-                              dangerouslySetInnerHTML={{ __html: (window as any).marked?.parse?.(msg.text || '') || msg.text || '' }}
-                            />
+                            <div className="analysis-markdown">
+                              {renderAnalysisRichText(msg.text || '')}
+                            </div>
                           </div>
                         ))}
                       </section>
