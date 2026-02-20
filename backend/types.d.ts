@@ -1,1 +1,9 @@
-declare module 'pdf-parse';
+declare global {
+  namespace Express {
+    interface Request {
+      authUid?: string;
+    }
+  }
+}
+
+export {};
