@@ -465,6 +465,29 @@ function sendSSE(res: Response, data: Record<string, unknown>) {
     if (typeof (res as any).flush === "function") (res as any).flush();
 }
 
+class ClientAbortError extends Error {
+    constructor(message = "Cliente desconectou durante a análise.") {
+        super(message);
+        this.name = "ClientAbortError";
+    }
+}
+
+function isSseConnectionClosed(res: Response): boolean {
+    const anyRes = res as any;
+    return Boolean(
+        res.writableEnded ||
+        res.destroyed ||
+        anyRes?.writableAborted ||
+        anyRes?.socket?.destroyed,
+    );
+}
+
+function throwIfClientDisconnected(res: Response): void {
+    if (isSseConnectionClosed(res)) {
+        throw new ClientAbortError();
+    }
+}
+
 /* â”€â”€â”€ Shapefile Parsing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 /**
@@ -4303,6 +4326,7 @@ async function generateAuasSatelliteImages(
     cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
     resolution: { width: number; height: number };
 }> {
+    throwIfClientDisconnected(res);
     const { bbox, polygon: propertyPolygon, clippedGeometries } = job;
     const paddedBbox = padBbox(bbox!, 0.10);
 
@@ -4326,6 +4350,7 @@ async function generateAuasSatelliteImages(
     let step = 0;
 
     for (const key of AUAS_SATELLITE_KEYS) {
+        throwIfClientDisconnected(res);
         const sat = SATELLITE_LAYERS[key];
         if (!sat) { step++; continue; }
 
@@ -4340,6 +4365,7 @@ async function generateAuasSatelliteImages(
         let lastLayerError = "unknown";
 
         for (const layerName of candidateLayers) {
+            throwIfClientDisconnected(res);
             try {
                 basePng = await fetchWmsImageBuffer([layerName], paddedBbox, IMG_W, IMG_H);
                 break;
@@ -4776,6 +4802,7 @@ async function processAuasAnalysis(
     outputZipUrl?: string,
     acAvnMeta?: any,
 ): Promise<boolean> {
+    throwIfClientDisconnected(res);
     let job = jobCache.get(jobId);
     if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
         job = (await hydrateJobFromPersistedContext(jobId, contextUrl)) ?? undefined;
@@ -4806,6 +4833,7 @@ async function processAuasAnalysis(
 
     // Step 1: Generate satellite images with AUAS overlay
     sendSSE(res, { type: "progress", step: "generating_images", percent: 5, message: "Iniciando geraÃ§Ã£o de imagens AUAS..." });
+    throwIfClientDisconnected(res);
 
     let imagesToAnalyze: Array<{ dataUrl: string; caption: string }>;
     let usedSatelliteKeys: string[] = [];
@@ -4834,6 +4862,7 @@ async function processAuasAnalysis(
     const cloudinaryUrls: Array<{ url: string; caption: string }> = [];
     try {
         for (let i = 0; i < imagesToAnalyze.length; i++) {
+            throwIfClientDisconnected(res);
             const img = imagesToAnalyze[i];
             const filename = `simcar_auas_${jobId.slice(0, 8)}_img${i + 1}`;
             const url = await uploadToCloudinary(img.dataUrl, filename);
@@ -4850,6 +4879,7 @@ async function processAuasAnalysis(
 
     // Step 3: Prepare images for AI
     sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens AUAS para anÃ¡lise IA..." });
+    throwIfClientDisconnected(res);
 
     const aiImages: AiImage[] = [];
     if (cloudinaryUrls.length === imagesToAnalyze.length) {
@@ -4881,6 +4911,7 @@ async function processAuasAnalysis(
     let satIdx = 0;
 
     for (const key of validKeys) {
+        throwIfClientDisconnected(res);
         const sat = SATELLITE_LAYERS[key];
         if (!sat) continue;
 
@@ -4921,6 +4952,7 @@ async function processAuasAnalysis(
 
     // Step 5: Final synthesis (combines AUAS + previous AC/AVN analysis)
     sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando laudo integrado de AUAS..." });
+    throwIfClientDisconnected(res);
 
     let auasSynthesisText: string;
     const truncatedPreviousAnalysis = clampTextMiddle(previousAnalysis || "", 4200);
@@ -4972,6 +5004,7 @@ async function processAuasAnalysis(
 
     let analysisText = auasSynthesisText;
     if (truncatedPreviousAnalysis.trim()) {
+        throwIfClientDisconnected(res);
         sendSSE(res, {
             type: "progress",
             step: "analyzing",
@@ -5059,6 +5092,7 @@ async function generateSatelliteImages(
     cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
     resolution: { width: number; height: number };
 }> {
+    throwIfClientDisconnected(res);
     const { bbox, polygon: propertyPolygon, clippedGeometries } = job;
     const paddedBbox = padBbox(bbox!, 0.10);
 
@@ -5085,6 +5119,7 @@ async function generateSatelliteImages(
     let step = 0;
 
     for (const key of validKeys) {
+        throwIfClientDisconnected(res);
         const sat = SATELLITE_LAYERS[key];
         sendSSE(res, {
             type: "progress", step: "generating_images",
@@ -5098,6 +5133,7 @@ async function generateSatelliteImages(
         let lastLayerError = "unknown";
 
         for (const layerName of candidateLayers) {
+            throwIfClientDisconnected(res);
             try {
                 basePng = await fetchWmsImageBuffer([layerName], paddedBbox, IMG_W, IMG_H);
                 resolvedLayer = layerName;
@@ -5341,6 +5377,7 @@ async function processAnalysis(
     contextUrl?: string,
     outputZipUrl?: string,
 ): Promise<boolean> {
+    throwIfClientDisconnected(res);
     let job = jobCache.get(jobId);
     if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
         job = (await hydrateJobFromPersistedContext(jobId, contextUrl)) ?? undefined;
@@ -5363,6 +5400,7 @@ async function processAnalysis(
 
     // Step 1: Generate satellite images with polygon overlays
     sendSSE(res, { type: "progress", step: "generating_images", percent: 10, message: "Iniciando geracao de imagens..." });
+    throwIfClientDisconnected(res);
 
     let imagesToAnalyze: Array<{ dataUrl: string; caption: string }>;
     let usedSatelliteKeys: string[] = [];
@@ -5395,6 +5433,7 @@ async function processAnalysis(
     const cloudinaryUrls: Array<{ url: string; caption: string }> = [];
     try {
         for (let i = 0; i < imagesToAnalyze.length; i++) {
+            throwIfClientDisconnected(res);
             const img = imagesToAnalyze[i];
             const filename = `simcar_analysis_${jobId.slice(0, 8)}_img${i + 1}`;
             const url = await uploadToCloudinary(img.dataUrl, filename);
@@ -5428,6 +5467,7 @@ async function processAnalysis(
 
     // Step 3: Prepare images for AI (use Cloudinary URLs or compress base64 as fallback)
     sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens para analise IA..." });
+    throwIfClientDisconnected(res);
 
     const aiImages: AiImage[] = [];
     if (cloudinaryUrls.length === imagesToAnalyze.length) {
@@ -5483,6 +5523,7 @@ async function processAnalysis(
         let satIdx = 0;
 
         for (const key of validKeys) {
+            throwIfClientDisconnected(res);
             const sat = SATELLITE_LAYERS[key];
             if (!sat) continue;
 
@@ -5596,6 +5637,7 @@ async function processAnalysis(
                 : "IA analisando imagens...",
         });
         try {
+            throwIfClientDisconnected(res);
             const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers, {
                 acAvnAuasContext,
             });
@@ -6136,6 +6178,11 @@ export function registerSimcarClipRoutes(app: Express) {
         let billingUid = "";
         let billingRequestId = "";
         let billingReserved = 0;
+        let usageInputs: Array<any> = [];
+        let clientDisconnected = false;
+        req.on("close", () => {
+            clientDisconnected = true;
+        });
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
@@ -6174,9 +6221,15 @@ export function registerSimcarClipRoutes(app: Express) {
             console.log(`[AUAS ANALYSIS] Starting AUAS analysis for job: ${jobId}`);
             let completed = false;
             await runWithBillingUsageSession(async () => {
-                completed = await processAuasAnalysis(res, jobId, previousAnalysis, contextUrl, outputZipUrl, acAvnMeta);
+                try {
+                    completed = await processAuasAnalysis(res, jobId, previousAnalysis, contextUrl, outputZipUrl, acAvnMeta);
+                } finally {
+                    usageInputs = getBillingUsageSessionRecords();
+                }
             });
-            const usageInputs = getBillingUsageSessionRecords();
+            if (clientDisconnected || isSseConnectionClosed(res)) {
+                throw new ClientAbortError();
+            }
             if (usageInputs.length > 0 || completed) {
                 const usageForSettle = usageInputs.length > 0
                     ? usageInputs
@@ -6209,6 +6262,34 @@ export function registerSimcarClipRoutes(app: Express) {
                 billingReserved = 0;
             }
         } catch (err: any) {
+            if (err instanceof ClientAbortError) {
+                if (billingUid && billingReserved > 0 && billingRequestId) {
+                    try {
+                        if (usageInputs.length > 0) {
+                            await settleReservedCredits({
+                                uid: billingUid,
+                                requestId: billingRequestId,
+                                endpoint: "/api/simcar/clip/analyze-auas",
+                                reservedBrl: billingReserved,
+                                usageInputs,
+                            });
+                            billingReserved = 0;
+                        } else {
+                            await refundReserve({
+                                uid: billingUid,
+                                requestId: billingRequestId,
+                                amountBrl: billingReserved,
+                                endpoint: "/api/simcar/clip/analyze-auas",
+                                reason: "client_abort_without_usage",
+                            });
+                            billingReserved = 0;
+                        }
+                    } catch (billingErr) {
+                        console.error("[AUAS ANALYSIS] client-abort billing error:", billingErr);
+                    }
+                }
+                return;
+            }
             if (billingUid && billingReserved > 0 && billingRequestId) {
                 try {
                     await refundReserve({
@@ -6246,6 +6327,11 @@ export function registerSimcarClipRoutes(app: Express) {
         let billingUid = "";
         let billingRequestId = "";
         let billingReserved = 0;
+        let usageInputs: Array<any> = [];
+        let clientDisconnected = false;
+        req.on("close", () => {
+            clientDisconnected = true;
+        });
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
@@ -6298,9 +6384,15 @@ export function registerSimcarClipRoutes(app: Express) {
             if (aiAnalysis) {
                 let completed = false;
                 await runWithBillingUsageSession(async () => {
-                    completed = await processAnalysis(res, jobId, layers, true, contextUrl, outputZipUrl);
+                    try {
+                        completed = await processAnalysis(res, jobId, layers, true, contextUrl, outputZipUrl);
+                    } finally {
+                        usageInputs = getBillingUsageSessionRecords();
+                    }
                 });
-                const usageInputs = getBillingUsageSessionRecords();
+                if (clientDisconnected || isSseConnectionClosed(res)) {
+                    throw new ClientAbortError();
+                }
                 if (usageInputs.length > 0 || completed) {
                     const usageForSettle = usageInputs.length > 0
                         ? usageInputs
@@ -6336,6 +6428,34 @@ export function registerSimcarClipRoutes(app: Express) {
                 await processAnalysis(res, jobId, layers, false, contextUrl, outputZipUrl);
             }
         } catch (err: any) {
+            if (err instanceof ClientAbortError) {
+                if (billingUid && billingReserved > 0 && billingRequestId) {
+                    try {
+                        if (usageInputs.length > 0) {
+                            await settleReservedCredits({
+                                uid: billingUid,
+                                requestId: billingRequestId,
+                                endpoint: "/api/simcar/clip/analyze",
+                                reservedBrl: billingReserved,
+                                usageInputs,
+                            });
+                            billingReserved = 0;
+                        } else {
+                            await refundReserve({
+                                uid: billingUid,
+                                requestId: billingRequestId,
+                                amountBrl: billingReserved,
+                                endpoint: "/api/simcar/clip/analyze",
+                                reason: "client_abort_without_usage",
+                            });
+                            billingReserved = 0;
+                        }
+                    } catch (billingErr) {
+                        console.error("[SIMCAR ANALYSIS] client-abort billing error:", billingErr);
+                    }
+                }
+                return;
+            }
             if (billingUid && billingReserved > 0 && billingRequestId) {
                 try {
                     await refundReserve({
