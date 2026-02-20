@@ -6387,8 +6387,9 @@ export function registerSimcarClipRoutes(app: Express) {
     // Delete clip endpoint: removes Cloudinary resources + cache
     app.delete("/api/simcar/clip/:jobId", async (req: Request, res: Response) => {
         const { jobId } = req.params;
-        const { imageUrls, inputZipUrl, outputZipUrl, contextUrl } = req.body as {
+        const { imageUrls, auasImageUrls, inputZipUrl, outputZipUrl, contextUrl } = req.body as {
             imageUrls?: string[];
+            auasImageUrls?: string[];
             inputZipUrl?: string;
             outputZipUrl?: string;
             contextUrl?: string;
@@ -6397,22 +6398,34 @@ export function registerSimcarClipRoutes(app: Express) {
         try {
             const cached = jobCache.get(jobId);
             const deletions: Promise<void>[] = [];
+            const seen = new Set<string>();
+
+            const queueDelete = (url: string | undefined, forcedType?: "raw" | "image") => {
+                const clean = String(url || "").trim();
+                if (!clean) return;
+                const inferredType: "raw" | "image" =
+                    forcedType
+                    || (/\/raw\/upload\//i.test(clean) || /\.(zip|json)(\?|$)/i.test(clean) ? "raw" : "image");
+                const key = `${inferredType}:${clean}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                deletions.push(deleteFromCloudinary(clean, inferredType));
+            };
 
             // Delete ZIPs from Cloudinary (raw type)
-            if (cached?.inputZipUrl || inputZipUrl) {
-                deletions.push(deleteFromCloudinary((cached?.inputZipUrl || inputZipUrl) as string, "raw"));
-            }
-            if (cached?.outputZipUrl || outputZipUrl) {
-                deletions.push(deleteFromCloudinary((cached?.outputZipUrl || outputZipUrl) as string, "raw"));
-            }
-            if (cached?.contextJsonUrl || contextUrl) {
-                deletions.push(deleteFromCloudinary((cached?.contextJsonUrl || contextUrl) as string, "raw"));
-            }
+            queueDelete(cached?.inputZipUrl || inputZipUrl, "raw");
+            queueDelete(cached?.outputZipUrl || outputZipUrl, "raw");
+            queueDelete(cached?.contextJsonUrl || contextUrl, "raw");
 
             // Delete analysis images from Cloudinary (image type)
             if (Array.isArray(imageUrls)) {
                 for (const url of imageUrls) {
-                    deletions.push(deleteFromCloudinary(url, "image"));
+                    queueDelete(url, "image");
+                }
+            }
+            if (Array.isArray(auasImageUrls)) {
+                for (const url of auasImageUrls) {
+                    queueDelete(url, "image");
                 }
             }
 

@@ -4306,7 +4306,6 @@ export default function Dashboard() {
         },
         previousAnalysis: previousAnalysisText,
         acAvnMeta: acAvnResult.analysisMeta,
-        prependContextText: previousAnalysisText,
         skipConversation: true,
       });
       if (!auasResult.ok) {
@@ -5394,11 +5393,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       e.stopPropagation();
                       // Delete from Cloudinary + remove from state
                       const imageUrls = (clip.analysisImages || []).map((img) => img.url);
+                      const auasImageUrls = (clip.auasAnalysisImages || []).map((img) => img.url);
                       fetch(apiUrl(`/api/simcar/clip/${clip.jobId}`), {
                         method: 'DELETE',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                           imageUrls,
+                          auasImageUrls,
                           inputZipUrl: clip.inputZipUrl,
                           outputZipUrl: clip.outputZipUrl,
                           contextUrl: clip.contextUrl,
@@ -5419,6 +5420,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         setSimcarThinkingHidden(false);
                         setSimcarLiveThinkingText('');
                         setSimcarLiveAnswerText('');
+                        setSimcarAuasImages([]);
+                        setSimcarAuasMessages([]);
                       }
                     }}
                     className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition xl:block lg:hidden"
@@ -6667,11 +6670,19 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             <Layers size={18} />
                           </div>
                           <div className="min-w-0">
-                            <h3 className="font-semibold text-white text-sm">Análise de AUAS</h3>
-                            <p className="text-[10px] text-slate-500">Uso Alternativo do Solo com série temporal e síntese técnica</p>
+                            <h3 className="font-semibold text-white text-sm">
+                              {simcarClipMode === 'vectorized-analysis'
+                                ? 'Análise Integrada SIMCAR (AC/AVN + AUAS)'
+                                : 'Análise de AUAS'}
+                            </h3>
+                            <p className="text-[10px] text-slate-500">
+                              {simcarClipMode === 'vectorized-analysis'
+                                ? 'Síntese final única das validações de AC, AVN e AUAS'
+                                : 'Uso Alternativo do Solo com série temporal e síntese técnica'}
+                            </p>
                           </div>
                           <span className="ml-auto text-[9px] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-slate-500 font-medium">
-                            Uso Alternativo do Solo
+                            {simcarClipMode === 'vectorized-analysis' ? 'Laudo Único' : 'Uso Alternativo do Solo'}
                           </span>
                         </div>
 
@@ -6854,8 +6865,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400"><Scissors size={22} /></div>
                     <div>
-                      <h2 className="font-semibold text-lg text-slate-200">2. Recorte Automático SIMCAR</h2>
-                      <p className="text-xs text-slate-500 mt-0.5">Clipping de 28 camadas vetoriais pelo limite do imóvel</p>
+                      <h2 className="font-semibold text-lg text-slate-200">2. Recorte e Análise SIMCAR</h2>
+                      <p className="text-xs text-slate-500 mt-0.5">Dois modos: recorte automático (WFS) e análise vetorizada (ZIP já pronto)</p>
                     </div>
                   </div>
                   <ChevronDown size={18} className={`text-slate-500 transition-transform duration-200 ${manualSection === 'simcar' ? 'rotate-180' : ''}`} />
@@ -6865,9 +6876,24 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <div>
                       <h4 className="text-sm font-semibold text-slate-300 mb-3"><span className="text-purple-400">O que faz</span></h4>
                       <p className="text-sm text-slate-400 leading-relaxed">
-                        Recorta automaticamente todas as <strong className="text-slate-300">28 camadas</strong> do SIMCAR Digital (SEMA-MT) pelo contorno do seu imóvel rural.
-                        O resultado é um ZIP contendo shapefiles recortados e uma planilha Excel com os quantitativos por camada (área em hectares, número de feições, percentual do imóvel).
+                        O módulo SIMCAR agora opera em <strong className="text-slate-300">2 fluxos</strong>: <strong className="text-slate-300">Recorte Automático</strong> (gera o recorte no servidor com base no imóvel) e <strong className="text-slate-300">Análise Vetorizada com IA</strong> (quando você já possui o ZIP do modelo com os shapes vetorizados).
+                        Em ambos, os resultados ficam no histórico e podem ser reabertos para continuar análise AC/AVN e AUAS.
                       </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="rounded-xl border border-purple-500/15 bg-purple-500/5 p-4">
+                        <h4 className="text-sm font-semibold text-purple-300 mb-1">Modo 1: Recorte Automático</h4>
+                        <p className="text-sm text-slate-400 leading-relaxed">
+                          Envie o ZIP do imóvel e o sistema recorta as camadas SIMCAR, gera saída para download e habilita as análises IA.
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-cyan-500/15 bg-cyan-500/5 p-4">
+                        <h4 className="text-sm font-semibold text-cyan-300 mb-1">Modo 2: Análise Vetorizada IA</h4>
+                        <p className="text-sm text-slate-400 leading-relaxed">
+                          Envie um ZIP já vetorizado e rode a análise completa em 1 clique (AC/AVN + AUAS) sem executar recorte WFS.
+                        </p>
+                      </div>
                     </div>
 
                     <div>
@@ -6882,11 +6908,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/15 text-purple-400 flex items-center justify-center text-xs font-bold">2</span>
-                          <span>Clique em <strong className="text-slate-300">"Recorte SIMCAR"</strong> na barra lateral e arraste o ZIP na área de upload (ou clique para selecionar).</span>
+                          <span>Clique em <strong className="text-slate-300">"Análise SIMCAR"</strong> na barra lateral e escolha o modo desejado (Recorte ou Vetorizado).</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/15 text-purple-400 flex items-center justify-center text-xs font-bold">3</span>
-                          <span>(Opcional) Preencha o campo <strong className="text-slate-300">"AIR / Identificação"</strong> — esse texto será gravado na camada AIR do shapefile de saída.</span>
+                          <span>No modo Recorte, preencha <strong className="text-slate-300">AIR / Identificação</strong>. No modo Vetorizado, envie diretamente o ZIP do modelo vetorizado.</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/15 text-purple-400 flex items-center justify-center text-xs font-bold">4</span>
@@ -6894,11 +6920,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/15 text-purple-400 flex items-center justify-center text-xs font-bold">5</span>
-                          <span>Clique em <strong className="text-slate-300">"Processar Recorte"</strong> e aguarde. O progresso é exibido em tempo real (SSE). O processamento leva entre 15-60 segundos dependendo do tamanho do imóvel.</span>
+                          <span>Execute: <strong className="text-slate-300">"Processar Recorte"</strong> (modo recorte) ou <strong className="text-slate-300">"Análise Completa por IA"</strong> (modo vetorizado).</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500/15 text-purple-400 flex items-center justify-center text-xs font-bold">6</span>
-                          <span>Ao concluir, clique em <strong className="text-slate-300">"Baixar ZIP"</strong> para obter os shapefiles + Excel. O download expira em 15 minutos.</span>
+                          <span>Ao concluir, revise os resultados no painel e no histórico; no modo recorte também há download do ZIP de saída.</span>
                         </li>
                       </ol>
                     </div>
@@ -6934,6 +6960,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <ul className="space-y-1.5 text-sm text-slate-400">
                         <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />O ZIP deve conter ao menos os arquivos <code className="text-xs bg-white/5 px-1 rounded">.shp</code> e <code className="text-xs bg-white/5 px-1 rounded">.shx</code>. Sem o <code className="text-xs bg-white/5 px-1 rounded">.prj</code>, o sistema tentará assumir EPSG:4674.</li>
                         <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />Se o GeoServer da SEMA estiver fora do ar, as camadas WFS ficarão vazias, mas o download será gerado mesmo assim.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />O modo fica travado por recorte: se o item foi criado em modo vetorizado, não pode ser trocado para recorte (e vice-versa).</li>
                       </ul>
                     </div>
 
@@ -6966,8 +6993,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <div>
                       <h4 className="text-sm font-semibold text-slate-300 mb-3"><span className="text-amber-400">O que faz</span></h4>
                       <p className="text-sm text-slate-400 leading-relaxed">
-                        Após o recorte SIMCAR, gera imagens compostas (satélite + polígonos de Área Consolidada, AVN e limite do imóvel) e as envia para um modelo de <strong className="text-slate-300">visão computacional (IA)</strong> que produz um laudo técnico automático.
-                        O laudo avalia a coerência entre a classificação do CAR e o que é visível na imagem de satélite.
+                        A análise IA valida AC/AVN e AUAS com imagens históricas e sobreposição dos shapes. No fluxo vetorizado, a plataforma executa <strong className="text-slate-300">análise completa em 1 clique</strong> e retorna um laudo integrado.
+                        A saída destaca vereditos objetivos, coerência por satélite, achados temporais e recomendações operacionais.
                       </p>
                     </div>
 
@@ -6991,11 +7018,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-xs font-bold">3</span>
-                          <span>Clique em <strong className="text-slate-300">"Analisar com IA"</strong>. Para cada satélite, 3 imagens são geradas: <em className="text-slate-300">Visão Geral</em>, <em className="text-slate-300">Área Consolidada</em> e <em className="text-slate-300">AVN</em>.</span>
+                          <span>Execute <strong className="text-slate-300">"Analisar com IA"</strong> (AC/AVN) ou <strong className="text-slate-300">"Análise Completa por IA"</strong> no modo vetorizado.</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-xs font-bold">4</span>
-                          <span>A IA analisa as imagens e gera um laudo com: concordâncias, discordâncias, nível de confiança e recomendações ao analista.</span>
+                          <span>A IA gera vereditos estruturados (AC_FORA_SHAPE, AVN_DENTRO_SHAPE_ANTROPIZADO e status AUAS), com síntese temporal e níveis de confiança.</span>
                         </li>
                         <li className="flex gap-3">
                           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-xs font-bold">5</span>
@@ -7005,15 +7032,15 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
 
                     <div>
-                      <h4 className="text-sm font-semibold text-slate-300 mb-3">Análise Multi-temporal (2+ satélites)</h4>
+                      <h4 className="text-sm font-semibold text-slate-300 mb-3">Análise Multi-temporal (fluxo atual)</h4>
                       <p className="text-sm text-slate-400 leading-relaxed mb-3">
-                        Quando você seleciona <strong className="text-slate-300">mais de um satélite</strong>, a IA realiza uma análise temporal comparativa adicional:
+                        A validação AC/AVN usa conjunto técnico fixo e a AUAS usa série temporal iniciando em 2008:
                       </p>
                       <ul className="space-y-2 text-sm text-slate-400">
-                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Mudanças na cobertura:</strong> Detecta supressão de vegetação ou regeneração entre os anos.</li>
-                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Consistência do CAR:</strong> Verifica se a AC já existia na imagem mais antiga.</li>
-                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Art. 68 (marco 22/07/2008):</strong> Valida se o uso consolidado é anterior ao marco legal.</li>
-                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Diferenças de sensor:</strong> A IA considera que Landsat (30m) e SPOT (2.5m) têm resoluções diferentes.</li>
+                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">AC/AVN fixo:</strong> Landsat 2006, Landsat 2007, SPOT 2008 e Landsat 2008.</li>
+                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">AUAS temporal:</strong> valida ano provável de supressão e cruza AUAS x AVN.</li>
+                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Contexto legal:</strong> considera marco de 22/07/2008 para interpretação técnica.</li>
+                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Robustez:</strong> detecta nuvem/oclusão e marca trechos inconclusivos quando necessário.</li>
                       </ul>
                     </div>
 
@@ -7033,6 +7060,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         <div className="flex items-center gap-2"><span className="w-4 h-3 rounded-sm border-2 border-red-500 bg-transparent" /><span className="text-slate-400">Contorno vermelho = Limite da propriedade (ATP)</span></div>
                         <div className="flex items-center gap-2"><span className="w-4 h-3 rounded-sm bg-purple-500/40 border border-purple-500" /><span className="text-slate-400">Roxo semi-transparente = Área Consolidada (AC)</span></div>
                         <div className="flex items-center gap-2"><span className="w-4 h-3 rounded-sm bg-yellow-500/40 border border-yellow-500" /><span className="text-slate-400">Amarelo semi-transparente = Vegetação Nativa (AVN)</span></div>
+                        <div className="flex items-center gap-2"><span className="w-4 h-3 rounded-sm bg-white/40 border border-white/70" /><span className="text-slate-400">Branco semi-transparente = AUAS</span></div>
                       </div>
                     </div>
                   </div>
@@ -7155,11 +7183,19 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       },
                       {
                         q: 'Posso analisar imagens de satélite sem fazer o recorte primeiro?',
-                        a: 'Não. A análise por IA depende dos polígonos recortados (AC, AVN, ATP) do SIMCAR para criar as sobreposições sobre as imagens. Faça o recorte primeiro, depois clique em "Analisar com IA".',
+                        a: 'Sim, no modo Vetorizado com IA. Nesse modo você envia um ZIP já vetorizado (com os shapes) e executa a análise completa sem recorte WFS.',
                       },
                       {
                         q: 'Por que a análise com múltiplos satélites pode falhar?',
-                        a: 'Ao selecionar 3 satélites, são geradas 9 imagens (3 views × 3 satélites). Se o servidor WMS retornar erro para alguma camada (ex: Landsat indisponível), ela é pulada automaticamente. Se o payload for muito grande para a API de IA, o sistema reduz automaticamente para apenas as imagens de visão geral.',
+                        a: 'Falhas normalmente ocorrem por indisponibilidade WMS, limite de API ou cena com baixa qualidade (nuvem/oclusão). O sistema aplica fallback de modelos e continua com os satélites válidos quando possível.',
+                      },
+                      {
+                        q: 'Por que não consigo trocar o modo de um recorte já aberto?',
+                        a: 'Cada recorte fica vinculado ao modo em que foi criado (Recorte Automático ou Vetorizado). Para evitar inconsistência de pipeline, a troca de modo é bloqueada no item ativo. Use "Novo Recorte" para iniciar no outro modo.',
+                      },
+                      {
+                        q: 'Como funciona o consumo de créditos nessas análises?',
+                        a: 'O consumo é por uso real: modelos/tokens de IA e operações de armazenamento associadas ao fluxo. O detalhe aparece no extrato da aba Configurações.',
                       },
                       {
                         q: 'As respostas da IA são confiáveis para laudos oficiais?',
