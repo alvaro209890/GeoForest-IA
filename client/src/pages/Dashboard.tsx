@@ -6880,30 +6880,63 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           </div>
                         </div>
 
-                        {/* Images Gallery */}
+                        {/* Images Gallery (Retrátil) */}
                         {simcarAnalysisImages.length > 0 && (
                           <div className="px-6 pt-4">
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                              {simcarAnalysisImages.map((img, idx) => {
-                                const captionText = normalizeImageCaption(img.caption);
-                                return (
-                                <div key={idx} className="group relative rounded-xl overflow-hidden border border-white/10">
-                                  <a href={img.url} target="_blank" rel="noopener noreferrer">
-                                    <img
-                                      src={img.url}
-                                      alt={captionText}
-                                      className="w-full h-32 object-cover transition-transform duration-300 group-hover:scale-105"
-                                    />
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
-                                      <span className="text-[10px] text-white flex items-center gap-1">
-                                        <Eye size={10} /> Abrir
-                                      </span>
-                                    </div>
-                                  </a>
-                                  <p className="text-[9px] text-slate-400 px-2 py-1.5 bg-black/30 truncate" title={captionText}>{captionText}</p>
+                            <div className="rounded-xl border border-white/10 bg-black/20 overflow-hidden">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setSimcarResultImagePanelsOpen((prev) => ({
+                                    ...prev,
+                                    acAvn: !prev.acAvn,
+                                  }))
+                                }
+                                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.03] transition-colors"
+                              >
+                                <div className="p-1.5 rounded-md bg-white/10 text-slate-300">
+                                  <Eye size={13} />
                                 </div>
-                                );
-                              })}
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs font-semibold text-slate-200">Imagens da validação AC/AVN</p>
+                                  <p className="text-[10px] text-slate-500">{simcarAnalysisImages.length} imagem(ns)</p>
+                                </div>
+                                <ChevronDown
+                                  size={14}
+                                  className={`text-slate-400 transition-transform duration-200 ${simcarResultImagePanelsOpen.acAvn ? 'rotate-180' : 'rotate-0'}`}
+                                />
+                              </button>
+                              {simcarResultImagePanelsOpen.acAvn && (
+                                <div className="px-4 pb-4">
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                    {simcarAnalysisImages.map((img, idx) => {
+                                      const captionText = normalizeImageCaption(img.caption);
+                                      return (
+                                        <a
+                                          key={idx}
+                                          href={img.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="group block relative rounded-xl overflow-hidden border border-white/10 cursor-zoom-in hover:border-white/20 transition-colors"
+                                        >
+                                          <img
+                                            src={img.url}
+                                            alt={captionText}
+                                            className="w-full h-32 object-cover transition-transform duration-300 group-hover:scale-105"
+                                            loading="lazy"
+                                          />
+                                          <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
+                                            <span className="text-[10px] text-white flex items-center gap-1">
+                                              <Eye size={10} /> Abrir
+                                            </span>
+                                          </div>
+                                          <p className="text-[9px] text-slate-400 px-2 py-1.5 bg-black/30 truncate" title={captionText}>{captionText}</p>
+                                        </a>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
                         )}
@@ -7058,32 +7091,60 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         ) : (
                           simcarAuasImages.length > 0 && (
                             <div className="px-6 pt-4">
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                {simcarAuasImages.map((img, idx) => {
-                                  const captionText = normalizeImageCaption(img.caption);
-                                  return (
-                                    <a
-                                      key={idx}
-                                      href={img.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="group block relative rounded-xl overflow-hidden border border-white/10 cursor-zoom-in hover:border-white/20 transition-colors"
-                                    >
-                                      <img
-                                        src={img.url}
-                                        alt={captionText}
-                                        className="w-full h-32 object-cover transition-transform duration-300 group-hover:scale-105"
-                                        loading="lazy"
-                                      />
-                                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
-                                        <span className="text-[10px] text-white flex items-center gap-1">
-                                          <Eye size={10} /> Abrir
-                                        </span>
-                                      </div>
-                                      <p className="text-[9px] text-slate-400 px-2 py-1.5 bg-black/30 truncate" title={captionText}>{captionText}</p>
-                                    </a>
-                                  );
-                                })}
+                              <div className="rounded-xl border border-white/10 bg-black/20 overflow-hidden">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setSimcarResultImagePanelsOpen((prev) => ({
+                                      ...prev,
+                                      auas: !prev.auas,
+                                    }))
+                                  }
+                                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.03] transition-colors"
+                                >
+                                  <div className="p-1.5 rounded-md bg-white/10 text-slate-300">
+                                    <Eye size={13} />
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-xs font-semibold text-slate-200">Imagens da análise AUAS</p>
+                                    <p className="text-[10px] text-slate-500">{simcarAuasImages.length} imagem(ns)</p>
+                                  </div>
+                                  <ChevronDown
+                                    size={14}
+                                    className={`text-slate-400 transition-transform duration-200 ${simcarResultImagePanelsOpen.auas ? 'rotate-180' : 'rotate-0'}`}
+                                  />
+                                </button>
+                                {simcarResultImagePanelsOpen.auas && (
+                                  <div className="px-4 pb-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      {simcarAuasImages.map((img, idx) => {
+                                        const captionText = normalizeImageCaption(img.caption);
+                                        return (
+                                          <a
+                                            key={idx}
+                                            href={img.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="group block relative rounded-xl overflow-hidden border border-white/10 cursor-zoom-in hover:border-white/20 transition-colors"
+                                          >
+                                            <img
+                                              src={img.url}
+                                              alt={captionText}
+                                              className="w-full h-32 object-cover transition-transform duration-300 group-hover:scale-105"
+                                              loading="lazy"
+                                            />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
+                                              <span className="text-[10px] text-white flex items-center gap-1">
+                                                <Eye size={10} /> Abrir
+                                              </span>
+                                            </div>
+                                            <p className="text-[9px] text-slate-400 px-2 py-1.5 bg-black/30 truncate" title={captionText}>{captionText}</p>
+                                          </a>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )
