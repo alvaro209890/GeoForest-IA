@@ -46,6 +46,7 @@ import {
   AlertTriangle,
   Clock,
   MousePointerClick,
+  CheckCircle2,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
@@ -756,6 +757,35 @@ const parseZipShpGeometryOnClient = async (file: File): Promise<ParsedGeometry> 
   throw new Error('ZIP sem arquivo .shp encontrado.');
 };
 
+/** Extrai dos veredictos de concordância/discordância do texto de análise. */
+function extractAnalysisSummary(text: string): {
+  ac: 'concorda' | 'discorda' | 'inconclusivo' | null;
+  avn: 'concorda' | 'discorda' | 'inconclusivo' | null;
+} {
+  const lines = text.split('\n');
+  let ac: 'concorda' | 'discorda' | 'inconclusivo' | null = null;
+  let avn: 'concorda' | 'discorda' | 'inconclusivo' | null = null;
+  for (const raw of lines) {
+    const l = raw.toLowerCase();
+    const isAC = (/área consolidada|\bac\b/).test(l) && !(/avn|vegetação nativa|vegeta..o nativa/).test(l);
+    const isAVN = (/\bavn\b|vegetação nativa|vegeta..o nativa/).test(l);
+    const concorda = raw.includes('✅') || (l.includes('concorda') && !l.includes('não concorda') && !l.includes('discorda'));
+    const discorda = raw.includes('❌') || l.includes('discorda');
+    const inconcl = raw.includes('⚠️') || l.includes('inconclusivo');
+    if (isAC && ac === null) {
+      if (inconcl) ac = 'inconclusivo';
+      else if (concorda) ac = 'concorda';
+      else if (discorda) ac = 'discorda';
+    }
+    if (isAVN && avn === null) {
+      if (inconcl) avn = 'inconclusivo';
+      else if (concorda) avn = 'concorda';
+      else if (discorda) avn = 'discorda';
+    }
+  }
+  return { ac, avn };
+}
+
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -834,6 +864,7 @@ export default function Dashboard() {
   // ─── SIMCAR AI Analysis State ───
   const [simcarAnalysisProcessing, setSimcarAnalysisProcessing] = useState(false);
   const [simcarAnalysisProgress, setSimcarAnalysisProgress] = useState<{ step: string; percent: number; message: string } | null>(null);
+  const [simcarAgentLog, setSimcarAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
   const [simcarAnalysisImages, setSimcarAnalysisImages] = useState<Array<{ url: string; caption: string }>>([]);
   const [simcarAnalysisMessages, setSimcarAnalysisMessages] = useState<SimcarAnalysisMessage[]>([]);
   const [simcarThinkingText, setSimcarThinkingText] = useState('');
@@ -4722,6 +4753,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
                               setSimcarAnalysisProcessing(true);
                               setSimcarAnalysisProgress({ step: 'starting', percent: 0, message: 'Iniciando análise...' });
+                              setSimcarAgentLog([{ label: 'Iniciando análise...', done: false, kind: 'step' }]);
                               setSimcarAnalysisImages([]);
                               setSimcarAnalysisMessages([]);
                               setSimcarThinkingText('');
@@ -4754,13 +4786,26 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                       try {
                                         const event = JSON.parse(line.slice(6));
                                         if (event.type === 'progress') {
-                                          setSimcarAnalysisProgress({ step: event.step, percent: event.percent, message: event.message });
+                                          const msg = String(event.message || '');
+                                          setSimcarAnalysisProgress({ step: event.step, percent: event.percent, message: msg });
+                                          setSimcarAgentLog((prev) => {
+                                            // Mark previous active step as done, add new step
+                                            const updated = prev.map((s) => s.done ? s : { ...s, done: true });
+                                            return [...updated, { label: msg, done: false, kind: 'step' as const }];
+                                          });
                                         } else if (event.type === 'model_thinking') {
                                           const source = event.source ? `[${event.source}]` : '';
                                           const thought = String(event.thinkingText || '').trim();
                                           if (thought) {
                                             appendSimcarThinking(source ? `${source}\n${thought}` : thought);
                                             setSimcarThinkingHidden(false);
+                                            // Add thinking snippet to agent log (first 120 chars)
+                                            const snippet = thought.replace(/\s+/g, ' ').slice(0, 120);
+                                            const label = source ? `${source}: ${snippet}…` : `${snippet}…`;
+                                            setSimcarAgentLog((prev) => [
+                                              ...prev,
+                                              { label, done: true, kind: 'thinking' as const },
+                                            ]);
                                           }
                                         } else if (event.type === 'complete') {
                                           const parsed = splitThinkContent(String(event.analysis || ''));
@@ -4776,6 +4821,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                           setSimcarAnalysisImages(event.images || []);
                                           setSimcarAnalysisMessages([aiMessage]);
                                           setSimcarAnalysisProgress(null);
+                                          setSimcarAgentLog((prev) => prev.map((s) => ({ ...s, done: true })));
                                           // Persist to history
                                           setSimcarClipHistory((prev) => prev.map((c) =>
                                             c.jobId === simcarClipJobId
@@ -4881,85 +4927,51 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </section>
                     )}
 
-                    {/* AI Thinking Bubble (Top) */}
-                    {(simcarAnalysisProcessing || simcarAnalysisSending || simcarThinkingText.trim() || simcarLiveThinkingText.trim()) && (
-                      <section className="sticky top-2 z-20 relative rounded-2xl border border-purple-400/25 bg-[#101622]/85 backdrop-blur-md px-4 py-3 shadow-lg shadow-black/25">
-                        <div className="absolute -top-1.5 left-8 h-3 w-3 rotate-45 border-l border-t border-purple-400/25 bg-[#101622]/85" />
-                        <div className="flex items-center justify-between gap-3 mb-2">
-                          <div className="flex items-center gap-2">
-                            <Brain size={14} className="text-purple-300" />
-                            <h3 className="font-semibold text-slate-200 text-xs uppercase tracking-wider">Pensamento da IA</h3>
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border ${simcarAnalysisSending
-                              ? 'border-purple-400/35 bg-purple-500/15 text-purple-200'
-                              : simcarAnalysisProcessing
-                                ? 'border-indigo-400/35 bg-indigo-500/15 text-indigo-200'
-                                : 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
-                              }`}>
-                              <span className="thinking-status-dot" />
-                              {simcarAnalysisSending
-                                ? (simcarLiveAnswerText.trim() ? 'Escrevendo resposta' : 'Pensando em tempo real')
-                                : simcarAnalysisProcessing
-                                  ? 'Pensando nos modelos'
-                                  : 'Concluído'}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setSimcarThinkingHidden((prev) => !prev)}
-                              className="px-2.5 py-1 rounded-lg text-[10px] font-medium bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 transition-colors"
-                            >
-                              {simcarThinkingHidden ? 'Mostrar' : 'Esconder'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSimcarThinkingText('');
-                                setSimcarLiveThinkingText('');
-                              }}
-                              className="px-2.5 py-1 rounded-lg text-[10px] font-medium bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-300 transition-colors"
-                            >
-                              Apagar
-                            </button>
-                          </div>
-                        </div>
-                        {simcarThinkingHidden ? (
-                          <p className="text-xs text-slate-500 italic">Pensamento oculto.</p>
-                        ) : (
-                          <div className="space-y-2">
-                            <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
-                              <p className="text-[10px] uppercase tracking-wider text-purple-300/90 mb-1">Raciocínio em tempo real</p>
-                              <div ref={simcarThinkingPanelRef} className="max-h-44 overflow-y-auto custom-scrollbar">
-                                <p className="text-xs leading-relaxed text-slate-300/90 whitespace-pre-wrap">
-                                  {(simcarLiveThinkingText || simcarThinkingText).trim() ||
-                                    (simcarAnalysisProcessing || simcarAnalysisSending
-                                      ? 'Aguardando o primeiro bloco de pensamento...'
-                                      : 'Sem pensamento disponível.')}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </section>
-                    )}
+                    {/* ── Balão de Agente IA (durante a análise) ── */}
+                    {simcarAnalysisProcessing && (
+                      <section className="relative rounded-2xl border border-purple-500/30 bg-[#0c1018]/90 backdrop-blur-md px-5 py-4 shadow-xl">
+                        {/* ponteiro do balão */}
+                        <div className="absolute -top-[7px] left-7 h-3.5 w-3.5 rotate-45 border-l border-t border-purple-500/30 bg-[#0c1018]" />
 
-                    {/* AI Analysis Progress */}
-                    {simcarAnalysisProcessing && simcarAnalysisProgress && (
-                      <section className="bg-[#0e1216]/60 backdrop-blur-md border border-purple-500/20 rounded-2xl p-6">
+                        {/* cabeçalho */}
                         <div className="flex items-center gap-3 mb-3">
-                          <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400 animate-pulse">
-                            <Brain size={20} />
+                          <div className="relative flex-shrink-0">
+                            <div className="p-2 rounded-xl bg-purple-500/15 text-purple-400">
+                              <Brain size={16} />
+                            </div>
+                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-purple-400 animate-ping opacity-75" />
+                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-purple-400" />
                           </div>
-                          <div className="flex-1">
-                            <h3 className="font-semibold text-white text-sm">Análise com IA</h3>
-                            <p className="text-xs text-slate-400">{simcarAnalysisProgress.message}</p>
+                          <div>
+                            <p className="text-xs font-semibold text-slate-200">GeoForest IA — analisando...</p>
+                            <p className="text-[10px] text-slate-500">Análise de imagens de satélite em tempo real</p>
                           </div>
-                          <span className="text-sm font-semibold text-purple-400 tabular-nums">{simcarAnalysisProgress.percent}%</span>
+                          <span className="ml-auto text-xs font-semibold text-purple-400 tabular-nums">
+                            {simcarAnalysisProgress?.percent ?? 0}%
+                          </span>
                         </div>
-                        <div className="bg-black/40 h-2.5 rounded-full overflow-hidden">
+
+                        {/* lista de passos */}
+                        <div className="space-y-1.5 max-h-52 overflow-y-auto custom-scrollbar pr-1">
+                          {simcarAgentLog.map((step, i) => (
+                            <div key={i} className={`flex items-start gap-2 text-[11px] transition-opacity ${step.done ? 'opacity-40' : 'opacity-100'}`}>
+                              {step.done ? (
+                                <CheckCircle2 size={11} className={`mt-0.5 flex-shrink-0 ${step.kind === 'thinking' ? 'text-indigo-400' : 'text-emerald-400'}`} />
+                              ) : (
+                                <Loader2 size={11} className="mt-0.5 flex-shrink-0 animate-spin text-purple-400" />
+                              )}
+                              <span className={`leading-snug ${step.kind === 'thinking' ? 'italic text-indigo-300/80' : step.done ? 'text-slate-400' : 'text-slate-200 font-medium'}`}>
+                                {step.kind === 'thinking' ? `💭 ${step.label}` : step.label}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* barra de progresso */}
+                        <div className="mt-3 bg-black/40 h-1 rounded-full overflow-hidden">
                           <div
                             className="bg-gradient-to-r from-purple-500 to-indigo-400 h-full rounded-full transition-all duration-700"
-                            style={{ width: `${simcarAnalysisProgress.percent}%` }}
+                            style={{ width: `${simcarAnalysisProgress?.percent ?? 0}%` }}
                           />
                         </div>
                       </section>
@@ -5013,19 +5025,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 : 'bg-[#111a20]/80 border border-purple-500/20 text-slate-200 rounded-bl-md'
                                 }`}>
                                 {msg.role === 'ai' ? (
-                                  <>
-                                    {!simcarThinkingHidden && msg.thinkingText && (
-                                      <div className="mb-3 rounded-xl border border-purple-400/30 bg-purple-500/10 px-3 py-2">
-                                        <p className="text-[10px] uppercase tracking-wider text-purple-300 mb-1">Pensamento da IA</p>
-                                        <p className="text-xs leading-relaxed whitespace-pre-wrap text-slate-300/90">
-                                          {msg.thinkingText}
-                                        </p>
-                                      </div>
-                                    )}
-                                    <div className="analysis-markdown">
-                                      {renderAnalysisRichText(msg.text)}
-                                    </div>
-                                  </>
+                                  <div className="analysis-markdown">
+                                    {renderAnalysisRichText(msg.text)}
+                                  </div>
                                 ) : (
                                   msg.text
                                 )}
@@ -5051,38 +5053,30 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           )}
                         </div>
 
-                        {/* Chat Input */}
-                        <div className="px-6 pb-4">
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              value={simcarAnalysisInput}
-                              onChange={(e) => setSimcarAnalysisInput(e.target.value)}
-                              placeholder="Pergunte mais sobre a análise..."
-                              className="flex-1 px-4 py-2.5 rounded-xl bg-black/30 border border-white/10 text-white text-sm placeholder-slate-500 focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 focus:outline-none transition-colors"
-                              disabled={simcarAnalysisSending}
-                              onKeyDown={async (e) => {
-                                if (e.key === 'Enter' && simcarAnalysisInput.trim() && !simcarAnalysisSending) {
-                                  const userMsg = simcarAnalysisInput.trim();
-                                  setSimcarAnalysisInput('');
-                                  await sendSimcarFollowUpMessage(userMsg);
-                                }
-                              }}
-                            />
-                            <button
-                              onClick={async () => {
-                                if (!simcarAnalysisInput.trim() || simcarAnalysisSending) return;
-                                const userMsg = simcarAnalysisInput.trim();
-                                setSimcarAnalysisInput('');
-                                await sendSimcarFollowUpMessage(userMsg);
-                              }}
-                              disabled={!simcarAnalysisInput.trim() || simcarAnalysisSending}
-                              className="p-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:bg-white/5 disabled:text-slate-500 text-white transition-colors"
-                            >
-                              <SendHorizontal size={16} />
-                            </button>
-                          </div>
-                        </div>
+                        {/* ── Card de Resumo ── */}
+                        {(() => {
+                          const aiText = simcarAnalysisMessages.find((m) => m.role === 'ai')?.text ?? '';
+                          const { ac, avn } = extractAnalysisSummary(aiText);
+                          const chip = (v: typeof ac) => {
+                            if (v === 'concorda') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 border border-emerald-500/25 text-emerald-300"><CheckCircle2 size={9} /> Concorda</span>;
+                            if (v === 'discorda') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/15 border border-red-500/25 text-red-300">✕ Discorda</span>;
+                            if (v === 'inconclusivo') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 border border-amber-500/25 text-amber-300">⚠ Inconclusivo</span>;
+                            return <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] bg-white/5 border border-white/10 text-slate-500">—</span>;
+                          };
+                          return (
+                            <div className="mx-6 mb-4 rounded-xl border border-white/8 bg-black/30 px-4 py-3 flex flex-col gap-2">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Resumo da análise IA</p>
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-[11px] text-slate-300">Área Consolidada (2008)</span>
+                                {chip(ac)}
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-[11px] text-slate-300">Vegetação Nativa (2008)</span>
+                                {chip(avn)}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </section>
                     )}
                   </>
