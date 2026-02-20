@@ -1173,31 +1173,35 @@ async function processClip(
 const SEMA_WMS_BASE = process.env.SEMA_WMS_BASE_URL || "https://geo.sema.mt.gov.br/geoserver/ows";
 const SEMA_WMS_AUTHKEY = process.env.SEMA_WMS_AUTHKEY || "541085de-9a2e-454e-bdba-eb3d57a2f492";
 const SPOT_LAYER = "Mosaicos:MOSAICO_SPOT_SEPLAN";
-const LANDSAT5_2007_LAYER = process.env.WMS_LANDSAT5_2007 || "Mosaicos:LANDSAT_5_2007";
-const LANDSAT5_2008_LAYER = process.env.WMS_LANDSAT5_2008 || "Mosaicos:LANDSAT_5_2008";
-const LANDSAT5_2009_LAYER = process.env.WMS_LANDSAT5_2009 || "Mosaicos:LANDSAT_5_2009";
+
+/** Helper to generate Landsat 5/8 and Sentinel-2 layer entries. */
+function buildSatLayer(sensor: string, year: number, wmsPrefix: string, labelPrefix: string, aliases?: string[]): { wmsLayer: string; wmsAliases?: string[]; label: string; year: number } {
+    const envKey = `WMS_${sensor}_${year}`;
+    const defaultLayer = `Mosaicos:${wmsPrefix}_${year}`;
+    return {
+        wmsLayer: process.env[envKey] || defaultLayer,
+        wmsAliases: aliases || [`Mosaicos:${wmsPrefix}_${year}`, `Mosaicos:MOSAICO_${wmsPrefix}${year}`],
+        label: `${labelPrefix} (${year})`,
+        year,
+    };
+}
 
 /** Available satellite base layers for analysis. */
 const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]; label: string; year: number }> = {
+    // SPOT (high-res 2.5m)
     spot_2008: { wmsLayer: SPOT_LAYER, label: "SPOT 2008", year: 2008 },
-    landsat5_2007: {
-        wmsLayer: LANDSAT5_2007_LAYER,
-        wmsAliases: ["Mosaicos:LANDSAT_5_2007", "Mosaicos:MOSAICO_LANDSAT5_2007"],
-        label: "Landsat 5 (2007)",
-        year: 2007,
-    },
-    landsat5_2008: {
-        wmsLayer: LANDSAT5_2008_LAYER,
-        wmsAliases: ["Mosaicos:LANDSAT_5_2008", "Mosaicos:MOSAICO_LANDSAT5_2008"],
-        label: "Landsat 5 (2008)",
-        year: 2008,
-    },
-    landsat5_2009: {
-        wmsLayer: LANDSAT5_2009_LAYER,
-        wmsAliases: ["Mosaicos:LANDSAT_5_2009", "Mosaicos:MOSAICO_LANDSAT5_2009"],
-        label: "Landsat 5 (2009)",
-        year: 2009,
-    },
+    // Landsat 5 (30m) — 1984-2011
+    ...Object.fromEntries([1984,1985,1986,1987,1988,1989,1990,1991,1992,1993,1994,1995,1996,1997,1998,1999,2000,2003,2004,2005,2006,2007,2008,2009,2010,2011].map(
+        (y) => [`landsat5_${y}`, buildSatLayer("LANDSAT5", y, "LANDSAT_5", "Landsat 5")]
+    )),
+    // Landsat 8 (30m) — 2013-2018
+    ...Object.fromEntries([2013,2014,2015,2016,2017,2018].map(
+        (y) => [`landsat8_${y}`, buildSatLayer("LANDSAT8", y, "LANDSAT_8", "Landsat 8")]
+    )),
+    // Sentinel-2 (10m) — 2016-2024
+    ...Object.fromEntries([2016,2017,2018,2019,2020,2021,2022,2023,2024].map(
+        (y) => [`sentinel2_${y}`, buildSatLayer("SENTINEL2", y, "SENTINEL_2", "Sentinel-2")]
+    )),
 };
 
 function getOrderedSatelliteKeys(selectedLayers: string[] = []): string[] {
@@ -3009,8 +3013,9 @@ function buildSingleSatellitePrompt(
     satelliteKey: string,
 ): string {
     const sat = SATELLITE_LAYERS[satelliteKey];
-    const sensor = satelliteKey.startsWith("landsat")
-        ? "Landsat 5 TM (30m de resolução espacial)"
+    const sensor = satelliteKey.startsWith("sentinel2") ? "Sentinel-2 MSI (10m de resolução espacial)"
+        : satelliteKey.startsWith("landsat8") ? "Landsat 8 OLI (30m de resolução espacial)"
+        : satelliteKey.startsWith("landsat5") ? "Landsat 5 TM (30m de resolução espacial)"
         : "SPOT (2.5m de resolução espacial)";
 
     return [
@@ -3075,7 +3080,10 @@ function buildAnalysisPrompt(
     const satDescriptions = validLayers.map((k, i) => {
         const sat = SATELLITE_LAYERS[k];
         const imgBase = i * 3 + 1;
-        const sensor = k.startsWith("landsat") ? "Landsat 5 TM (30m de resolução espacial)" : "SPOT (2.5m de resolução espacial)";
+        const sensor = k.startsWith("sentinel2") ? "Sentinel-2 MSI (10m de resolução espacial)"
+            : k.startsWith("landsat8") ? "Landsat 8 OLI (30m de resolução espacial)"
+            : k.startsWith("landsat5") ? "Landsat 5 TM (30m de resolução espacial)"
+            : "SPOT (2.5m de resolução espacial)";
         return [
             `#### ${sat.label} — ${sensor}`,
             `- Imagem ${imgBase}: Visão Geral — base ${sat.label} + contorno vermelho (propriedade) + AC (roxo) + AVN (amarelo)`,
@@ -3140,7 +3148,7 @@ function buildAnalysisPrompt(
             "- Expansão sobre vegetação nativa após 2008?",
             "",
             "#### d) Diferenças entre sensores",
-            "- Landsat 30m vs SPOT 2.5m — não confundir resolução com mudança.",
+            "- Sentinel-2 10m vs Landsat 30m vs SPOT 2.5m — não confundir resolução com mudança.",
             "",
         );
     }
