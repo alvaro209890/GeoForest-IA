@@ -3360,64 +3360,113 @@ function buildAuasSingleSatPrompt(
     satelliteKey: string,
 ): string {
     const sat = SATELLITE_LAYERS[satelliteKey];
-    const sensor = satelliteKey.startsWith("sentinel2") ? "Sentinel-2 MSI (10m de resolução espacial)"
-        : satelliteKey.startsWith("landsat8") ? "Landsat 8 OLI (30m de resolução espacial)"
-            : satelliteKey.startsWith("landsat5") ? "Landsat 5 TM (30m de resolução espacial)"
-                : "SPOT (2.5m de resolução espacial)";
+    const sensorInfo: Record<string, { name: string; res: string; bandTips: string }> = {
+        sentinel2: {
+            name: "Sentinel-2 MSI",
+            res: "10m de resolução espacial",
+            bandTips: "Resolução alta (10m) permite identificar com clareza limites de desmatamento, bordas de vegetação nativa remanescente, e padrões de pasto/agricultura. Preste atenção a diferenças de textura e tonalidade entre vegetação densa (escura e homogênea) e uso antrópico (mais clara, padrões geométricos).",
+        },
+        landsat8: {
+            name: "Landsat 8 OLI",
+            res: "30m de resolução espacial",
+            bandTips: "Resolução de 30m — confiável para manchas de desmatamento maiores que ~1 ha. Vegetação nativa aparece como textura rugosa e verde-escura; áreas de pasto/recém-desmatadas aparecem mais homogêneas e claras. Solo exposto apresenta tons avermelhados ou amarelados.",
+        },
+        landsat5: {
+            name: "Landsat 5 TM",
+            res: "30m de resolução espacial",
+            bandTips: "Sensor histórico fundamental — mesma resolução do L8 (30m). Por ser imagem mais antiga, pode ter maior presença de nuvens ou ruído atmosférico. Foque em padrões claros: verde-escuro homogêneo = mata nativa; padrões geométricos com tons mais claros = uso consolidado (pastagem, lavoura).",
+        },
+        spot: {
+            name: "SPOT",
+            res: "2.5m de resolução espacial",
+            bandTips: "Resolução MUITO ALTA (2.5m) — permite individualizar árvores, cercas, estradas internas, corpos d'água pequenos. Esta é a melhor imagem de referência para 2008 (ano do marco). Use-a como baseline detalhado: identifique com precisão quais parcelas da AUAS já estavam convertidas e quais mantinham vegetação nativa.",
+        },
+    };
+    const sensorKey = satelliteKey.startsWith("sentinel2") ? "sentinel2"
+        : satelliteKey.startsWith("landsat8") ? "landsat8"
+            : satelliteKey.startsWith("landsat5") ? "landsat5" : "spot";
+    const sensor = sensorInfo[sensorKey];
 
     const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
+    const acSummary = layerSummaries.find((l) => l.name === "AC" || l.name === "Consolidada");
+    const avnSummary = layerSummaries.find((l) => l.name === "AVN" || /vegeta/i.test(l.name));
+
+    const isPreMarco = sat.year <= 2008;
+    const yearsAfterMarco = sat.year - 2008;
 
     return [
-        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
-        "Analise a imagem de satélite avaliando a AUAS (Área de Uso Alternativo do Solo) declarada no CAR.",
+        "Você é a **GeoForest IA**, perita em sensoriamento remoto e análise ambiental forense para imóveis rurais em Mato Grosso.",
+        `Sua especialidade é identificar mudanças de uso e cobertura do solo (LULC) usando imagens de satélite e correlacionar com as declarações do CAR.`,
         "",
         "---",
         "",
-        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
+        "## Contexto do Imóvel",
         "",
-        auasSummary ? `| AUAS (Uso Alternativo do Solo) | ${auasSummary.areaHa?.toFixed(2) ?? '0'} ha — ${auasSummary.features ?? 0} feições |` : "",
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
+        "",
+        "| Camada | Informação |",
+        "| --- | --- |",
+        auasSummary ? `| **AUAS** (Uso Alternativo do Solo) | ${auasSummary.areaHa?.toFixed(2) ?? '0'} ha — ${auasSummary.features ?? 0} feições |` : "",
+        acSummary ? `| **AC** (Área Consolidada) | ${acSummary.areaHa?.toFixed(2) ?? '0'} ha — ${acSummary.features ?? 0} feições |` : "",
+        avnSummary ? `| **AVN** (Vegetação Nativa) | ${avnSummary.areaHa?.toFixed(2) ?? '0'} ha — ${avnSummary.features ?? 0} feições |` : "",
         "",
         "---",
         "",
-        `## Imagem: ${sat.label} — ${sensor}`,
+        `## Imagem Analisada: ${sat.label} — ${sensor.name} (${sensor.res})`,
         "",
-        "**Legenda dos polígonos sobrepostos na imagem:**",
-        "- 🟥 **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP/AIR)",
-        "- ⬜ **Branco semi-transparente**: AUAS (Área de Uso Alternativo do Solo)",
+        `**Dicas de interpretação para este sensor:** ${sensor.bandTips}`,
         "",
-        `A imagem mostra a base ${sat.label} com o polígono da AUAS em branco sobre o contorno da propriedade em vermelho.`,
+        "**Legenda visual dos polígonos na imagem:**",
+        "- 🟥 **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP/AIR do CAR)",
+        "- ⬜ **Branco semi-transparente (preenchimento)**: **AUAS** — Área de Uso Alternativo do Solo declarada no CAR",
+        "",
+        "---",
+        "",
+        "## Marco Legal de Referência",
+        "",
+        "O **Art. 68 da Lei 12.651/2012** (Código Florestal) estabelece que áreas rurais que já estavam consolidadas " +
+        "com atividades agrossilvipastoris até **22/07/2008** podem ser mantidas nessa condição, desde que corretamente " +
+        "declaradas no CAR. A AUAS é a camada do CAR que delimita essas áreas de uso alternativo.",
+        "",
+        `⏱️ **Ano desta imagem: ${sat.year}** — ` + (isPreMarco
+            ? `Esta imagem é **${sat.year === 2008 ? 'DO' : 'ANTERIOR AO'}** marco temporal (22/07/2008). Serve como PROVA BASELINE do estado da terra antes/no marco.`
+            : `Esta imagem é **${yearsAfterMarco} ano(s) APÓS** o marco temporal. Qualquer supressão de vegetação nativa dentro da AUAS detectada NESTE ano indica irregularidade.`),
         "",
         "---",
         "",
         "## Instruções de Análise",
         "",
-        "### Análise da AUAS",
-        "- Observe a área demarcada em branco (AUAS). Descreva o que existe nessa área no ano da imagem.",
-        "- Havia VEGETAÇÃO NATIVA dentro da AUAS neste ano?",
-        "- A área aparenta ser de USO ANTRÓPICO (pastagem, agricultura, solo exposto)?",
-        "- Se há vegetação nativa, descreva: tipo aparente (floresta, cerrado, mata ciliar), cobertura do dossel, integridade.",
-        "- Compare a condição da AUAS com a área ao redor — está em continuidade com vegetação nativa maior?",
+        "### 1. Estado da AUAS neste ano",
+        "Observe EXCLUSIVAMENTE a área demarcada em branco (AUAS) e descreva:",
+        "- **Cobertura predominante**: vegetação nativa densa, vegetação nativa rala/degradada, pasto, lavoura, solo exposto, área construída, espelho d'água, ou mista?",
+        "- **Proporção estimada**: qual % da AUAS está sob cada tipo de uso? (ex: 70% pasto, 20% vegetação nativa, 10% solo exposto)",
+        "- **Padrões geográficos**: as áreas de uso antrópico estão concentradas em qual parte? (norte, sul, centro, bordas)",
         "",
-        "### Indicação temporal",
-        `- O ano da imagem é **${sat.year}**. O marco temporal de referência é **22/07/2008** (Art. 68, Lei 12.651/2012).`,
-        sat.year <= 2008
-            ? "- Esta é uma imagem PRÉ ou DO marco temporal. Descreva a condição da área como baseline."
-            : "- Esta é uma imagem PÓS marco temporal. Indique se há evidência de DESMATAMENTO RECENTE (solo exposto, queimada, vegetação suprimida) dentro da AUAS.",
+        "### 2. Indicadores de Desmatamento",
+        "Procure evidências visuais de supressão recente:",
+        "- Solo exposto de formato geométrico (indicando corte raso)",
+        "- Bordas abruptas entre vegetação nativa e área desmatada",
+        "- Queimadas (tons pretos/cinza com padrão de fogo)",
+        "- Estradas novas cortando vegetação",
+        "- Vegetação secundária (capoeira) — indica desmatamento anterior com regeneração parcial",
         "",
-        "### Conclusão Parcial",
-        "- **✅ USO CONSOLIDADO**: AUAS mostra uso antrópico neste ano (coerente com sua declaração).",
-        "- **❌ VEGETAÇÃO NATIVA**: AUAS mostra vegetação nativa neste ano (não deveria ser AUAS).",
-        "- **⚠️ INCONCLUSIVO**: resolução do sensor não permite afirmar com segurança.",
+        "### 3. Conclusão Parcial para este ano",
+        "Use OBRIGATORIAMENTE um dos seguintes vereditos:",
+        "- **✅ USO ANTRÓPICO CONSOLIDADO**: A AUAS mostra uso antrópico neste ano — coerente com a declaração do CAR.",
+        "- **❌ VEGETAÇÃO NATIVA PRESENTE**: A AUAS mostra vegetação nativa significativa (>30%) — a declaração de AUAS nesta área é questionável.",
+        "- **🔴 DESMATAMENTO RECENTE DETECTADO**: Evidência clara de supressão recente dentro da AUAS (solo exposto, queimada, corte).",
+        "- **⚠️ INCONCLUSIVO**: Resolução do sensor, cobertura de nuvens ou outros fatores impedem determinação confiável.",
         "",
         "---",
-        "Responda em **português**, use markdown, seja OBJETIVO e CONCISO (máximo 300 palavras).",
+        "Responda em **português**, use markdown, seja OBJETIVO e TÉCNICO (250–400 palavras).",
         "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
     ].join("\n");
 }
 
 /**
- * Build the final synthesis prompt for AUAS analysis that combines
- * per-satellite AUAS analyses with the previous AC/AVN analysis.
+ * Build the final synthesis prompt for AUAS analysis — produces a
+ * professional environmental forensics report combining per-satellite
+ * observations with previous AC/AVN analysis.
  */
 function buildAuasFinalSynthesisPrompt(
     areaHa: number,
@@ -3427,6 +3476,12 @@ function buildAuasFinalSynthesisPrompt(
 ): string {
     const labels = perSatelliteAnalyses.map((a) => a.satelliteLabel);
     const years = perSatelliteAnalyses.map((a) => a.year).sort();
+    const preMarco = years.filter((y) => y <= 2008);
+    const postMarco = years.filter((y) => y > 2008);
+
+    const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
+    const acSummary = layerSummaries.find((l) => l.name === "AC" || l.name === "Consolidada");
+    const avnSummary = layerSummaries.find((l) => l.name === "AVN" || /vegeta/i.test(l.name));
 
     const analysesBlock = perSatelliteAnalyses.map((a) => [
         `### ${a.satelliteLabel} (${a.year})`,
@@ -3435,18 +3490,29 @@ function buildAuasFinalSynthesisPrompt(
     ].join("\n")).join("\n\n---\n\n");
 
     const parts: string[] = [
-        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
+        "Você é a **GeoForest IA**, perita em sensoriamento remoto e análise ambiental forense, especializada em imóveis rurais de Mato Grosso.",
         "",
-        "Você receberá análises individuais feitas por IA para diferentes imagens de satélite do MESMO imóvel rural,",
-        "focadas na **AUAS (Área de Uso Alternativo do Solo)** declarada no CAR.",
-        "",
-        "---",
-        "",
-        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
+        "Sua tarefa: produzir um **Laudo Técnico de Análise da AUAS** profissional e impactante, " +
+        "combinando as análises por satélite individuais com o contexto legal e ambiental do imóvel.",
         "",
         "---",
         "",
-        `## Análises AUAS por Ano (${labels.length} satélites: ${years[0]}–${years[years.length - 1]})`,
+        "## Dados do Imóvel",
+        "",
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
+        "",
+        "### Camadas do CAR relevantes para esta análise:",
+        "| Camada | Área | Feições |",
+        "| --- | --- | --- |",
+        auasSummary ? `| **AUAS** (Uso Alternativo do Solo) | ${auasSummary.areaHa?.toFixed(2) ?? '—'} ha | ${auasSummary.features ?? 0} |` : "",
+        acSummary ? `| **AC** (Área Consolidada) | ${acSummary.areaHa?.toFixed(2) ?? '—'} ha | ${acSummary.features ?? 0} |` : "",
+        avnSummary ? `| **AVN** (Vegetação Nativa) | ${avnSummary.areaHa?.toFixed(2) ?? '—'} ha | ${avnSummary.features ?? 0} |` : "",
+        "",
+        "---",
+        "",
+        `## Análises AUAS por Satélite (${labels.length} imagens: ${years[0]}–${years[years.length - 1]})`,
+        "",
+        `**Imagens pré-marco (≤2008):** ${preMarco.length > 0 ? preMarco.join(", ") : "nenhuma"} | **Imagens pós-marco (>2008):** ${postMarco.length > 0 ? postMarco.join(", ") : "nenhuma"}`,
         "",
         analysesBlock,
         "",
@@ -3456,11 +3522,12 @@ function buildAuasFinalSynthesisPrompt(
         parts.push(
             "---",
             "",
-            "## Análise Anterior da Área Consolidada (AC) e Vegetação Nativa (AVN)",
+            "## 📋 Análise Anterior — Área Consolidada (AC) e Vegetação Nativa (AVN)",
             "",
-            "A IA já analisou a AC e AVN deste imóvel. Este é o resumo:",
+            "**A IA já analisou as camadas AC e AVN deste imóvel usando as mesmas imagens de satélite.**",
+            "Use este resultado como referência cruzada — as conclusões da AUAS devem ser COERENTES com as da AC:",
             "",
-            toSynthesisExcerpt(previousAcAvnAnalysis, 3000),
+            toSynthesisExcerpt(previousAcAvnAnalysis, 4000),
             "",
         );
     }
@@ -3468,53 +3535,80 @@ function buildAuasFinalSynthesisPrompt(
     parts.push(
         "---",
         "",
-        "## Sua Tarefa: Laudo Integrado de AUAS",
+        "## 📝 PRODUZA O LAUDO TÉCNICO COM A SEGUINTE ESTRUTURA:",
         "",
-        "Produza um laudo ÚNICO e COMPLETO. Seja objetivo.",
+        "### 🔰 Resumo Executivo",
+        "Comece com um resumo impactante de 3–4 linhas: a AUAS declarada está correta, incorreta ou parcialmente correta?",
+        "Inclua a área total analisada, o período de cobertura e o veredito principal.",
         "",
-        "### 1. Linha do Tempo da AUAS",
-        `Para cada ano analisado (${years.join(", ")}), resuma o que foi observado dentro da AUAS:`,
-        "- Uso antrópico consolidado (pastagem, agricultura, construções)?",
-        "- Vegetação nativa presente?",
-        "- Evidência de desmatamento recente (solo exposto, queimada)?",
+        "### 📅 Linha do Tempo",
+        `Crie uma tabela temporal com colunas: **Ano** | **Sensor** | **Cobertura da AUAS** | **Veredito** | **Observações**`,
+        `Os vereditos devem usar: ✅ Consolidado | ❌ Veg. Nativa | 🔴 Desmatamento | ⚠️ Inconclusivo`,
         "",
-        "### 2. Identificação de Desmatamentos Irregulares",
-        "- O marco temporal é **22/07/2008** (Art. 68, Lei 12.651/2012).",
-        "- Se a AUAS tinha vegetação nativa em imagens de 2007 ou 2008, e em anos seguintes essa vegetação foi suprimida, identifique **EM QUE ANO** o desmatamento irregular ocorreu.",
-        "- Liste cada intervalo temporal onde houve supressão (ex: 'entre 2010 e 2013, porção norte da AUAS').",
+        `Para cada ano analisado (${years.join(", ")}), indique:`,
+        "- Qual era a cobertura predominante dentro da AUAS (pasto, lavoura, mata, misto)",
+        "- Se houve alguma mudança visível em relação ao ano anterior",
+        "- Se há evidência de supressão recente de vegetação nativa",
         "",
-        "### 3. Concordância com a Declaração de AUAS",
-        "- **✅ CONCORDA**: A AUAS declarada no CAR era de uso antrópico consolidado antes de julho/2008, coerente com a declaração.",
-        "- **❌ DISCORDA**: A AUAS declarada tinha vegetação nativa que foi suprimida após julho/2008. O desmatamento é irregular.",
-        "- **⚠️ PARCIALMENTE**: Parte da AUAS está correta, parte apresenta supressão irregular.",
+        "### 🔍 Detecção de Desmatamentos Irregulares",
+        "",
+        "**Marco legal**: Art. 68 da Lei 12.651/2012 — áreas de uso alternativo consolidadas até 22/07/2008.",
+        "",
+        "Se a AUAS continha vegetação nativa nas imagens de 2007–2008 (baseline) e essa vegetação",
+        "foi suprimida em anos posteriores, identifique COM PRECISÃO:",
+        "- **Em qual intervalo de anos** ocorreu cada supressão (ex: \"entre 2013 e 2014\")",
+        "- **Em qual parte do polígono** (norte, sul, centro, porção X ha)",
+        "- **Qual a área aproximada** afetada pela supressão irregular",
+        "- **Tipo de evidência**: solo exposto geométrico, queimada, remoção parcial, etc.",
+        "",
+        "Se NÃO houve desmatamento irregular, declare explicitamente: \"Nenhum desmatamento irregular detectado.\"",
         "",
     );
 
     if (previousAcAvnAnalysis) {
         parts.push(
-            "### 4. Integração com Análise AC/AVN",
-            "- Compare as conclusões da AUAS com as análises anteriores de AC e AVN.",
-            "- Há coerência entre o que a AC mostra e o que a AUAS declara?",
-            "- A AVN está íntegra nas áreas fora da AUAS?",
-            "- As áreas de discordância na AC correspondem a discordâncias na AUAS?",
+            "### 🔗 Integração com Análise AC/AVN",
+            "",
+            "Este é um dos pontos mais importantes — cruze os dados:",
+            "- A **AC** (Área Consolidada) e a **AUAS** se sobrepõem? São coerentes?",
+            "- Se a AC foi considerada \"concordante\" na análise anterior, a AUAS na mesma região também deve ser?",
+            "- Se houve discordância na AC (vegetação nativa onde deveria ser consolidada), a AUAS na mesma área confirma essa discordância?",
+            "- A **AVN** está íntegra nas áreas fora da AUAS? Há invasão de uso antrópico em áreas de AVN?",
+            "- Identifique CONTRADIÇÕES entre a análise AC/AVN e a AUAS (ex: AC diz consolidada, mas AUAS mostra mata)",
             "",
         );
     }
 
-    const nextSection = previousAcAvnAnalysis ? 5 : 4;
+    const nextNum = previousAcAvnAnalysis ? 5 : 4;
     parts.push(
-        `### ${nextSection}. Nível de Confiança`,
-        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]** e justifique.",
+        `### 🎯 Veredito Final sobre a AUAS`,
         "",
-        `### ${nextSection + 1}. Conclusão e Recomendações`,
-        "- Síntese final: a AUAS declarada está correta, incorreta ou parcialmente correta?",
-        "- Em quais anos após 2008 ocorreram desmatamentos irregulares (se houver)?",
-        "- Recomendações: vistoria, imagens complementares, retificação do CAR, notificação.",
+        "Use OBRIGATORIAMENTE um destes:",
+        "- **✅ AUAS VÁLIDA**: Todo o polígono declarado como AUAS já era de uso antrópico consolidado em julho/2008. A declaração do CAR está correta.",
+        "- **❌ AUAS INVÁLIDA**: O polígono declarado como AUAS continha vegetação nativa que foi ilegalmente suprimida após julho/2008.",
+        "- **⚠️ AUAS PARCIALMENTE VÁLIDA**: Parte do polígono está correta (uso consolidado pré-2008), mas [X] ha apresentam supressão irregular pós-2008.",
+        "",
+        `### 📊 Nível de Confiança`,
+        "Classifique a confiança global: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]**.",
+        "Justifique com base na qualidade das imagens, cobertura temporal e consistência entre sensores.",
+        "",
+        `### 💡 Recomendações`,
+        "Liste ações concretas e priorizadas:",
+        "- Necessidade de vistoria em campo?",
+        "- Imagens adicionais (RapidEye, Planet, drones) para confirmar?",
+        "- Retificação do CAR necessária?",
+        "- Notificação ou autuação cabível?",
+        "- Análise de sobreposição com Terras Indígenas, UCs, APPs?",
         "",
         "---",
-        "Responda em **português**, use markdown, seja detalhado e técnico.",
-        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
-        "NÃO repita as análises individuais integralmente — sintetize e compare.",
+        "",
+        "⚡ **REGRAS DE FORMATAÇÃO:**",
+        "- Responda em **português**, use markdown rico (tabelas, emojis, negrito, listas)",
+        "- Seja **técnico, detalhado e persuasivo** — imagine que este laudo será lido por um promotor do MP-MT",
+        "- NÃO repita as análises individuais na íntegra — sintetize, compare e conclua",
+        "- Use dados quantitativos sempre que possível (áreas em ha, percentuais, intervalos de anos)",
+        "- O laudo deve ter entre 600 e 1200 palavras",
+        "- Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final",
     );
 
     return parts.join("\n");
