@@ -1486,6 +1486,43 @@ export default function Dashboard() {
   const applyBillingToWallet = useCallback((billing?: BillingResult | null) => {
     if (!billing) return;
     setBillingMe((prev) => {
+      const usageList = Array.isArray(billing.usage) ? billing.usage : [];
+      const usageInputTokens = usageList.reduce((acc, item) => acc + Number(item.inputTokens || 0), 0);
+      const usageOutputTokens = usageList.reduce((acc, item) => acc + Number(item.outputTokens || 0), 0);
+      const mergeModelSnapshot = (
+        currentSnapshot: BillingMePayload['modelSnapshot'] = [],
+      ): BillingMePayload['modelSnapshot'] => {
+        const byModel = new Map<string, BillingMePayload['modelSnapshot'][number]>();
+        for (const item of currentSnapshot) {
+          byModel.set(String(item.model || ''), {
+            ...item,
+            inputTokens: Number(item.inputTokens || 0),
+            outputTokens: Number(item.outputTokens || 0),
+            costBrl: Number(item.costBrl || 0),
+            requests: Number(item.requests || 0),
+          });
+        }
+        for (const usage of usageList) {
+          const model = String(usage.model || '').trim();
+          if (!model) continue;
+          const existing = byModel.get(model) || {
+            model,
+            provider: String(usage.provider || 'unknown'),
+            inputTokens: 0,
+            outputTokens: 0,
+            costBrl: 0,
+            requests: 0,
+          };
+          existing.provider = String(usage.provider || existing.provider || 'unknown');
+          existing.inputTokens += Number(usage.inputTokens || 0);
+          existing.outputTokens += Number(usage.outputTokens || 0);
+          existing.costBrl += Number(usage.costBrl || 0);
+          existing.requests += 1;
+          byModel.set(model, existing);
+        }
+        return [...byModel.values()].sort((a, b) => Number(b.costBrl || 0) - Number(a.costBrl || 0));
+      };
+
       if (!prev) {
         return {
           wallet: {
@@ -1496,12 +1533,12 @@ export default function Dashboard() {
           usageToday: {
             date: new Date().toISOString().slice(0, 10),
             totalCostBrl: Number(billing.chargedBrl || 0),
-            totalInputTokens: billing.usage.reduce((acc, item) => acc + Number(item.inputTokens || 0), 0),
-            totalOutputTokens: billing.usage.reduce((acc, item) => acc + Number(item.outputTokens || 0), 0),
+            totalInputTokens: usageInputTokens,
+            totalOutputTokens: usageOutputTokens,
             totalRequests: 1,
             models: {},
           },
-          modelSnapshot: [],
+          modelSnapshot: mergeModelSnapshot([]),
         };
       }
       return {
@@ -1514,14 +1551,11 @@ export default function Dashboard() {
         usageToday: {
           ...prev.usageToday,
           totalCostBrl: Number(prev.usageToday.totalCostBrl || 0) + Number(billing.chargedBrl || 0),
-          totalInputTokens:
-            Number(prev.usageToday.totalInputTokens || 0) +
-            billing.usage.reduce((acc, item) => acc + Number(item.inputTokens || 0), 0),
-          totalOutputTokens:
-            Number(prev.usageToday.totalOutputTokens || 0) +
-            billing.usage.reduce((acc, item) => acc + Number(item.outputTokens || 0), 0),
+          totalInputTokens: Number(prev.usageToday.totalInputTokens || 0) + usageInputTokens,
+          totalOutputTokens: Number(prev.usageToday.totalOutputTokens || 0) + usageOutputTokens,
           totalRequests: Number(prev.usageToday.totalRequests || 0) + 1,
         },
+        modelSnapshot: mergeModelSnapshot(prev.modelSnapshot || []),
       };
     });
   }, []);

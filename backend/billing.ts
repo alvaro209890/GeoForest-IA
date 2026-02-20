@@ -866,25 +866,68 @@ export async function getBillingMe(uid: string) {
     }),
   );
   const modelAggregate = new Map<string, { provider: string; inputTokens: number; outputTokens: number; costBrl: number; requests: number }>();
+  const addAggregate = (entry: {
+    model?: string;
+    provider?: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    costBrl?: number;
+    requests?: number;
+  }) => {
+    const model = normalizeModelName(String(entry.model || ""));
+    if (!model) return;
+    const current = modelAggregate.get(model) || {
+      provider: String(entry?.provider || inferProviderFromModel(model)),
+      inputTokens: 0,
+      outputTokens: 0,
+      costBrl: 0,
+      requests: 0,
+    };
+    current.inputTokens += Number(entry?.inputTokens || 0);
+    current.outputTokens += Number(entry?.outputTokens || 0);
+    current.costBrl += Number(entry?.costBrl || 0);
+    current.requests += Number(entry?.requests || 0);
+    modelAggregate.set(model, current);
+  };
 
   for (const usageData of recentUsageDocs) {
     if (!usageData) continue;
     const models = (usageData as any)?.models || {};
     for (const value of Object.values(models) as any[]) {
-      const model = String(value?.model || "");
-      if (!model) continue;
-      const current = modelAggregate.get(model) || {
-        provider: String(value?.provider || inferProviderFromModel(model)),
-        inputTokens: 0,
-        outputTokens: 0,
-        costBrl: 0,
-        requests: 0,
-      };
-      current.inputTokens += Number(value?.inputTokens || 0);
-      current.outputTokens += Number(value?.outputTokens || 0);
-      current.costBrl += Number(value?.costBrl || 0);
-      current.requests += Number(value?.requests || 0);
-      modelAggregate.set(model, current);
+      addAggregate({
+        model: value?.model,
+        provider: value?.provider,
+        inputTokens: value?.inputTokens,
+        outputTokens: value?.outputTokens,
+        costBrl: value?.costBrl,
+        requests: value?.requests,
+      });
+    }
+  }
+
+  // Fallback: if daily aggregation is empty/incomplete, rebuild from ledger usage entries.
+  if (modelAggregate.size === 0) {
+    try {
+      const ledgerSnap = await ledgerCollection(uid)
+        .orderBy("createdAt", "desc")
+        .limit(200)
+        .get();
+      for (const doc of ledgerSnap.docs) {
+        const data = doc.data() as any;
+        const usages = Array.isArray(data?.usage) ? data.usage : [];
+        for (const usage of usages) {
+          addAggregate({
+            model: usage?.model || data?.model,
+            provider: usage?.provider || data?.provider,
+            inputTokens: usage?.inputTokens,
+            outputTokens: usage?.outputTokens,
+            costBrl: usage?.costBrl,
+            requests: 1,
+          });
+        }
+      }
+    } catch (ledgerErr) {
+      console.warn("[BILLING] fallback modelSnapshot via ledger falhou:", ledgerErr);
     }
   }
 

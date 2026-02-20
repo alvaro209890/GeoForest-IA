@@ -4702,6 +4702,9 @@ function buildAuasFinalSynthesisPrompt(
         "- No bloco 'Veredito Final AUAS', incluir as linhas:",
         "- STATUS_FINAL = AUAS_VALIDA | AUAS_INVALIDA | AUAS_PARCIAL",
         "- ANO_PROVAVEL_INICIO_DESMATE = YYYY | INCONCLUSIVO",
+        "- Se houver supressão confirmada após 22/07/2008 dentro da AUAS, tratar como PASSIVO AMBIENTAL identificado na AUAS (e não como erro automático de vetorização).",
+        "- Nessa situação (supressão pós-2008 dentro da AUAS), evitar frases como 'invalida a declaração da AUAS'. Explicar que a AUAS está mapeando área de passivo e que exige regularização.",
+        "- Use AUAS_INVALIDA somente quando houver inconsistência técnica de delimitação/cronologia da própria AUAS (ex.: AUAS em área sem evidência temporal compatível).",
         "- Se houver incerteza relevante por imagem/ano ausente ou qualidade da cena, declarar explicitamente INCONCLUSIVO no trecho afetado.",
         "- Em 'Não Conformidades Detectadas', citar intervalo de anos e localização aproximada quando houver supressão irregular.",
         "- Em 'Próximas Ações', listar no máximo 4 ações diretas e priorizadas.",
@@ -4724,6 +4727,26 @@ function stripRoboticVerdictLines(text: string): string {
         .replace(/\n{3,}/g, "\n\n")
         .trim();
     return cleaned;
+}
+
+function normalizeAuasPassivoNarrative(text: string): string {
+    let normalized = String(text || "");
+    const hasPostMarcoSignal =
+        /\b(2009|2010|2011|2012|2013|2014|2015|2016|2017|2018|2019|2020|2021|2022|2023|2024|2025|2026)\b/.test(normalized) &&
+        /(ap[oó]s\s*2008|p[oó]s-marco|passivo ambiental|supress[aã]o)/i.test(normalized);
+
+    if (hasPostMarcoSignal) {
+        normalized = normalized.replace(
+            /(an[aá]lise\s+multitemporal\s+invalida\s+a\s+declara[cç][aã]o\s+da\s+[áa]rea\s+de\s+uso\s+alternativo\s+do\s+solo[^.]*\.)/gi,
+            "A análise multitemporal indica que a AUAS mapeia área com supressão após 2008, caracterizando passivo ambiental que requer regularização.",
+        );
+        normalized = normalized.replace(
+            /(invalida\s+a\s+declara[cç][aã]o\s+da\s+[áa]rea\s+de\s+uso\s+alternativo\s+do\s+solo)/gi,
+            "identifica passivo ambiental na área AUAS",
+        );
+    }
+
+    return normalized.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function buildIntegratedAcAvnAuasPrompt(
@@ -4786,6 +4809,8 @@ function buildIntegratedAcAvnAuasPrompt(
         "- Não usar linhas no formato STATUS_FINAL = ...",
         "- Não usar linhas no formato ANO_PROVAVEL_INICIO_DESMATE = ...",
         "- Quando citar ano provável de desmate, escrever em frase corrida.",
+        "- Se AUAS indicar supressão pós-2008, descrever como passivo ambiental identificado na área AUAS (não como invalidação automática da AUAS).",
+        "- Só usar linguagem de 'AUAS inválida' quando houver incoerência técnica de vetorização/delimitação, não apenas por existir passivo pós-marco.",
         "- Limite de tamanho: 260 a 420 palavras.",
         "- Sem tabelas e sem bloco <think>.",
     );
@@ -5061,6 +5086,7 @@ async function processAuasAnalysis(
         satellitesUsed: usedSatelliteKeys,
         satellitesMissing: missingSatelliteKeys,
     };
+    analysisText = normalizeAuasPassivoNarrative(analysisText);
 
     // Step 6: Complete
     const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
