@@ -1575,6 +1575,17 @@ function getCloudinaryAiUrl(url: string): string {
     return url.replace("/image/upload/", "/image/upload/w_800,h_600,c_limit,q_65,f_jpg,fl_strip_profile/");
 }
 
+/**
+ * Returns a Cloudinary URL optimized for Gemini vision analysis.
+ * Uses a higher resolution (max 1024×768) and better JPEG quality (82) than the
+ * Groq path, taking advantage of Gemini's larger context window and superior image
+ * understanding to produce more precise land-use / vegetation analyses.
+ */
+function getCloudinaryGeminiUrl(url: string): string {
+    if (!url.includes("/image/upload/")) return url;
+    return url.replace("/image/upload/", "/image/upload/w_1024,h_768,c_limit,q_82,f_jpg,fl_strip_profile/");
+}
+
 /** Delete a resource from Cloudinary by its secure_url. */
 async function deleteFromCloudinary(secureUrl: string, resourceType: "image" | "raw" = "image"): Promise<void> {
     const apiKey = process.env.CLOUDINARY_API_KEY;
@@ -1642,7 +1653,15 @@ async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promi
     return uploadRawBufferToCloudinary(buffer, filename, "application/zip");
 }
 
-type AiImage = { url?: string; dataUrl?: string; caption: string };
+type AiImage = {
+    /** URL for Groq vision (compressed 800×600 JPEG). */
+    url?: string;
+    /** Higher-quality URL for Gemini vision (1024×768 JPEG). Falls back to `url` if absent. */
+    geminiUrl?: string;
+    /** Base64 data URL used when Cloudinary is unavailable. */
+    dataUrl?: string;
+    caption: string;
+};
 
 /**
  * Build content parts for vision API from images.
@@ -1794,7 +1813,7 @@ function toGeminiContents(
 async function callGeminiTextOnce(
     model: string,
     messages: Array<{ role: string; content: any }>,
-    maxOutputTokens = 4096,
+    maxOutputTokens = 8192,
 ): Promise<{ content: string; finishReason: string }> {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("GEMINI_API_KEY não configurada.");
@@ -1864,7 +1883,7 @@ async function callGeminiTextSynthesis(
 
     for (const model of GEMINI_TEXT_SYNTHESIS_MODELS) {
         try {
-            const first = await callGeminiTextOnce(model, messages, 4096);
+            const first = await callGeminiTextOnce(model, messages, 8192);
             let merged = first.content.trim();
             let finishReason = first.finishReason;
             let continuationsUsed = 0;
@@ -1879,7 +1898,7 @@ async function callGeminiTextSynthesis(
                     { role: "assistant" as const, content: trimForContinuation(merged) || merged },
                     { role: "user" as const, content: CONTINUATION_INSTRUCTION },
                 ];
-                const cont = await callGeminiTextOnce(model, continuationMessages, 4096);
+                const cont = await callGeminiTextOnce(model, continuationMessages, 8192);
                 merged = mergeContinuationText(merged, cont.content).trim();
                 finishReason = cont.finishReason;
                 console.log(
@@ -1954,11 +1973,13 @@ async function probeGeminiModel(model: string): Promise<{ ok: boolean; error?: s
 
 async function resolveImageDataUrlForGemini(image: AiImage): Promise<string> {
     if (image.dataUrl) return image.dataUrl;
-    if (!image.url) throw new Error(`Imagem sem URL/dataUrl: ${image.caption}`);
+    // Prefer the Gemini-optimised URL (higher res) over the Groq-compressed one.
+    const fetchUrl = image.geminiUrl ?? image.url;
+    if (!fetchUrl) throw new Error(`Imagem sem URL/dataUrl: ${image.caption}`);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
-    const response = await fetch(image.url, { signal: controller.signal });
+    const response = await fetch(fetchUrl, { signal: controller.signal });
     clearTimeout(timeout);
 
     if (!response.ok) {
@@ -2163,8 +2184,9 @@ async function callGeminiVisionAnalysis(
                             contents: [{ role: "user", parts }],
                             generationConfig: {
                                 temperature: 0.1,
-                                // Smaller images (post-transformation) need fewer output tokens.
-                                maxOutputTokens: currentImages.length > 3 ? 4000 : 3200,
+                                // Gemini 2.5 suporta saídas longas (até 65k tokens).
+                                // 8192 permite laudos detalhados sem corte artificial.
+                                maxOutputTokens: 8192,
                             },
                         }),
                         signal: controller.signal,
@@ -3275,12 +3297,16 @@ async function processAnalysis(
     const aiImages: AiImage[] = [];
     if (cloudinaryUrls.length === imagesToAnalyze.length) {
         for (const cu of cloudinaryUrls) {
-            // Use on-the-fly Cloudinary transformations (800×600 JPEG q65) for AI —
-            // reduces vision-token consumption ~75% vs full-res PNG while keeping
-            // the original full-quality URL for user display.
-            aiImages.push({ url: getCloudinaryAiUrl(cu.url), caption: cu.caption });
+            // url      → Groq vision: 800×600 JPEG q65 (fewer input tokens)
+            // geminiUrl → Gemini vision: 1024×768 JPEG q82 (more detail for precise analysis)
+            // Both derived via Cloudinary on-the-fly transformations from the original full-res PNG.
+            aiImages.push({
+                url: getCloudinaryAiUrl(cu.url),
+                geminiUrl: getCloudinaryGeminiUrl(cu.url),
+                caption: cu.caption,
+            });
         }
-        console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs (AI-optimized) for vision API`);
+        console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs (Groq: 800×600 q65 / Gemini: 1024×768 q82) for vision API`);
     } else {
         console.log(`[SIMCAR ANALYSIS] Cloudinary partial/failed, compressing ${imagesToAnalyze.length} images for vision API`);
         for (const img of imagesToAnalyze) {
