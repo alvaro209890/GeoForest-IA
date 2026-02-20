@@ -913,6 +913,11 @@ const normalizeImageCaption = (rawCaption: string): string => {
     .trim();
 };
 
+const normalizeBackendText = (rawText: string): string => {
+  const normalized = normalizeImageCaption(String(rawText || ''));
+  return normalized || String(rawText || '');
+};
+
 const parseKmlGeometryOnClient = (kmlText: string): ParsedGeometry => {
   const matches = [...kmlText.matchAll(/<coordinates>([\s\S]*?)<\/coordinates>/gi)];
   if (!matches.length) {
@@ -1185,6 +1190,19 @@ export default function Dashboard() {
 
   // ─── SIMCAR Clip History (for sidebar cards) ───
   const [simcarClipHistory, setSimcarClipHistory] = useState<SimcarClipHistoryItem[]>([]);
+  const activeSimcarClip = useMemo(
+    () => (simcarClipJobId ? simcarClipHistory.find((clip) => clip.jobId === simcarClipJobId) : undefined),
+    [simcarClipHistory, simcarClipJobId]
+  );
+  const simcarLockedMode = activeSimcarClip?.sourceMode;
+  const isSimcarModeLocked = Boolean(simcarLockedMode);
+
+  useEffect(() => {
+    if (!simcarLockedMode) return;
+    if (simcarClipMode !== simcarLockedMode) {
+      setSimcarClipMode(simcarLockedMode);
+    }
+  }, [simcarClipMode, simcarLockedMode]);
 
   // ─── SIMCAR Satellite Selection ───
   const simcarFixedSatelliteKeys = useMemo(
@@ -3642,6 +3660,8 @@ export default function Dashboard() {
       historyEntry?: SimcarClipHistoryItem;
       layers?: string[];
       imageOnly?: boolean;
+      silentOutput?: boolean;
+      skipConversation?: boolean;
     }): Promise<{
       ok: boolean;
       aiMessage?: SimcarAnalysisMessage;
@@ -3650,6 +3670,8 @@ export default function Dashboard() {
       error?: string;
     }> => {
       const { jobId, imageOnly = false } = params;
+      const silentOutput = Boolean(params.silentOutput);
+      const skipConversation = Boolean(params.skipConversation);
       const layers = Array.isArray(params.layers) && params.layers.length > 0
         ? params.layers
         : simcarFixedSatelliteKeys;
@@ -3666,11 +3688,11 @@ export default function Dashboard() {
       setSimcarAnalysisProgress({
         step: 'starting',
         percent: 0,
-        message: imageOnly ? 'Gerando imagens...' : 'Iniciando análise...',
+        message: imageOnly ? 'Gerando imagens...' : 'Iniciando analise...',
       });
-      setSimcarAnalysisImages([]);
-      if (!imageOnly) {
-        setSimcarAgentLog([{ label: 'Iniciando análise...', done: false, kind: 'step' }]);
+      if (!silentOutput) setSimcarAnalysisImages([]);
+      if (!imageOnly && !silentOutput) {
+        setSimcarAgentLog([{ label: 'Iniciando analise...', done: false, kind: 'step' }]);
         setSimcarAnalysisMessages([]);
         setSimcarThinkingText('');
         setSimcarThinkingHidden(false);
@@ -3716,15 +3738,15 @@ export default function Dashboard() {
               try {
                 const event = JSON.parse(line.slice(6));
                 if (event.type === 'progress') {
-                  const msg = String(event.message || '');
+                  const msg = normalizeBackendText(String(event.message || ''));
                   setSimcarAnalysisProgress({ step: event.step, percent: event.percent, message: msg });
-                  if (!imageOnly) {
+                  if (!imageOnly && !silentOutput) {
                     setSimcarAgentLog((prev) => {
                       const updated = prev.map((s) => (s.done ? s : { ...s, done: true }));
                       return [...updated, { label: msg, done: false, kind: 'step' as const }];
                     });
                   }
-                } else if (event.type === 'model_thinking' && !imageOnly) {
+                } else if (event.type === 'model_thinking' && !imageOnly && !silentOutput) {
                   const source = event.source ? `[${event.source}]` : '';
                   const thought = String(event.thinkingText || '').trim();
                   if (thought) {
@@ -3763,13 +3785,17 @@ export default function Dashboard() {
                       thinkingText: parsed.thinkingText || undefined,
                       images: images.map((img: { url: string; caption: string }) => img.url),
                     };
-                    patch.analysisMessages = [aiMessage];
+                    patch.analysisMessages = silentOutput ? [] : [aiMessage];
                     result.aiMessage = aiMessage;
-                    setSimcarAnalysisMessages([aiMessage]);
-                    setSimcarAgentLog((prev) => prev.map((s) => ({ ...s, done: true })));
+                    if (!silentOutput) {
+                      setSimcarAnalysisMessages([aiMessage]);
+                      setSimcarAgentLog((prev) => prev.map((s) => ({ ...s, done: true })));
+                    }
                   }
 
-                  setSimcarAnalysisImages(images);
+                  if (!silentOutput) {
+                    setSimcarAnalysisImages(images);
+                  }
                   setSimcarAnalysisProgress(null);
                   setSimcarClipHistory((prev) =>
                     prev.map((c) =>
@@ -3801,7 +3827,7 @@ export default function Dashboard() {
                     ...patch,
                   };
                   const imageLinks = images.map((img: { url: string; caption: string }) => `- ${img.url}`);
-                  if (imageOnly) {
+                  if (!skipConversation && imageOnly) {
                     void appendSimcarEntriesToConversation(clipForConversation, [
                       {
                         role: 'user',
@@ -3817,7 +3843,7 @@ export default function Dashboard() {
                           .join('\n\n'),
                       },
                     ]);
-                  } else if (aiMessage) {
+                  } else if (!skipConversation && aiMessage) {
                     void appendSimcarEntriesToConversation(clipForConversation, [
                       {
                         role: 'user',
@@ -3845,7 +3871,7 @@ export default function Dashboard() {
                     insufficientCredits = true;
                     break readLoop;
                   }
-                  streamError = String(event.message || 'Erro inesperado na análise.');
+                  streamError = normalizeBackendText(String(event.message || 'Erro inesperado na analise.'));
                   break readLoop;
                 }
               } catch {
@@ -3862,14 +3888,14 @@ export default function Dashboard() {
           throw new Error(streamError);
         }
         if (!result.ok) {
-          throw new Error(imageOnly ? 'Falha ao gerar imagens.' : 'Falha ao concluir análise AC/AVN.');
+          throw new Error(imageOnly ? 'Falha ao gerar imagens.' : 'Falha ao concluir analise AC/AVN.');
         }
         return result;
       } catch (err: any) {
         const message = String(err?.message || (imageOnly ? 'Erro ao gerar imagens.' : 'Erro inesperado.'));
-        if (!imageOnly) {
+        if (!imageOnly && !silentOutput) {
           setSimcarAnalysisMessages([{ role: 'ai', text: `❌ ${message}` }]);
-          if (historyEntry) {
+          if (historyEntry && !skipConversation) {
             void appendSimcarEntriesToConversation(historyEntry, [
               {
                 role: 'user',
@@ -3880,7 +3906,7 @@ export default function Dashboard() {
           }
         } else {
           setSimcarClipError(message);
-          if (historyEntry) {
+          if (historyEntry && !skipConversation) {
             void appendSimcarEntriesToConversation(historyEntry, [
               {
                 role: 'user',
@@ -3916,6 +3942,8 @@ export default function Dashboard() {
       historyEntry?: SimcarClipHistoryItem;
       previousAnalysis?: string;
       acAvnMeta?: SimcarAcAvnAnalysisMeta;
+      prependContextText?: string;
+      skipConversation?: boolean;
     }): Promise<{
       ok: boolean;
       aiMessage?: SimcarAnalysisMessage;
@@ -3925,6 +3953,8 @@ export default function Dashboard() {
     }> => {
       const { jobId } = params;
       const historyEntry = params.historyEntry || simcarClipHistory.find((c) => c.jobId === jobId);
+      const prependContextText = String(params.prependContextText || '').trim();
+      const skipConversation = Boolean(params.skipConversation);
       const previousAnalysis = String(
         params.previousAnalysis
         || simcarAnalysisMessages
@@ -3985,7 +4015,7 @@ export default function Dashboard() {
               try {
                 const event = JSON.parse(line.slice(6));
                 if (event.type === 'progress') {
-                  const msg = String(event.message || '');
+                  const msg = normalizeBackendText(String(event.message || ''));
                   setSimcarAuasProgress({ step: event.step, percent: event.percent, message: msg });
                   setSimcarAuasAgentLog((prev) => {
                     const updated = prev.map((s) => (s.done ? s : { ...s, done: true }));
@@ -4010,9 +4040,20 @@ export default function Dashboard() {
                     ? (event.auasMeta as SimcarAuasMeta)
                     : undefined;
                   const parsed = splitThinkContent(String(event.analysis || ''));
+                  const combinedText = prependContextText
+                    ? [
+                      '## Analise Integrada SIMCAR (AC/AVN + AUAS)',
+                      '',
+                      '## Achados AC e AVN',
+                      prependContextText,
+                      '',
+                      '## Achados AUAS',
+                      parsed.cleanText,
+                    ].join('\n')
+                    : parsed.cleanText;
                   const aiMessage: SimcarAnalysisMessage = {
                     role: 'ai',
-                    text: parsed.cleanText,
+                    text: combinedText,
                     thinkingText: parsed.thinkingText || undefined,
                     images: images.map((img: { url: string; caption: string }) => img.url),
                   };
@@ -4060,22 +4101,24 @@ export default function Dashboard() {
                     ...patch,
                   };
                   const imageLinks = images.map((img: { url: string; caption: string }) => `- ${img.url}`);
-                  void appendSimcarEntriesToConversation(clipForConversation, [
-                    {
-                      role: 'user',
-                      text: `Solicitei análise de AUAS para o recorte ${jobId}.`,
-                    },
-                    {
-                      role: 'ai',
-                      text: [
-                        `Análise de AUAS concluída para o recorte ${jobId}.`,
-                        imageLinks.length > 0 ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}` : '',
-                        aiMessage.text,
-                      ]
-                        .filter(Boolean)
-                        .join('\n\n'),
-                    },
-                  ]);
+                  if (!skipConversation) {
+                    void appendSimcarEntriesToConversation(clipForConversation, [
+                      {
+                        role: 'user',
+                        text: `Solicitei analise de AUAS para o recorte ${jobId}.`,
+                      },
+                      {
+                        role: 'ai',
+                        text: [
+                          `Analise de AUAS concluida para o recorte ${jobId}.`,
+                          imageLinks.length > 0 ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}` : '',
+                          aiMessage.text,
+                        ]
+                          .filter(Boolean)
+                          .join('\n\n'),
+                      },
+                    ]);
+                  }
                 } else if (event.type === 'billing' && event.billing) {
                   applyBillingToWallet(event.billing as BillingResult);
                 } else if (event.type === 'error') {
@@ -4084,7 +4127,7 @@ export default function Dashboard() {
                     insufficientCredits = true;
                     break readLoop;
                   }
-                  streamError = String(event.message || 'Erro inesperado na análise de AUAS.');
+                  streamError = normalizeBackendText(String(event.message || 'Erro inesperado na analise de AUAS.'));
                   break readLoop;
                 }
               } catch {
@@ -4107,9 +4150,9 @@ export default function Dashboard() {
       } catch (err: any) {
         const message = String(err?.message || 'Erro inesperado.');
         setSimcarAuasMessages([{ role: 'ai', text: `❌ ${message}` }]);
-        if (historyEntry) {
+        if (historyEntry && !skipConversation) {
           void appendSimcarEntriesToConversation(historyEntry, [
-            { role: 'user', text: `Solicitei análise de AUAS para o recorte ${jobId}.` },
+            { role: 'user', text: `Solicitei analise de AUAS para o recorte ${jobId}.` },
             { role: 'ai', text: `❌ ${message}` },
           ]);
         }
@@ -4236,12 +4279,14 @@ export default function Dashboard() {
         { title: newClip.filename }
       );
 
-      setSimcarVectorizedStatus({ stage: 'acavn', message: 'Executando análise AC/AVN...' });
+      setSimcarVectorizedStatus({ stage: 'acavn', message: 'Executando analise integrada (etapa AC/AVN)...' });
       const acAvnResult = await runAcAvnAnalysis({
         jobId,
         historyEntry: newClip,
         layers: simcarFixedSatelliteKeys,
         imageOnly: false,
+        silentOutput: true,
+        skipConversation: true,
       });
       if (!acAvnResult.ok) {
         const errText = acAvnResult.error || 'Falha na etapa AC/AVN.';
@@ -4250,12 +4295,9 @@ export default function Dashboard() {
         return;
       }
 
-      setSimcarVectorizedStatus({ stage: 'auas', message: 'Executando análise AUAS...' });
+      setSimcarVectorizedStatus({ stage: 'auas', message: 'Consolidando laudo unico (AUAS + AC/AVN)...' });
       const previousAnalysisText = acAvnResult.aiMessage?.text
-        || simcarAnalysisMessages
-          .filter((m) => m.role === 'ai')
-          .map((m) => m.text)
-          .join('\n\n---\n\n');
+        || '';
       const auasResult = await runAuasAnalysis({
         jobId,
         historyEntry: {
@@ -4264,6 +4306,8 @@ export default function Dashboard() {
         },
         previousAnalysis: previousAnalysisText,
         acAvnMeta: acAvnResult.analysisMeta,
+        prependContextText: previousAnalysisText,
+        skipConversation: true,
       });
       if (!auasResult.ok) {
         const errText = auasResult.error || 'Falha na etapa AUAS.';
@@ -4271,6 +4315,36 @@ export default function Dashboard() {
         setSimcarVectorizedStatus({ stage: 'error', message: errText });
         return;
       }
+
+      setSimcarAnalysisImages([]);
+      setSimcarAnalysisMessages([]);
+      const finalCombinedText = auasResult.aiMessage?.text || 'Analise completa concluida.';
+      const imageLinks = (auasResult.images || []).map((img) => `- ${img.url}`);
+      await appendSimcarEntriesToConversation(
+        {
+          ...newClip,
+          analysisMeta: acAvnResult.analysisMeta,
+          auasAnalysisImages: auasResult.images || [],
+          auasAnalysisMessages: auasResult.aiMessage ? [auasResult.aiMessage] : [],
+          auasMeta: auasResult.auasMeta,
+        },
+        [
+          {
+            role: 'user',
+            text: `Solicitei analise completa vetorizada para o recorte ${jobId} (AC, AVN e AUAS em laudo unico).`,
+          },
+          {
+            role: 'ai',
+            text: [
+              `Analise completa concluida para o recorte ${jobId}.`,
+              imageLinks.length > 0 ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}` : '',
+              finalCombinedText,
+            ]
+              .filter(Boolean)
+              .join('\n\n'),
+          },
+        ]
+      );
 
       setSimcarVectorizedStatus({ stage: 'done', message: 'Análise completa finalizada com sucesso.' });
       toast.success('Análise completa por IA concluída.');
@@ -5277,6 +5351,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     // Load clip results + persisted analysis data
                     setSimcarClipDownloadUrl(clip.outputZipUrl || clip.downloadUrl);
                     setSimcarClipJobId(clip.jobId);
+                    if (clip.sourceMode === 'auto-clip' || clip.sourceMode === 'vectorized-analysis') {
+                      setSimcarClipMode(clip.sourceMode);
+                    }
                     setSimcarClipSummary({
                       totalFeaturesClipped: clip.totalFeatures,
                       propertyAreaHa: clip.propertyAreaHa,
@@ -5298,6 +5375,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     setSimcarAuasProcessing(false);
                     setSimcarClipProcessing(false);
                     setSimcarAnalysisProcessing(false);
+                    setSimcarVectorizedRunning(false);
+                    setSimcarVectorizedStatus(null);
                     setSimcarClipError(null);
                   }}
                 >
@@ -5653,10 +5732,19 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           ? 'Envie o shapefile do imóvel e receba as camadas SIMCAR recortadas'
                           : 'Envie o ZIP do modelo vetorizado para analisar diretamente com IA, sem recorte WFS'}
                       </p>
+                      {isSimcarModeLocked && (
+                        <p className="text-[11px] text-amber-300 mt-1">
+                          Modo travado neste recorte: {simcarLockedMode === 'vectorized-analysis' ? 'Análise Vetorizada IA' : 'Recorte Automático'}.
+                        </p>
+                      )}
                     </div>
                   </div>
                   <button
                     onClick={() => {
+                      if (isSimcarModeLocked) {
+                        toast.info('Este recorte já foi processado em um modo fixo. Clique em "Novo Recorte" para trocar de modo.');
+                        return;
+                      }
                       setSimcarClipMode((prev) => (prev === 'auto-clip' ? 'vectorized-analysis' : 'auto-clip'));
                       setSimcarClipFile(null);
                       setSimcarClipProgress(null);
@@ -5668,7 +5756,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       setSimcarVectorizedRunning(false);
                       setSimcarVectorizedStatus(null);
                     }}
-                    className="shrink-0 px-3 py-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-xs font-medium hover:bg-emerald-500/20 transition-colors"
+                    disabled={isSimcarModeLocked}
+                    title={isSimcarModeLocked ? 'Modo bloqueado para o recorte ativo' : undefined}
+                    className={`shrink-0 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                      isSimcarModeLocked
+                        ? 'border-white/10 bg-white/5 text-slate-500 cursor-not-allowed'
+                        : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                    }`}
                   >
                     {simcarClipMode === 'auto-clip' ? 'Análise Vetorizada IA' : 'Voltar ao Recorte'}
                   </button>
@@ -6210,7 +6304,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </section>
 
                     {/* Satellite Image Selection + Analysis Buttons */}
-                    {!simcarAnalysisProcessing && simcarAnalysisMessages.length === 0 && (
+                    {!simcarAnalysisProcessing && simcarAnalysisMessages.length === 0 && simcarAuasMessages.length === 0 && (
                       <section className="bg-[#0e1216]/60 backdrop-blur-md border border-white/5 rounded-2xl p-5 space-y-4">
                         {/* ZIP Download Links */}
                         {(() => {
@@ -6483,7 +6577,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     })()}
 
                     {/* AI Analysis Chat */}
-                    {simcarAnalysisMessages.length > 0 && (
+                    {simcarAnalysisMessages.length > 0 && (simcarClipMode !== 'vectorized-analysis' || simcarAuasMessages.length === 0) && (
                       <section className="bg-[#0e1216]/60 backdrop-blur-md border border-purple-500/20 rounded-2xl overflow-hidden">
                         {/* Header */}
                         <div className="px-6 py-4 border-b border-white/5 flex items-center gap-3">
