@@ -1169,6 +1169,10 @@ export default function Dashboard() {
   const [simcarAuasImages, setSimcarAuasImages] = useState<Array<{ url: string; caption: string }>>([]);
   const [simcarAuasMessages, setSimcarAuasMessages] = useState<SimcarAnalysisMessage[]>([]);
   const [simcarAuasAgentLog, setSimcarAuasAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
+  const [simcarResultImagePanelsOpen, setSimcarResultImagePanelsOpen] = useState<{ acAvn: boolean; auas: boolean }>({
+    acAvn: false,
+    auas: false,
+  });
 
   // ─── SIMCAR Agent Log: elapsed timer ───
   useEffect(() => {
@@ -1292,6 +1296,7 @@ export default function Dashboard() {
   const [billingTopupOpen, setBillingTopupOpen] = useState(false);
   const [billingTopupAmount, setBillingTopupAmount] = useState('50');
   const [billingTopupLoading, setBillingTopupLoading] = useState(false);
+  const [simcarUnifiedProgressDisplay, setSimcarUnifiedProgressDisplay] = useState(0);
 
   const [conversationsRef, setConversationsRef] = useState<{
     collection: ReturnType<typeof collection>;
@@ -1312,7 +1317,7 @@ export default function Dashboard() {
 
     if (simcarVectorizedStatus.stage === 'importing') {
       return {
-        percent: 8,
+        percent: 10,
         phaseLabel: '1/3 Importando',
         message: simcarVectorizedStatus.message,
       };
@@ -1320,7 +1325,7 @@ export default function Dashboard() {
 
     if (simcarVectorizedStatus.stage === 'acavn') {
       return {
-        percent: clamp(12 + acPercent * 0.43),
+        percent: clamp(12 + acPercent * 0.47),
         phaseLabel: '2/3 AC/AVN',
         message: simcarAnalysisProgress?.message || simcarVectorizedStatus.message,
       };
@@ -1328,7 +1333,7 @@ export default function Dashboard() {
 
     if (simcarVectorizedStatus.stage === 'auas') {
       return {
-        percent: clamp(55 + auasPercent * 0.44),
+        percent: clamp(60 + auasPercent * 0.39),
         phaseLabel: '3/3 AUAS',
         message: simcarAuasProgress?.message || simcarVectorizedStatus.message,
       };
@@ -1343,9 +1348,9 @@ export default function Dashboard() {
     }
 
     const fallback = simcarAuasProcessing
-      ? clamp(55 + auasPercent * 0.44)
+      ? clamp(60 + auasPercent * 0.39)
       : simcarAnalysisProcessing
-        ? clamp(12 + acPercent * 0.43)
+        ? clamp(12 + acPercent * 0.47)
         : 0;
     return {
       percent: fallback,
@@ -1359,6 +1364,62 @@ export default function Dashboard() {
     simcarAuasProgress,
     simcarVectorizedStatus,
   ]);
+  useEffect(() => {
+    if (!simcarUnifiedVectorizedProgress) {
+      setSimcarUnifiedProgressDisplay(0);
+      return;
+    }
+    const target = Math.max(0, Math.min(100, Math.round(simcarUnifiedVectorizedProgress.percent)));
+    const stage = simcarVectorizedStatus?.stage;
+    if (stage === 'done') {
+      setSimcarUnifiedProgressDisplay(100);
+      return;
+    }
+    if (stage === 'error') {
+      setSimcarUnifiedProgressDisplay((prev) => Math.max(prev, target));
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setSimcarUnifiedProgressDisplay((prev) => {
+        if (prev >= target) return prev;
+        const step = Math.max(1, Math.ceil((target - prev) * 0.28));
+        return Math.min(target, prev + step);
+      });
+    }, 120);
+
+    return () => window.clearInterval(interval);
+  }, [simcarUnifiedVectorizedProgress, simcarVectorizedStatus?.stage]);
+
+  const resetSimcarDraft = useCallback((nextMode: 'auto-clip' | 'vectorized-analysis' = 'auto-clip') => {
+    setSimcarClipMode(nextMode);
+    setSimcarClipFile(null);
+    setSimcarClipProcessing(false);
+    setSimcarClipProgress(null);
+    setSimcarClipDownloadUrl(null);
+    setSimcarClipSummary(null);
+    setSimcarClipError(null);
+    setSimcarClipJobId(null);
+    setSimcarAirId('');
+    setSimcarVectorizedRunning(false);
+    setSimcarVectorizedStatus(null);
+    setSimcarUnifiedProgressDisplay(0);
+    setSimcarAnalysisProcessing(false);
+    setSimcarAnalysisProgress(null);
+    setSimcarAnalysisImages([]);
+    setSimcarAnalysisMessages([]);
+    setSimcarAgentLog([]);
+    setSimcarThinkingText('');
+    setSimcarThinkingHidden(false);
+    setSimcarLiveThinkingText('');
+    setSimcarLiveAnswerText('');
+    setSimcarAuasProcessing(false);
+    setSimcarAuasProgress(null);
+    setSimcarAuasImages([]);
+    setSimcarAuasMessages([]);
+    setSimcarAuasAgentLog([]);
+    setSimcarResultImagePanelsOpen({ acAvn: false, auas: false });
+  }, []);
 
   const formatBrl = useCallback((value: number) => {
     return Number(value || 0).toLocaleString('pt-BR', {
@@ -4268,6 +4329,7 @@ export default function Dashboard() {
       toast.error('Selecione um ZIP vetorizado para continuar.');
       return;
     }
+    setSimcarUnifiedProgressDisplay(0);
     setSimcarVectorizedRunning(true);
     setSimcarVectorizedStatus({ stage: 'importing', message: 'Importando ZIP vetorizado...' });
     setSimcarClipError(null);
@@ -4277,6 +4339,7 @@ export default function Dashboard() {
     setSimcarAnalysisMessages([]);
     setSimcarAuasImages([]);
     setSimcarAuasMessages([]);
+    setSimcarResultImagePanelsOpen({ acAvn: false, auas: false });
 
     try {
       const base64 = await readFileAsBase64Payload(simcarClipFile);
@@ -4403,14 +4466,18 @@ export default function Dashboard() {
         return;
       }
 
-      setSimcarAnalysisImages([]);
+      const acAvnImages = (acAvnResult.images || [])
+        .filter((img, idx, arr) => img?.url && arr.findIndex((x) => x.url === img.url) === idx);
+      const auasImages = (auasResult.images || [])
+        .filter((img, idx, arr) => img?.url && arr.findIndex((x) => x.url === img.url) === idx);
+      setSimcarAnalysisImages(acAvnImages);
       setSimcarAnalysisMessages([]);
       const finalCombinedText = String(auasResult.aiMessage?.text || '').trim()
         || buildIntegratedVectorizedReport(
           acAvnResult.aiMessage?.text || '',
           auasResult.aiMessage?.text || ''
         );
-      const mergedImages = [...(acAvnResult.images || []), ...(auasResult.images || [])]
+      const mergedImages = [...acAvnImages, ...auasImages]
         .filter((img, idx, arr) => img?.url && arr.findIndex((x) => x.url === img.url) === idx);
       const finalAiMessage: SimcarAnalysisMessage = {
         role: 'ai',
@@ -4418,15 +4485,16 @@ export default function Dashboard() {
         thinkingText: auasResult.aiMessage?.thinkingText,
         images: mergedImages.map((img) => img.url),
       };
-      setSimcarAuasImages(mergedImages);
+      setSimcarAuasImages(auasImages);
       setSimcarAuasMessages([finalAiMessage]);
+      setSimcarResultImagePanelsOpen({ acAvn: false, auas: false });
       setSimcarClipHistory((prev) =>
         prev.map((c) =>
           c.jobId === jobId
             ? {
               ...c,
               analysisMeta: acAvnResult.analysisMeta,
-              auasAnalysisImages: mergedImages,
+              auasAnalysisImages: auasImages,
               auasAnalysisMessages: [finalAiMessage],
               auasMeta: auasResult.auasMeta,
             }
@@ -4435,7 +4503,7 @@ export default function Dashboard() {
       );
       void patchPersistedSimcarClip(jobId, {
         analysisMeta: acAvnResult.analysisMeta,
-        auasAnalysisImages: mergedImages,
+        auasAnalysisImages: auasImages,
         auasAnalysisMessages: [finalAiMessage],
         auasMeta: auasResult.auasMeta,
       });
@@ -4444,7 +4512,7 @@ export default function Dashboard() {
         {
           ...newClip,
           analysisMeta: acAvnResult.analysisMeta,
-          auasAnalysisImages: mergedImages,
+          auasAnalysisImages: auasImages,
           auasAnalysisMessages: [finalAiMessage],
           auasMeta: auasResult.auasMeta,
         },
@@ -5383,22 +5451,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </button>
               <button
                 onClick={() => {
-                  // Reset clip state for a new clip
-                  setSimcarClipFile(null);
-                  setSimcarClipProcessing(false);
-                  setSimcarClipProgress(null);
-                  setSimcarClipDownloadUrl(null);
-                  setSimcarClipSummary(null);
-                  setSimcarClipError(null);
-                  setSimcarClipJobId(null);
-                  setSimcarAnalysisProcessing(false);
-                  setSimcarAnalysisImages([]);
-                  setSimcarAnalysisMessages([]);
-                  setSimcarAnalysisProgress(null);
-                  setSimcarThinkingText('');
-                  setSimcarThinkingHidden(false);
-                  setSimcarLiveThinkingText('');
-                  setSimcarLiveAnswerText('');
+                  resetSimcarDraft('auto-clip');
                   setActiveView('simcar-clip');
                 }}
                 className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 transition-all duration-300 p-[1px] shadow-lg shadow-purple-900/30"
@@ -5492,6 +5545,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     // Restore AUAS analysis data if available
                     setSimcarAuasImages(clip.auasAnalysisImages || []);
                     setSimcarAuasMessages(clip.auasAnalysisMessages || []);
+                    setSimcarResultImagePanelsOpen({ acAvn: false, auas: false });
                     setSimcarAuasProcessing(false);
                     setSimcarClipProcessing(false);
                     setSimcarAnalysisProcessing(false);
@@ -5532,17 +5586,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       setSimcarClipHistory((prev) => prev.filter((c) => c.id !== clip.id));
                       // Clear active clip if it was this one
                       if (simcarClipJobId === clip.jobId) {
-                        setSimcarClipJobId(null);
-                        setSimcarClipDownloadUrl(null);
-                        setSimcarClipSummary(null);
-                        setSimcarAnalysisImages([]);
-                        setSimcarAnalysisMessages([]);
-                        setSimcarThinkingText('');
-                        setSimcarThinkingHidden(false);
-                        setSimcarLiveThinkingText('');
-                        setSimcarLiveAnswerText('');
-                        setSimcarAuasImages([]);
-                        setSimcarAuasMessages([]);
+                        resetSimcarDraft('auto-clip');
+                        setActiveView('simcar-clip');
                       }
                     }}
                     className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition xl:block lg:hidden"
@@ -5863,33 +5908,47 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       )}
                     </div>
                   </div>
-                  <button
-                    onClick={() => {
-                      if (isSimcarModeLocked) {
-                        toast.info('Este recorte já foi processado em um modo fixo. Clique em "Novo Recorte" para trocar de modo.');
-                        return;
-                      }
-                      setSimcarClipMode((prev) => (prev === 'auto-clip' ? 'vectorized-analysis' : 'auto-clip'));
-                      setSimcarClipFile(null);
-                      setSimcarClipProgress(null);
-                      setSimcarClipDownloadUrl(null);
-                      setSimcarClipSummary(null);
-                      setSimcarClipError(null);
-                      setSimcarClipJobId(null);
-                      setSimcarClipProcessing(false);
-                      setSimcarVectorizedRunning(false);
-                      setSimcarVectorizedStatus(null);
-                    }}
-                    disabled={isSimcarModeLocked}
-                    title={isSimcarModeLocked ? 'Modo bloqueado para o recorte ativo' : undefined}
-                    className={`shrink-0 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
-                      isSimcarModeLocked
-                        ? 'border-white/10 bg-white/5 text-slate-500 cursor-not-allowed'
-                        : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
-                    }`}
-                  >
-                    {simcarClipMode === 'auto-clip' ? 'Análise Vetorizada IA' : 'Voltar ao Recorte'}
-                  </button>
+                  <div className="shrink-0 min-w-[240px]">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Modo de Importação Ativo</p>
+                    <div className="mt-1.5 grid grid-cols-2 gap-2">
+                      {([
+                        { key: 'auto-clip' as const, label: 'Recorte da base' },
+                        { key: 'vectorized-analysis' as const, label: 'Análise de vetorização' },
+                      ]).map((modeOption) => {
+                        const isActive = simcarClipMode === modeOption.key;
+                        return (
+                          <button
+                            key={modeOption.key}
+                            type="button"
+                            onClick={() => {
+                              if (isSimcarModeLocked) {
+                                toast.info('Este recorte já foi processado em um modo fixo. Clique em "Novo Recorte" para trocar de modo.');
+                                return;
+                              }
+                              if (simcarClipMode === modeOption.key) return;
+                              resetSimcarDraft(modeOption.key);
+                            }}
+                            disabled={isSimcarModeLocked}
+                            title={isSimcarModeLocked ? 'Modo bloqueado para o recorte ativo' : undefined}
+                            className={`px-3 py-2 rounded-lg border text-[11px] font-semibold transition-colors ${
+                              isActive
+                                ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-200'
+                                : isSimcarModeLocked
+                                  ? 'border-white/10 bg-white/5 text-slate-600 cursor-not-allowed'
+                                  : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                            }`}
+                          >
+                            {modeOption.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1.5 text-[10px] text-slate-500">
+                      {simcarClipMode === 'auto-clip'
+                        ? 'Ativo: Recorte da base.'
+                        : 'Ativo: Análise de vetorização.'}
+                    </p>
+                  </div>
                 </div>
 
                 {/* Upload Area */}
@@ -5986,22 +6045,29 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         Fluxo completo
                       </p>
                       <span className="text-xs font-semibold tabular-nums text-slate-200">
-                        {simcarUnifiedVectorizedProgress.percent}%
+                        {simcarUnifiedProgressDisplay}%
                       </span>
                     </div>
                     <div className="mt-2 w-full bg-black/30 rounded-full h-1.5 overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all duration-500 ${
+                        className={`h-full rounded-full transition-all duration-500 relative overflow-hidden ${
                           simcarVectorizedStatus.stage === 'error'
                             ? 'bg-gradient-to-r from-red-500 to-rose-400'
                             : simcarVectorizedStatus.stage === 'done'
                               ? 'bg-gradient-to-r from-emerald-500 to-emerald-300'
                               : 'bg-gradient-to-r from-indigo-500 to-cyan-400'
                         }`}
-                        style={{ width: `${simcarUnifiedVectorizedProgress.percent}%` }}
-                      />
+                        style={{ width: `${simcarUnifiedProgressDisplay}%` }}
+                      >
+                        {simcarVectorizedStatus.stage !== 'done' && simcarVectorizedStatus.stage !== 'error' && (
+                          <span
+                            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-[shimmer_1.4s_linear_infinite]"
+                            style={{ backgroundSize: '180% 100%' }}
+                          />
+                        )}
+                      </div>
                     </div>
-                    <p className="mt-2 text-xs text-slate-200">
+                    <p className="mt-2 text-xs text-slate-200 leading-relaxed break-words">
                       {simcarUnifiedVectorizedProgress.phaseLabel}
                       {' — '}
                       {simcarUnifiedVectorizedProgress.message}
@@ -6323,122 +6389,126 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 const propertyAreaHa = simcarClipSummary.propertyAreaHa || 0;
                 return (
                   <>
-                    {/* Summary Cards */}
-                    <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      {[
-                        { label: 'Área Imóvel', value: `${propertyAreaHa.toFixed(2)} ha`, color: 'text-amber-400', bg: 'bg-amber-500/10' },
-                        { label: 'Camadas com Dados', value: `${withData.length} / ${layers.length}`, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-                        { label: 'Feições Recortadas', value: String(totalFeatures), color: 'text-blue-400', bg: 'bg-blue-500/10' },
-                        { label: 'Área Recortada', value: `${totalAreaHa.toFixed(2)} ha`, color: 'text-purple-400', bg: 'bg-purple-500/10' },
-                      ].map((card) => (
-                        <div key={card.label} className={`${card.bg} border border-white/5 rounded-xl p-4 text-center`}>
-                          <p className={`text-lg font-bold ${card.color}`}>{card.value}</p>
-                          <p className="text-[10px] text-slate-400 mt-1">{card.label}</p>
-                        </div>
-                      ))}
-                    </section>
+                    {simcarClipMode === 'auto-clip' && (
+                      <>
+                        {/* Summary Cards */}
+                        <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          {[
+                            { label: 'Área Imóvel', value: `${propertyAreaHa.toFixed(2)} ha`, color: 'text-amber-400', bg: 'bg-amber-500/10' },
+                            { label: 'Camadas com Dados', value: `${withData.length} / ${layers.length}`, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+                            { label: 'Feições Recortadas', value: String(totalFeatures), color: 'text-blue-400', bg: 'bg-blue-500/10' },
+                            { label: 'Área Recortada', value: `${totalAreaHa.toFixed(2)} ha`, color: 'text-purple-400', bg: 'bg-purple-500/10' },
+                          ].map((card) => (
+                            <div key={card.label} className={`${card.bg} border border-white/5 rounded-xl p-4 text-center`}>
+                              <p className={`text-lg font-bold ${card.color}`}>{card.value}</p>
+                              <p className="text-[10px] text-slate-400 mt-1">{card.label}</p>
+                            </div>
+                          ))}
+                        </section>
 
-                    {/* Download + Detailed Table */}
-                    <section className="bg-[#0e1612]/60 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-6 space-y-4">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
-                          <Download size={20} />
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-white">Recorte Concluído</h3>
-                          <p className="text-xs text-slate-400">
-                            Processado em {(simcarClipSummary.processingTimeMs / 1000).toFixed(1)}s • CRS: {simcarClipSummary.crs}
-                          </p>
-                        </div>
-                        <a
-                          href={simcarClipDownloadUrl}
-                          download
-                          className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/30"
-                        >
-                          <Download size={14} />
-                          Baixar ZIP
-                        </a>
-                      </div>
+                        {/* Download + Detailed Table */}
+                        <section className="bg-[#0e1612]/60 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-6 space-y-4">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                              <Download size={20} />
+                            </div>
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-white">Recorte Concluído</h3>
+                              <p className="text-xs text-slate-400">
+                                Processado em {(simcarClipSummary.processingTimeMs / 1000).toFixed(1)}s • CRS: {simcarClipSummary.crs}
+                              </p>
+                            </div>
+                            <a
+                              href={simcarClipDownloadUrl}
+                              download
+                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/30"
+                            >
+                              <Download size={14} />
+                              Baixar ZIP
+                            </a>
+                          </div>
 
-                      {/* Layers with data */}
-                      {withData.length > 0 && (
-                        <div>
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400 mb-2">
-                            Camadas com dados ({withData.length})
-                          </p>
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-xs">
-                              <thead>
-                                <tr className="border-b border-white/10">
-                                  <th className="text-left py-2 text-slate-400 font-medium">Camada</th>
-                                  <th className="text-center py-2 text-slate-400 font-medium">Origem</th>
-                                  <th className="text-right py-2 text-slate-400 font-medium">Feições</th>
-                                  <th className="text-right py-2 text-slate-400 font-medium">Área (ha)</th>
-                                  <th className="text-right py-2 text-slate-400 font-medium">% Imóvel</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {withData.map((layer: any) => {
-                                  const pct = propertyAreaHa > 0 && layer.areaHa ? ((layer.areaHa / propertyAreaHa) * 100) : null;
-                                  return (
-                                    <tr key={layer.name} className="border-b border-white/5 hover:bg-white/[0.02]">
-                                      <td className="py-2 text-slate-200 font-mono text-xs">
-                                        {layer.name}
-                                        {layer.warning && (
-                                          <span className="block text-[9px] text-amber-400/70 mt-0.5">{layer.warning}</span>
-                                        )}
-                                      </td>
-                                      <td className="py-2 text-center">
-                                        <span className={`px-1.5 py-0.5 rounded text-[10px] ${layer.source === 'property'
-                                          ? 'bg-amber-500/10 text-amber-400'
-                                          : 'bg-blue-500/10 text-blue-400'
-                                          }`}>
-                                          {layer.source === 'property' ? 'Imóvel' : 'WFS'}
-                                        </span>
-                                      </td>
-                                      <td className="py-2 text-right text-emerald-400 font-medium">{layer.features}</td>
-                                      <td className="py-2 text-right text-slate-300">{layer.areaHa ? layer.areaHa.toFixed(2) : '—'}</td>
-                                      <td className="py-2 text-right text-slate-400">{pct !== null ? `${pct.toFixed(1)}%` : '—'}</td>
+                          {/* Layers with data */}
+                          {withData.length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400 mb-2">
+                                Camadas com dados ({withData.length})
+                              </p>
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-white/10">
+                                      <th className="text-left py-2 text-slate-400 font-medium">Camada</th>
+                                      <th className="text-center py-2 text-slate-400 font-medium">Origem</th>
+                                      <th className="text-right py-2 text-slate-400 font-medium">Feições</th>
+                                      <th className="text-right py-2 text-slate-400 font-medium">Área (ha)</th>
+                                      <th className="text-right py-2 text-slate-400 font-medium">% Imóvel</th>
                                     </tr>
-                                  );
-                                })}
-                                {/* Totals row */}
-                                <tr className="border-t border-emerald-500/20 font-medium">
-                                  <td className="py-2 text-emerald-400 text-xs">TOTAL</td>
-                                  <td className="py-2" />
-                                  <td className="py-2 text-right text-emerald-400">{totalFeatures}</td>
-                                  <td className="py-2 text-right text-emerald-300">{totalAreaHa.toFixed(2)}</td>
-                                  <td className="py-2 text-right text-emerald-300">
-                                    {propertyAreaHa > 0 ? `${((totalAreaHa / propertyAreaHa) * 100).toFixed(1)}%` : '—'}
-                                  </td>
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      )}
+                                  </thead>
+                                  <tbody>
+                                    {withData.map((layer: any) => {
+                                      const pct = propertyAreaHa > 0 && layer.areaHa ? ((layer.areaHa / propertyAreaHa) * 100) : null;
+                                      return (
+                                        <tr key={layer.name} className="border-b border-white/5 hover:bg-white/[0.02]">
+                                          <td className="py-2 text-slate-200 font-mono text-xs">
+                                            {layer.name}
+                                            {layer.warning && (
+                                              <span className="block text-[9px] text-amber-400/70 mt-0.5">{layer.warning}</span>
+                                            )}
+                                          </td>
+                                          <td className="py-2 text-center">
+                                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${layer.source === 'property'
+                                              ? 'bg-amber-500/10 text-amber-400'
+                                              : 'bg-blue-500/10 text-blue-400'
+                                              }`}>
+                                              {layer.source === 'property' ? 'Imóvel' : 'WFS'}
+                                            </span>
+                                          </td>
+                                          <td className="py-2 text-right text-emerald-400 font-medium">{layer.features}</td>
+                                          <td className="py-2 text-right text-slate-300">{layer.areaHa ? layer.areaHa.toFixed(2) : '—'}</td>
+                                          <td className="py-2 text-right text-slate-400">{pct !== null ? `${pct.toFixed(1)}%` : '—'}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                    {/* Totals row */}
+                                    <tr className="border-t border-emerald-500/20 font-medium">
+                                      <td className="py-2 text-emerald-400 text-xs">TOTAL</td>
+                                      <td className="py-2" />
+                                      <td className="py-2 text-right text-emerald-400">{totalFeatures}</td>
+                                      <td className="py-2 text-right text-emerald-300">{totalAreaHa.toFixed(2)}</td>
+                                      <td className="py-2 text-right text-emerald-300">
+                                        {propertyAreaHa > 0 ? `${((totalAreaHa / propertyAreaHa) * 100).toFixed(1)}%` : '—'}
+                                      </td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          )}
 
-                      {/* Layers without data */}
-                      {withoutData.length > 0 && (
-                        <div>
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
-                            Camadas sem dados na área ({withoutData.length})
-                          </p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {withoutData.map((layer: any) => (
-                              <span
-                                key={layer.name}
-                                className="px-2 py-1 rounded-lg bg-white/5 text-[10px] text-slate-500 font-mono"
-                                title={layer.warning || 'Nenhuma feição encontrada na área do imóvel'}
-                              >
-                                {layer.name}
-                                {layer.warning && <span className="text-amber-400/50 ml-1">!</span>}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </section>
+                          {/* Layers without data */}
+                          {withoutData.length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                                Camadas sem dados na área ({withoutData.length})
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {withoutData.map((layer: any) => (
+                                  <span
+                                    key={layer.name}
+                                    className="px-2 py-1 rounded-lg bg-white/5 text-[10px] text-slate-500 font-mono"
+                                    title={layer.warning || 'Nenhuma feição encontrada na área do imóvel'}
+                                  >
+                                    {layer.name}
+                                    {layer.warning && <span className="text-amber-400/50 ml-1">!</span>}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </section>
+                      </>
+                    )}
 
                     {/* Satellite Image Selection + Analysis Buttons */}
                     {simcarClipMode === 'auto-clip' && !simcarAnalysisProcessing && simcarAnalysisMessages.length === 0 && simcarAuasMessages.length === 0 && (
@@ -6820,37 +6890,120 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           </span>
                         </div>
 
-                        {/* AUAS Images Gallery */}
-                        {simcarAuasImages.length > 0 && (
-                          <div className="px-6 pt-4">
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                              {simcarAuasImages.map((img, idx) => {
-                                const captionText = normalizeImageCaption(img.caption);
-                                return (
-                                  <a
-                                    key={idx}
-                                    href={img.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="group block relative rounded-xl overflow-hidden border border-white/10 cursor-zoom-in hover:border-white/20 transition-colors"
+                        {/* Images Gallery */}
+                        {simcarClipMode === 'vectorized-analysis' ? (
+                          <div className="px-6 pt-4 space-y-3">
+                            {([
+                              {
+                                key: 'acAvn' as const,
+                                title: 'Imagens da validação AC/AVN',
+                                images: simcarAnalysisImages,
+                                emptyText: 'Sem imagens registradas para AC/AVN nesta análise.',
+                              },
+                              {
+                                key: 'auas' as const,
+                                title: 'Imagens da análise AUAS',
+                                images: simcarAuasImages,
+                                emptyText: 'Sem imagens registradas para AUAS nesta análise.',
+                              },
+                            ]).map((panel) => {
+                              const isOpen = simcarResultImagePanelsOpen[panel.key];
+                              const count = panel.images.length;
+                              return (
+                                <div key={panel.key} className="rounded-xl border border-white/10 bg-black/20 overflow-hidden">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setSimcarResultImagePanelsOpen((prev) => ({
+                                        ...prev,
+                                        [panel.key]: !prev[panel.key],
+                                      }))
+                                    }
+                                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.03] transition-colors"
                                   >
-                                    <img
-                                      src={img.url}
-                                      alt={captionText}
-                                      className="w-full h-32 object-cover transition-transform duration-300 group-hover:scale-105"
-                                      loading="lazy"
-                                    />
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
-                                      <span className="text-[10px] text-white flex items-center gap-1">
-                                        <Eye size={10} /> Abrir
-                                      </span>
+                                    <div className="p-1.5 rounded-md bg-white/10 text-slate-300">
+                                      <Eye size={13} />
                                     </div>
-                                    <p className="text-[9px] text-slate-400 px-2 py-1.5 bg-black/30 truncate" title={captionText}>{captionText}</p>
-                                  </a>
-                                );
-                              })}
-                            </div>
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-xs font-semibold text-slate-200">{panel.title}</p>
+                                      <p className="text-[10px] text-slate-500">{count} imagem(ns)</p>
+                                    </div>
+                                    <ChevronDown
+                                      size={14}
+                                      className={`text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : 'rotate-0'}`}
+                                    />
+                                  </button>
+                                  {isOpen && (
+                                    <div className="px-4 pb-4">
+                                      {count > 0 ? (
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                          {panel.images.map((img, idx) => {
+                                            const captionText = normalizeImageCaption(img.caption);
+                                            return (
+                                              <a
+                                                key={`${panel.key}-${idx}`}
+                                                href={img.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="group block relative rounded-xl overflow-hidden border border-white/10 cursor-zoom-in hover:border-white/20 transition-colors"
+                                              >
+                                                <img
+                                                  src={img.url}
+                                                  alt={captionText}
+                                                  className="w-full h-32 object-cover transition-transform duration-300 group-hover:scale-105"
+                                                  loading="lazy"
+                                                />
+                                                <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
+                                                  <span className="text-[10px] text-white flex items-center gap-1">
+                                                    <Eye size={10} /> Abrir
+                                                  </span>
+                                                </div>
+                                                <p className="text-[9px] text-slate-400 px-2 py-1.5 bg-black/30 truncate" title={captionText}>{captionText}</p>
+                                              </a>
+                                            );
+                                          })}
+                                        </div>
+                                      ) : (
+                                        <p className="text-[11px] text-slate-500 pt-1">{panel.emptyText}</p>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
+                        ) : (
+                          simcarAuasImages.length > 0 && (
+                            <div className="px-6 pt-4">
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                {simcarAuasImages.map((img, idx) => {
+                                  const captionText = normalizeImageCaption(img.caption);
+                                  return (
+                                    <a
+                                      key={idx}
+                                      href={img.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="group block relative rounded-xl overflow-hidden border border-white/10 cursor-zoom-in hover:border-white/20 transition-colors"
+                                    >
+                                      <img
+                                        src={img.url}
+                                        alt={captionText}
+                                        className="w-full h-32 object-cover transition-transform duration-300 group-hover:scale-105"
+                                        loading="lazy"
+                                      />
+                                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
+                                        <span className="text-[10px] text-white flex items-center gap-1">
+                                          <Eye size={10} /> Abrir
+                                        </span>
+                                      </div>
+                                      <p className="text-[9px] text-slate-400 px-2 py-1.5 bg-black/30 truncate" title={captionText}>{captionText}</p>
+                                    </a>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )
                         )}
 
                         {/* AUAS Analysis Text */}
