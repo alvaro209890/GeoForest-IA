@@ -1,12 +1,12 @@
-/**
- * SIMCAR Clip — Automated clipping of SEMA-MT SIMCAR WFS layers
+﻿/**
+ * SIMCAR Clip â€” Automated clipping of SEMA-MT SIMCAR WFS layers
  * to the geometry of a user-provided property polygon.
  *
  * Registers endpoints:
- *   POST /api/simcar/clip          — SSE stream (progress + result)
- *   GET  /api/simcar/clip/download/:jobId — Download final ZIP
- *   POST /api/simcar/clip/analyze   — SSE stream (AI analysis of clips)
- *   GET  /api/simcar/gemini/config  — Runtime Gemini config (+ optional probe)
+ *   POST /api/simcar/clip          â€” SSE stream (progress + result)
+ *   GET  /api/simcar/clip/download/:jobId â€” Download final ZIP
+ *   POST /api/simcar/clip/analyze   â€” SSE stream (AI analysis of clips)
+ *   GET  /api/simcar/gemini/config  â€” Runtime Gemini config (+ optional probe)
  */
 import type { Express, Request, Response } from "express";
 import path from "path";
@@ -57,11 +57,26 @@ import {
     type DbfFieldDef,
     type ShpRecord,
 } from "./shapefile-writer";
+import {
+    BillingError,
+    buildUsageFromGemini,
+    buildUsageFromGroq,
+    createRequestId,
+    estimateReserveForModels,
+    estimateTokensFromMessages,
+    estimateTokensFromText,
+    getBillingUsageSessionRecords,
+    recordModelUsage,
+    refundReserve,
+    reserveCredits,
+    runWithBillingUsageSession,
+    settleReservedCredits,
+} from "./billing";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-/* ─── Constants ──────────────────────────────────────────────── */
+/* â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 const MODELO_ZIP_PATH = path.resolve(__dirname, "..", "Arquivo Modelo.zip");
 const WFS_MAX_FEATURES = 50000;
@@ -83,7 +98,7 @@ const TEMPLATE_LAYERS = [
 /** Layers that receive the property polygon directly (no WFS query). */
 const DIRECT_COPY_LAYERS = new Set(["AIR", "ATP"]);
 
-/* ─── Job Cache ──────────────────────────────────────────────── */
+/* â”€â”€â”€ Job Cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 type CachedJob = {
     buffer?: Buffer;
@@ -117,7 +132,7 @@ function pruneJobCache() {
 
 setInterval(pruneJobCache, CACHE_CLEANUP_INTERVAL).unref();
 
-/* ─── SSE Helpers ────────────────────────────────────────────── */
+/* â”€â”€â”€ SSE Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 function sendSSE(res: Response, data: Record<string, unknown>) {
     if (res.writableEnded) return;
@@ -126,7 +141,7 @@ function sendSSE(res: Response, data: Record<string, unknown>) {
     if (typeof (res as any).flush === "function") (res as any).flush();
 }
 
-/* ─── Shapefile Parsing ──────────────────────────────────────── */
+/* â”€â”€â”€ Shapefile Parsing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 /**
  * Read ALL polygon records from a .shp buffer.
@@ -180,7 +195,7 @@ function readFullShapefile(shpBuffer: Buffer): number[][][][] {
 }
 
 /**
- * Parse user's shapefile ZIP → single unified polygon in EPSG:4674.
+ * Parse user's shapefile ZIP â†’ single unified polygon in EPSG:4674.
  */
 function parseUserShapefile(zipBuffer: Buffer): {
     polygon: Feature<Polygon | MultiPolygon>;
@@ -191,10 +206,10 @@ function parseUserShapefile(zipBuffer: Buffer): {
     const shpEntry = entries.find((e) => e.name.toLowerCase().endsWith(".shp"));
     const prjEntry = entries.find((e) => e.name.toLowerCase().endsWith(".prj"));
 
-    if (!shpEntry) throw new Error("ZIP não contém arquivo .shp válido.");
+    if (!shpEntry) throw new Error("ZIP nÃ£o contÃ©m arquivo .shp vÃ¡lido.");
 
     const allPolygons = readFullShapefile(shpEntry.data);
-    if (!allPolygons.length) throw new Error("Shapefile não contém polígonos válidos.");
+    if (!allPolygons.length) throw new Error("Shapefile nÃ£o contÃ©m polÃ­gonos vÃ¡lidos.");
 
     // Detect CRS from .prj and reproject if needed
     let needsReproject = false;
@@ -210,7 +225,7 @@ function parseUserShapefile(zipBuffer: Buffer): {
             if (upper.includes("SIRGAS") || upper.includes("4674")) {
                 needsReproject = false;
             } else if (upper.includes("WGS") && upper.includes("84")) {
-                // WGS84 ≈ EPSG:4674 for practical purposes
+                // WGS84 â‰ˆ EPSG:4674 for practical purposes
                 needsReproject = false;
             }
         }
@@ -251,7 +266,7 @@ function parseUserShapefile(zipBuffer: Buffer): {
         }
     }
 
-    if (!features.length) throw new Error("Nenhum polígono válido encontrado no Shapefile.");
+    if (!features.length) throw new Error("Nenhum polÃ­gono vÃ¡lido encontrado no Shapefile.");
 
     // Union all polygons into one
     let unified: Feature<Polygon | MultiPolygon> = features[0];
@@ -274,14 +289,14 @@ function parseUserShapefile(zipBuffer: Buffer): {
     }
 
     const geometry = normalizePolygonGeometry(unified.geometry);
-    if (!geometry) throw new Error("Geometria do imóvel não pôde ser validada.");
+    if (!geometry) throw new Error("Geometria do imÃ³vel nÃ£o pÃ´de ser validada.");
 
     const areaHa = Number((turfArea(unified) / 10000).toFixed(4));
 
     return { polygon: unified, geometry, areaHa };
 }
 
-/* ─── Layer Name Mapping (Template → WFS) ────────────────────── */
+/* â”€â”€â”€ Layer Name Mapping (Template â†’ WFS) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 function discoverLayerMapping(
     templateLayers: readonly string[],
@@ -331,7 +346,7 @@ function discoverLayerMapping(
             }
         }
 
-        // Fallback: fuzzy — find a WFS layer whose suffix matches SIMCAR_D_<name> or just <name>
+        // Fallback: fuzzy â€” find a WFS layer whose suffix matches SIMCAR_D_<name> or just <name>
         if (!matched) {
             for (const [wfsLow, wfsOriginal] of wfsLower) {
                 const wfsSuffix = (wfsLow.split(":")[1] || wfsLow).toLowerCase();
@@ -349,7 +364,7 @@ function discoverLayerMapping(
             }
         }
 
-        // Last resort: partial match — WFS layer ending with _<TEMPLATE_NAME>
+        // Last resort: partial match â€” WFS layer ending with _<TEMPLATE_NAME>
         if (!matched) {
             for (const [wfsLow, wfsOriginal] of wfsLower) {
                 const wfsSuffix = (wfsLow.split(":")[1] || wfsLow).toLowerCase();
@@ -369,7 +384,7 @@ function discoverLayerMapping(
     return mapping;
 }
 
-/* ─── WFS Feature Fetching with Attributes ───────────────────── */
+/* â”€â”€â”€ WFS Feature Fetching with Attributes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 type WfsFeature = {
     geometry: Geometry | null;
@@ -448,7 +463,7 @@ async function fetchWfsClipFeatures(
     return allFeatures;
 }
 
-/* ─── Feature Clipping ───────────────────────────────────────── */
+/* â”€â”€â”€ Feature Clipping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 function clipFeaturesToPolygon(
     features: WfsFeature[],
@@ -477,7 +492,7 @@ function clipFeaturesToPolygon(
     return clipped;
 }
 
-/* ─── Template Schema Extraction ─────────────────────────────── */
+/* â”€â”€â”€ Template Schema Extraction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 function readTemplateSchemas(
     modeloEntries: Array<{ name: string; data: Buffer }>,
@@ -500,7 +515,7 @@ function readTemplateSchemas(
     return schemas;
 }
 
-/* ─── Attribute Mapping ──────────────────────────────────────── */
+/* â”€â”€â”€ Attribute Mapping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 function mapAttributes(
     properties: Record<string, unknown>,
@@ -528,7 +543,7 @@ function mapAttributes(
     return mapped;
 }
 
-/* ─── ZIP Output Builder ─────────────────────────────────────── */
+/* â”€â”€â”€ ZIP Output Builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 async function buildOutputZip(
     templateEntries: Array<{ name: string; data: Buffer }>,
@@ -604,7 +619,7 @@ async function buildOutputZip(
     });
 }
 
-/* ─── XLSX Quantitative Report Builder ───────────────────────── */
+/* â”€â”€â”€ XLSX Quantitative Report Builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 async function buildQuantitativeXlsx(
     layerSummaries: LayerSummary[],
@@ -633,25 +648,25 @@ async function buildQuantitativeXlsx(
         right: thinBorder,
     };
 
-    // ── Sheet 1: Resumo ──
+    // â”€â”€ Sheet 1: Resumo â”€â”€
     const resumo = workbook.addWorksheet("Resumo");
 
     // Title row
     resumo.mergeCells("A1:B1");
     const titleCell = resumo.getCell("A1");
-    titleCell.value = "Relatório Quantitativo — Recorte SIMCAR";
+    titleCell.value = "RelatÃ³rio Quantitativo â€” Recorte SIMCAR";
     titleCell.font = { bold: true, size: 14, color: { argb: "FF065F46" } };
     titleCell.alignment = { horizontal: "center" };
 
     // Summary data
     const summaryData: [string, string | number][] = [
         ["Data do Processamento", new Date().toLocaleString("pt-BR", { timeZone: "America/Cuiaba" })],
-        ["Nº Identificação AIR", airIdentificacao || "—"],
-        ["Área do Imóvel (ha)", Number(propertyAreaHa.toFixed(4))],
-        ["Sistema de Referência", "EPSG:4674 (SIRGAS 2000)"],
+        ["NÂº IdentificaÃ§Ã£o AIR", airIdentificacao || "â€”"],
+        ["Ãrea do ImÃ³vel (ha)", Number(propertyAreaHa.toFixed(4))],
+        ["Sistema de ReferÃªncia", "EPSG:4674 (SIRGAS 2000)"],
         ["Total de Camadas", layerSummaries.length],
         ["Camadas com Dados", layerSummaries.filter((l) => l.features > 0).length],
-        ["Total de Feições Recortadas", layerSummaries.reduce((s, l) => s + l.features, 0)],
+        ["Total de FeiÃ§Ãµes Recortadas", layerSummaries.reduce((s, l) => s + l.features, 0)],
     ];
 
     summaryData.forEach(([label, value], idx) => {
@@ -667,11 +682,11 @@ async function buildQuantitativeXlsx(
     resumo.getColumn(1).width = 32;
     resumo.getColumn(2).width = 40;
 
-    // ── Sheet 2: Camadas ──
+    // â”€â”€ Sheet 2: Camadas â”€â”€
     const camadas = workbook.addWorksheet("Camadas");
 
     // Header row
-    const headers = ["Camada", "Origem", "Feições", "Área (ha)", "% do Imóvel", "Observações"];
+    const headers = ["Camada", "Origem", "FeiÃ§Ãµes", "Ãrea (ha)", "% do ImÃ³vel", "ObservaÃ§Ãµes"];
     const headerRow = camadas.getRow(1);
     headers.forEach((h, i) => {
         const cell = headerRow.getCell(i + 1);
@@ -691,7 +706,7 @@ async function buildQuantitativeXlsx(
             : 0;
 
         row.getCell(1).value = layer.name;
-        row.getCell(2).value = layer.source === "property" ? "Imóvel" : "WFS";
+        row.getCell(2).value = layer.source === "property" ? "ImÃ³vel" : "WFS";
         row.getCell(3).value = layer.features;
         row.getCell(4).value = layer.areaHa ?? 0;
         row.getCell(5).value = pct;
@@ -718,10 +733,10 @@ async function buildQuantitativeXlsx(
     // Auto-fit columns
     camadas.getColumn(1).width = 28; // Camada
     camadas.getColumn(2).width = 12; // Origem
-    camadas.getColumn(3).width = 10; // Feições
-    camadas.getColumn(4).width = 14; // Área (ha)
-    camadas.getColumn(5).width = 14; // % do Imóvel
-    camadas.getColumn(6).width = 36; // Observações
+    camadas.getColumn(3).width = 10; // FeiÃ§Ãµes
+    camadas.getColumn(4).width = 14; // Ãrea (ha)
+    camadas.getColumn(5).width = 14; // % do ImÃ³vel
+    camadas.getColumn(6).width = 36; // ObservaÃ§Ãµes
 
     // Auto-filter
     camadas.autoFilter = { from: "A1", to: `F${layerSummaries.length + 1}` };
@@ -731,7 +746,7 @@ async function buildQuantitativeXlsx(
     return Buffer.from(arrayBuffer);
 }
 
-/* ─── Main Processing Pipeline ───────────────────────────────── */
+/* â”€â”€â”€ Main Processing Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 type LayerSummary = {
     name: string;
@@ -840,7 +855,7 @@ async function processClip(
     try {
         userResult = parseUserShapefile(propertyZip);
     } catch (err: any) {
-        sendSSE(res, { type: "error", message: err.message || "Erro ao processar shapefile do imóvel." });
+        sendSSE(res, { type: "error", message: err.message || "Erro ao processar shapefile do imÃ³vel." });
         return;
     }
 
@@ -853,7 +868,7 @@ async function processClip(
         const modeloBuffer = fs.readFileSync(MODELO_ZIP_PATH);
         templateEntries = extractZipEntries(modeloBuffer);
     } catch (err: any) {
-        sendSSE(res, { type: "error", message: "Arquivo Modelo.zip não encontrado no servidor." });
+        sendSSE(res, { type: "error", message: "Arquivo Modelo.zip nÃ£o encontrado no servidor." });
         return;
     }
 
@@ -867,7 +882,7 @@ async function processClip(
         }
     }
 
-    // 4. WFS GetCapabilities → discover layer mapping
+    // 4. WFS GetCapabilities â†’ discover layer mapping
     let layerMapping = new Map<string, string>();
     try {
         const caps = await getCapabilitiesCached(false);
@@ -876,7 +891,7 @@ async function processClip(
         console.log(`[SIMCAR CLIP] Layer mapping: ${layerMapping.size} layers matched`);
     } catch (err: any) {
         console.error("[SIMCAR CLIP] WFS capabilities error:", err.message);
-        sendSSE(res, { type: "error", message: "Serviço WFS da SEMA-MT indisponível." });
+        sendSSE(res, { type: "error", message: "ServiÃ§o WFS da SEMA-MT indisponÃ­vel." });
         return;
     }
 
@@ -943,7 +958,7 @@ async function processClip(
                 name: layerName,
                 source: "wfs",
                 features: 0,
-                warning: "Camada não encontrada no WFS",
+                warning: "Camada nÃ£o encontrada no WFS",
             });
             continue;
         }
@@ -1168,7 +1183,7 @@ async function processClip(
     });
 }
 
-/* ─── AI Analysis Pipeline ───────────────────────────────────── */
+/* â”€â”€â”€ AI Analysis Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 const SEMA_WMS_BASE = process.env.SEMA_WMS_BASE_URL || "https://geo.sema.mt.gov.br/geoserver/ows";
 const SEMA_WMS_AUTHKEY = process.env.SEMA_WMS_AUTHKEY || "541085de-9a2e-454e-bdba-eb3d57a2f492";
@@ -1190,15 +1205,15 @@ function buildSatLayer(sensor: string, year: number, wmsPrefix: string, labelPre
 const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]; label: string; year: number }> = {
     // SPOT (high-res 2.5m)
     spot_2008: { wmsLayer: SPOT_LAYER, label: "SPOT 2008", year: 2008 },
-    // Landsat 5 (30m) — 1984-2011
+    // Landsat 5 (30m) â€” 1984-2011
     ...Object.fromEntries([1984, 1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011].map(
         (y) => [`landsat5_${y}`, buildSatLayer("LANDSAT5", y, "LANDSAT_5", "Landsat 5")]
     )),
-    // Landsat 8 (30m) — 2013-2018
+    // Landsat 8 (30m) â€” 2013-2018
     ...Object.fromEntries([2013, 2014, 2015, 2016, 2017, 2018].map(
         (y) => [`landsat8_${y}`, buildSatLayer("LANDSAT8", y, "LANDSAT_8", "Landsat 8")]
     )),
-    // Sentinel-2 (10m) — 2016-2024
+    // Sentinel-2 (10m) â€” 2016-2024
     ...Object.fromEntries([2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024].map(
         (y) => [`sentinel2_${y}`, buildSatLayer("SENTINEL2", y, "SENTINEL_2", "Sentinel-2")]
     )),
@@ -1485,7 +1500,7 @@ async function fetchWmsImageBuffer(
     if (!isPng && !isJpeg) {
         // Likely an XML/text error response with 200 status
         const preview = buf.toString("utf8", 0, Math.min(200, buf.length));
-        throw new Error(`WMS retornou formato inválido (não é PNG/JPEG): ${preview.slice(0, 150)}`);
+        throw new Error(`WMS retornou formato invÃ¡lido (nÃ£o Ã© PNG/JPEG): ${preview.slice(0, 150)}`);
     }
 
     return buf;
@@ -1500,7 +1515,7 @@ function geoToPixel(
     height: number,
 ): [number, number] {
     const x = ((lon - bbox[0]) / (bbox[2] - bbox[0])) * width;
-    // WMS 1.1.1 with EPSG:4326 uses lon,lat order in bbox → y is inverted
+    // WMS 1.1.1 with EPSG:4326 uses lon,lat order in bbox â†’ y is inverted
     const y = ((bbox[3] - lat) / (bbox[3] - bbox[1])) * height;
     return [x, y];
 }
@@ -1600,7 +1615,7 @@ async function compositeOverlay(
 
 /**
  * Compress image for AI vision analysis (base64 fallback path, used when Cloudinary is unavailable).
- * Downscales to max 800×600 and encodes as JPEG at quality 65 with metadata stripped.
+ * Downscales to max 800Ã—600 and encodes as JPEG at quality 65 with metadata stripped.
  * Keeps enough detail for vegetation/land-use classification while minimising token cost.
  */
 async function compressForVision(dataUrl: string): Promise<string> {
@@ -1618,7 +1633,7 @@ const CLOUDINARY_CLOUD = "da19dwpgk";
 
 function cloudinarySign(params: Record<string, string>): string {
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
-    if (!apiSecret) throw new Error("Cloudinary não configurado.");
+    if (!apiSecret) throw new Error("Cloudinary nÃ£o configurado.");
     const base = Object.keys(params).sort().map((k) => `${k}=${params[k]}`).join("&");
     return crypto.createHash("sha1").update(base + apiSecret).digest("hex");
 }
@@ -1628,7 +1643,7 @@ async function uploadToCloudinary(dataUrl: string, filename: string): Promise<st
     const apiKey = process.env.CLOUDINARY_API_KEY;
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
     const folder = process.env.CLOUDINARY_FOLDER;
-    if (!apiKey || !apiSecret) throw new Error("Cloudinary não configurado.");
+    if (!apiKey || !apiSecret) throw new Error("Cloudinary nÃ£o configurado.");
 
     const timestamp = Math.floor(Date.now() / 1000);
     const publicId = `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_");
@@ -1663,8 +1678,8 @@ function extractCloudinaryPublicId(url: string): string | null {
 
 /**
  * Returns a Cloudinary URL with on-the-fly transformations optimized for AI vision APIs.
- * Resizes to max 800×600, converts to JPEG at quality 65, strips metadata.
- * This reduces image token consumption by ~70–80% vs. sending the full-res PNG,
+ * Resizes to max 800Ã—600, converts to JPEG at quality 65, strips metadata.
+ * This reduces image token consumption by ~70â€“80% vs. sending the full-res PNG,
  * while preserving enough detail for land-use / vegetation classification.
  * The original full-resolution URL is kept intact for user display.
  */
@@ -1677,7 +1692,7 @@ function getCloudinaryAiUrl(url: string): string {
 
 /**
  * Returns a Cloudinary URL optimized for Gemini vision analysis.
- * Uses a higher resolution (max 1024×768) and better JPEG quality (82) than the
+ * Uses a higher resolution (max 1024Ã—768) and better JPEG quality (82) than the
  * Groq path, taking advantage of Gemini's larger context window and superior image
  * understanding to produce more precise land-use / vegetation analyses.
  */
@@ -1722,7 +1737,7 @@ async function uploadRawBufferToCloudinary(
     const apiKey = process.env.CLOUDINARY_API_KEY;
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
     const folder = process.env.CLOUDINARY_FOLDER;
-    if (!apiKey || !apiSecret) throw new Error("Cloudinary não configurado.");
+    if (!apiKey || !apiSecret) throw new Error("Cloudinary nÃ£o configurado.");
 
     const timestamp = Math.floor(Date.now() / 1000);
     const publicId = `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_");
@@ -1754,9 +1769,9 @@ async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promi
 }
 
 type AiImage = {
-    /** URL for Groq vision (compressed 800×600 JPEG). */
+    /** URL for Groq vision (compressed 800Ã—600 JPEG). */
     url?: string;
-    /** Higher-quality URL for Gemini vision (1024×768 JPEG). Falls back to `url` if absent. */
+    /** Higher-quality URL for Gemini vision (1024Ã—768 JPEG). Falls back to `url` if absent. */
     geminiUrl?: string;
     /** Base64 data URL used when Cloudinary is unavailable. */
     dataUrl?: string;
@@ -1790,7 +1805,7 @@ function buildVisionContentParts(images: AiImage[], prompt: string): any[] {
 function reduceImageSet(
     images: AiImage[],
 ): AiImage[] {
-    return images.filter((img) => img.caption.includes("Visão Geral"));
+    return images.filter((img) => img.caption.includes("VisÃ£o Geral"));
 }
 
 /** Split images by provider weight, giving Gemini priority (all images by default). */
@@ -1834,7 +1849,7 @@ function splitImagesByProviderWeight(images: AiImage[]): { groqImages: AiImage[]
 function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!match) {
-        throw new Error("Formato de data URL inválido para Gemini.");
+        throw new Error("Formato de data URL invÃ¡lido para Gemini.");
     }
     return { mimeType: match[1], base64: match[2] };
 }
@@ -1876,8 +1891,8 @@ async function continueTruncatedAnalysisText(
             {
                 role: "user" as const,
                 content:
-                    "Você está finalizando um laudo técnico de recorte ambiental.\n" +
-                    "Mantenha o mesmo estilo técnico da resposta original.\n\n" +
+                    "VocÃª estÃ¡ finalizando um laudo tÃ©cnico de recorte ambiental.\n" +
+                    "Mantenha o mesmo estilo tÃ©cnico da resposta original.\n\n" +
                     `Prompt original:\n${prompt}`,
             },
             { role: "assistant" as const, content: trimForContinuation(currentText) || currentText },
@@ -1916,11 +1931,11 @@ async function callGeminiTextOnce(
     maxOutputTokens = 8192,
 ): Promise<{ content: string; finishReason: string }> {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY não configurada.");
+    if (!apiKey) throw new Error("GEMINI_API_KEY nÃ£o configurada.");
 
     const contents = toGeminiContents(messages);
     if (contents.length === 0) {
-        throw new Error("Sem conteúdo textual para síntese Gemini.");
+        throw new Error("Sem conteÃºdo textual para sÃ­ntese Gemini.");
     }
 
     const controller = new AbortController();
@@ -1959,6 +1974,24 @@ async function callGeminiTextOnce(
             const blockReason = String(data?.promptFeedback?.blockReason || "");
             throw new Error(`${model}: empty response${finish ? ` (finish=${finish})` : ""}${blockReason ? ` (block=${blockReason})` : ""}`);
         }
+        const usage = buildUsageFromGemini(model, data?.usageMetadata, "/api/simcar/clip/analyze/chat");
+        if (usage.estimated) {
+            usage.inputTokens = Math.max(
+                Number(usage.inputTokens || 0),
+                estimateTokensFromMessages(messages),
+            );
+            usage.outputTokens = Math.max(
+                Number(usage.outputTokens || 0),
+                estimateTokensFromText(content),
+            );
+        }
+        recordModelUsage({
+            provider: "gemini",
+            model,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            estimated: usage.estimated,
+        });
 
         return {
             content,
@@ -1976,7 +2009,7 @@ async function callGeminiTextSynthesis(
 ): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-        throw new Error("GEMINI_API_KEY não configurada para síntese.");
+        throw new Error("GEMINI_API_KEY nÃ£o configurada para sÃ­ntese.");
     }
 
     const MAX_CONTINUATIONS = 2;
@@ -2022,7 +2055,7 @@ async function callGeminiTextSynthesis(
         }
     }
 
-    throw new Error(`Gemini synthesis falhou para ${contextLabel}. Último erro: ${lastError}`);
+    throw new Error(`Gemini synthesis falhou para ${contextLabel}. Ãšltimo erro: ${lastError}`);
 }
 
 async function probeGeminiModel(model: string): Promise<{ ok: boolean; error?: string }> {
@@ -2106,7 +2139,7 @@ async function callVisionAnalysis(
     prompt: string,
 ): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
+    if (!apiKey) throw new Error("GROQ_API_KEY nÃ£o configurada.");
 
     const VISION_TIMEOUT_MS = 120_000; // 2 minutes
     // Smaller images (post-compression) need fewer output tokens; cap output to reduce cost.
@@ -2163,7 +2196,7 @@ async function callVisionAnalysis(
                     const text = await response.text();
                     lastError = `${model}: ${response.status} - ${text.slice(0, 300)}`;
                     console.warn(`[SIMCAR ANALYSIS] Model ${model} failed:`, lastError);
-                    // Detect Groq rate limit — mark and propagate immediately
+                    // Detect Groq rate limit â€” mark and propagate immediately
                     if (isRateLimitError(response.status, text)) {
                         sawRateLimit = true;
                         const retryAfterMs = extractRetryAfterMs(response.headers, text);
@@ -2182,6 +2215,24 @@ async function callVisionAnalysis(
                 const choice = data?.choices?.[0];
                 const content = normalizeAssistantContent(choice?.message?.content).trim();
                 if (content) {
+                    const usage = buildUsageFromGroq(model, data?.usage, "/api/simcar/clip/analyze");
+                    if (usage.estimated) {
+                        usage.inputTokens = Math.max(
+                            Number(usage.inputTokens || 0),
+                            estimateTokensFromText(prompt) + currentImages.length * 1400,
+                        );
+                        usage.outputTokens = Math.max(
+                            Number(usage.outputTokens || 0),
+                            estimateTokensFromText(content),
+                        );
+                    }
+                    recordModelUsage({
+                        provider: "groq",
+                        model,
+                        inputTokens: usage.inputTokens,
+                        outputTokens: usage.outputTokens,
+                        estimated: usage.estimated,
+                    });
                     const finishReason = String(choice?.finish_reason || "stop");
                     const finalized = await continueTruncatedAnalysisText(
                         content,
@@ -2202,9 +2253,9 @@ async function callVisionAnalysis(
     }
     if (sawRateLimit && !hasAvailableGroqModels(ANALYSIS_VISION_MODELS)) {
         const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(ANALYSIS_VISION_MODELS) / 1000));
-        throw new GroqRateLimitError(`Todos os modelos de visão Groq estão em cooldown (~${waitSecs}s).`);
+        throw new GroqRateLimitError(`Todos os modelos de visÃ£o Groq estÃ£o em cooldown (~${waitSecs}s).`);
     }
-    throw new Error(`Todos os modelos Groq falharam. Último erro: ${lastError}`);
+    throw new Error(`Todos os modelos Groq falharam. Ãšltimo erro: ${lastError}`);
 }
 
 function buildDualModelMergePrompt(
@@ -2213,22 +2264,22 @@ function buildDualModelMergePrompt(
     geminiAnalysis: string,
 ): string {
     return [
-        "Você é a GeoForest IA e deve consolidar duas análises técnicas da MESMA área e do MESMO período.",
+        "VocÃª Ã© a GeoForest IA e deve consolidar duas anÃ¡lises tÃ©cnicas da MESMA Ã¡rea e do MESMO perÃ­odo.",
         `Contexto do recorte: ${contextLabel}`,
         "",
-        "## Análise Groq",
+        "## AnÃ¡lise Groq",
         groqAnalysis,
         "",
-        "## Análise Gemini",
+        "## AnÃ¡lise Gemini",
         geminiAnalysis,
         "",
         "## Tarefa",
-        "Produza um texto único e técnico em português com:",
+        "Produza um texto Ãºnico e tÃ©cnico em portuguÃªs com:",
         "1) Consensos principais entre os dois modelos.",
-        "2) Divergências relevantes e a hipótese mais provável.",
-        "3) Conclusão consolidada para este período.",
+        "2) DivergÃªncias relevantes e a hipÃ³tese mais provÃ¡vel.",
+        "3) ConclusÃ£o consolidada para este perÃ­odo.",
         "",
-        "Seja objetivo e não repita integralmente os textos de origem.",
+        "Seja objetivo e nÃ£o repita integralmente os textos de origem.",
     ].join("\n");
 }
 
@@ -2265,7 +2316,7 @@ async function callGeminiVisionAnalysis(
     prompt: string,
 ): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY não configurada.");
+    if (!apiKey) throw new Error("GEMINI_API_KEY nÃ£o configurada.");
 
     const VISION_TIMEOUT_MS = 120_000;
     const imageSets = [images];
@@ -2304,7 +2355,7 @@ async function callGeminiVisionAnalysis(
                             contents: [{ role: "user", parts }],
                             generationConfig: {
                                 temperature: 0.1,
-                                // Gemini 2.5 suporta saídas longas (até 65k tokens).
+                                // Gemini 2.5 suporta saÃ­das longas (atÃ© 65k tokens).
                                 // 8192 permite laudos detalhados sem corte artificial.
                                 maxOutputTokens: 8192,
                             },
@@ -2330,6 +2381,24 @@ async function callGeminiVisionAnalysis(
                     .trim();
 
                 if (content) {
+                    const usage = buildUsageFromGemini(model, data?.usageMetadata, "/api/simcar/clip/analyze");
+                    if (usage.estimated) {
+                        usage.inputTokens = Math.max(
+                            Number(usage.inputTokens || 0),
+                            estimateTokensFromText(prompt) + currentImages.length * 1800,
+                        );
+                        usage.outputTokens = Math.max(
+                            Number(usage.outputTokens || 0),
+                            estimateTokensFromText(content),
+                        );
+                    }
+                    recordModelUsage({
+                        provider: "gemini",
+                        model,
+                        inputTokens: usage.inputTokens,
+                        outputTokens: usage.outputTokens,
+                        estimated: usage.estimated,
+                    });
                     const finalized = await continueTruncatedAnalysisText(
                         content,
                         prompt,
@@ -2349,7 +2418,7 @@ async function callGeminiVisionAnalysis(
         }
     }
 
-    throw new Error(`Gemini falhou. Último erro: ${lastError}`);
+    throw new Error(`Gemini falhou. Ãšltimo erro: ${lastError}`);
 }
 
 async function analyzeWithGroqAndGemini(
@@ -2358,7 +2427,7 @@ async function analyzeWithGroqAndGemini(
     contextLabel: string,
 ): Promise<string> {
     if (images.length === 0) {
-        throw new Error(`Sem imagens para análise (${contextLabel}).`);
+        throw new Error(`Sem imagens para anÃ¡lise (${contextLabel}).`);
     }
 
     const hasGemini = Boolean(process.env.GEMINI_API_KEY);
@@ -2375,7 +2444,7 @@ async function analyzeWithGroqAndGemini(
 
     if (groqAvailable) {
         console.log(
-            `[SIMCAR ANALYSIS] ${contextLabel}: Groq-first — sending all ${images.length} images to Groq`,
+            `[SIMCAR ANALYSIS] ${contextLabel}: Groq-first â€” sending all ${images.length} images to Groq`,
         );
 
         try {
@@ -2400,7 +2469,7 @@ async function analyzeWithGroqAndGemini(
     } else if (hasGroq) {
         const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(ANALYSIS_VISION_MODELS) / 1000));
         console.log(
-            `[SIMCAR ANALYSIS] ${contextLabel}: modelos Groq de visão em cooldown (~${waitSecs}s), pulando direto para Gemini`,
+            `[SIMCAR ANALYSIS] ${contextLabel}: modelos Groq de visÃ£o em cooldown (~${waitSecs}s), pulando direto para Gemini`,
         );
     }
 
@@ -2437,7 +2506,7 @@ async function analyzeWithGroqAndGemini(
         );
     }
 
-    throw new Error(`Nenhum provedor disponível para ${contextLabel}.`);
+    throw new Error(`Nenhum provedor disponÃ­vel para ${contextLabel}.`);
 }
 
 /** Call Groq with text-only follow-up message. Multi-model fallback. */
@@ -2505,9 +2574,9 @@ function compactChatMessages(
     const maxCharsPerMessage = Math.max(300, SIMCAR_CHAT_MAX_CHARS_PER_MESSAGE);
     const maxTotalChars = Math.max(1800, SIMCAR_CHAT_MAX_TOTAL_CHARS);
 
-    const prepared = rawMessages
-        .map((msg) => {
-            const role = msg?.role === "assistant" ? "assistant" : "user";
+    const prepared: Array<{ role: "user" | "assistant"; content: string }> = rawMessages
+        .map((msg): { role: "user" | "assistant"; content: string } => {
+            const role: "user" | "assistant" = msg?.role === "assistant" ? "assistant" : "user";
             const content = clampTextMiddle(normalizeAssistantContent(msg?.content), maxCharsPerMessage);
             return { role, content };
         })
@@ -2580,6 +2649,24 @@ async function callGroqTextOnce(
         if (!content) {
             throw new Error(`${model}: empty response`);
         }
+        const usage = buildUsageFromGroq(model, data?.usage, "/api/simcar/clip/analyze/chat");
+        if (usage.estimated) {
+            usage.inputTokens = Math.max(
+                Number(usage.inputTokens || 0),
+                estimateTokensFromMessages(messages),
+            );
+            usage.outputTokens = Math.max(
+                Number(usage.outputTokens || 0),
+                estimateTokensFromText(content),
+            );
+        }
+        recordModelUsage({
+            provider: "groq",
+            model,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            estimated: usage.estimated,
+        });
         return { content, finishReason };
     } finally {
         clearTimeout(timeout);
@@ -2662,23 +2749,23 @@ async function callBestTextSynthesis(
         } catch (groqErr: any) {
             const groqError = groqErr?.message || String(groqErr);
             if (geminiError) {
-                throw new Error(`Síntese falhou. Gemini=${geminiError} | Groq=${groqError}`);
+                throw new Error(`SÃ­ntese falhou. Gemini=${geminiError} | Groq=${groqError}`);
             }
             throw groqErr;
         }
     }
 
     if (geminiError) {
-        throw new Error(`Síntese falhou com Gemini: ${geminiError}`);
+        throw new Error(`SÃ­ntese falhou com Gemini: ${geminiError}`);
     }
-    throw new Error("Nenhum provedor de texto configurado para síntese.");
+    throw new Error("Nenhum provedor de texto configurado para sÃ­ntese.");
 }
 
 async function callTextFollowUp(
     messages: Array<{ role: string; content: any }>,
 ): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
+    if (!apiKey) throw new Error("GROQ_API_KEY nÃ£o configurada.");
 
     const MAX_TOKENS = 2200;
     const MAX_CONTINUATIONS = 2;
@@ -2764,9 +2851,9 @@ async function callTextFollowUp(
     }
     if (sawRateLimit && !hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
         const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(GROQ_TEXT_MODELS) / 1000));
-        throw new GroqRateLimitError(`Todos os modelos de texto Groq estão em cooldown (~${waitSecs}s).`);
+        throw new GroqRateLimitError(`Todos os modelos de texto Groq estÃ£o em cooldown (~${waitSecs}s).`);
     }
-    throw new Error(`Falha nos modelos de texto Groq. Último erro: ${lastError}`);
+    throw new Error(`Falha nos modelos de texto Groq. Ãšltimo erro: ${lastError}`);
 }
 
 async function streamTextFollowUp(
@@ -2774,7 +2861,7 @@ async function streamTextFollowUp(
     messages: Array<{ role: string; content: any }>,
 ): Promise<void> {
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
+    if (!apiKey) throw new Error("GROQ_API_KEY nÃ£o configurada.");
 
     const MAX_TOKENS = 2200;
     const MAX_CONTINUATIONS = 2;
@@ -2791,6 +2878,7 @@ async function streamTextFollowUp(
         segmentModel: string,
         segmentMessages: Array<{ role: string; content: any }>,
     ): Promise<{ finishReason: string; segmentText: string }> => {
+        const segmentInputTokens = estimateTokensFromMessages(segmentMessages);
         const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -2840,6 +2928,13 @@ async function streamTextFollowUp(
                 const data = trimmed.slice(5).trim();
                 if (!data) continue;
                 if (data === "[DONE]") {
+                    recordModelUsage({
+                        provider: "groq",
+                        model: segmentModel,
+                        inputTokens: Math.max(1, segmentInputTokens),
+                        outputTokens: Math.max(1, estimateTokensFromText(segmentRaw)),
+                        estimated: true,
+                    });
                     return { finishReason: finishReason || "stop", segmentText: segmentRaw };
                 }
                 try {
@@ -2864,6 +2959,13 @@ async function streamTextFollowUp(
             }
         }
 
+        recordModelUsage({
+            provider: "groq",
+            model: segmentModel,
+            inputTokens: Math.max(1, segmentInputTokens),
+            outputTokens: Math.max(1, estimateTokensFromText(segmentRaw)),
+            estimated: true,
+        });
         return { finishReason: finishReason || "stop", segmentText: segmentRaw };
     };
 
@@ -2883,9 +2985,9 @@ async function streamTextFollowUp(
     if (!firstResult) {
         if (!hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
             const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(GROQ_TEXT_MODELS) / 1000));
-            throw new GroqRateLimitError(`Todos os modelos de texto Groq estão em cooldown (~${waitSecs}s).`);
+            throw new GroqRateLimitError(`Todos os modelos de texto Groq estÃ£o em cooldown (~${waitSecs}s).`);
         }
-        throw new Error("Nenhum modelo disponível para iniciar resposta.");
+        throw new Error("Nenhum modelo disponÃ­vel para iniciar resposta.");
     }
 
     const firstSplit = splitThinkProgress(firstResult.segmentText);
@@ -2987,21 +3089,21 @@ function buildPropertyContext(
         });
 
     return [
-        "## Contexto do Imóvel Rural",
+        "## Contexto do ImÃ³vel Rural",
         "",
-        `| Parâmetro | Valor |`,
+        `| ParÃ¢metro | Valor |`,
         `|-----------|-------|`,
-        `| Área Total da Propriedade (ATP) | **${areaHa.toFixed(2)} ha** |`,
-        `| Área Consolidada (AC) | ${acSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((acSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) — ${acSummary?.features ?? 0} feições |`,
-        `| Vegetação Nativa (AVN) | ${avnSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((avnSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) — ${avnSummary?.features ?? 0} feições |`,
-        atpSummary ? `| ATP (polígono declarado) | ${atpSummary.areaHa?.toFixed(2) ?? '-'} ha |` : "",
+        `| Ãrea Total da Propriedade (ATP) | **${areaHa.toFixed(2)} ha** |`,
+        `| Ãrea Consolidada (AC) | ${acSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((acSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) â€” ${acSummary?.features ?? 0} feiÃ§Ãµes |`,
+        `| VegetaÃ§Ã£o Nativa (AVN) | ${avnSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((avnSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) â€” ${avnSummary?.features ?? 0} feiÃ§Ãµes |`,
+        atpSummary ? `| ATP (polÃ­gono declarado) | ${atpSummary.areaHa?.toFixed(2) ?? '-'} ha |` : "",
         "",
         compact ? "### Quantitativos-chave (SIMCAR Digital)" : "### Quantitativos completos (SIMCAR Digital)",
-        "| Camada | Feições | Área | % do Imóvel |",
+        "| Camada | FeiÃ§Ãµes | Ãrea | % do ImÃ³vel |",
         "|--------|---------|------|-----------|",
         ...quantRows,
         compact && nonZeroRows.length > chosenRows.length
-            ? `\n*Resumo reduzido para eficiência de tokens: exibindo ${chosenRows.length} de ${nonZeroRows.length} camadas com feições.*`
+            ? `\n*Resumo reduzido para eficiÃªncia de tokens: exibindo ${chosenRows.length} de ${nonZeroRows.length} camadas com feiÃ§Ãµes.*`
             : "",
     ].join("\n");
 }
@@ -3013,14 +3115,14 @@ function buildSingleSatellitePrompt(
     satelliteKey: string,
 ): string {
     const sat = SATELLITE_LAYERS[satelliteKey];
-    const sensor = satelliteKey.startsWith("sentinel2") ? "Sentinel-2 MSI (10m de resolução espacial)"
-        : satelliteKey.startsWith("landsat8") ? "Landsat 8 OLI (30m de resolução espacial)"
-            : satelliteKey.startsWith("landsat5") ? "Landsat 5 TM (30m de resolução espacial)"
-                : "SPOT (2.5m de resolução espacial)";
+    const sensor = satelliteKey.startsWith("sentinel2") ? "Sentinel-2 MSI (10m de resoluÃ§Ã£o espacial)"
+        : satelliteKey.startsWith("landsat8") ? "Landsat 8 OLI (30m de resoluÃ§Ã£o espacial)"
+            : satelliteKey.startsWith("landsat5") ? "Landsat 5 TM (30m de resoluÃ§Ã£o espacial)"
+                : "SPOT (2.5m de resoluÃ§Ã£o espacial)";
 
     return [
-        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
-        "Analise as 3 imagens do satélite fornecido comparando com os dados vetoriais do CAR.",
+        "VocÃª Ã© a **GeoForest IA**, especialista em sensoriamento remoto e anÃ¡lise ambiental para imÃ³veis rurais em Mato Grosso.",
+        "Analise as 3 imagens do satÃ©lite fornecido comparando com os dados vetoriais do CAR.",
         "",
         "---",
         "",
@@ -3028,41 +3130,41 @@ function buildSingleSatellitePrompt(
         "",
         "---",
         "",
-        `## Imagens: ${sat.label} — ${sensor}`,
+        `## Imagens: ${sat.label} â€” ${sensor}`,
         "",
-        "**Legenda dos polígonos:**",
-        "- 🟥 **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
-        "- 🟪 **Roxo semi-transparente**: ÁREA CONSOLIDADA (AC)",
-        "- 🟨 **Amarelo semi-transparente**: VEGETAÇÃO NATIVA (AVN)",
+        "**Legenda dos polÃ­gonos:**",
+        "- ðŸŸ¥ **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
+        "- ðŸŸª **Roxo semi-transparente**: ÃREA CONSOLIDADA (AC)",
+        "- ðŸŸ¨ **Amarelo semi-transparente**: VEGETAÃ‡ÃƒO NATIVA (AVN)",
         "",
-        `- Imagem 1: Visão Geral — base ${sat.label} + propriedade + AC + AVN`,
-        `- Imagem 2: Área Consolidada — base ${sat.label} + propriedade + somente AC`,
-        `- Imagem 3: AVN — base ${sat.label} + propriedade + somente AVN`,
+        `- Imagem 1: VisÃ£o Geral â€” base ${sat.label} + propriedade + AC + AVN`,
+        `- Imagem 2: Ãrea Consolidada â€” base ${sat.label} + propriedade + somente AC`,
+        `- Imagem 3: AVN â€” base ${sat.label} + propriedade + somente AVN`,
         "",
         "---",
         "",
-        "## Instruções",
+        "## InstruÃ§Ãµes",
         "",
-        "### Análise da Área Consolidada (AC)",
-        "- As áreas em roxo correspondem a uso antrópico (pastagem, agricultura, solo exposto)?",
-        "- Algum trecho de AC apresenta textura de vegetação nativa?",
-        "- Descreva a localização de trechos discordantes (ex: 'porção norte', 'borda leste').",
+        "### AnÃ¡lise da Ãrea Consolidada (AC)",
+        "- As Ã¡reas em roxo correspondem a uso antrÃ³pico (pastagem, agricultura, solo exposto)?",
+        "- Algum trecho de AC apresenta textura de vegetaÃ§Ã£o nativa?",
+        "- Descreva a localizaÃ§Ã£o de trechos discordantes (ex: 'porÃ§Ã£o norte', 'borda leste').",
         "",
-        "### Análise da Vegetação Nativa (AVN)",
-        "- As áreas em amarelo correspondem a vegetação nativa (floresta, cerrado, mata ciliar)?",
+        "### AnÃ¡lise da VegetaÃ§Ã£o Nativa (AVN)",
+        "- As Ã¡reas em amarelo correspondem a vegetaÃ§Ã£o nativa (floresta, cerrado, mata ciliar)?",
         "- Algum trecho de AVN parece antropizado (pastagem, desmatamento, queimada)?",
-        "- Avalie integridade e conectividade da vegetação.",
+        "- Avalie integridade e conectividade da vegetaÃ§Ã£o.",
         "",
-        "### Concordâncias e Discordâncias",
-        "- **✅ CONCORDA**: áreas onde classificação coincide com a imagem.",
-        "- **❌ DISCORDA**: áreas onde classificação não condiz. Indique a classificação mais apropriada.",
+        "### ConcordÃ¢ncias e DiscordÃ¢ncias",
+        "- **âœ… CONCORDA**: Ã¡reas onde classificaÃ§Ã£o coincide com a imagem.",
+        "- **âŒ DISCORDA**: Ã¡reas onde classificaÃ§Ã£o nÃ£o condiz. Indique a classificaÃ§Ã£o mais apropriada.",
         "",
-        "### Nível de Confiança",
-        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]**.",
+        "### NÃ­vel de ConfianÃ§a",
+        "Classifique: **[ALTA]**, **[MÃ‰DIA]** ou **[BAIXA]**.",
         "",
         "---",
-        "Responda em **português**, use markdown, seja detalhado e técnico.",
-        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
+        "Responda em **portuguÃªs**, use markdown, seja detalhado e tÃ©cnico.",
+        "NÃ£o inclua cadeia de raciocÃ­nio interna nem bloco <think>; entregue sÃ³ a resposta final.",
     ].join("\n");
 }
 
@@ -3080,21 +3182,21 @@ function buildAnalysisPrompt(
     const satDescriptions = validLayers.map((k, i) => {
         const sat = SATELLITE_LAYERS[k];
         const imgBase = i * 3 + 1;
-        const sensor = k.startsWith("sentinel2") ? "Sentinel-2 MSI (10m de resolução espacial)"
-            : k.startsWith("landsat8") ? "Landsat 8 OLI (30m de resolução espacial)"
-                : k.startsWith("landsat5") ? "Landsat 5 TM (30m de resolução espacial)"
-                    : "SPOT (2.5m de resolução espacial)";
+        const sensor = k.startsWith("sentinel2") ? "Sentinel-2 MSI (10m de resoluÃ§Ã£o espacial)"
+            : k.startsWith("landsat8") ? "Landsat 8 OLI (30m de resoluÃ§Ã£o espacial)"
+                : k.startsWith("landsat5") ? "Landsat 5 TM (30m de resoluÃ§Ã£o espacial)"
+                    : "SPOT (2.5m de resoluÃ§Ã£o espacial)";
         return [
-            `#### ${sat.label} — ${sensor}`,
-            `- Imagem ${imgBase}: Visão Geral — base ${sat.label} + contorno vermelho (propriedade) + AC (roxo) + AVN (amarelo)`,
-            `- Imagem ${imgBase + 1}: Área Consolidada — base ${sat.label} + contorno vermelho + somente AC (roxo)`,
-            `- Imagem ${imgBase + 2}: AVN — base ${sat.label} + contorno vermelho + somente AVN (amarelo)`,
+            `#### ${sat.label} â€” ${sensor}`,
+            `- Imagem ${imgBase}: VisÃ£o Geral â€” base ${sat.label} + contorno vermelho (propriedade) + AC (roxo) + AVN (amarelo)`,
+            `- Imagem ${imgBase + 1}: Ãrea Consolidada â€” base ${sat.label} + contorno vermelho + somente AC (roxo)`,
+            `- Imagem ${imgBase + 2}: AVN â€” base ${sat.label} + contorno vermelho + somente AVN (amarelo)`,
         ].join("\n");
     }).join("\n\n");
 
     const parts: string[] = [
-        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
-        "Realize uma análise técnica comparando os dados vetoriais do CAR com as imagens de satélite.",
+        "VocÃª Ã© a **GeoForest IA**, especialista em sensoriamento remoto e anÃ¡lise ambiental para imÃ³veis rurais em Mato Grosso.",
+        "Realize uma anÃ¡lise tÃ©cnica comparando os dados vetoriais do CAR com as imagens de satÃ©lite.",
         "",
         "---",
         "",
@@ -3104,26 +3206,26 @@ function buildAnalysisPrompt(
         "",
         "## Imagens Fornecidas",
         "",
-        `Foram geradas imagens de **${layerLabels.join(", ")}**${isMultiYear ? ` (período ${layerYears[0]}–${layerYears[layerYears.length - 1]})` : ""}.`,
+        `Foram geradas imagens de **${layerLabels.join(", ")}**${isMultiYear ? ` (perÃ­odo ${layerYears[0]}â€“${layerYears[layerYears.length - 1]})` : ""}.`,
         "",
         "**Legenda:**",
-        "- 🟥 **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
-        "- 🟪 **Roxo semi-transparente**: ÁREA CONSOLIDADA (AC)",
-        "- 🟨 **Amarelo semi-transparente**: VEGETAÇÃO NATIVA (AVN)",
+        "- ðŸŸ¥ **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
+        "- ðŸŸª **Roxo semi-transparente**: ÃREA CONSOLIDADA (AC)",
+        "- ðŸŸ¨ **Amarelo semi-transparente**: VEGETAÃ‡ÃƒO NATIVA (AVN)",
         "",
         satDescriptions,
         "",
         "---",
         "",
-        "## Instruções de Análise",
+        "## InstruÃ§Ãµes de AnÃ¡lise",
         "",
-        "### 3.1 Análise da Área Consolidada (AC)",
-        "- Verifique se AC (roxo) corresponde a uso antrópico (pastagem, agricultura, solo exposto, construções).",
-        "- Identifique trechos de AC com textura de vegetação nativa.",
-        "- Descreva localização de trechos discordantes.",
+        "### 3.1 AnÃ¡lise da Ãrea Consolidada (AC)",
+        "- Verifique se AC (roxo) corresponde a uso antrÃ³pico (pastagem, agricultura, solo exposto, construÃ§Ãµes).",
+        "- Identifique trechos de AC com textura de vegetaÃ§Ã£o nativa.",
+        "- Descreva localizaÃ§Ã£o de trechos discordantes.",
         "",
-        "### 3.2 Análise da Vegetação Nativa (AVN)",
-        "- Verifique se AVN (amarelo) corresponde a vegetação nativa.",
+        "### 3.2 AnÃ¡lise da VegetaÃ§Ã£o Nativa (AVN)",
+        "- Verifique se AVN (amarelo) corresponde a vegetaÃ§Ã£o nativa.",
         "- Identifique trechos de AVN antropizados.",
         "- Avalie integridade e conectividade.",
         "",
@@ -3131,43 +3233,43 @@ function buildAnalysisPrompt(
 
     if (isMultiYear) {
         parts.push(
-            "### 3.3 Análise Temporal (Multi-período)",
+            "### 3.3 AnÃ¡lise Temporal (Multi-perÃ­odo)",
             `Imagens de **${layerLabels.join(" e ")}**. Parte MAIS IMPORTANTE.`,
             "",
-            "#### a) Mudanças na cobertura vegetal",
-            "- Supressão (mata → solo/pastagem) ou regeneração entre os anos.",
-            "- Estime a área das mudanças.",
+            "#### a) MudanÃ§as na cobertura vegetal",
+            "- SupressÃ£o (mata â†’ solo/pastagem) ou regeneraÃ§Ã£o entre os anos.",
+            "- Estime a Ã¡rea das mudanÃ§as.",
             "",
-            "#### b) Consistência CAR vs. histórico",
+            "#### b) ConsistÃªncia CAR vs. histÃ³rico",
             "- AC existia na imagem mais antiga?",
-            "- AC mostra vegetação nativa na imagem mais antiga (desmatamento posterior)?",
-            "- AVN já antropizada na imagem mais antiga?",
+            "- AC mostra vegetaÃ§Ã£o nativa na imagem mais antiga (desmatamento posterior)?",
+            "- AVN jÃ¡ antropizada na imagem mais antiga?",
             "",
-            "#### c) Art. 68 — Lei 12.651/2012 (marco: 22/07/2008)",
+            "#### c) Art. 68 â€” Lei 12.651/2012 (marco: 22/07/2008)",
             "- AC consolidada antes de julho/2008?",
-            "- Expansão sobre vegetação nativa após 2008?",
+            "- ExpansÃ£o sobre vegetaÃ§Ã£o nativa apÃ³s 2008?",
             "",
-            "#### d) Diferenças entre sensores",
-            "- Sentinel-2 10m vs Landsat 30m vs SPOT 2.5m — não confundir resolução com mudança.",
+            "#### d) DiferenÃ§as entre sensores",
+            "- Sentinel-2 10m vs Landsat 30m vs SPOT 2.5m â€” nÃ£o confundir resoluÃ§Ã£o com mudanÃ§a.",
             "",
         );
     }
 
     const n = isMultiYear ? 4 : 3;
     parts.push(
-        `### 3.${n} Concordâncias e Discordâncias`,
-        "- **✅ CONCORDA**: classificação coincide com imagem.",
-        "- **❌ DISCORDA**: classificação não condiz. Indique a classificação correta.",
+        `### 3.${n} ConcordÃ¢ncias e DiscordÃ¢ncias`,
+        "- **âœ… CONCORDA**: classificaÃ§Ã£o coincide com imagem.",
+        "- **âŒ DISCORDA**: classificaÃ§Ã£o nÃ£o condiz. Indique a classificaÃ§Ã£o correta.",
         "",
-        `### 3.${n + 1} Nível de Confiança: [ALTA], [MÉDIA] ou [BAIXA]`,
+        `### 3.${n + 1} NÃ­vel de ConfianÃ§a: [ALTA], [MÃ‰DIA] ou [BAIXA]`,
         "",
-        `### 3.${n + 2} Recomendações ao Analista`,
-        "- Ações práticas: vistoria, imagens complementares, retificação do CAR.",
-        "- Artigos relevantes do Código Florestal.",
+        `### 3.${n + 2} RecomendaÃ§Ãµes ao Analista`,
+        "- AÃ§Ãµes prÃ¡ticas: vistoria, imagens complementares, retificaÃ§Ã£o do CAR.",
+        "- Artigos relevantes do CÃ³digo Florestal.",
         "",
         "---",
-        "Responda em **português**, use markdown com seções e sub-seções.",
-        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
+        "Responda em **portuguÃªs**, use markdown com seÃ§Ãµes e sub-seÃ§Ãµes.",
+        "NÃ£o inclua cadeia de raciocÃ­nio interna nem bloco <think>; entregue sÃ³ a resposta final.",
     );
 
     return parts.join("\n");
@@ -3191,16 +3293,16 @@ function buildSynthesisPrompt(
     const years = perSatelliteAnalyses.map((a) => a.year).sort();
 
     const analysesBlock = perSatelliteAnalyses.map((a) => [
-        `### Análise: ${a.satelliteLabel} (${a.year})`,
+        `### AnÃ¡lise: ${a.satelliteLabel} (${a.year})`,
         "",
         toSynthesisExcerpt(a.analysis),
     ].join("\n")).join("\n\n---\n\n");
 
     return [
-        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
+        "VocÃª Ã© a **GeoForest IA**, especialista em sensoriamento remoto e anÃ¡lise ambiental para imÃ³veis rurais em Mato Grosso.",
         "",
-        "Você receberá análises individuais feitas por IA para diferentes imagens de satélite do MESMO imóvel rural.",
-        "Sua tarefa é **sintetizar e comparar** essas análises para produzir um **laudo temporal integrado**.",
+        "VocÃª receberÃ¡ anÃ¡lises individuais feitas por IA para diferentes imagens de satÃ©lite do MESMO imÃ³vel rural.",
+        "Sua tarefa Ã© **sintetizar e comparar** essas anÃ¡lises para produzir um **laudo temporal integrado**.",
         "",
         "---",
         "",
@@ -3208,7 +3310,7 @@ function buildSynthesisPrompt(
         "",
         "---",
         "",
-        `## Análises Individuais Realizadas (${labels.join(", ")})`,
+        `## AnÃ¡lises Individuais Realizadas (${labels.join(", ")})`,
         "",
         analysesBlock,
         "",
@@ -3216,47 +3318,47 @@ function buildSynthesisPrompt(
         "",
         "## Sua Tarefa: Laudo Integrado Multi-temporal",
         "",
-        "Produza um laudo ÚNICO e COMPLETO que integre as análises acima. Seja objetivo e evite repetições.",
+        "Produza um laudo ÃšNICO e COMPLETO que integre as anÃ¡lises acima. Seja objetivo e evite repetiÃ§Ãµes.",
         "",
-        "### 1. Análise por Ano (obrigatória)",
-        `Crie um subtítulo para cada ano em **${years.join(", ")}** e descreva os achados de AC/AVN.`,
-        "Em cada ano, inclua: uso antrópico, integridade da vegetação, pontos de dúvida.",
+        "### 1. AnÃ¡lise por Ano (obrigatÃ³ria)",
+        `Crie um subtÃ­tulo para cada ano em **${years.join(", ")}** e descreva os achados de AC/AVN.`,
+        "Em cada ano, inclua: uso antrÃ³pico, integridade da vegetaÃ§Ã£o, pontos de dÃºvida.",
         "",
-        "### 2. Conexões Entre os Anos (obrigatória)",
+        "### 2. ConexÃµes Entre os Anos (obrigatÃ³ria)",
         "Explique a linha do tempo conectando os anos entre si:",
-        "- O que permaneceu estável ao longo dos anos?",
-        "- Onde há indício de mudança (supressão ou regeneração)?",
-        "- Qual sequência temporal mais provável para essas mudanças?",
+        "- O que permaneceu estÃ¡vel ao longo dos anos?",
+        "- Onde hÃ¡ indÃ­cio de mudanÃ§a (supressÃ£o ou regeneraÃ§Ã£o)?",
+        "- Qual sequÃªncia temporal mais provÃ¡vel para essas mudanÃ§as?",
         "",
-        "### 3. Comparação CAR x Histórico",
-        "- A Área Consolidada (AC) já estava consolidada no ano mais antigo?",
-        "- Há AC com sinal de vegetação nativa no passado?",
-        "- Há AVN com sinal de uso antrópico em algum ano?",
+        "### 3. ComparaÃ§Ã£o CAR x HistÃ³rico",
+        "- A Ãrea Consolidada (AC) jÃ¡ estava consolidada no ano mais antigo?",
+        "- HÃ¡ AC com sinal de vegetaÃ§Ã£o nativa no passado?",
+        "- HÃ¡ AVN com sinal de uso antrÃ³pico em algum ano?",
         "",
         "### 4. Marco Temporal (Art. 68, Lei 12.651/2012)",
-        "- Referência: **22/07/2008**.",
+        "- ReferÃªncia: **22/07/2008**.",
         "- Relacione explicitamente os anos anteriores e posteriores a 2008.",
         "",
-        "### 5. Concordâncias e Discordâncias Consolidadas",
-        "- **✅ CONCORDA**: quando os anos confirmam a classificação do CAR.",
-        "- **❌ DISCORDA**: quando algum ano contradiz o CAR (cite ano e evidência).",
-        "- **⚠️ INCONCLUSIVO**: quando a limitação do sensor impede conclusão robusta.",
+        "### 5. ConcordÃ¢ncias e DiscordÃ¢ncias Consolidadas",
+        "- **âœ… CONCORDA**: quando os anos confirmam a classificaÃ§Ã£o do CAR.",
+        "- **âŒ DISCORDA**: quando algum ano contradiz o CAR (cite ano e evidÃªncia).",
+        "- **âš ï¸ INCONCLUSIVO**: quando a limitaÃ§Ã£o do sensor impede conclusÃ£o robusta.",
         "",
-        "### 6. Nível de Confiança",
-        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]** e justifique.",
+        "### 6. NÃ­vel de ConfianÃ§a",
+        "Classifique: **[ALTA]**, **[MÃ‰DIA]** ou **[BAIXA]** e justifique.",
         "",
-        "### 7. Conclusão Integrada + Recomendações",
-        "- Síntese final da linha do tempo citando todos os anos.",
-        "- Recomendações práticas: vistoria, imagens extras, retificação do CAR.",
+        "### 7. ConclusÃ£o Integrada + RecomendaÃ§Ãµes",
+        "- SÃ­ntese final da linha do tempo citando todos os anos.",
+        "- RecomendaÃ§Ãµes prÃ¡ticas: vistoria, imagens extras, retificaÃ§Ã£o do CAR.",
         "",
         "---",
-        "Responda em **português**, use markdown, seja detalhado e técnico.",
-        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
-        "NÃO repita as análises individuais integralmente — sintetize e compare.",
+        "Responda em **portuguÃªs**, use markdown, seja detalhado e tÃ©cnico.",
+        "NÃ£o inclua cadeia de raciocÃ­nio interna nem bloco <think>; entregue sÃ³ a resposta final.",
+        "NÃƒO repita as anÃ¡lises individuais integralmente â€” sintetize e compare.",
     ].join("\n");
 }
 
-/* ─── AUAS Analysis Pipeline ─────────────────────────────────── */
+/* â”€â”€â”€ AUAS Analysis Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 /** Satellite keys used for AUAS analysis: only 2007 onwards, in chronological order. */
 const AUAS_SATELLITE_KEYS: string[] = [
@@ -3330,7 +3432,7 @@ async function generateAuasSatelliteImages(
             sendSSE(res, {
                 type: "progress", step: "generating_images",
                 percent: 10 + Math.round((step / totalSteps) * 40),
-                message: `Aviso: ${sat.label} indisponível, pulando...`,
+                message: `Aviso: ${sat.label} indisponÃ­vel, pulando...`,
             });
             step++;
             continue;
@@ -3340,13 +3442,13 @@ async function generateAuasSatelliteImages(
         const auasSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
             { name: "AUAS", stroke: "#FFFFFF", fill: "rgba(255, 255, 255, 0.30)", strokeWidth: 2.5 },
         ]);
-        images.push({ dataUrl: await compositeOverlay(basePng, auasSvg), caption: `${sat.label} — AUAS` });
+        images.push({ dataUrl: await compositeOverlay(basePng, auasSvg), caption: `${sat.label} â€” AUAS` });
         step++;
 
         sendSSE(res, {
             type: "progress", step: "generating_images",
             percent: 10 + Math.round((step / totalSteps) * 40),
-            message: `${sat.label}: imagem AUAS gerada ✓`,
+            message: `${sat.label}: imagem AUAS gerada âœ“`,
         });
     }
 
@@ -3363,23 +3465,23 @@ function buildAuasSingleSatPrompt(
     const sensorInfo: Record<string, { name: string; res: string; bandTips: string }> = {
         sentinel2: {
             name: "Sentinel-2 MSI",
-            res: "10m de resolução espacial",
-            bandTips: "Resolução alta (10m) permite identificar com clareza limites de desmatamento, bordas de vegetação nativa remanescente, e padrões de pasto/agricultura. Preste atenção a diferenças de textura e tonalidade entre vegetação densa (escura e homogênea) e uso antrópico (mais clara, padrões geométricos).",
+            res: "10m de resoluÃ§Ã£o espacial",
+            bandTips: "ResoluÃ§Ã£o alta (10m) permite identificar com clareza limites de desmatamento, bordas de vegetaÃ§Ã£o nativa remanescente, e padrÃµes de pasto/agricultura. Preste atenÃ§Ã£o a diferenÃ§as de textura e tonalidade entre vegetaÃ§Ã£o densa (escura e homogÃªnea) e uso antrÃ³pico (mais clara, padrÃµes geomÃ©tricos).",
         },
         landsat8: {
             name: "Landsat 8 OLI",
-            res: "30m de resolução espacial",
-            bandTips: "Resolução de 30m — confiável para manchas de desmatamento maiores que ~1 ha. Vegetação nativa aparece como textura rugosa e verde-escura; áreas de pasto/recém-desmatadas aparecem mais homogêneas e claras. Solo exposto apresenta tons avermelhados ou amarelados.",
+            res: "30m de resoluÃ§Ã£o espacial",
+            bandTips: "ResoluÃ§Ã£o de 30m â€” confiÃ¡vel para manchas de desmatamento maiores que ~1 ha. VegetaÃ§Ã£o nativa aparece como textura rugosa e verde-escura; Ã¡reas de pasto/recÃ©m-desmatadas aparecem mais homogÃªneas e claras. Solo exposto apresenta tons avermelhados ou amarelados.",
         },
         landsat5: {
             name: "Landsat 5 TM",
-            res: "30m de resolução espacial",
-            bandTips: "Sensor histórico fundamental — mesma resolução do L8 (30m). Por ser imagem mais antiga, pode ter maior presença de nuvens ou ruído atmosférico. Foque em padrões claros: verde-escuro homogêneo = mata nativa; padrões geométricos com tons mais claros = uso consolidado (pastagem, lavoura).",
+            res: "30m de resoluÃ§Ã£o espacial",
+            bandTips: "Sensor histÃ³rico fundamental â€” mesma resoluÃ§Ã£o do L8 (30m). Por ser imagem mais antiga, pode ter maior presenÃ§a de nuvens ou ruÃ­do atmosfÃ©rico. Foque em padrÃµes claros: verde-escuro homogÃªneo = mata nativa; padrÃµes geomÃ©tricos com tons mais claros = uso consolidado (pastagem, lavoura).",
         },
         spot: {
             name: "SPOT",
-            res: "2.5m de resolução espacial",
-            bandTips: "Resolução MUITO ALTA (2.5m) — permite individualizar árvores, cercas, estradas internas, corpos d'água pequenos. Esta é a melhor imagem de referência para 2008 (ano do marco). Use-a como baseline detalhado: identifique com precisão quais parcelas da AUAS já estavam convertidas e quais mantinham vegetação nativa.",
+            res: "2.5m de resoluÃ§Ã£o espacial",
+            bandTips: "ResoluÃ§Ã£o MUITO ALTA (2.5m) â€” permite individualizar Ã¡rvores, cercas, estradas internas, corpos d'Ã¡gua pequenos. Esta Ã© a melhor imagem de referÃªncia para 2008 (ano do marco). Use-a como baseline detalhado: identifique com precisÃ£o quais parcelas da AUAS jÃ¡ estavam convertidas e quais mantinham vegetaÃ§Ã£o nativa.",
         },
     };
     const sensorKey = satelliteKey.startsWith("sentinel2") ? "sentinel2"
@@ -3395,76 +3497,76 @@ function buildAuasSingleSatPrompt(
     const yearsAfterMarco = sat.year - 2008;
 
     return [
-        "Você é a **GeoForest IA**, perita em sensoriamento remoto e análise ambiental forense para imóveis rurais em Mato Grosso.",
-        `Sua especialidade é identificar mudanças de uso e cobertura do solo (LULC) usando imagens de satélite e correlacionar com as declarações do CAR.`,
+        "VocÃª Ã© a **GeoForest IA**, perita em sensoriamento remoto e anÃ¡lise ambiental forense para imÃ³veis rurais em Mato Grosso.",
+        `Sua especialidade Ã© identificar mudanÃ§as de uso e cobertura do solo (LULC) usando imagens de satÃ©lite e correlacionar com as declaraÃ§Ãµes do CAR.`,
         "",
         "---",
         "",
-        "## Contexto do Imóvel",
+        "## Contexto do ImÃ³vel",
         "",
         buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
         "",
-        "| Camada | Informação |",
+        "| Camada | InformaÃ§Ã£o |",
         "| --- | --- |",
-        auasSummary ? `| **AUAS** (Uso Alternativo do Solo) | ${auasSummary.areaHa?.toFixed(2) ?? '0'} ha — ${auasSummary.features ?? 0} feições |` : "",
-        acSummary ? `| **AC** (Área Consolidada) | ${acSummary.areaHa?.toFixed(2) ?? '0'} ha — ${acSummary.features ?? 0} feições |` : "",
-        avnSummary ? `| **AVN** (Vegetação Nativa) | ${avnSummary.areaHa?.toFixed(2) ?? '0'} ha — ${avnSummary.features ?? 0} feições |` : "",
+        auasSummary ? `| **AUAS** (Uso Alternativo do Solo) | ${auasSummary.areaHa?.toFixed(2) ?? '0'} ha â€” ${auasSummary.features ?? 0} feiÃ§Ãµes |` : "",
+        acSummary ? `| **AC** (Ãrea Consolidada) | ${acSummary.areaHa?.toFixed(2) ?? '0'} ha â€” ${acSummary.features ?? 0} feiÃ§Ãµes |` : "",
+        avnSummary ? `| **AVN** (VegetaÃ§Ã£o Nativa) | ${avnSummary.areaHa?.toFixed(2) ?? '0'} ha â€” ${avnSummary.features ?? 0} feiÃ§Ãµes |` : "",
         "",
         "---",
         "",
-        `## Imagem Analisada: ${sat.label} — ${sensor.name} (${sensor.res})`,
+        `## Imagem Analisada: ${sat.label} â€” ${sensor.name} (${sensor.res})`,
         "",
-        `**Dicas de interpretação para este sensor:** ${sensor.bandTips}`,
+        `**Dicas de interpretaÃ§Ã£o para este sensor:** ${sensor.bandTips}`,
         "",
-        "**Legenda visual dos polígonos na imagem:**",
-        "- 🟥 **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP/AIR do CAR)",
-        "- ⬜ **Branco semi-transparente (preenchimento)**: **AUAS** — Área de Uso Alternativo do Solo declarada no CAR",
-        "",
-        "---",
-        "",
-        "## Marco Legal de Referência",
-        "",
-        "O **Art. 68 da Lei 12.651/2012** (Código Florestal) estabelece que áreas rurais que já estavam consolidadas " +
-        "com atividades agrossilvipastoris até **22/07/2008** podem ser mantidas nessa condição, desde que corretamente " +
-        "declaradas no CAR. A AUAS é a camada do CAR que delimita essas áreas de uso alternativo.",
-        "",
-        `⏱️ **Ano desta imagem: ${sat.year}** — ` + (isPreMarco
-            ? `Esta imagem é **${sat.year === 2008 ? 'DO' : 'ANTERIOR AO'}** marco temporal (22/07/2008). Serve como PROVA BASELINE do estado da terra antes/no marco.`
-            : `Esta imagem é **${yearsAfterMarco} ano(s) APÓS** o marco temporal. Qualquer supressão de vegetação nativa dentro da AUAS detectada NESTE ano indica irregularidade.`),
+        "**Legenda visual dos polÃ­gonos na imagem:**",
+        "- ðŸŸ¥ **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP/AIR do CAR)",
+        "- â¬œ **Branco semi-transparente (preenchimento)**: **AUAS** â€” Ãrea de Uso Alternativo do Solo declarada no CAR",
         "",
         "---",
         "",
-        "## Instruções de Análise",
+        "## Marco Legal de ReferÃªncia",
+        "",
+        "O **Art. 68 da Lei 12.651/2012** (CÃ³digo Florestal) estabelece que Ã¡reas rurais que jÃ¡ estavam consolidadas " +
+        "com atividades agrossilvipastoris atÃ© **22/07/2008** podem ser mantidas nessa condiÃ§Ã£o, desde que corretamente " +
+        "declaradas no CAR. A AUAS Ã© a camada do CAR que delimita essas Ã¡reas de uso alternativo.",
+        "",
+        `â±ï¸ **Ano desta imagem: ${sat.year}** â€” ` + (isPreMarco
+            ? `Esta imagem Ã© **${sat.year === 2008 ? 'DO' : 'ANTERIOR AO'}** marco temporal (22/07/2008). Serve como PROVA BASELINE do estado da terra antes/no marco.`
+            : `Esta imagem Ã© **${yearsAfterMarco} ano(s) APÃ“S** o marco temporal. Qualquer supressÃ£o de vegetaÃ§Ã£o nativa dentro da AUAS detectada NESTE ano indica irregularidade.`),
+        "",
+        "---",
+        "",
+        "## InstruÃ§Ãµes de AnÃ¡lise",
         "",
         "### 1. Estado da AUAS neste ano",
-        "Observe EXCLUSIVAMENTE a área demarcada em branco (AUAS) e descreva:",
-        "- **Cobertura predominante**: vegetação nativa densa, vegetação nativa rala/degradada, pasto, lavoura, solo exposto, área construída, espelho d'água, ou mista?",
-        "- **Proporção estimada**: qual % da AUAS está sob cada tipo de uso? (ex: 70% pasto, 20% vegetação nativa, 10% solo exposto)",
-        "- **Padrões geográficos**: as áreas de uso antrópico estão concentradas em qual parte? (norte, sul, centro, bordas)",
+        "Observe EXCLUSIVAMENTE a Ã¡rea demarcada em branco (AUAS) e descreva:",
+        "- **Cobertura predominante**: vegetaÃ§Ã£o nativa densa, vegetaÃ§Ã£o nativa rala/degradada, pasto, lavoura, solo exposto, Ã¡rea construÃ­da, espelho d'Ã¡gua, ou mista?",
+        "- **ProporÃ§Ã£o estimada**: qual % da AUAS estÃ¡ sob cada tipo de uso? (ex: 70% pasto, 20% vegetaÃ§Ã£o nativa, 10% solo exposto)",
+        "- **PadrÃµes geogrÃ¡ficos**: as Ã¡reas de uso antrÃ³pico estÃ£o concentradas em qual parte? (norte, sul, centro, bordas)",
         "",
         "### 2. Indicadores de Desmatamento",
-        "Procure evidências visuais de supressão recente:",
-        "- Solo exposto de formato geométrico (indicando corte raso)",
-        "- Bordas abruptas entre vegetação nativa e área desmatada",
-        "- Queimadas (tons pretos/cinza com padrão de fogo)",
-        "- Estradas novas cortando vegetação",
-        "- Vegetação secundária (capoeira) — indica desmatamento anterior com regeneração parcial",
+        "Procure evidÃªncias visuais de supressÃ£o recente:",
+        "- Solo exposto de formato geomÃ©trico (indicando corte raso)",
+        "- Bordas abruptas entre vegetaÃ§Ã£o nativa e Ã¡rea desmatada",
+        "- Queimadas (tons pretos/cinza com padrÃ£o de fogo)",
+        "- Estradas novas cortando vegetaÃ§Ã£o",
+        "- VegetaÃ§Ã£o secundÃ¡ria (capoeira) â€” indica desmatamento anterior com regeneraÃ§Ã£o parcial",
         "",
-        "### 3. Conclusão Parcial para este ano",
+        "### 3. ConclusÃ£o Parcial para este ano",
         "Use OBRIGATORIAMENTE um dos seguintes vereditos:",
-        "- **✅ USO ANTRÓPICO CONSOLIDADO**: A AUAS mostra uso antrópico neste ano — coerente com a declaração do CAR.",
-        "- **❌ VEGETAÇÃO NATIVA PRESENTE**: A AUAS mostra vegetação nativa significativa (>30%) — a declaração de AUAS nesta área é questionável.",
-        "- **🔴 DESMATAMENTO RECENTE DETECTADO**: Evidência clara de supressão recente dentro da AUAS (solo exposto, queimada, corte).",
-        "- **⚠️ INCONCLUSIVO**: Resolução do sensor, cobertura de nuvens ou outros fatores impedem determinação confiável.",
+        "- **âœ… USO ANTRÃ“PICO CONSOLIDADO**: A AUAS mostra uso antrÃ³pico neste ano â€” coerente com a declaraÃ§Ã£o do CAR.",
+        "- **âŒ VEGETAÃ‡ÃƒO NATIVA PRESENTE**: A AUAS mostra vegetaÃ§Ã£o nativa significativa (>30%) â€” a declaraÃ§Ã£o de AUAS nesta Ã¡rea Ã© questionÃ¡vel.",
+        "- **ðŸ”´ DESMATAMENTO RECENTE DETECTADO**: EvidÃªncia clara de supressÃ£o recente dentro da AUAS (solo exposto, queimada, corte).",
+        "- **âš ï¸ INCONCLUSIVO**: ResoluÃ§Ã£o do sensor, cobertura de nuvens ou outros fatores impedem determinaÃ§Ã£o confiÃ¡vel.",
         "",
         "---",
-        "Responda em **português**, use markdown, seja OBJETIVO e TÉCNICO (250–400 palavras).",
-        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
+        "Responda em **portuguÃªs**, use markdown, seja OBJETIVO e TÃ‰CNICO (250â€“400 palavras).",
+        "NÃ£o inclua cadeia de raciocÃ­nio interna nem bloco <think>; entregue sÃ³ a resposta final.",
     ].join("\n");
 }
 
 /**
- * Build the final synthesis prompt for AUAS analysis — produces a
+ * Build the final synthesis prompt for AUAS analysis â€” produces a
  * professional environmental forensics report combining per-satellite
  * observations with previous AC/AVN analysis.
  */
@@ -3490,29 +3592,29 @@ function buildAuasFinalSynthesisPrompt(
     ].join("\n")).join("\n\n---\n\n");
 
     const parts: string[] = [
-        "Você é a **GeoForest IA**, perita em sensoriamento remoto e análise ambiental forense, especializada em imóveis rurais de Mato Grosso.",
+        "VocÃª Ã© a **GeoForest IA**, perita em sensoriamento remoto e anÃ¡lise ambiental forense, especializada em imÃ³veis rurais de Mato Grosso.",
         "",
-        "Sua tarefa: produzir um **Laudo Técnico de Análise da AUAS** profissional e impactante, " +
-        "combinando as análises por satélite individuais com o contexto legal e ambiental do imóvel.",
+        "Sua tarefa: produzir um **Laudo TÃ©cnico de AnÃ¡lise da AUAS** profissional e impactante, " +
+        "combinando as anÃ¡lises por satÃ©lite individuais com o contexto legal e ambiental do imÃ³vel.",
         "",
         "---",
         "",
-        "## Dados do Imóvel",
+        "## Dados do ImÃ³vel",
         "",
         buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
         "",
-        "### Camadas do CAR relevantes para esta análise:",
-        "| Camada | Área | Feições |",
+        "### Camadas do CAR relevantes para esta anÃ¡lise:",
+        "| Camada | Ãrea | FeiÃ§Ãµes |",
         "| --- | --- | --- |",
-        auasSummary ? `| **AUAS** (Uso Alternativo do Solo) | ${auasSummary.areaHa?.toFixed(2) ?? '—'} ha | ${auasSummary.features ?? 0} |` : "",
-        acSummary ? `| **AC** (Área Consolidada) | ${acSummary.areaHa?.toFixed(2) ?? '—'} ha | ${acSummary.features ?? 0} |` : "",
-        avnSummary ? `| **AVN** (Vegetação Nativa) | ${avnSummary.areaHa?.toFixed(2) ?? '—'} ha | ${avnSummary.features ?? 0} |` : "",
+        auasSummary ? `| **AUAS** (Uso Alternativo do Solo) | ${auasSummary.areaHa?.toFixed(2) ?? 'â€”'} ha | ${auasSummary.features ?? 0} |` : "",
+        acSummary ? `| **AC** (Ãrea Consolidada) | ${acSummary.areaHa?.toFixed(2) ?? 'â€”'} ha | ${acSummary.features ?? 0} |` : "",
+        avnSummary ? `| **AVN** (VegetaÃ§Ã£o Nativa) | ${avnSummary.areaHa?.toFixed(2) ?? 'â€”'} ha | ${avnSummary.features ?? 0} |` : "",
         "",
         "---",
         "",
-        `## Análises AUAS por Satélite (${labels.length} imagens: ${years[0]}–${years[years.length - 1]})`,
+        `## AnÃ¡lises AUAS por SatÃ©lite (${labels.length} imagens: ${years[0]}â€“${years[years.length - 1]})`,
         "",
-        `**Imagens pré-marco (≤2008):** ${preMarco.length > 0 ? preMarco.join(", ") : "nenhuma"} | **Imagens pós-marco (>2008):** ${postMarco.length > 0 ? postMarco.join(", ") : "nenhuma"}`,
+        `**Imagens prÃ©-marco (â‰¤2008):** ${preMarco.length > 0 ? preMarco.join(", ") : "nenhuma"} | **Imagens pÃ³s-marco (>2008):** ${postMarco.length > 0 ? postMarco.join(", ") : "nenhuma"}`,
         "",
         analysesBlock,
         "",
@@ -3522,10 +3624,10 @@ function buildAuasFinalSynthesisPrompt(
         parts.push(
             "---",
             "",
-            "## 📋 Análise Anterior — Área Consolidada (AC) e Vegetação Nativa (AVN)",
+            "## ðŸ“‹ AnÃ¡lise Anterior â€” Ãrea Consolidada (AC) e VegetaÃ§Ã£o Nativa (AVN)",
             "",
-            "**A IA já analisou as camadas AC e AVN deste imóvel usando as mesmas imagens de satélite.**",
-            "Use este resultado como referência cruzada — as conclusões da AUAS devem ser COERENTES com as da AC:",
+            "**A IA jÃ¡ analisou as camadas AC e AVN deste imÃ³vel usando as mesmas imagens de satÃ©lite.**",
+            "Use este resultado como referÃªncia cruzada â€” as conclusÃµes da AUAS devem ser COERENTES com as da AC:",
             "",
             toSynthesisExcerpt(previousAcAvnAnalysis, 4000),
             "",
@@ -3535,80 +3637,80 @@ function buildAuasFinalSynthesisPrompt(
     parts.push(
         "---",
         "",
-        "## 📝 PRODUZA O LAUDO TÉCNICO COM A SEGUINTE ESTRUTURA:",
+        "## ðŸ“ PRODUZA O LAUDO TÃ‰CNICO COM A SEGUINTE ESTRUTURA:",
         "",
-        "### 🔰 Resumo Executivo",
-        "Comece com um resumo impactante de 3–4 linhas: a AUAS declarada está correta, incorreta ou parcialmente correta?",
-        "Inclua a área total analisada, o período de cobertura e o veredito principal.",
+        "### ðŸ”° Resumo Executivo",
+        "Comece com um resumo impactante de 3â€“4 linhas: a AUAS declarada estÃ¡ correta, incorreta ou parcialmente correta?",
+        "Inclua a Ã¡rea total analisada, o perÃ­odo de cobertura e o veredito principal.",
         "",
-        "### 📅 Linha do Tempo",
-        `Crie uma tabela temporal com colunas: **Ano** | **Sensor** | **Cobertura da AUAS** | **Veredito** | **Observações**`,
-        `Os vereditos devem usar: ✅ Consolidado | ❌ Veg. Nativa | 🔴 Desmatamento | ⚠️ Inconclusivo`,
+        "### ðŸ“… Linha do Tempo",
+        `Crie uma tabela temporal com colunas: **Ano** | **Sensor** | **Cobertura da AUAS** | **Veredito** | **ObservaÃ§Ãµes**`,
+        `Os vereditos devem usar: âœ… Consolidado | âŒ Veg. Nativa | ðŸ”´ Desmatamento | âš ï¸ Inconclusivo`,
         "",
         `Para cada ano analisado (${years.join(", ")}), indique:`,
         "- Qual era a cobertura predominante dentro da AUAS (pasto, lavoura, mata, misto)",
-        "- Se houve alguma mudança visível em relação ao ano anterior",
-        "- Se há evidência de supressão recente de vegetação nativa",
+        "- Se houve alguma mudanÃ§a visÃ­vel em relaÃ§Ã£o ao ano anterior",
+        "- Se hÃ¡ evidÃªncia de supressÃ£o recente de vegetaÃ§Ã£o nativa",
         "",
-        "### 🔍 Detecção de Desmatamentos Irregulares",
+        "### ðŸ” DetecÃ§Ã£o de Desmatamentos Irregulares",
         "",
-        "**Marco legal**: Art. 68 da Lei 12.651/2012 — áreas de uso alternativo consolidadas até 22/07/2008.",
+        "**Marco legal**: Art. 68 da Lei 12.651/2012 â€” Ã¡reas de uso alternativo consolidadas atÃ© 22/07/2008.",
         "",
-        "Se a AUAS continha vegetação nativa nas imagens de 2007–2008 (baseline) e essa vegetação",
-        "foi suprimida em anos posteriores, identifique COM PRECISÃO:",
-        "- **Em qual intervalo de anos** ocorreu cada supressão (ex: \"entre 2013 e 2014\")",
-        "- **Em qual parte do polígono** (norte, sul, centro, porção X ha)",
-        "- **Qual a área aproximada** afetada pela supressão irregular",
-        "- **Tipo de evidência**: solo exposto geométrico, queimada, remoção parcial, etc.",
+        "Se a AUAS continha vegetaÃ§Ã£o nativa nas imagens de 2007â€“2008 (baseline) e essa vegetaÃ§Ã£o",
+        "foi suprimida em anos posteriores, identifique COM PRECISÃƒO:",
+        "- **Em qual intervalo de anos** ocorreu cada supressÃ£o (ex: \"entre 2013 e 2014\")",
+        "- **Em qual parte do polÃ­gono** (norte, sul, centro, porÃ§Ã£o X ha)",
+        "- **Qual a Ã¡rea aproximada** afetada pela supressÃ£o irregular",
+        "- **Tipo de evidÃªncia**: solo exposto geomÃ©trico, queimada, remoÃ§Ã£o parcial, etc.",
         "",
-        "Se NÃO houve desmatamento irregular, declare explicitamente: \"Nenhum desmatamento irregular detectado.\"",
+        "Se NÃƒO houve desmatamento irregular, declare explicitamente: \"Nenhum desmatamento irregular detectado.\"",
         "",
     );
 
     if (previousAcAvnAnalysis) {
         parts.push(
-            "### 🔗 Integração com Análise AC/AVN",
+            "### ðŸ”— IntegraÃ§Ã£o com AnÃ¡lise AC/AVN",
             "",
-            "Este é um dos pontos mais importantes — cruze os dados:",
-            "- A **AC** (Área Consolidada) e a **AUAS** se sobrepõem? São coerentes?",
-            "- Se a AC foi considerada \"concordante\" na análise anterior, a AUAS na mesma região também deve ser?",
-            "- Se houve discordância na AC (vegetação nativa onde deveria ser consolidada), a AUAS na mesma área confirma essa discordância?",
-            "- A **AVN** está íntegra nas áreas fora da AUAS? Há invasão de uso antrópico em áreas de AVN?",
-            "- Identifique CONTRADIÇÕES entre a análise AC/AVN e a AUAS (ex: AC diz consolidada, mas AUAS mostra mata)",
+            "Este Ã© um dos pontos mais importantes â€” cruze os dados:",
+            "- A **AC** (Ãrea Consolidada) e a **AUAS** se sobrepÃµem? SÃ£o coerentes?",
+            "- Se a AC foi considerada \"concordante\" na anÃ¡lise anterior, a AUAS na mesma regiÃ£o tambÃ©m deve ser?",
+            "- Se houve discordÃ¢ncia na AC (vegetaÃ§Ã£o nativa onde deveria ser consolidada), a AUAS na mesma Ã¡rea confirma essa discordÃ¢ncia?",
+            "- A **AVN** estÃ¡ Ã­ntegra nas Ã¡reas fora da AUAS? HÃ¡ invasÃ£o de uso antrÃ³pico em Ã¡reas de AVN?",
+            "- Identifique CONTRADIÃ‡Ã•ES entre a anÃ¡lise AC/AVN e a AUAS (ex: AC diz consolidada, mas AUAS mostra mata)",
             "",
         );
     }
 
     const nextNum = previousAcAvnAnalysis ? 5 : 4;
     parts.push(
-        `### 🎯 Veredito Final sobre a AUAS`,
+        `### ðŸŽ¯ Veredito Final sobre a AUAS`,
         "",
         "Use OBRIGATORIAMENTE um destes:",
-        "- **✅ AUAS VÁLIDA**: Todo o polígono declarado como AUAS já era de uso antrópico consolidado em julho/2008. A declaração do CAR está correta.",
-        "- **❌ AUAS INVÁLIDA**: O polígono declarado como AUAS continha vegetação nativa que foi ilegalmente suprimida após julho/2008.",
-        "- **⚠️ AUAS PARCIALMENTE VÁLIDA**: Parte do polígono está correta (uso consolidado pré-2008), mas [X] ha apresentam supressão irregular pós-2008.",
+        "- **âœ… AUAS VÃLIDA**: Todo o polÃ­gono declarado como AUAS jÃ¡ era de uso antrÃ³pico consolidado em julho/2008. A declaraÃ§Ã£o do CAR estÃ¡ correta.",
+        "- **âŒ AUAS INVÃLIDA**: O polÃ­gono declarado como AUAS continha vegetaÃ§Ã£o nativa que foi ilegalmente suprimida apÃ³s julho/2008.",
+        "- **âš ï¸ AUAS PARCIALMENTE VÃLIDA**: Parte do polÃ­gono estÃ¡ correta (uso consolidado prÃ©-2008), mas [X] ha apresentam supressÃ£o irregular pÃ³s-2008.",
         "",
-        `### 📊 Nível de Confiança`,
-        "Classifique a confiança global: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]**.",
-        "Justifique com base na qualidade das imagens, cobertura temporal e consistência entre sensores.",
+        `### ðŸ“Š NÃ­vel de ConfianÃ§a`,
+        "Classifique a confianÃ§a global: **[ALTA]**, **[MÃ‰DIA]** ou **[BAIXA]**.",
+        "Justifique com base na qualidade das imagens, cobertura temporal e consistÃªncia entre sensores.",
         "",
-        `### 💡 Recomendações`,
-        "Liste ações concretas e priorizadas:",
+        `### ðŸ’¡ RecomendaÃ§Ãµes`,
+        "Liste aÃ§Ãµes concretas e priorizadas:",
         "- Necessidade de vistoria em campo?",
         "- Imagens adicionais (RapidEye, Planet, drones) para confirmar?",
-        "- Retificação do CAR necessária?",
-        "- Notificação ou autuação cabível?",
-        "- Análise de sobreposição com Terras Indígenas, UCs, APPs?",
+        "- RetificaÃ§Ã£o do CAR necessÃ¡ria?",
+        "- NotificaÃ§Ã£o ou autuaÃ§Ã£o cabÃ­vel?",
+        "- AnÃ¡lise de sobreposiÃ§Ã£o com Terras IndÃ­genas, UCs, APPs?",
         "",
         "---",
         "",
-        "⚡ **REGRAS DE FORMATAÇÃO:**",
-        "- Responda em **português**, use markdown rico (tabelas, emojis, negrito, listas)",
-        "- Seja **técnico, detalhado e persuasivo** — imagine que este laudo será lido por um promotor do MP-MT",
-        "- NÃO repita as análises individuais na íntegra — sintetize, compare e conclua",
-        "- Use dados quantitativos sempre que possível (áreas em ha, percentuais, intervalos de anos)",
+        "âš¡ **REGRAS DE FORMATAÃ‡ÃƒO:**",
+        "- Responda em **portuguÃªs**, use markdown rico (tabelas, emojis, negrito, listas)",
+        "- Seja **tÃ©cnico, detalhado e persuasivo** â€” imagine que este laudo serÃ¡ lido por um promotor do MP-MT",
+        "- NÃƒO repita as anÃ¡lises individuais na Ã­ntegra â€” sintetize, compare e conclua",
+        "- Use dados quantitativos sempre que possÃ­vel (Ã¡reas em ha, percentuais, intervalos de anos)",
         "- O laudo deve ter entre 600 e 1200 palavras",
-        "- Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final",
+        "- NÃ£o inclua cadeia de raciocÃ­nio interna nem bloco <think>; entregue sÃ³ a resposta final",
     );
 
     return parts.join("\n");
@@ -3632,7 +3734,7 @@ async function processAuasAnalysis(
     if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
         sendSSE(res, {
             type: "error",
-            message: "Job não encontrado. Envie contextUrl ou gere o recorte novamente.",
+            message: "Job nÃ£o encontrado. Envie contextUrl ou gere o recorte novamente.",
         });
         return;
     }
@@ -3645,13 +3747,13 @@ async function processAuasAnalysis(
     if (!auasGeoms || auasGeoms.length === 0) {
         sendSSE(res, {
             type: "error",
-            message: "Camada AUAS não encontrada no recorte. Verifique se o imóvel possui AUAS declarada no CAR.",
+            message: "Camada AUAS nÃ£o encontrada no recorte. Verifique se o imÃ³vel possui AUAS declarada no CAR.",
         });
         return;
     }
 
     // Step 1: Generate satellite images with AUAS overlay
-    sendSSE(res, { type: "progress", step: "generating_images", percent: 5, message: "Iniciando geração de imagens AUAS..." });
+    sendSSE(res, { type: "progress", step: "generating_images", percent: 5, message: "Iniciando geraÃ§Ã£o de imagens AUAS..." });
 
     let imagesToAnalyze: Array<{ dataUrl: string; caption: string }>;
     try {
@@ -3688,7 +3790,7 @@ async function processAuasAnalysis(
     }
 
     // Step 3: Prepare images for AI
-    sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens AUAS para análise IA..." });
+    sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens AUAS para anÃ¡lise IA..." });
 
     const aiImages: AiImage[] = [];
     if (cloudinaryUrls.length === imagesToAnalyze.length) {
@@ -3741,7 +3843,7 @@ async function processAuasAnalysis(
             console.error(`[AUAS ANALYSIS] ${sat.label} failed:`, err.message);
             sendSSE(res, {
                 type: "progress", step: "analyzing", percent: progressPct,
-                message: `Aviso: análise AUAS de ${sat.label} falhou, continuando...`,
+                message: `Aviso: anÃ¡lise AUAS de ${sat.label} falhou, continuando...`,
             });
         }
         satIdx++;
@@ -3750,7 +3852,7 @@ async function processAuasAnalysis(
     perSatResults.sort((a, b) => a.year - b.year || a.satelliteLabel.localeCompare(b.satelliteLabel));
 
     if (perSatResults.length === 0) {
-        sendSSE(res, { type: "error", message: "Nenhuma análise AUAS individual foi concluída com sucesso." });
+        sendSSE(res, { type: "error", message: "Nenhuma anÃ¡lise AUAS individual foi concluÃ­da com sucesso." });
         return;
     }
 
@@ -3766,7 +3868,7 @@ async function processAuasAnalysis(
         );
         const split = splitThinkProgress(analysisText);
         if (split.thinkingText) {
-            sendSSE(res, { type: "model_thinking", source: "Síntese AUAS", thinkingText: split.thinkingText });
+            sendSSE(res, { type: "model_thinking", source: "SÃ­ntese AUAS", thinkingText: split.thinkingText });
         }
         console.log(`[AUAS ANALYSIS] Final synthesis complete (${analysisText.length} chars)`);
     } catch (err: any) {
@@ -3792,7 +3894,7 @@ async function processAuasAnalysis(
 
 /**
  * Generate composited satellite images for given layers.
- * Returns array of { dataUrl, caption } for each satellite × 3 views.
+ * Returns array of { dataUrl, caption } for each satellite Ã— 3 views.
  */
 async function generateSatelliteImages(
     res: Response,
@@ -3840,7 +3942,7 @@ async function generateSatelliteImages(
             sendSSE(res, {
                 type: "progress", step: "generating_images",
                 percent: 10 + Math.round((step / totalSteps) * 40),
-                message: `Aviso: ${sat.label} indisponível, pulando...`,
+                message: `Aviso: ${sat.label} indisponÃ­vel, pulando...`,
             });
             step += 3;
             continue;
@@ -3855,27 +3957,27 @@ async function generateSatelliteImages(
             { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.20)", strokeWidth: 2 },
             { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.20)", strokeWidth: 2 },
         ]);
-        images.push({ dataUrl: await compositeOverlay(basePng, overviewSvg), caption: `${sat.label} — Visão Geral (propriedade + AC + AVN)` });
+        images.push({ dataUrl: await compositeOverlay(basePng, overviewSvg), caption: `${sat.label} â€” VisÃ£o Geral (propriedade + AC + AVN)` });
         step++;
 
         sendSSE(res, {
             type: "progress", step: "generating_images",
             percent: 10 + Math.round((step / totalSteps) * 40),
-            message: `${sat.label}: renderizando Área Consolidada...`,
+            message: `${sat.label}: renderizando Ãrea Consolidada...`,
         });
 
         // 2: AC only
         const acSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
             { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.25)", strokeWidth: 2.5 },
         ]);
-        images.push({ dataUrl: await compositeOverlay(basePng, acSvg), caption: `${sat.label} — Área Consolidada` });
+        images.push({ dataUrl: await compositeOverlay(basePng, acSvg), caption: `${sat.label} â€” Ãrea Consolidada` });
         step++;
 
         // 3: AVN only
         const avnSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
             { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.25)", strokeWidth: 2.5 },
         ]);
-        images.push({ dataUrl: await compositeOverlay(basePng, avnSvg), caption: `${sat.label} — AVN` });
+        images.push({ dataUrl: await compositeOverlay(basePng, avnSvg), caption: `${sat.label} â€” AVN` });
         step++;
     }
 
@@ -3992,7 +4094,7 @@ async function hydrateJobFromOutputZipUrl(jobId: string, outputZipUrl?: string):
             outputZipUrl,
         );
         if (!hydrated) {
-            throw new Error("Não foi possível reconstruir contexto pelo ZIP");
+            throw new Error("NÃ£o foi possÃ­vel reconstruir contexto pelo ZIP");
         }
         jobCache.set(jobId, hydrated);
         return hydrated;
@@ -4014,7 +4116,7 @@ async function hydrateJobFromPersistedContext(
         }
         const parsed = parsePersistedClipContext(await response.json());
         if (!parsed) {
-            throw new Error("Formato de contexto inválido");
+            throw new Error("Formato de contexto invÃ¡lido");
         }
         const clipMap = objectToMapGeometry(parsed.clippedGeometries);
         const hydrated: CachedJob = {
@@ -4048,16 +4150,16 @@ async function processAnalysis(
 ) {
     let job = jobCache.get(jobId);
     if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
-        job = await hydrateJobFromPersistedContext(jobId, contextUrl);
+        job = (await hydrateJobFromPersistedContext(jobId, contextUrl)) ?? undefined;
     }
     if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && outputZipUrl) {
-        job = await hydrateJobFromOutputZipUrl(jobId, outputZipUrl);
+        job = (await hydrateJobFromOutputZipUrl(jobId, outputZipUrl)) ?? undefined;
     }
     if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
         sendSSE(res, {
             type: "error",
             message:
-                "Job não encontrado no cache do servidor. Envie contextUrl salvo no Firebase/Cloudinary para reidratar ou gere o recorte novamente.",
+                "Job nÃ£o encontrado no cache do servidor. Envie contextUrl salvo no Firebase/Cloudinary para reidratar ou gere o recorte novamente.",
         });
         return;
     }
@@ -4066,7 +4168,7 @@ async function processAnalysis(
     const areaHa = propAreaHa ?? 0;
 
     // Step 1: Generate satellite images with polygon overlays
-    sendSSE(res, { type: "progress", step: "generating_images", percent: 10, message: "Iniciando geração de imagens..." });
+    sendSSE(res, { type: "progress", step: "generating_images", percent: 10, message: "Iniciando geraÃ§Ã£o de imagens..." });
 
     let imagesToAnalyze: Array<{ dataUrl: string; caption: string }>;
     try {
@@ -4078,7 +4180,7 @@ async function processAnalysis(
     }
 
     if (imagesToAnalyze.length === 0) {
-        sendSSE(res, { type: "error", message: "Nenhuma imagem de satélite foi gerada. Verifique a disponibilidade das camadas WMS." });
+        sendSSE(res, { type: "error", message: "Nenhuma imagem de satÃ©lite foi gerada. Verifique a disponibilidade das camadas WMS." });
         return;
     }
 
@@ -4116,13 +4218,13 @@ async function processAnalysis(
     }
 
     // Step 3: Prepare images for AI (use Cloudinary URLs or compress base64 as fallback)
-    sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens para análise IA..." });
+    sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens para anÃ¡lise IA..." });
 
     const aiImages: AiImage[] = [];
     if (cloudinaryUrls.length === imagesToAnalyze.length) {
         for (const cu of cloudinaryUrls) {
-            // url      → Groq vision: 800×600 JPEG q65 (fewer input tokens)
-            // geminiUrl → Gemini vision: 1024×768 JPEG q82 (more detail for precise analysis)
+            // url      â†’ Groq vision: 800Ã—600 JPEG q65 (fewer input tokens)
+            // geminiUrl â†’ Gemini vision: 1024Ã—768 JPEG q82 (more detail for precise analysis)
             // Both derived via Cloudinary on-the-fly transformations from the original full-res PNG.
             aiImages.push({
                 url: getCloudinaryAiUrl(cu.url),
@@ -4130,7 +4232,7 @@ async function processAnalysis(
                 caption: cu.caption,
             });
         }
-        console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs (Groq: 800×600 q65 / Gemini: 1024×768 q82) for vision API`);
+        console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs (Groq: 800Ã—600 q65 / Gemini: 1024Ã—768 q82) for vision API`);
     } else {
         console.log(`[SIMCAR ANALYSIS] Cloudinary partial/failed, compressing ${imagesToAnalyze.length} images for vision API`);
         for (const img of imagesToAnalyze) {
@@ -4143,7 +4245,7 @@ async function processAnalysis(
         }
     }
 
-    // Step 4: AI Analysis — strategy depends on number of satellites
+    // Step 4: AI Analysis â€” strategy depends on number of satellites
     const validKeys = getOrderedSatelliteKeys(selectedLayers);
     const isMultiSatellite = validKeys.length > 1;
 
@@ -4157,7 +4259,7 @@ async function processAnalysis(
     }
 
     if (isMultiSatellite && SIMCAR_ANALYSIS_MODE === "detailed") {
-        // ── MULTI-SATELLITE (detailed mode): analyze each satellite separately, then synthesize ──
+        // â”€â”€ MULTI-SATELLITE (detailed mode): analyze each satellite separately, then synthesize â”€â”€
         console.log(`[SIMCAR ANALYSIS] Multi-satellite mode: ${validKeys.length} satellites, analyzing individually...`);
 
         const perSatelliteResults: Array<{ satelliteLabel: string; year: number; analysis: string }> = [];
@@ -4202,7 +4304,7 @@ async function processAnalysis(
                 console.error(`[SIMCAR ANALYSIS] ${sat.label} analysis failed:`, err.message);
                 sendSSE(res, {
                     type: "progress", step: "analyzing", percent: progressPct,
-                    message: `Aviso: análise de ${sat.label} falhou, continuando com os demais...`,
+                    message: `Aviso: anÃ¡lise de ${sat.label} falhou, continuando com os demais...`,
                 });
             }
             satIdx++;
@@ -4211,27 +4313,27 @@ async function processAnalysis(
         perSatelliteResults.sort((a, b) => (a.year - b.year) || a.satelliteLabel.localeCompare(b.satelliteLabel));
 
         if (perSatelliteResults.length === 0) {
-            // All individual analyses failed — try legacy single-call as last resort
+            // All individual analyses failed â€” try legacy single-call as last resort
             console.warn(`[SIMCAR ANALYSIS] All individual analyses failed, trying legacy single-call...`);
-            sendSSE(res, { type: "progress", step: "analyzing", percent: 85, message: "Tentando análise unificada como fallback..." });
+            sendSSE(res, { type: "progress", step: "analyzing", percent: 85, message: "Tentando anÃ¡lise unificada como fallback..." });
             try {
                 const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers);
                 analysisText = await analyzeWithGroqAndGemini(
                     aiImages,
                     prompt,
-                    "Análise unificada multitemporal",
+                    "AnÃ¡lise unificada multitemporal",
                 );
             } catch (err: any) {
                 console.error("[SIMCAR ANALYSIS] Legacy fallback also failed:", err.message);
-                sendSSE(res, { type: "error", message: `Erro na análise IA: ${err.message}` });
+                sendSSE(res, { type: "error", message: `Erro na anÃ¡lise IA: ${err.message}` });
                 return;
             }
         } else if (perSatelliteResults.length === 1) {
-            // Only one satellite succeeded — return its analysis directly (no synthesis needed)
+            // Only one satellite succeeded â€” return its analysis directly (no synthesis needed)
             analysisText = perSatelliteResults[0].analysis;
         } else {
-            // Multiple results — synthesize with temporal comparison
-            sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando análise temporal comparativa..." });
+            // Multiple results â€” synthesize with temporal comparison
+            sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando anÃ¡lise temporal comparativa..." });
             try {
                 const synthesisPrompt = buildSynthesisPrompt(areaHa, layerSummaries, perSatelliteResults);
                 analysisText = await callBestTextSynthesis(
@@ -4248,24 +4350,24 @@ async function processAnalysis(
                 }
                 console.log(`[SIMCAR ANALYSIS] Synthesis complete (${analysisText.length} chars)`);
             } catch (err: any) {
-                // Synthesis failed — concatenate individual analyses as fallback
+                // Synthesis failed â€” concatenate individual analyses as fallback
                 console.error("[SIMCAR ANALYSIS] Synthesis failed, concatenating analyses:", err.message);
                 analysisText = perSatelliteResults.map((r) => [
-                    `## Análise: ${r.satelliteLabel} (${r.year})`,
+                    `## AnÃ¡lise: ${r.satelliteLabel} (${r.year})`,
                     "",
                     r.analysis,
                 ].join("\n")).join("\n\n---\n\n");
             }
         }
     } else {
-        // ── EFFICIENT MODE (default) OR SINGLE SATELLITE: one unified call ──
+        // â”€â”€ EFFICIENT MODE (default) OR SINGLE SATELLITE: one unified call â”€â”€
         const isUnifiedMulti = isMultiSatellite && SIMCAR_ANALYSIS_MODE !== "detailed";
         sendSSE(res, {
             type: "progress",
             step: "analyzing",
             percent: 65,
             message: isUnifiedMulti
-                ? "IA analisando recorte multitemporal em chamada única (modo eficiente)..."
+                ? "IA analisando recorte multitemporal em chamada Ãºnica (modo eficiente)..."
                 : "IA analisando imagens...",
         });
         try {
@@ -4276,7 +4378,7 @@ async function processAnalysis(
             analysisText = await analyzeWithGroqAndGemini(
                 aiImages,
                 prompt,
-                singleContext || "Análise de um único satélite",
+                singleContext || "AnÃ¡lise de um Ãºnico satÃ©lite",
             );
             const split = splitThinkProgress(analysisText);
             if (split.thinkingText) {
@@ -4288,7 +4390,7 @@ async function processAnalysis(
             }
         } catch (err: any) {
             console.error("[SIMCAR ANALYSIS] AI analysis error:", err.message);
-            sendSSE(res, { type: "error", message: `Erro na análise IA: ${err.message}` });
+            sendSSE(res, { type: "error", message: `Erro na anÃ¡lise IA: ${err.message}` });
             return;
         }
     }
@@ -4303,9 +4405,25 @@ async function processAnalysis(
     });
 }
 
-/* ─── Express Route Registration ─────────────────────────────── */
+/* â”€â”€â”€ Express Route Registration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 export function registerSimcarClipRoutes(app: Express) {
+    const sendSseHeaders = (res: Response) => {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        res.flushHeaders();
+    };
+    const simcarBillingModels = Array.from(
+        new Set([
+            ...ANALYSIS_VISION_MODELS,
+            ...GEMINI_VISION_MODELS,
+            ...GROQ_TEXT_MODELS,
+            ...SIMCAR_SYNTHESIS_TEXT_MODELS,
+        ]),
+    );
+
     app.get("/api/simcar/gemini/config", async (req: Request, res: Response) => {
         const probe = String((req.query as any)?.probe || "").toLowerCase() === "1";
         const runtime = getSimcarGeminiRuntimeConfig();
@@ -4363,7 +4481,7 @@ export function registerSimcarClipRoutes(app: Express) {
             };
 
             if (!body.propertyZip) {
-                sendSSE(res, { type: "error", message: "Campo propertyZip (base64) é obrigatório." });
+                sendSSE(res, { type: "error", message: "Campo propertyZip (base64) Ã© obrigatÃ³rio." });
                 res.end();
                 return;
             }
@@ -4372,13 +4490,13 @@ export function registerSimcarClipRoutes(app: Express) {
             try {
                 zipBuffer = Buffer.from(body.propertyZip, "base64");
             } catch {
-                sendSSE(res, { type: "error", message: "Base64 do ZIP inválido." });
+                sendSSE(res, { type: "error", message: "Base64 do ZIP invÃ¡lido." });
                 res.end();
                 return;
             }
 
             if (zipBuffer.length < 22) {
-                sendSSE(res, { type: "error", message: "ZIP muito pequeno para ser válido." });
+                sendSSE(res, { type: "error", message: "ZIP muito pequeno para ser vÃ¡lido." });
                 res.end();
                 return;
             }
@@ -4405,7 +4523,7 @@ export function registerSimcarClipRoutes(app: Express) {
         if (!cached || cached.expiresAt <= Date.now()) {
             if (cached) jobCache.delete(jobId);
             res.status(404).json({
-                error: "Download expirado ou não encontrado. Processe novamente.",
+                error: "Download expirado ou nÃ£o encontrado. Processe novamente.",
             });
             return;
         }
@@ -4414,7 +4532,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 res.redirect(cached.outputZipUrl);
                 return;
             }
-            res.status(404).json({ error: "Arquivo do recorte não disponível no cache." });
+            res.status(404).json({ error: "Arquivo do recorte nÃ£o disponÃ­vel no cache." });
             return;
         }
 
@@ -4426,13 +4544,17 @@ export function registerSimcarClipRoutes(app: Express) {
 
     // AUAS analysis endpoint (SSE stream)
     app.post("/api/simcar/clip/analyze-auas", async (req: Request, res: Response) => {
-        res.setHeader("Content-Type", "text/event-stream");
-        res.setHeader("Cache-Control", "no-cache");
-        res.setHeader("Connection", "keep-alive");
-        res.setHeader("X-Accel-Buffering", "no");
-        res.flushHeaders();
-
+        let billingUid = "";
+        let billingRequestId = "";
+        let billingReserved = 0;
         try {
+            const uid = String(req.authUid || "");
+            if (!uid) {
+                res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+                return;
+            }
+            billingUid = uid;
+
             const { jobId, previousAnalysis, contextUrl, outputZipUrl } = req.body as {
                 jobId?: string;
                 previousAnalysis?: string;
@@ -4440,16 +4562,78 @@ export function registerSimcarClipRoutes(app: Express) {
                 outputZipUrl?: string;
             };
             if (!jobId) {
-                sendSSE(res, { type: "error", message: "jobId é obrigatório." });
-                res.end();
+                res.status(400).json({ error: "jobId é obrigatório." });
                 return;
             }
 
+            billingRequestId = createRequestId("simcar_auas");
+            billingReserved = await estimateReserveForModels({
+                models: simcarBillingModels,
+                estimatedInputTokens: 900_000,
+                estimatedOutputTokens: 48_000,
+                safetyMultiplier: 1.8,
+            });
+            await reserveCredits({
+                uid,
+                amountBrl: billingReserved,
+                requestId: billingRequestId,
+                endpoint: "/api/simcar/clip/analyze-auas",
+            });
+
+            sendSseHeaders(res);
             console.log(`[AUAS ANALYSIS] Starting AUAS analysis for job: ${jobId}`);
-            await processAuasAnalysis(res, jobId, previousAnalysis, contextUrl, outputZipUrl);
+            await runWithBillingUsageSession(async () => {
+                await processAuasAnalysis(res, jobId, previousAnalysis, contextUrl, outputZipUrl);
+            });
+            const usageInputs = getBillingUsageSessionRecords();
+            if (usageInputs.length > 0) {
+                const billing = await settleReservedCredits({
+                    uid,
+                    requestId: billingRequestId,
+                    endpoint: "/api/simcar/clip/analyze-auas",
+                    reservedBrl: billingReserved,
+                    usageInputs,
+                });
+                billingReserved = 0;
+                sendSSE(res, { type: "billing", billing });
+            } else if (billingReserved > 0) {
+                await refundReserve({
+                    uid,
+                    requestId: billingRequestId,
+                    amountBrl: billingReserved,
+                    endpoint: "/api/simcar/clip/analyze-auas",
+                    reason: "no_ai_usage",
+                });
+                billingReserved = 0;
+            }
         } catch (err: any) {
+            if (billingUid && billingReserved > 0 && billingRequestId) {
+                try {
+                    await refundReserve({
+                        uid: billingUid,
+                        requestId: billingRequestId,
+                        amountBrl: billingReserved,
+                        endpoint: "/api/simcar/clip/analyze-auas",
+                        reason: "exception",
+                    });
+                } catch (refundErr) {
+                    console.error("[AUAS ANALYSIS] refund error:", refundErr);
+                }
+            }
+            if (err instanceof BillingError) {
+                if (!res.headersSent) {
+                    res.status(err.statusCode).json({ error: err.message, code: err.code });
+                } else {
+                    sendSSE(res, { type: "error", message: err.message, code: err.code });
+                }
+                return;
+            }
             console.error("[AUAS ANALYSIS] Unexpected error:", err);
-            sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
+            if (res.headersSent) {
+                sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
+            } else {
+                res.status(500).json({ error: err.message || "Erro interno inesperado." });
+            }
         } finally {
             if (!res.writableEnded) res.end();
         }
@@ -4457,13 +4641,17 @@ export function registerSimcarClipRoutes(app: Express) {
 
     // AI analysis endpoint (SSE stream)
     app.post("/api/simcar/clip/analyze", async (req: Request, res: Response) => {
-        res.setHeader("Content-Type", "text/event-stream");
-        res.setHeader("Cache-Control", "no-cache");
-        res.setHeader("Connection", "keep-alive");
-        res.setHeader("X-Accel-Buffering", "no");
-        res.flushHeaders();
-
+        let billingUid = "";
+        let billingRequestId = "";
+        let billingReserved = 0;
         try {
+            const uid = String(req.authUid || "");
+            if (!uid) {
+                res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+                return;
+            }
+            billingUid = uid;
+
             const { jobId, selectedLayers, imageOnly, contextUrl, outputZipUrl } = req.body as {
                 jobId?: string;
                 selectedLayers?: string[];
@@ -4472,17 +4660,89 @@ export function registerSimcarClipRoutes(app: Express) {
                 outputZipUrl?: string;
             };
             if (!jobId) {
-                sendSSE(res, { type: "error", message: "jobId é obrigatório." });
-                res.end();
+                res.status(400).json({ error: "jobId é obrigatório." });
                 return;
             }
 
             const layers = Array.isArray(selectedLayers) && selectedLayers.length > 0 ? selectedLayers : ["spot_2008"];
-            console.log(`[SIMCAR ANALYSIS] Starting analysis for job: ${jobId}, layers: ${layers.join(",")}, aiAnalysis: ${!imageOnly}`);
-            await processAnalysis(res, jobId, layers, !imageOnly, contextUrl, outputZipUrl);
+            const aiAnalysis = !imageOnly;
+
+            if (aiAnalysis) {
+                const satelliteFactor = Math.max(1, layers.length + 1);
+                billingRequestId = createRequestId("simcar_analyze");
+                billingReserved = await estimateReserveForModels({
+                    models: simcarBillingModels,
+                    estimatedInputTokens: 180_000 * satelliteFactor,
+                    estimatedOutputTokens: 12_000 * satelliteFactor,
+                    safetyMultiplier: 1.8,
+                });
+                await reserveCredits({
+                    uid,
+                    amountBrl: billingReserved,
+                    requestId: billingRequestId,
+                    endpoint: "/api/simcar/clip/analyze",
+                });
+            }
+
+            sendSseHeaders(res);
+            console.log(`[SIMCAR ANALYSIS] Starting analysis for job: ${jobId}, layers: ${layers.join(",")}, aiAnalysis: ${aiAnalysis}`);
+
+            if (aiAnalysis) {
+                await runWithBillingUsageSession(async () => {
+                    await processAnalysis(res, jobId, layers, true, contextUrl, outputZipUrl);
+                });
+                const usageInputs = getBillingUsageSessionRecords();
+                if (usageInputs.length > 0) {
+                    const billing = await settleReservedCredits({
+                        uid,
+                        requestId: billingRequestId,
+                        endpoint: "/api/simcar/clip/analyze",
+                        reservedBrl: billingReserved,
+                        usageInputs,
+                    });
+                    billingReserved = 0;
+                    sendSSE(res, { type: "billing", billing });
+                } else if (billingReserved > 0) {
+                    await refundReserve({
+                        uid,
+                        requestId: billingRequestId,
+                        amountBrl: billingReserved,
+                        endpoint: "/api/simcar/clip/analyze",
+                        reason: "no_ai_usage",
+                    });
+                    billingReserved = 0;
+                }
+            } else {
+                await processAnalysis(res, jobId, layers, false, contextUrl, outputZipUrl);
+            }
         } catch (err: any) {
+            if (billingUid && billingReserved > 0 && billingRequestId) {
+                try {
+                    await refundReserve({
+                        uid: billingUid,
+                        requestId: billingRequestId,
+                        amountBrl: billingReserved,
+                        endpoint: "/api/simcar/clip/analyze",
+                        reason: "exception",
+                    });
+                } catch (refundErr) {
+                    console.error("[SIMCAR ANALYSIS] refund error:", refundErr);
+                }
+            }
+            if (err instanceof BillingError) {
+                if (!res.headersSent) {
+                    res.status(err.statusCode).json({ error: err.message, code: err.code });
+                } else {
+                    sendSSE(res, { type: "error", message: err.message, code: err.code });
+                }
+                return;
+            }
             console.error("[SIMCAR ANALYSIS] Unexpected error:", err);
-            sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
+            if (res.headersSent) {
+                sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
+            } else {
+                res.status(500).json({ error: err.message || "Erro interno inesperado." });
+            }
         } finally {
             if (!res.writableEnded) res.end();
         }
@@ -4491,16 +4751,24 @@ export function registerSimcarClipRoutes(app: Express) {
     // AI follow-up chat endpoint
     app.post("/api/simcar/clip/analyze/chat", async (req: Request, res: Response) => {
         const streamMode = String((req.query as any)?.stream || "").toLowerCase() === "1";
+        let billingUid = "";
+        let billingRequestId = "";
+        let billingReserved = 0;
         try {
+            const uid = String(req.authUid || "");
+            if (!uid) {
+                res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+                return;
+            }
+            billingUid = uid;
+
             const { messages } = req.body as {
                 messages?: Array<{ role: string; content: any }>;
             };
 
             if (!messages || !Array.isArray(messages) || messages.length === 0) {
                 if (streamMode) {
-                    res.setHeader("Content-Type", "text/event-stream");
-                    res.setHeader("Cache-Control", "no-cache");
-                    res.setHeader("Connection", "keep-alive");
+                    sendSseHeaders(res);
                     sendSSE(res, { type: "error", message: "Mensagens inválidas." });
                     if (!res.writableEnded) res.end();
                     return;
@@ -4517,9 +4785,7 @@ export function registerSimcarClipRoutes(app: Express) {
             const compactedChars = compactedMessages.reduce((acc, msg) => acc + msg.content.length, 0);
             if (compactedMessages.length === 0) {
                 if (streamMode) {
-                    res.setHeader("Content-Type", "text/event-stream");
-                    res.setHeader("Cache-Control", "no-cache");
-                    res.setHeader("Connection", "keep-alive");
+                    sendSseHeaders(res);
                     sendSSE(res, { type: "error", message: "Sem contexto textual válido para análise." });
                     if (!res.writableEnded) res.end();
                     return;
@@ -4543,25 +4809,105 @@ export function registerSimcarClipRoutes(app: Express) {
                 ...compactedMessages,
             ];
 
-            if (streamMode) {
-                res.setHeader("Content-Type", "text/event-stream");
-                res.setHeader("Cache-Control", "no-cache");
-                res.setHeader("Connection", "keep-alive");
-                res.setHeader("X-Accel-Buffering", "no");
-                res.flushHeaders();
+            billingRequestId = createRequestId(streamMode ? "simcar_chat_stream" : "simcar_chat");
+            billingReserved = await estimateReserveForModels({
+                models: Array.from(new Set([...GROQ_TEXT_MODELS, ...SIMCAR_SYNTHESIS_TEXT_MODELS])),
+                estimatedInputTokens: estimateTokensFromMessages(optimizedMessages),
+                estimatedOutputTokens: 6600,
+                safetyMultiplier: 1.5,
+            });
+            await reserveCredits({
+                uid,
+                amountBrl: billingReserved,
+                requestId: billingRequestId,
+                endpoint: "/api/simcar/clip/analyze/chat",
+            });
 
-                await streamTextFollowUp(res, optimizedMessages);
+            if (streamMode) {
+                sendSseHeaders(res);
+                await runWithBillingUsageSession(async () => {
+                    await streamTextFollowUp(res, optimizedMessages);
+                });
+                const usageInputs = getBillingUsageSessionRecords();
+                if (usageInputs.length > 0) {
+                    const billing = await settleReservedCredits({
+                        uid,
+                        requestId: billingRequestId,
+                        endpoint: "/api/simcar/clip/analyze/chat",
+                        reservedBrl: billingReserved,
+                        usageInputs,
+                    });
+                    billingReserved = 0;
+                    sendSSE(res, { type: "billing", billing });
+                } else if (billingReserved > 0) {
+                    await refundReserve({
+                        uid,
+                        requestId: billingRequestId,
+                        amountBrl: billingReserved,
+                        endpoint: "/api/simcar/clip/analyze/chat",
+                        reason: "no_ai_usage",
+                    });
+                    billingReserved = 0;
+                }
                 if (!res.writableEnded) res.end();
                 return;
             }
 
-            const reply = await callTextFollowUpGroqFirst(optimizedMessages, "chat");
-            res.json({ content: reply });
+            const reply = await runWithBillingUsageSession(async () =>
+                callTextFollowUpGroqFirst(optimizedMessages, "chat"),
+            );
+            const usageInputs = getBillingUsageSessionRecords();
+            const usageForSettle = usageInputs.length > 0
+                ? usageInputs
+                : [
+                    {
+                        provider: "groq" as const,
+                        model: GROQ_TEXT_MODELS[0] || "openai/gpt-oss-120b",
+                        inputTokens: Math.max(1, estimateTokensFromMessages(optimizedMessages)),
+                        outputTokens: Math.max(1, estimateTokensFromText(reply)),
+                        estimated: true,
+                    },
+                ];
+            const billing = await settleReservedCredits({
+                uid,
+                requestId: billingRequestId,
+                endpoint: "/api/simcar/clip/analyze/chat",
+                reservedBrl: billingReserved,
+                usageInputs: usageForSettle,
+            });
+            billingReserved = 0;
+            res.json({ content: reply, billing });
         } catch (err: any) {
+            if (billingUid && billingReserved > 0 && billingRequestId) {
+                try {
+                    await refundReserve({
+                        uid: billingUid,
+                        requestId: billingRequestId,
+                        amountBrl: billingReserved,
+                        endpoint: "/api/simcar/clip/analyze/chat",
+                        reason: "exception",
+                    });
+                } catch (refundErr) {
+                    console.error("[SIMCAR ANALYSIS CHAT] refund error:", refundErr);
+                }
+            }
+            if (err instanceof BillingError) {
+                if (!res.headersSent) {
+                    res.status(err.statusCode).json({ error: err.message, code: err.code });
+                } else {
+                    sendSSE(res, { type: "error", message: err.message, code: err.code });
+                    if (!res.writableEnded) res.end();
+                }
+                return;
+            }
             console.error("[SIMCAR ANALYSIS CHAT] Error:", err);
             if (streamMode) {
-                sendSSE(res, { type: "error", message: err.message || "Erro interno." });
-                if (!res.writableEnded) res.end();
+                if (res.headersSent) {
+                    sendSSE(res, { type: "error", message: err.message || "Erro interno." });
+                    if (!res.writableEnded) res.end();
+                } else {
+                    res.status(500).json({ error: err.message || "Erro interno." });
+                }
                 return;
             }
             res.status(500).json({ error: err.message || "Erro interno." });
@@ -4621,3 +4967,8 @@ export function registerSimcarClipRoutes(app: Express) {
         }
     });
 }
+
+
+
+
+

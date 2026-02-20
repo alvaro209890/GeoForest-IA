@@ -7,6 +7,22 @@ import { inflateRawSync } from "zlib";
 import { fileURLToPath } from "url";
 import { registerWfsIntersectionRoutes } from "./wfs-intersection";
 import { createKnowledgeBase } from "./knowledge-base";
+import { requireAuth } from "./auth";
+import {
+  BillingError,
+  buildUsageFromGroq,
+  createManualTopup,
+  createRequestId,
+  estimateReserveForModels,
+  estimateTokensFromMessages,
+  estimateTokensFromText,
+  getBillingLedger,
+  getBillingMe,
+  getBillingPricingSnapshot,
+  refundReserve,
+  reserveCredits,
+  settleReservedCredits,
+} from "./billing";
 import {
   extractZipEntries,
   isLatLonBbox,
@@ -174,6 +190,20 @@ async function startServer() {
     });
     next();
   });
+
+  app.use(
+    [
+      "/api/chat",
+      "/api/chat-stream",
+      "/api/simcar/clip/analyze",
+      "/api/simcar/clip/analyze-auas",
+      "/api/simcar/clip/analyze/chat",
+      "/api/billing/me",
+      "/api/billing/topups/manual",
+      "/api/billing/ledger",
+    ],
+    requireAuth,
+  );
 
   registerWfsIntersectionRoutes(app);
   registerSimcarClipRoutes(app);
@@ -842,6 +872,73 @@ async function startServer() {
     res.json({ models: MODEL_CATALOG, defaultModel });
   });
 
+  app.get("/api/billing/pricing", async (_req, res) => {
+    try {
+      const pricing = await getBillingPricingSnapshot();
+      res.json(pricing);
+    } catch (error: any) {
+      console.error("Erro no /api/billing/pricing:", error);
+      res.status(500).json({ error: error?.message || "Erro ao carregar pricing." });
+    }
+  });
+
+  app.get("/api/billing/me", async (req, res) => {
+    try {
+      const uid = String(req.authUid || "");
+      if (!uid) {
+        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      const payload = await getBillingMe(uid);
+      res.json(payload);
+    } catch (error: any) {
+      console.error("Erro no /api/billing/me:", error);
+      res.status(500).json({ error: error?.message || "Erro ao carregar carteira." });
+    }
+  });
+
+  app.post("/api/billing/topups/manual", async (req, res) => {
+    try {
+      const uid = String(req.authUid || "");
+      if (!uid) {
+        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      const amountBrl = Number(req.body?.amountBrl);
+      const idempotencyKey = String(req.body?.idempotencyKey || "");
+      const topup = await createManualTopup({ uid, amountBrl, idempotencyKey });
+      const wallet = await getBillingMe(uid);
+      res.json({
+        ok: true,
+        topup,
+        wallet: wallet.wallet,
+      });
+    } catch (error: any) {
+      if (error instanceof BillingError) {
+        res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return;
+      }
+      console.error("Erro no /api/billing/topups/manual:", error);
+      res.status(500).json({ error: error?.message || "Erro ao adicionar créditos." });
+    }
+  });
+
+  app.get("/api/billing/ledger", async (req, res) => {
+    try {
+      const uid = String(req.authUid || "");
+      if (!uid) {
+        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      const limit = Number(req.query?.limit || 50);
+      const entries = await getBillingLedger(uid, limit);
+      res.json({ entries });
+    } catch (error: any) {
+      console.error("Erro no /api/billing/ledger:", error);
+      res.status(500).json({ error: error?.message || "Erro ao carregar extrato." });
+    }
+  });
+
   app.get("/api/map/capabilities", async (_req, res) => {
     try {
       console.log("[API] GET /api/map/capabilities â€” iniciando...");
@@ -1289,8 +1386,18 @@ async function startServer() {
   };
 
   app.post("/api/chat", async (req, res) => {
+    let billingRequestId = "";
+    let billingReserved = 0;
+    let billingUid = "";
     try {
       console.log("[/api/chat] request received");
+      const uid = String(req.authUid || "");
+      if (!uid) {
+        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      billingUid = uid;
+
       const apiKey = process.env.GROQ_API_KEY;
       const defaultModel = DEFAULT_MODEL;
       const temperature = TEMPERATURE;
@@ -1298,7 +1405,7 @@ async function startServer() {
       const autoModel = AUTO_MODEL;
       if (!apiKey) {
         console.error("[/api/chat] GROQ_API_KEY missing");
-        res.status(500).json({ error: "GROQ_API_KEY nÃ£o configurada no servidor." });
+        res.status(500).json({ error: "GROQ_API_KEY não configurada no servidor." });
         return;
       }
 
@@ -1310,7 +1417,7 @@ async function startServer() {
       };
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         console.error("[/api/chat] invalid messages payload");
-        res.status(400).json({ error: "Mensagens invÃ¡lidas." });
+        res.status(400).json({ error: "Mensagens inválidas." });
         return;
       }
       const normalizedPendingPdfs = Array.isArray(pendingPdfs)
@@ -1353,7 +1460,7 @@ async function startServer() {
           : model || defaultModel;
       if (!MODEL_IDS.has(resolvedModel)) {
         console.error("[/api/chat] model not allowed:", resolvedModel);
-        res.status(400).json({ error: "Modelo nÃ£o permitido." });
+        res.status(400).json({ error: "Modelo não permitido." });
         return;
       }
 
@@ -1363,11 +1470,26 @@ async function startServer() {
         : resolvedModel === "openai/gpt-oss-120b"
           ? ["openai/gpt-oss-120b", "qwen/qwen3-32b", "meta-llama/llama-3.3-70b-versatile"]
           : [resolvedModel, "openai/gpt-oss-120b", "qwen/qwen3-32b"];
+      const uniqueCandidates = fallbackOrder.filter((m, i, arr) => arr.indexOf(m) === i).filter((m) => MODEL_IDS.has(m));
+
+      billingRequestId = createRequestId("chat");
+      billingReserved = await estimateReserveForModels({
+        models: uniqueCandidates,
+        estimatedInputTokens: estimateTokensFromMessages(messagesForModel),
+        estimatedOutputTokens: maxTokens,
+        safetyMultiplier: 1.3,
+      });
+      await reserveCredits({
+        uid,
+        amountBrl: billingReserved,
+        requestId: billingRequestId,
+        endpoint: "/api/chat",
+      });
+
       let data: any = null;
       let usedModel = resolvedModel;
       let lastErr = "";
-      for (const candidate of fallbackOrder.filter((m, i, arr) => arr.indexOf(m) === i)) {
-        if (!MODEL_IDS.has(candidate)) continue;
+      for (const candidate of uniqueCandidates) {
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -1392,11 +1514,33 @@ async function startServer() {
         break;
       }
       if (!data) {
+        await refundReserve({
+          uid,
+          requestId: billingRequestId,
+          amountBrl: billingReserved,
+          endpoint: "/api/chat",
+          reason: "no_model_succeeded",
+        });
+        billingReserved = 0;
         res.status(502).json({ error: lastErr || "Falha ao consultar IA." });
         return;
       }
 
-      const content = data?.choices?.[0]?.message?.content ?? "";
+      const content = String(data?.choices?.[0]?.message?.content ?? "");
+      const usageFromProvider = buildUsageFromGroq(usedModel, data?.usage, "/api/chat");
+      if (usageFromProvider.estimated) {
+        usageFromProvider.inputTokens = Math.max(usageFromProvider.inputTokens || 0, estimateTokensFromMessages(messagesForModel));
+        usageFromProvider.outputTokens = Math.max(usageFromProvider.outputTokens || 0, estimateTokensFromText(content));
+      }
+      const billing = await settleReservedCredits({
+        uid,
+        requestId: billingRequestId,
+        endpoint: "/api/chat",
+        reservedBrl: billingReserved,
+        usageInputs: [usageFromProvider],
+      });
+      billingReserved = 0;
+
       console.log(
         "[/api/chat] knowledge:",
         JSON.stringify({
@@ -1408,16 +1552,43 @@ async function startServer() {
         }),
       );
       console.log("[/api/chat] success");
-      res.json({ content, model: usedModel, knowledge: knowledgeTelemetry });
+      res.json({ content, model: usedModel, knowledge: knowledgeTelemetry, billing });
     } catch (error: any) {
+      if (billingUid && billingReserved > 0 && billingRequestId) {
+        try {
+          await refundReserve({
+            uid: billingUid,
+            requestId: billingRequestId,
+            amountBrl: billingReserved,
+            endpoint: "/api/chat",
+            reason: "exception",
+          });
+        } catch (refundErr) {
+          console.error("[/api/chat] falha no refund:", refundErr);
+        }
+      }
+      if (error instanceof BillingError) {
+        res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return;
+      }
       console.error("Erro no /api/chat:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });
     }
   });
 
   app.post("/api/chat-stream", async (req, res) => {
+    let billingRequestId = "";
+    let billingReserved = 0;
+    let billingUid = "";
     try {
       console.log("[/api/chat-stream] request received");
+      const uid = String(req.authUid || "");
+      if (!uid) {
+        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      billingUid = uid;
+
       const apiKey = process.env.GROQ_API_KEY;
       if (!apiKey) {
         console.error("[/api/chat-stream] GROQ_API_KEY missing");
@@ -1479,19 +1650,6 @@ async function startServer() {
         return;
       }
 
-      res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
-      res.setHeader("Cache-Control", "no-cache, no-transform");
-      res.setHeader("Connection", "keep-alive");
-
-      const writeChunk = (payload: Record<string, any>) => {
-        res.write(`${JSON.stringify(payload)}\n`);
-      };
-
-      // --- Accumulated answer (visible to user) and thinking (hidden) ---
-      let accumulatedAnswer = "";
-      let accumulatedThinking = "";
-      const clientModel = resolvedModel;
-
       const fallbackModels = hasImageInput
         ? [
           ...IMAGE_ANALYSIS_FALLBACKS,
@@ -1505,6 +1663,42 @@ async function startServer() {
         ];
       const startupCandidates = [resolvedModel, ...fallbackModels.filter((m) => m !== resolvedModel)];
       const MAX_CONTINUATIONS = 2;
+      const maxResponseTokensEstimate = MAX_TOKENS * (MAX_CONTINUATIONS + 1);
+
+      billingRequestId = createRequestId("chat_stream");
+      billingReserved = await estimateReserveForModels({
+        models: startupCandidates,
+        estimatedInputTokens: estimateTokensFromMessages(messagesForModel),
+        estimatedOutputTokens: maxResponseTokensEstimate,
+        safetyMultiplier: 1.35,
+      });
+      await reserveCredits({
+        uid,
+        amountBrl: billingReserved,
+        requestId: billingRequestId,
+        endpoint: "/api/chat-stream",
+      });
+
+      res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+
+      const writeChunk = (payload: Record<string, any>) => {
+        res.write(`${JSON.stringify(payload)}\n`);
+      };
+
+      const usageInputs: Array<{
+        provider: "groq";
+        model: string;
+        inputTokens: number;
+        outputTokens: number;
+        estimated: boolean;
+      }> = [];
+
+      // --- Accumulated answer (visible to user) and thinking (hidden) ---
+      let accumulatedAnswer = "";
+      let accumulatedThinking = "";
+      const clientModel = resolvedModel;
 
       /**
        * Streams one model segment. Returns { finishReason, segmentText }.
@@ -1515,6 +1709,7 @@ async function startServer() {
         segmentModel: string,
         segmentMessages: Array<{ role: string; content: any }>
       ): Promise<{ finishReason: string; segmentText: string }> => {
+        const segmentInputTokens = estimateTokensFromMessages(segmentMessages);
         const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -1555,6 +1750,13 @@ async function startServer() {
             const data = trimmed.slice(5).trim();
             if (!data) continue;
             if (data === "[DONE]") {
+              usageInputs.push({
+                provider: "groq",
+                model: segmentModel,
+                inputTokens: Math.max(1, segmentInputTokens),
+                outputTokens: Math.max(1, estimateTokensFromText(segmentRaw)),
+                estimated: true,
+              });
               return { finishReason: finishReason || "stop", segmentText: segmentRaw };
             }
             try {
@@ -1581,6 +1783,13 @@ async function startServer() {
           }
         }
 
+        usageInputs.push({
+          provider: "groq",
+          model: segmentModel,
+          inputTokens: Math.max(1, segmentInputTokens),
+          outputTokens: Math.max(1, estimateTokensFromText(segmentRaw)),
+          estimated: true,
+        });
         return { finishReason: finishReason || "stop", segmentText: segmentRaw };
       };
 
@@ -1663,6 +1872,24 @@ async function startServer() {
       }
 
       const finalSplit = { thinkingText: accumulatedThinking.trim(), answerText: accumulatedAnswer.trim() };
+      if (!usageInputs.length) {
+        usageInputs.push({
+          provider: "groq",
+          model: activeModel || resolvedModel,
+          inputTokens: Math.max(1, estimateTokensFromMessages(messagesForModel)),
+          outputTokens: Math.max(1, estimateTokensFromText(finalSplit.answerText)),
+          estimated: true,
+        });
+      }
+      const billing = await settleReservedCredits({
+        uid,
+        requestId: billingRequestId,
+        endpoint: "/api/chat-stream",
+        reservedBrl: billingReserved,
+        usageInputs,
+      });
+      billingReserved = 0;
+
       console.log(
         "[/api/chat-stream] knowledge:",
         JSON.stringify({
@@ -1680,10 +1907,33 @@ async function startServer() {
           thinkingText: finalSplit.thinkingText,
           content: finalSplit.answerText,
           knowledge: knowledgeTelemetry,
+          billing,
         })}\n`
       );
       res.end();
     } catch (error: any) {
+      if (billingUid && billingReserved > 0 && billingRequestId) {
+        try {
+          await refundReserve({
+            uid: billingUid,
+            requestId: billingRequestId,
+            amountBrl: billingReserved,
+            endpoint: "/api/chat-stream",
+            reason: "exception",
+          });
+        } catch (refundErr) {
+          console.error("[/api/chat-stream] falha no refund:", refundErr);
+        }
+      }
+      if (error instanceof BillingError) {
+        if (!res.headersSent) {
+          res.status(error.statusCode).json({ error: error.message, code: error.code });
+        } else {
+          res.write(`${JSON.stringify({ type: "error", error: error.message, code: error.code })}\n`);
+          res.end();
+        }
+        return;
+      }
       console.error("Erro no /api/chat-stream:", error);
       if (!res.headersSent) {
         res.status(500).json({ error: error?.message || "Erro interno" });
