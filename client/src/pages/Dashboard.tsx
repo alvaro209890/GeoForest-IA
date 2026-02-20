@@ -39,7 +39,6 @@ import {
   Satellite,
   FileSearch,
   ShieldCheck,
-  BarChart3,
   ArrowRight,
   HelpCircle,
   Lightbulb,
@@ -329,6 +328,12 @@ type SimcarAnalysisMessage = {
   thinkingText?: string;
 };
 
+type SimcarConversationEntry = {
+  role: 'ai' | 'user';
+  text: string;
+  meta?: Partial<NonNullable<ChatMessage['meta']>>;
+};
+
 type SimcarClipHistoryItem = {
   id: string;
   timestamp: string;
@@ -339,6 +344,7 @@ type SimcarClipHistoryItem = {
   layersWithData: number;
   totalLayers: number;
   jobId: string;
+  conversationId?: string;
   inputZipUrl?: string;
   outputZipUrl?: string;
   contextUrl?: string;
@@ -759,88 +765,6 @@ const parseZipShpGeometryOnClient = async (file: File): Promise<ParsedGeometry> 
   throw new Error('ZIP sem arquivo .shp encontrado.');
 };
 
-/** Extrai dos veredictos de concordância/discordância do texto de análise. */
-type VerdictValue = 'concorda' | 'discorda' | 'inconclusivo' | null;
-type ConfidenceValue = 'alta' | 'media' | 'baixa' | null;
-
-function extractAnalysisSummary(text: string): {
-  ac: VerdictValue;
-  avn: VerdictValue;
-  confidence: ConfidenceValue;
-  acDetail: string;
-  avnDetail: string;
-  years: number[];
-} {
-  // Split into paragraphs (2+ newlines) for block-level analysis
-  const paragraphs = text.split(/\n{2,}/);
-  let ac: VerdictValue = null;
-  let avn: VerdictValue = null;
-  let confidence: ConfidenceValue = null;
-  let acDetail = '';
-  let avnDetail = '';
-  const years = new Set<number>();
-
-  // years left empty — caller provides selected satellite years instead
-
-  const detectVerdict = (block: string): VerdictValue => {
-    const hasEmoji = (e: string) => block.includes(e);
-    const l = block.toLowerCase();
-    if (hasEmoji('⚠️') || l.includes('inconclusivo')) return 'inconclusivo';
-    if (hasEmoji('❌') || (l.includes('discorda') && !l.includes('não discorda'))) return 'discorda';
-    if (hasEmoji('✅') || (l.includes('concorda') && !l.includes('não concorda') && !l.includes('discorda'))) return 'concorda';
-    return null;
-  };
-
-  // Strategy 1: paragraph-level scanning (blocks mentioning AC or AVN)
-  for (const para of paragraphs) {
-    const l = para.toLowerCase();
-    const mentionsAC = /área consolidada|\bac\b/.test(l) && !/\bavn\b|vegetação nativa/.test(l);
-    const mentionsAVN = /\bavn\b|vegetação nativa|vegeta..o nativa/.test(l);
-    const verdict = detectVerdict(para);
-    if (mentionsAC && ac === null && verdict) { ac = verdict; acDetail = para.replace(/[#*_`]/g, '').trim().split('\n')[0].slice(0, 120); }
-    if (mentionsAVN && avn === null && verdict) { avn = verdict; avnDetail = para.replace(/[#*_`]/g, '').trim().split('\n')[0].slice(0, 120); }
-  }
-
-  // Strategy 2: line-level fallback for cases where paragraph is mixed
-  if (ac === null || avn === null) {
-    const lines = text.split('\n');
-    for (const raw of lines) {
-      const l = raw.toLowerCase();
-      const isACLine = /área consolidada|\bac\b/.test(l) && !/avn|vegetação nativa/.test(l);
-      const isAVNLine = /\bavn\b|vegetação nativa|vegeta..o nativa/.test(l);
-      const verdict = detectVerdict(raw);
-      if (isACLine && ac === null && verdict) { ac = verdict; acDetail = acDetail || raw.replace(/[#*_`✅❌⚠️]/g, '').trim().slice(0, 120); }
-      if (isAVNLine && avn === null && verdict) { avn = verdict; avnDetail = avnDetail || raw.replace(/[#*_`✅❌⚠️]/g, '').trim().slice(0, 120); }
-    }
-  }
-
-  // Strategy 3: scan for "Concordâncias" section as a whole
-  if (ac === null || avn === null) {
-    const concordSection = text.match(/concordâncias?\s+e\s+discordâncias?[\s\S]{0,800}/i)?.[0] || '';
-    if (concordSection) {
-      const lines = concordSection.split('\n');
-      for (const raw of lines) {
-        const l = raw.toLowerCase();
-        const verdict = detectVerdict(raw);
-        if (verdict && ac === null && /área consolidada|\bac\b/i.test(l) && !/avn|vegetação nativa/i.test(l)) ac = verdict;
-        if (verdict && avn === null && /\bavn\b|vegetação nativa/i.test(l)) avn = verdict;
-      }
-    }
-  }
-
-  // Extract confidence level
-  const confMatch = text.match(/nível\s+de\s+confiança[:\s]*\*?\*?\[?(alta|média|media|baixa)\]?\*?\*?/i)
-    || text.match(/confiança[:\s]*\*?\*?\[?(alta|média|media|baixa)\]?\*?\*?/i);
-  if (confMatch) {
-    const v = confMatch[1].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    if (v === 'alta') confidence = 'alta';
-    else if (v === 'media') confidence = 'media';
-    else if (v === 'baixa') confidence = 'baixa';
-  }
-
-  return { ac, avn, confidence, acDetail, avnDetail, years: [...years].sort() };
-}
-
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -1215,6 +1139,88 @@ export default function Dashboard() {
     [simcarClipsRef]
   );
 
+  const appendSimcarEntriesToConversation = useCallback(
+    async (
+      clip: SimcarClipHistoryItem,
+      entries: SimcarConversationEntry[],
+      options?: { title?: string },
+    ) => {
+      if (!conversationsRef || !clip?.jobId) return null;
+
+      const validEntries = entries
+        .map((entry) => ({
+          ...entry,
+          text: String(entry?.text || '').trim(),
+        }))
+        .filter((entry) => entry.text.length > 0);
+
+      if (validEntries.length === 0) return clip.conversationId || null;
+
+      const conversationId = clip.conversationId || nanoid();
+      const convDocRef = doc(conversationsRef.collection, conversationId);
+      const snap = await getDoc(convDocRef);
+      const existingMessages = snap.exists()
+        ? ((snap.data() as any)?.messages as ChatMessage[] | undefined)
+        : undefined;
+      const baseMessages = Array.isArray(existingMessages) && existingMessages.length > 0
+        ? existingMessages
+        : [DEFAULT_ASSISTANT_MESSAGE];
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const additions: ChatMessage[] = validEntries.map((entry) => {
+        const cleanedMeta = entry.meta
+          ? Object.fromEntries(Object.entries(entry.meta).filter(([, value]) => value !== undefined))
+          : undefined;
+        return {
+          id: nanoid(),
+          role: entry.role,
+          text: entry.text,
+          time: now,
+          ...(cleanedMeta && Object.keys(cleanedMeta).length > 0 ? { meta: cleanedMeta as ChatMessage['meta'] } : {}),
+        };
+      });
+
+      const mergedMessages = [...baseMessages, ...additions];
+      const existingTitle = snap.exists() ? String((snap.data() as any)?.title || '').trim() : '';
+      const fallbackTitle = options?.title?.trim() || clip.filename || `Recorte SIMCAR ${clip.jobId.slice(0, 8)}`;
+      const nextTitle = existingTitle || fallbackTitle;
+      const lastPreview = additions[additions.length - 1]?.text?.slice(0, 120) || '';
+
+      const conversationPayload: Record<string, any> = {
+        title: nextTitle,
+        kind: 'simcar_recorte',
+        simcarJobId: clip.jobId,
+        messages: sanitizeMessagesForFirestore(mergedMessages),
+        updatedAt: serverTimestamp(),
+        lastMessagePreview: lastPreview,
+        lastAttachmentType: null,
+      };
+      if (!snap.exists()) {
+        conversationPayload.createdAt = serverTimestamp();
+      }
+
+      await setDoc(convDocRef, conversationPayload, { merge: true });
+
+      setConversations((prev) => {
+        const next: Conversation = {
+          id: conversationId,
+          title: nextTitle,
+          lastMessagePreview: lastPreview,
+        };
+        return [next, ...prev.filter((item) => item.id !== conversationId)];
+      });
+
+      if (!clip.conversationId) {
+        await patchPersistedSimcarClip(clip.jobId, { conversationId });
+        setSimcarClipHistory((prev) =>
+          prev.map((item) => (item.jobId === clip.jobId ? { ...item, conversationId } : item)),
+        );
+      }
+
+      return conversationId;
+    },
+    [conversationsRef, patchPersistedSimcarClip]
+  );
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       try {
@@ -1276,6 +1282,7 @@ export default function Dashboard() {
               layersWithData: Number(data?.layersWithData || 0),
               totalLayers: Number(data?.totalLayers || 0),
               jobId: String(data?.jobId || docSnap.id),
+              conversationId: data?.conversationId ? String(data.conversationId) : undefined,
               inputZipUrl: data?.inputZipUrl
                 ? String(data.inputZipUrl)
                 : data?.files?.inputZipUrl
@@ -1293,6 +1300,8 @@ export default function Dashboard() {
                   : undefined,
               analysisImages: Array.isArray(data?.analysisImages) ? data.analysisImages : [],
               analysisMessages: Array.isArray(data?.analysisMessages) ? data.analysisMessages : [],
+              auasAnalysisImages: Array.isArray(data?.auasAnalysisImages) ? data.auasAnalysisImages : [],
+              auasAnalysisMessages: Array.isArray(data?.auasAnalysisMessages) ? data.auasAnalysisMessages : [],
             });
           });
           setSimcarClipHistory(clips);
@@ -2958,6 +2967,9 @@ export default function Dashboard() {
 
   const sendSimcarFollowUpMessage = useCallback(async (userMsg: string) => {
     const baseMessages = simcarAnalysisMessages;
+    const activeClip = simcarClipJobId
+      ? simcarClipHistory.find((clip) => clip.jobId === simcarClipJobId)
+      : undefined;
     setSimcarAnalysisMessages((prev) => [...prev, { role: 'user', text: userMsg }]);
     setSimcarAnalysisSending(true);
     setSimcarLiveThinkingText('');
@@ -2998,6 +3010,12 @@ export default function Dashboard() {
         if (simcarClipJobId) {
           const nextHistory = [...baseMessages, { role: 'user' as const, text: userMsg }, aiMsg];
           void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
+          if (activeClip) {
+            void appendSimcarEntriesToConversation(activeClip, [
+              { role: 'user', text: userMsg },
+              { role: 'ai', text: aiMsg.text },
+            ]);
+          }
         }
         return;
       }
@@ -3073,6 +3091,12 @@ export default function Dashboard() {
       if (simcarClipJobId) {
         const nextHistory = [...baseMessages, { role: 'user' as const, text: userMsg }, aiMsg];
         void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
+        if (activeClip) {
+          void appendSimcarEntriesToConversation(activeClip, [
+            { role: 'user', text: userMsg },
+            { role: 'ai', text: aiMsg.text },
+          ]);
+        }
       }
     } catch (err: any) {
       const aiText = `❌ ${err.message || 'Erro ao processar resposta.'}`;
@@ -3084,6 +3108,12 @@ export default function Dashboard() {
           { role: 'ai' as const, text: aiText },
         ];
         void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
+        if (activeClip) {
+          void appendSimcarEntriesToConversation(activeClip, [
+            { role: 'user', text: userMsg },
+            { role: 'ai', text: aiText },
+          ]);
+        }
       }
     } finally {
       setSimcarAnalysisSending(false);
@@ -3097,7 +3127,9 @@ export default function Dashboard() {
     simcarAnalysisMessages,
     splitThinkContent,
     simcarClipJobId,
+    simcarClipHistory,
     patchPersistedSimcarClip,
+    appendSimcarEntriesToConversation,
     simcarAnalysisChatRef,
   ]);
 
@@ -4621,6 +4653,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     layersWithData: summary?.layers?.filter((l: any) => l.features > 0).length ?? 0,
                                     totalLayers: summary?.layers?.length ?? 0,
                                     jobId: nextJobId,
+                                    conversationId: nanoid(),
                                     inputZipUrl: event.inputZipUrl || undefined,
                                     outputZipUrl: event.outputZipUrl || undefined,
                                     contextUrl: event.contextUrl || undefined,
@@ -4630,6 +4663,42 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     return [newClip, ...filtered];
                                   });
                                   void persistSimcarClipHistoryEntry(newClip);
+                                  const cloudinaryFiles = [
+                                    newClip.inputZipUrl ? `- ZIP original: ${newClip.inputZipUrl}` : '',
+                                    newClip.outputZipUrl ? `- ZIP recortado: ${newClip.outputZipUrl}` : '',
+                                    newClip.contextUrl ? `- Contexto JSON: ${newClip.contextUrl}` : '',
+                                  ].filter(Boolean);
+                                  const selectedLayersLabel =
+                                    selectedLayers.length > 0 ? selectedLayers.join(', ') : 'todas as camadas padrão';
+                                  void appendSimcarEntriesToConversation(
+                                    newClip,
+                                    [
+                                      {
+                                        role: 'user',
+                                        text: [
+                                          `Solicitei um recorte SIMCAR para AIR ${simcarAirId.trim()}.`,
+                                          `Arquivo: ${simcarClipFile.name}.`,
+                                          `Camadas selecionadas: ${selectedLayersLabel}.`,
+                                        ].join('\n'),
+                                      },
+                                      {
+                                        role: 'ai',
+                                        text: [
+                                          `Recorte concluído (job ${nextJobId}).`,
+                                          `Feições recortadas: ${newClip.totalFeatures}.`,
+                                          `Área do imóvel: ${newClip.propertyAreaHa.toFixed(2)} ha.`,
+                                          `Camadas com dados: ${newClip.layersWithData}/${newClip.totalLayers}.`,
+                                          cloudinaryFiles.length > 0
+                                            ? `Arquivos no Cloudinary:\n${cloudinaryFiles.join('\n')}`
+                                            : '',
+                                          resolvedDownloadUrl ? `Download do resultado: ${resolvedDownloadUrl}` : '',
+                                        ]
+                                          .filter(Boolean)
+                                          .join('\n\n'),
+                                      },
+                                    ],
+                                    { title: newClip.filename }
+                                  );
                                 } else {
                                   setSimcarClipError('Recorte gerado, mas não foi possível identificar o job para salvar histórico.');
                                 }
@@ -4877,10 +4946,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Selecione as imagens de satélite</h4>
                           {(() => {
                             const sensorGroups = [
-                              { sensor: 'SPOT', color: 'emerald', desc: '2.5m', items: [{ key: 'spot_2008', year: 2008 }] },
-                              { sensor: 'Landsat 5', color: 'blue', desc: '30m · 1984–2011', items: [1984, 1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011].map((y) => ({ key: `landsat5_${y}`, year: y })) },
-                              { sensor: 'Landsat 8', color: 'cyan', desc: '30m · 2013–2018', items: [2013, 2014, 2015, 2016, 2017, 2018].map((y) => ({ key: `landsat8_${y}`, year: y })) },
-                              { sensor: 'Sentinel-2', color: 'purple', desc: '10m · 2016–2024', items: [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024].map((y) => ({ key: `sentinel2_${y}`, year: y })) },
+                              { sensor: 'SPOT', iconClass: 'text-emerald-400', desc: '2.5m', items: [{ key: 'spot_2008', year: 2008 }] },
+                              { sensor: 'Landsat 5', iconClass: 'text-blue-400', desc: '30m · 1984–2011', items: [1984, 1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011].map((y) => ({ key: `landsat5_${y}`, year: y })) },
+                              { sensor: 'Landsat 8', iconClass: 'text-cyan-400', desc: '30m · 2013–2018', items: [2013, 2014, 2015, 2016, 2017, 2018].map((y) => ({ key: `landsat8_${y}`, year: y })) },
+                              { sensor: 'Sentinel-2', iconClass: 'text-purple-400', desc: '10m · 2016–2024', items: [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024].map((y) => ({ key: `sentinel2_${y}`, year: y })) },
                             ];
                             const selectedCount = Object.values(simcarSelectedSatellites).filter(Boolean).length;
                             return (
@@ -4888,7 +4957,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 {sensorGroups.map((group) => (
                                   <div key={group.sensor} className="rounded-lg border border-white/8 bg-white/[0.02] overflow-hidden">
                                     <div className="px-3 py-1.5 flex items-center gap-2 border-b border-white/5">
-                                      <Satellite size={11} className={`text-${group.color}-400`} />
+                                      <Satellite size={11} className={group.iconClass} />
                                       <span className="text-[10px] font-semibold text-slate-300">{group.sensor}</span>
                                       <span className="text-[9px] text-slate-600">{group.desc}</span>
                                     </div>
@@ -4900,7 +4969,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                             key={sat.key}
                                             onClick={() => setSimcarSelectedSatellites((prev) => ({ ...prev, [sat.key]: !prev[sat.key] }))}
                                             className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all border ${selected
-                                              ? `border-${group.color}-500/50 bg-${group.color}-500/20 text-${group.color}-300`
+                                              ? 'border-emerald-500/50 bg-emerald-500/20 text-emerald-300'
                                               : 'border-transparent bg-white/5 text-slate-500 hover:text-slate-300 hover:bg-white/10'
                                               }`}
                                           >
@@ -5019,8 +5088,52 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                             analysisImages: event.images || [],
                                             analysisMessages: [aiMessage],
                                           });
+                                          const clipForConversation: SimcarClipHistoryItem = {
+                                            ...(historyEntry || {
+                                              id: simcarClipJobId,
+                                              timestamp: new Date().toISOString(),
+                                              filename: `Recorte ${simcarClipJobId.slice(0, 8)}`,
+                                              downloadUrl: historyEntry?.downloadUrl || '',
+                                              totalFeatures: historyEntry?.totalFeatures || 0,
+                                              propertyAreaHa: historyEntry?.propertyAreaHa || 0,
+                                              layersWithData: historyEntry?.layersWithData || 0,
+                                              totalLayers: historyEntry?.totalLayers || 0,
+                                              jobId: simcarClipJobId,
+                                            }),
+                                            analysisImages: event.images || [],
+                                            analysisMessages: [aiMessage],
+                                          };
+                                          const imageLinks = (event.images || [])
+                                            .map((img: any) => (img?.url ? `- ${img.url}` : ''))
+                                            .filter(Boolean);
+                                          void appendSimcarEntriesToConversation(clipForConversation, [
+                                            {
+                                              role: 'user',
+                                              text: `Solicitei análise AC/AVN para o recorte ${simcarClipJobId} com as imagens: ${layers.join(', ')}.`,
+                                            },
+                                            {
+                                              role: 'ai',
+                                              text: [
+                                                `Análise AC/AVN concluída para o recorte ${simcarClipJobId}.`,
+                                                imageLinks.length > 0 ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}` : '',
+                                                aiMessage.text,
+                                              ]
+                                                .filter(Boolean)
+                                                .join('\n\n'),
+                                            },
+                                          ]);
                                         } else if (event.type === 'error') {
-                                          setSimcarAnalysisMessages([{ role: 'ai', text: `❌ ${event.message}` }]);
+                                          const errorText = `❌ ${event.message}`;
+                                          setSimcarAnalysisMessages([{ role: 'ai', text: errorText }]);
+                                          if (historyEntry) {
+                                            void appendSimcarEntriesToConversation(historyEntry, [
+                                              {
+                                                role: 'user',
+                                                text: `Solicitei análise AC/AVN para o recorte ${simcarClipJobId} com as imagens: ${layers.join(', ')}.`,
+                                              },
+                                              { role: 'ai', text: errorText },
+                                            ]);
+                                          }
                                           setSimcarAnalysisProgress(null);
                                         }
                                       } catch { }
@@ -5028,7 +5141,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                   }
                                 }
                               } catch (err: any) {
-                                setSimcarAnalysisMessages([{ role: 'ai', text: `❌ ${err.message || 'Erro inesperado.'}` }]);
+                                const errorText = `❌ ${err.message || 'Erro inesperado.'}`;
+                                setSimcarAnalysisMessages([{ role: 'ai', text: errorText }]);
+                                if (historyEntry) {
+                                  void appendSimcarEntriesToConversation(historyEntry, [
+                                    {
+                                      role: 'user',
+                                      text: `Solicitei análise AC/AVN para o recorte ${simcarClipJobId} com as imagens: ${layers.join(', ')}.`,
+                                    },
+                                    { role: 'ai', text: errorText },
+                                  ]);
+                                }
                               } finally {
                                 setSimcarAnalysisProcessing(false);
                                 setSimcarAnalysisProgress(null);
@@ -5089,8 +5212,40 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                           void patchPersistedSimcarClip(simcarClipJobId, {
                                             analysisImages: event.images || [],
                                           });
+                                          if (historyEntry) {
+                                            const imageLinks = (event.images || [])
+                                              .map((img: any) => (img?.url ? `- ${img.url}` : ''))
+                                              .filter(Boolean);
+                                            void appendSimcarEntriesToConversation(
+                                              { ...historyEntry, analysisImages: event.images || [] },
+                                              [
+                                                {
+                                                  role: 'user',
+                                                  text: `Solicitei apenas a geração de imagens para o recorte ${simcarClipJobId} com as camadas: ${layers.join(', ')}.`,
+                                                },
+                                                {
+                                                  role: 'ai',
+                                                  text: [
+                                                    `Geração de imagens concluída para o recorte ${simcarClipJobId}.`,
+                                                    imageLinks.length > 0
+                                                      ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}`
+                                                      : 'Nenhuma imagem retornada.',
+                                                  ].join('\n\n'),
+                                                },
+                                              ]
+                                            );
+                                          }
                                         } else if (event.type === 'error') {
                                           setSimcarClipError(event.message);
+                                          if (historyEntry) {
+                                            void appendSimcarEntriesToConversation(historyEntry, [
+                                              {
+                                                role: 'user',
+                                                text: `Solicitei apenas a geração de imagens para o recorte ${simcarClipJobId} com as camadas: ${layers.join(', ')}.`,
+                                              },
+                                              { role: 'ai', text: `❌ ${event.message}` },
+                                            ]);
+                                          }
                                           setSimcarAnalysisProgress(null);
                                         }
                                       } catch { }
@@ -5099,6 +5254,15 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 }
                               } catch (err: any) {
                                 setSimcarClipError(err.message || 'Erro ao gerar imagens.');
+                                if (historyEntry) {
+                                  void appendSimcarEntriesToConversation(historyEntry, [
+                                    {
+                                      role: 'user',
+                                      text: `Solicitei apenas a geração de imagens para o recorte ${simcarClipJobId} com as camadas: ${layers.join(', ')}.`,
+                                    },
+                                    { role: 'ai', text: `❌ ${err.message || 'Erro ao gerar imagens.'}` },
+                                  ]);
+                                }
                               } finally {
                                 setSimcarAnalysisProcessing(false);
                                 setSimcarAnalysisProgress(null);
@@ -5111,126 +5275,170 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             Ver Imagens
                           </button>
                         </div>
+                      </section>
+                    )}
 
-                        {/* ── Análise de AUAS Button ── */}
-                        {simcarAnalysisMessages.length > 0 && !simcarAuasProcessing && (
-                          <button
-                            onClick={async () => {
-                              if (!simcarClipJobId) return;
-                              const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
-                              // Get previous AC/AVN analysis text
-                              const previousAnalysis = simcarAnalysisMessages
-                                .filter((m) => m.role === 'ai')
-                                .map((m) => m.text)
-                                .join('\n\n---\n\n');
-                              setSimcarAuasProcessing(true);
-                              setSimcarAuasProgress({ step: 'starting', percent: 0, message: 'Iniciando análise de AUAS...' });
-                              setSimcarAuasAgentLog([{ label: 'Iniciando análise AUAS...', done: false, kind: 'step' }]);
-                              setSimcarAuasImages([]);
-                              setSimcarAuasMessages([]);
-                              try {
-                                const response = await fetch(apiUrl('/api/simcar/clip/analyze-auas'), {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({
-                                    jobId: simcarClipJobId,
-                                    previousAnalysis,
-                                    contextUrl: historyEntry?.contextUrl,
-                                    outputZipUrl: historyEntry?.outputZipUrl,
-                                  }),
-                                });
-                                const reader = response.body?.getReader();
-                                const decoder = new TextDecoder();
-                                let buf = '';
-                                if (reader) {
-                                  while (true) {
-                                    const { done, value } = await reader.read();
-                                    if (done) break;
-                                    buf += decoder.decode(value, { stream: true });
-                                    const lines = buf.split('\n');
-                                    buf = lines.pop() || '';
-                                    for (const line of lines) {
-                                      if (!line.startsWith('data: ')) continue;
-                                      try {
-                                        const event = JSON.parse(line.slice(6));
-                                        if (event.type === 'progress') {
-                                          const msg = String(event.message || '');
-                                          setSimcarAuasProgress({ step: event.step, percent: event.percent, message: msg });
-                                          setSimcarAuasAgentLog((prev) => {
-                                            const updated = prev.map((s) => s.done ? s : { ...s, done: true });
-                                            return [...updated, { label: msg, done: false, kind: 'step' as const }];
-                                          });
-                                        } else if (event.type === 'model_thinking') {
-                                          const source = event.source ? `[${event.source}]` : '';
-                                          const thought = String(event.thinkingText || '').trim();
-                                          if (thought) {
-                                            const snippet = thought.replace(/\s+/g, ' ').slice(0, 120);
-                                            const label = source ? `${source}: ${snippet}…` : `${snippet}…`;
-                                            setSimcarAuasAgentLog((prev) => [
-                                              ...prev,
-                                              { label, done: true, kind: 'thinking' as const },
-                                            ]);
-                                          }
-                                        } else if (event.type === 'complete') {
-                                          const parsed = splitThinkContent(String(event.analysis || ''));
-                                          const aiMessage: SimcarAnalysisMessage = {
-                                            role: 'ai',
-                                            text: parsed.cleanText,
-                                            thinkingText: parsed.thinkingText || undefined,
-                                            images: (event.images || []).map((img: any) => img.url),
-                                          };
-                                          setSimcarAuasImages(event.images || []);
-                                          setSimcarAuasMessages([aiMessage]);
-                                          setSimcarAuasProgress(null);
-                                          setSimcarAuasAgentLog((prev) => prev.map((s) => ({ ...s, done: true })));
-                                          // Persist to history
-                                          setSimcarClipHistory((prev) => prev.map((c) =>
-                                            c.jobId === simcarClipJobId
-                                              ? { ...c, auasAnalysisImages: event.images || [], auasAnalysisMessages: [aiMessage] }
-                                              : c
-                                          ));
-                                          void patchPersistedSimcarClip(simcarClipJobId, {
-                                            auasAnalysisImages: event.images || [],
-                                            auasAnalysisMessages: [aiMessage],
-                                          });
-                                        } else if (event.type === 'error') {
-                                          setSimcarAuasMessages([{ role: 'ai', text: `❌ ${event.message}` }]);
-                                          setSimcarAuasProgress(null);
+                    {/* ── Análise de AUAS Button (shown after AC/AVN analysis is done) ── */}
+                    {simcarAnalysisMessages.length > 0 && !simcarAuasProcessing && !simcarAuasMessages.length && (
+                      <section className="px-4">
+                        <button
+                          onClick={async () => {
+                            if (!simcarClipJobId) return;
+                            const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
+                            const previousAnalysis = simcarAnalysisMessages
+                              .filter((m) => m.role === 'ai')
+                              .map((m) => m.text)
+                              .join('\n\n---\n\n');
+                            setSimcarAuasProcessing(true);
+                            setSimcarAuasProgress({ step: 'starting', percent: 0, message: 'Iniciando análise de AUAS...' });
+                            setSimcarAuasAgentLog([{ label: 'Iniciando análise AUAS...', done: false, kind: 'step' }]);
+                            setSimcarAuasImages([]);
+                            setSimcarAuasMessages([]);
+                            try {
+                              const response = await fetch(apiUrl('/api/simcar/clip/analyze-auas'), {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  jobId: simcarClipJobId,
+                                  previousAnalysis,
+                                  contextUrl: historyEntry?.contextUrl,
+                                  outputZipUrl: historyEntry?.outputZipUrl,
+                                }),
+                              });
+                              const reader = response.body?.getReader();
+                              const decoder = new TextDecoder();
+                              let buf = '';
+                              if (reader) {
+                                while (true) {
+                                  const { done, value } = await reader.read();
+                                  if (done) break;
+                                  buf += decoder.decode(value, { stream: true });
+                                  const lines = buf.split('\n');
+                                  buf = lines.pop() || '';
+                                  for (const line of lines) {
+                                    if (!line.startsWith('data: ')) continue;
+                                    try {
+                                      const event = JSON.parse(line.slice(6));
+                                      if (event.type === 'progress') {
+                                        const msg = String(event.message || '');
+                                        setSimcarAuasProgress({ step: event.step, percent: event.percent, message: msg });
+                                        setSimcarAuasAgentLog((prev) => {
+                                          const updated = prev.map((s) => s.done ? s : { ...s, done: true });
+                                          return [...updated, { label: msg, done: false, kind: 'step' as const }];
+                                        });
+                                      } else if (event.type === 'model_thinking') {
+                                        const source = event.source ? `[${event.source}]` : '';
+                                        const thought = String(event.thinkingText || '').trim();
+                                        if (thought) {
+                                          const snippet = thought.replace(/\s+/g, ' ').slice(0, 120);
+                                          const label = source ? `${source}: ${snippet}…` : `${snippet}…`;
+                                          setSimcarAuasAgentLog((prev) => [
+                                            ...prev,
+                                            { label, done: true, kind: 'thinking' as const },
+                                          ]);
                                         }
-                                      } catch { }
-                                    }
+                                      } else if (event.type === 'complete') {
+                                        const parsed = splitThinkContent(String(event.analysis || ''));
+                                        const aiMessage: SimcarAnalysisMessage = {
+                                          role: 'ai',
+                                          text: parsed.cleanText,
+                                          thinkingText: parsed.thinkingText || undefined,
+                                          images: (event.images || []).map((img: any) => img.url),
+                                        };
+                                        setSimcarAuasImages(event.images || []);
+                                        setSimcarAuasMessages([aiMessage]);
+                                        setSimcarAuasProgress(null);
+                                        setSimcarAuasAgentLog((prev) => prev.map((s) => ({ ...s, done: true })));
+                                        setSimcarClipHistory((prev) => prev.map((c) =>
+                                          c.jobId === simcarClipJobId
+                                            ? { ...c, auasAnalysisImages: event.images || [], auasAnalysisMessages: [aiMessage] }
+                                            : c
+                                        ));
+                                        void patchPersistedSimcarClip(simcarClipJobId, {
+                                          auasAnalysisImages: event.images || [],
+                                          auasAnalysisMessages: [aiMessage],
+                                        });
+                                        if (historyEntry) {
+                                          const imageLinks = (event.images || [])
+                                            .map((img: any) => (img?.url ? `- ${img.url}` : ''))
+                                            .filter(Boolean);
+                                          void appendSimcarEntriesToConversation(
+                                            {
+                                              ...historyEntry,
+                                              auasAnalysisImages: event.images || [],
+                                              auasAnalysisMessages: [aiMessage],
+                                            },
+                                            [
+                                              {
+                                                role: 'user',
+                                                text: `Solicitei análise de AUAS para o recorte ${simcarClipJobId}.`,
+                                              },
+                                              {
+                                                role: 'ai',
+                                                text: [
+                                                  `Análise de AUAS concluída para o recorte ${simcarClipJobId}.`,
+                                                  imageLinks.length > 0
+                                                    ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}`
+                                                    : '',
+                                                  aiMessage.text,
+                                                ]
+                                                  .filter(Boolean)
+                                                  .join('\n\n'),
+                                              },
+                                            ]
+                                          );
+                                        }
+                                      } else if (event.type === 'error') {
+                                        const errorText = `❌ ${event.message}`;
+                                        setSimcarAuasMessages([{ role: 'ai', text: errorText }]);
+                                        if (historyEntry) {
+                                          void appendSimcarEntriesToConversation(historyEntry, [
+                                            { role: 'user', text: `Solicitei análise de AUAS para o recorte ${simcarClipJobId}.` },
+                                            { role: 'ai', text: errorText },
+                                          ]);
+                                        }
+                                        setSimcarAuasProgress(null);
+                                      }
+                                    } catch { }
                                   }
                                 }
-                              } catch (err: any) {
-                                setSimcarAuasMessages([{ role: 'ai', text: `❌ ${err.message || 'Erro inesperado.'}` }]);
-                              } finally {
-                                setSimcarAuasProcessing(false);
-                                setSimcarAuasProgress(null);
                               }
-                            }}
-                            disabled={!simcarClipJobId}
-                            className="w-full mt-3 py-3 rounded-xl font-medium text-sm bg-gradient-to-r from-white/10 to-slate-500/20 hover:from-white/15 hover:to-slate-400/25 text-white border border-white/15 shadow-lg shadow-black/20 transition-all duration-300 flex items-center justify-center gap-2"
-                          >
-                            <Layers size={16} />
-                            Análise de AUAS
-                          </button>
-                        )}
+                            } catch (err: any) {
+                              const errorText = `❌ ${err.message || 'Erro inesperado.'}`;
+                              setSimcarAuasMessages([{ role: 'ai', text: errorText }]);
+                              if (historyEntry) {
+                                void appendSimcarEntriesToConversation(historyEntry, [
+                                  { role: 'user', text: `Solicitei análise de AUAS para o recorte ${simcarClipJobId}.` },
+                                  { role: 'ai', text: errorText },
+                                ]);
+                              }
+                            } finally {
+                              setSimcarAuasProcessing(false);
+                              setSimcarAuasProgress(null);
+                            }
+                          }}
+                          disabled={!simcarClipJobId}
+                          className="w-full py-3 rounded-xl font-medium text-sm bg-gradient-to-r from-white/10 to-slate-500/20 hover:from-white/15 hover:to-slate-400/25 text-white border border-white/15 shadow-lg shadow-black/20 transition-all duration-300 flex items-center justify-center gap-2"
+                        >
+                          <Layers size={16} />
+                          Análise de AUAS
+                        </button>
+                      </section>
+                    )}
 
-                        {/* ── AUAS Processing Progress ── */}
-                        {simcarAuasProcessing && simcarAuasProgress && (
-                          <div className="mt-3 rounded-xl border border-white/10 bg-[#0c1018]/90 p-4">
-                            <div className="flex items-center gap-2 mb-2">
-                              <div className="p-1 rounded-md bg-white/10">
-                                <Layers size={12} className="text-white animate-pulse" />
-                              </div>
-                              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Análise AUAS em progresso</p>
-                            </div>
-                            <div className="w-full bg-white/5 rounded-full h-1.5 mb-2">
-                              <div className="bg-gradient-to-r from-white/60 to-slate-300 h-full rounded-full transition-all duration-500" style={{ width: `${simcarAuasProgress.percent}%` }} />
-                            </div>
-                            <p className="text-[10px] text-slate-500">{simcarAuasProgress.message}</p>
+                    {/* ── AUAS Processing Progress ── */}
+                    {simcarAuasProcessing && simcarAuasProgress && (
+                      <section className="mx-4 rounded-xl border border-white/10 bg-[#0c1018]/90 p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="p-1 rounded-md bg-white/10">
+                            <Layers size={12} className="text-white animate-pulse" />
                           </div>
-                        )}
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Análise AUAS em progresso</p>
+                        </div>
+                        <div className="w-full bg-white/5 rounded-full h-1.5 mb-2">
+                          <div className="bg-gradient-to-r from-white/60 to-slate-300 h-full rounded-full transition-all duration-500" style={{ width: `${simcarAuasProgress.percent}%` }} />
+                        </div>
+                        <p className="text-[10px] text-slate-500">{simcarAuasProgress.message}</p>
                       </section>
                     )}
 
@@ -5452,87 +5660,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           )}
                         </div>
 
-                        {/* ── Card de Resumo ── */}
-                        {(() => {
-                          const aiText = simcarAnalysisMessages.find((m) => m.role === 'ai')?.text ?? '';
-                          const { ac, avn, confidence, acDetail, avnDetail } = extractAnalysisSummary(aiText);
-                          if (!aiText) return null;
-                          const satKeyToLabel = (k: string) => {
-                            if (k === 'spot_2008') return 'SPOT 2008';
-                            const m = k.match(/^(landsat5|landsat8|sentinel2)_(\d+)$/);
-                            if (!m) return k;
-                            const sensors: Record<string, string> = { landsat5: 'L5', landsat8: 'L8', sentinel2: 'S2' };
-                            return `${sensors[m[1]] || m[1]} ${m[2]}`;
-                          };
-                          const selectedSatLabels = Object.entries(simcarSelectedSatellites).filter(([, v]) => v).map(([k]) => satKeyToLabel(k));
-                          const verdictConfig = {
-                            concorda: { label: 'Concorda', icon: <CheckCircle2 size={12} />, bg: 'bg-emerald-500/12', border: 'border-emerald-500/25', text: 'text-emerald-400', glow: 'shadow-emerald-500/10' },
-                            discorda: { label: 'Discorda', icon: <X size={12} />, bg: 'bg-red-500/12', border: 'border-red-500/25', text: 'text-red-400', glow: 'shadow-red-500/10' },
-                            inconclusivo: { label: 'Inconclusivo', icon: <AlertTriangle size={12} />, bg: 'bg-amber-500/12', border: 'border-amber-500/25', text: 'text-amber-400', glow: 'shadow-amber-500/10' },
-                          };
-                          const confConfig: Record<string, { label: string; color: string }> = {
-                            alta: { label: 'Alta', color: 'text-emerald-400' },
-                            media: { label: 'Média', color: 'text-amber-400' },
-                            baixa: { label: 'Baixa', color: 'text-red-400' },
-                          };
-                          const renderVerdict = (label: string, verdict: VerdictValue, detail: string) => {
-                            const cfg = verdict ? verdictConfig[verdict] : null;
-                            return (
-                              <div className={`rounded-lg border p-3 transition-all ${cfg ? `${cfg.bg} ${cfg.border} shadow-md ${cfg.glow}` : 'bg-white/[0.03] border-white/8'}`}>
-                                <div className="flex items-center justify-between gap-2 mb-1">
-                                  <span className="text-[11px] font-medium text-slate-200">{label}</span>
-                                  {cfg ? (
-                                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${cfg.bg} ${cfg.border} border ${cfg.text}`}>
-                                      {cfg.icon} {cfg.label}
-                                    </span>
-                                  ) : (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-white/5 border border-white/10 text-slate-500">
-                                      <Loader2 size={9} className="animate-spin" /> Sem dados
-                                    </span>
-                                  )}
-                                </div>
-                                {detail && (
-                                  <p className="text-[10px] text-slate-500 leading-relaxed line-clamp-2 mt-1">{detail}</p>
-                                )}
-                              </div>
-                            );
-                          };
-                          const yearsLabel = selectedSatLabels.length > 0 ? selectedSatLabels.join(' · ') : '—';
-                          return (
-                            <div className="mx-6 mb-4 rounded-xl border border-purple-500/15 bg-gradient-to-b from-[#0c1018]/80 to-black/40 overflow-hidden">
-                              {/* header */}
-                              <div className="px-4 py-2.5 border-b border-white/5 flex items-center gap-2">
-                                <div className="p-1 rounded-md bg-purple-500/15">
-                                  <BarChart3 size={12} className="text-purple-400" />
-                                </div>
-                                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Resumo da Análise IA</p>
-                                {selectedSatLabels.length > 0 && (
-                                  <span className="ml-auto text-[9px] text-slate-600 tabular-nums flex items-center gap-1">
-                                    <Satellite size={9} /> {yearsLabel}
-                                  </span>
-                                )}
-                              </div>
-                              {/* verdicts */}
-                              <div className="p-3 space-y-2">
-                                {renderVerdict('Área Consolidada (AC)', ac, acDetail)}
-                                {renderVerdict('Vegetação Nativa (AVN)', avn, avnDetail)}
-                                {/* confiança + footer */}
-                                <div className="flex items-center justify-between pt-1.5 border-t border-white/5">
-                                  <span className="text-[10px] text-slate-500 flex items-center gap-1">
-                                    <Shield size={10} /> Nível de Confiança
-                                  </span>
-                                  {confidence ? (
-                                    <span className={`text-[10px] font-bold ${confConfig[confidence]?.color || 'text-slate-400'}`}>
-                                      {confConfig[confidence]?.label || confidence}
-                                    </span>
-                                  ) : (
-                                    <span className="text-[10px] text-slate-600">—</span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })()}
                       </section>
                     )}
 
