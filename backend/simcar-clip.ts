@@ -63,6 +63,7 @@ import {
     buildUsageFromGroq,
     createRequestId,
     estimateCloudinaryStorageReserve,
+    estimateImageTokens,
     estimateReserveForModels,
     estimateTokensFromMessages,
     estimateTokensFromText,
@@ -2766,9 +2767,11 @@ async function callGeminiVisionAnalysis(
                 if (content) {
                     const usage = buildUsageFromGemini(model, data?.usageMetadata, "/api/simcar/clip/analyze");
                     if (usage.estimated) {
+                        // Use tile-based formula for Gemini (1024x768 = 2 tiles wide, 1 tile tall = 2*258=516 tokens/image)
+                        const geminiImageTokensPerImg = estimateImageTokens(1024, 768);
                         usage.inputTokens = Math.max(
                             Number(usage.inputTokens || 0),
-                            estimateTokensFromText(prompt) + currentImages.length * 1800,
+                            estimateTokensFromText(prompt) + currentImages.length * geminiImageTokensPerImg,
                         );
                         usage.outputTokens = Math.max(
                             Number(usage.outputTokens || 0),
@@ -3513,10 +3516,12 @@ function buildSingleSatellitePrompt(
     const sensor = `${meta.sensor} (${meta.spatialResolution})`;
     const hasAuas = Boolean(acAvnAuasContext?.hasAuasLayer);
     const auasContext = hasAuas && acAvnAuasContext ? acAvnAuasContext : null;
+    const year = Number(sat?.year || 0);
+    const isPreMarco = year <= 2008;
 
     return [
-        "VocÃª Ã© a **GeoForest IA**, especialista em sensoriamento remoto e anÃ¡lise ambiental para imÃ³veis rurais em Mato Grosso.",
-        "Analise as 3 imagens do satÃ©lite fornecido comparando com os dados vetoriais do CAR.",
+        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
+        "Analise as 3 imagens do satélite fornecido comparando com os dados vetoriais do CAR.",
         "",
         "---",
         "",
@@ -3524,69 +3529,75 @@ function buildSingleSatellitePrompt(
         "",
         "---",
         "",
-        `## Imagens: ${sat.label} â€” ${sensor}`,
+        `## Imagens: ${sat.label} — ${sensor}`,
+        `**Referência temporal:** esta cena é ${isPreMarco ? "pré-marco ou marco temporal (≤ 2008)" : "pós-marco temporal (> 2008)"} — referência legal: 22/07/2008 (Art. 68, Lei 12.651/2012).`,
         "",
         `- **Bandas espectrais**: ${meta.spectralBands}`,
         `- **Revisita**: a cada ${meta.revisitDays} dias`,
-        `- **Melhor uso**: ${meta.bestUseCase}`,
+        `- **Resolução espacial**: ${meta.spatialResolution}`,
+        `- **Uso ideal**: ${meta.bestUseCase}`,
         "",
-        ...(hasAuas
-            ? [
-                "Contexto vetorial AUAS x AVN para este recorte:",
-                `- AUAS total: ${auasContext?.auasAreaHa.toFixed(2)} ha`,
-                `- AVN total: ${auasContext?.avnAreaHa.toFixed(2)} ha`,
-                `- Interseção AUAS∩AVN: ${auasContext?.overlapAreaHa.toFixed(2)} ha`,
-                `- AUAS fora do AVN: ${auasContext?.auasOutsideAvnAreaHa.toFixed(2)} ha (${auasContext?.auasOutsideAvnPct.toFixed(2)}% da AUAS)`,
-                "",
-            ]
-            : []),
         ...(cloudWarning
             ? [
-                "> ⚠️ **Atenção: Cobertura de nuvens detectada** neste satélite ",
-                `> (score de nebulosidade: ${(cloudWarning.cloudScore * 100).toFixed(0)}%). `,
-                "> Considere que algumas áreas podem estar parcialmente ocluídas.",
+                `> ⚠️ **Atenção: Cobertura de nuvens detectada** (score: ${(cloudWarning.cloudScore * 100).toFixed(0)}%).`,
+                "> Áreas ocluídas devem ser classificadas como INCONCLUSIVO, não como uso antrópico.",
                 "",
             ]
             : []),
-        "**Legenda dos polÃ­gonos:**",
-        "- ðŸŸ¥ **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
-        "- ðŸŸª **Roxo semi-transparente**: ÃREA CONSOLIDADA (AC)",
-        "- ðŸŸ¨ **Amarelo semi-transparente**: VEGETAÃ‡ÃƒO NATIVA (AVN)",
-        ...(hasAuas ? ["- ⬜ **Branco semi-transparente**: AUAS (uso alternativo do solo)"] : []),
+        ...(hasAuas
+            ? [
+                "**Contexto vetorial AUAS × AVN:**",
+                `- AUAS declarada: **${auasContext?.auasAreaHa.toFixed(2)} ha**`,
+                `- AVN declarada: **${auasContext?.avnAreaHa.toFixed(2)} ha**`,
+                `- Sobreposição AUAS∩AVN: ${auasContext?.overlapAreaHa.toFixed(2)} ha (${auasContext?.overlapPctOfAuas.toFixed(1)}% da AUAS)`,
+                `- AUAS fora do AVN: ${auasContext?.auasOutsideAvnAreaHa.toFixed(2)} ha — verifique cobertura nessa zona`,
+                "",
+            ]
+            : []),
+        "**Legenda dos polígonos:**",
+        "- 🟥 **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
+        "- 🟪 **Roxo semi-transparente**: ÁREA CONSOLIDADA (AC) — uso antrópico declarado",
+        "- 🟨 **Amarelo semi-transparente**: VEGETAÇÃO NATIVA (AVN) — vegetação nativa declarada",
+        ...(hasAuas ? ["- ⬜ **Branco semi-transparente**: AUAS — uso alternativo do solo"] : []),
         "",
-        `- Imagem 1: VisÃ£o Geral â€” base ${sat.label} + propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}`,
-        `- Imagem 2: Ãrea Consolidada â€” base ${sat.label} + propriedade + somente AC`,
-        `- Imagem 3: AVN â€” base ${sat.label} + propriedade + somente AVN`,
+        `- Imagem 1: Visão Geral — base ${sat.label} + propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}`,
+        `- Imagem 2: Área Consolidada — base ${sat.label} + propriedade + somente AC`,
+        `- Imagem 3: AVN — base ${sat.label} + propriedade + somente AVN`,
         "",
         "---",
         "",
-        "## InstruÃ§Ãµes",
+        "## Análise da Área Consolidada (AC — polígono roxo)",
+        "- As áreas em roxo correspondem a uso antrópico visível (pastagem limpa, agricultura, solo exposto, benfeitorias)?",
+        "- Padrão de textura antrópica: pastagem → tonalidade uniforme; agricultura → linhas regulares; solo exposto → tons claros sem estrutura.",
+        "- Algum trecho de AC apresenta textura de vegetação nativa (dossel rugoso, gradiente verde-escuro, estrutura de Cerrado/Floresta)?",
+        "- Indicar localização aproximada dos trechos discordantes: 'porção norte', 'borda leste', 'setor central', etc.",
         "",
-        "### AnÃ¡lise da Ãrea Consolidada (AC)",
-        "- As Ã¡reas em roxo correspondem a uso antrÃ³pico (pastagem, agricultura, solo exposto)?",
-        "- Algum trecho de AC apresenta textura de vegetaÃ§Ã£o nativa?",
-        "- Descreva a localizaÃ§Ã£o de trechos discordantes (ex: 'porÃ§Ã£o norte', 'borda leste').",
-        "",
-        "### AnÃ¡lise da VegetaÃ§Ã£o Nativa (AVN)",
-        "- As Ã¡reas em amarelo correspondem a vegetaÃ§Ã£o nativa (floresta, cerrado, mata ciliar)?",
-        "- Algum trecho de AVN parece antropizado (pastagem, desmatamento, queimada)?",
-        "- Avalie integridade e conectividade da vegetaÃ§Ã£o.",
+        "## Análise da Vegetação Nativa (AVN — polígono amarelo)",
+        "- As áreas em amarelo apresentam textura de vegetação nativa contínua (floresta, cerrado, mata ciliar)?",
+        "- Distinguir tipologias: Floresta → dossel denso e contínuo; Cerrado → mosaico arbustivo-herbáceo; Campo nativo → tonalidade mais clara com textura variada.",
+        "- Algum trecho de AVN parece antropizado (pastagem, desmatamento, queimada recente, cicatriz de fogo)?",
+        "- Avaliar integridade e conectividade: fragmentação, clareiras, bordas antropizadas.",
         ...(hasAuas
             ? [
-                "- Verifique se existe vegetação nativa aparente fora do AVN, porém dentro do shape AUAS.",
+                "- Verificar se existe vegetação nativa aparente fora do AVN, porém dentro do shape AUAS (contorno branco).",
             ]
             : []),
         "",
-        "### ConcordÃ¢ncias e DiscordÃ¢ncias",
-        "- **âœ… CONCORDA**: Ã¡reas onde classificaÃ§Ã£o coincide com a imagem.",
-        "- **âŒ DISCORDA**: Ã¡reas onde classificaÃ§Ã£o nÃ£o condiz. Indique a classificaÃ§Ã£o mais apropriada.",
+        "## Concordâncias e Discordâncias",
+        "- **✅ CONCORDA**: áreas onde a classificação CAR coincide com o uso visível.",
+        "- **❌ DISCORDA**: áreas onde a classificação não condiz. Indicar classificação mais apropriada e localização aproximada.",
+        "- **⚠️ INCONCLUSIVO**: quando resolução, nuvem ou sazonalidade impedem conclusão segura.",
         "",
-        "### NÃ­vel de ConfianÃ§a",
-        "Classifique: **[ALTA]**, **[MÃ‰DIA]** ou **[BAIXA]**.",
+        "## Nível de Confiança",
+        "Classifique: **[ALTA]** (evidência clara em imagem de qualidade, ≥2 fontes concordando), **[MÉDIA]** (evidência presente mas com limitação técnica) ou **[BAIXA]** (nuvem >30%, resolução insuficiente ou imagem única degradada).",
+        "",
+        "## Veredito deste Satélite",
+        "Forneça obrigatoriamente no formato exato:",
+        `- ${sat.label} (${year}) | AC_FORA_SHAPE=SIM|NAO|INCONCLUSIVO | AVN_DENTRO_SHAPE_ANTROPIZADO=SIM|NAO|INCONCLUSIVO | CONFIANCA=ALTA|MEDIA|BAIXA|INCONCLUSIVO`,
         "",
         "---",
-        "Responda em **portuguÃªs**, use markdown, seja detalhado e tÃ©cnico.",
-        "NÃ£o inclua cadeia de raciocÃ­nio interna nem bloco <think>; entregue sÃ³ a resposta final.",
+        "Responda em **português**, use markdown, seja detalhado e técnico.",
+        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
     ].join("\n");
 }
 
@@ -3606,52 +3617,70 @@ function buildAnalysisPrompt(
         const meta = getSatelliteMetadata(k);
         const imgBase = i * 3 + 1;
         return [
-            `### ${sat.label}`,
-            `- Metadados: sensor=${meta.sensor}; resolução=${meta.spatialResolution}; revisita=${meta.revisitDays} dias`,
-            `- Limitações: ${meta.bestUseCase}`,
+            `### ${sat.label} — ${meta.sensor} (${meta.spatialResolution})`,
+            `- Bandas: ${meta.spectralBands}`,
+            `- Revisita: ${meta.revisitDays} dias | Uso ideal: ${meta.bestUseCase}`,
             `- Imagem ${imgBase}: visão geral (propriedade + AC + AVN${hasAuas ? " + AUAS" : ""})`,
-            `- Imagem ${imgBase + 1}: foco AC (roxo)`,
-            `- Imagem ${imgBase + 2}: foco AVN (amarelo)`,
+            `- Imagem ${imgBase + 1}: foco AC (polígono roxo)`,
+            `- Imagem ${imgBase + 2}: foco AVN (polígono amarelo)`,
         ].join("\n");
     }).join("\n\n");
 
     return [
-        "Você é a GeoForest IA, perita em interpretação de satélite para validação de CAR.",
-        "A análise deve considerar somente áreas dentro do polígono da propriedade.",
+        "Você é a **GeoForest IA**, perita em interpretação de imagens de satélite para validação de CAR em imóveis rurais de Mato Grosso.",
+        "Analise **somente** o que está dentro do polígono da propriedade (contorno vermelho).",
         "",
         buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
         "",
         ...(hasAuas
             ? [
-                "## Contexto Vetorial AUAS x AVN",
-                `- AUAS total: ${auasContext?.auasAreaHa.toFixed(2)} ha`,
-                `- AVN total: ${auasContext?.avnAreaHa.toFixed(2)} ha`,
-                `- Interseção AUAS∩AVN: ${auasContext?.overlapAreaHa.toFixed(2)} ha (${auasContext?.overlapPctOfAuas.toFixed(2)}% da AUAS)`,
-                `- AUAS fora do AVN: ${auasContext?.auasOutsideAvnAreaHa.toFixed(2)} ha (${auasContext?.auasOutsideAvnPct.toFixed(2)}% da AUAS)`,
-                "- Use este contexto somente como apoio; a decisão final deve seguir o que está visível nas imagens.",
+                "## Contexto Vetorial AUAS × AVN",
+                `- AUAS declarada: **${auasContext?.auasAreaHa.toFixed(2)} ha**`,
+                `- AVN declarada: **${auasContext?.avnAreaHa.toFixed(2)} ha**`,
+                `- Sobreposição AUAS∩AVN: ${auasContext?.overlapAreaHa.toFixed(2)} ha (${auasContext?.overlapPctOfAuas.toFixed(1)}% da AUAS, ${auasContext?.overlapPctOfAvn.toFixed(1)}% da AVN)`,
+                `- AUAS fora do AVN: ${auasContext?.auasOutsideAvnAreaHa.toFixed(2)} ha (${auasContext?.auasOutsideAvnPct.toFixed(1)}% da AUAS) — área de uso alternativo do solo não coincidente com vegetação nativa declarada`,
+                "- Use este contexto como referência quantitativa; a decisão final deve seguir a evidência visual das imagens.",
                 "",
             ]
             : []),
         "## Regras Técnicas Obrigatórias",
-        "- AC_FORA_SHAPE = SIM somente quando houver EVIDÊNCIA CLARA de uso antrópico dentro do imóvel e fora do polígono AC.",
-        "- Evidência clara: SPOT 2008 sozinho já confirma, ou ao menos 2 imagens Landsat concordando.",
-        "- AVN_FORA_SHAPE = IGNORAR sempre. Não reportar vegetação fora do shape AVN.",
-        "- AVN_DENTRO_SHAPE_ANTROPIZADO = SIM apenas quando houver área sem mata DENTRO do shape AVN.",
+        "",
+        "### Área Consolidada (AC — polígono roxo)",
+        "- AC_FORA_SHAPE = **SIM** somente quando houver EVIDÊNCIA VISUAL CLARA de uso antrópico (pastagem, agricultura, solo exposto, estrada, benfeitorias) em área do imóvel que NÃO está coberta pelo polígono AC.",
+        "- Critério de evidência clara: SPOT 2008 confirmando sozinho É suficiente (2.5m de resolução). Para Landsat, exige concordância de ao menos 2 cenas independentes.",
+        "- Padrão de textura antrópica: tonalidade uniforme sem gradiente de dossel, estrutura regular de lavoura ou pasto limpo, cicatrizes de fogo.",
+        "- Padrão de vegetação nativa: textura rugosa de copas, gradiente de cor verde-escuro, estrutura irregular de dossel (Floresta), ou manchas herbáceas intercaladas com arbustos (Cerrado).",
+        "- Se a área em questão apresentar textura ambígua (campo nativo, palhada, solo seco), classifique como INCONCLUSIVO.",
+        "",
+        "### Vegetação Nativa (AVN — polígono amarelo)",
+        "- AVN_FORA_SHAPE = **IGNORAR** sempre. Não reportar vegetação fora do shape AVN.",
+        "- AVN_DENTRO_SHAPE_ANTROPIZADO = **SIM** apenas quando houver área CLARAMENTE antropizada DENTRO do polígono AVN.",
+        "- Avalie integridade do dossel, continuidade da cobertura e sinais de fragmentação.",
+        "- Atenção especial em bordas: áreas de borda podem apresentar transição gradual — só classifique como antropizado se a textura antrópica for dominante no trecho.",
         ...(hasAuas
             ? [
-                "- AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM quando houver evidencia de vegetacao nativa fora do AVN, mas dentro do shape AUAS.",
-                "- Se AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM, manter AVN_FORA_SHAPE como IGNORAR e sinalizar pendencia para validar no fluxo AUAS.",
+                "",
+                "### AUAS (polígono branco)",
+                "- AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = **SIM** quando houver evidência visual de vegetação nativa fora do AVN mas dentro do shape AUAS.",
+                "- Se AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM, manter AVN_FORA_SHAPE como IGNORAR e sinalizar necessidade de validação no fluxo AUAS.",
+                `- Área de AUAS fora do AVN: ${auasContext?.auasOutsideAvnAreaHa.toFixed(2)} ha — verifique se há vegetação nativa remanescente nessa porção.`,
             ]
             : [
-                "- Se AUAS não estiver disponível no recorte, use AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = INCONCLUSIVO.",
+                "- Como AUAS não está disponível no recorte, use AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = INCONCLUSIVO.",
             ]),
-        "- Se nuvem, sombra, baixa resolução ou ausência de imagem impedir certeza, use INCONCLUSIVO.",
+        "",
+        "### Critérios de Confiança",
+        "- **ALTA**: evidência direta e inequívoca em ao menos 2 imagens de qualidade, sem nuvem ou sombra relevante.",
+        "- **MEDIA**: evidência presente mas com limitação de resolução, sazonalidade (palhada, campo seco), ou discordância entre cenas.",
+        "- **BAIXA**: cobertura de nuvens >30%, resolução insuficiente para distinção, ou única fonte disponível com imagem degradada.",
+        "- Se nuvem, sombra, queimada recente ou ausência de imagem impedir certeza, use INCONCLUSIVO.",
         "",
         "## Imagens Disponíveis",
         satDescriptions,
         "",
         "## Formato Obrigatório da Resposta",
-        "Use EXATAMENTE estes títulos:",
+        "Use EXATAMENTE estes títulos de seção (não invente outros):",
+        "",
         "## Veredito Objetivo",
         "## Vereditos por Satélite",
         "## Validação de Coerência AC/AVN",
@@ -3659,26 +3688,25 @@ function buildAnalysisPrompt(
         "## Conclusão Técnica",
         "## Recomendação Operacional",
         "",
-        "No bloco 'Veredito Objetivo', incluir obrigatoriamente:",
+        "**Veredito Objetivo** — incluir obrigatoriamente:",
         "- AC_FORA_SHAPE = SIM | NAO | INCONCLUSIVO",
         "- AVN_FORA_SHAPE = IGNORAR",
         "- AVN_DENTRO_SHAPE_ANTROPIZADO = SIM | NAO | INCONCLUSIVO",
         "- AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM | NAO | INCONCLUSIVO",
         "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA",
         "",
-        "No bloco 'Vereditos por Satélite', incluir uma linha por satélite no formato EXATO:",
-        "- <SATELITE> | AC_FORA_SHAPE=SIM|NAO|INCONCLUSIVO | AVN_DENTRO_SHAPE_ANTROPIZADO=SIM|NAO|INCONCLUSIVO | CONFIANCA=ALTA|MEDIA|BAIXA|INCONCLUSIVO",
+        "**Vereditos por Satélite** — uma linha por satélite no formato EXATO:",
+        "- <NOME_SATELITE> (AAAA) | AC_FORA_SHAPE=SIM|NAO|INCONCLUSIVO | AVN_DENTRO_SHAPE_ANTROPIZADO=SIM|NAO|INCONCLUSIVO | CONFIANCA=ALTA|MEDIA|BAIXA|INCONCLUSIVO",
         "",
-        "No bloco 'Validação de Coerência AC/AVN':",
-        "- Indicar se o veredito global está coerente com os vereditos por satélite.",
-        "- Se houver conflito, declarar explicitamente e recomendar veredito global INCONCLUSIVO para o item conflitante.",
+        "**Validação de Coerência AC/AVN** — indicar se o veredito global é coerente com os vereditos individuais. Se houver conflito, declarar explicitamente e usar INCONCLUSIVO no item conflitante.",
         "",
-        "Regra de comunicacao para o texto:",
-        "- Escreva em linguagem clara, direta e sem jargao desnecessario.",
-        "- Se AC_FORA_SHAPE = SIM e/ou AVN_DENTRO_SHAPE_ANTROPIZADO = SIM, comece a conclusao com alerta objetivo.",
-        "- Se AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM, inclua literalmente a mensagem: 'Area de AVN parcialmente nao inserida no shape de AVN, porem inserida no shape de AUAS. Para confirmar se essa vetorizacao esta correta, execute a analise de AUAS.'",
-        "- Evite recomendacoes genericas que contradigam o veredito.",
-        "- Informe acao pratica imediata (o que revisar no shape e onde).",
+        "**Evidências por Imagem** — descrever os achados por satélite com localização geográfica aproximada (ex.: 'porção nordeste', 'borda sul'). Citar textura, tonalidade e padrão observado.",
+        "",
+        "**Comunicação da conclusão:**",
+        "- Linguagem clara, direta e sem jargão desnecessário.",
+        "- Se AC_FORA_SHAPE = SIM ou AVN_DENTRO_SHAPE_ANTROPIZADO = SIM, inicie a conclusão com alerta objetivo e indique localização aproximada.",
+        "- Se AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM, inclua: 'Área de AVN parcialmente não inserida no shape AVN, porém inserida no shape AUAS. Execute a análise de AUAS para confirmar a vetorização.'",
+        "- Recomendações práticas: especifique o que revisar no shape e em qual região da propriedade.",
         "",
         "Não use tabela. Não inclua cadeia de raciocínio interna nem bloco <think>.",
     ].join("\n");
@@ -4468,54 +4496,54 @@ function buildAuasSingleSatPrompt(
     const baselineHint =
         year > 2008
             ? (baselineReferenceLabel
-                ? `Use a imagem de referencia de 2008 (${baselineReferenceLabel}) para comparar diretamente com ${sat.label}.`
-                : "Use 2008 como referencia temporal para comparar diretamente com a cena do ano avaliado.")
+                ? `Compare diretamente com a imagem de referência de 2008 (${baselineReferenceLabel}) para detectar mudanças de cobertura após o marco temporal.`
+                : "Compare com 2008 como referência de linha base para detectar supressão após o marco temporal.")
             : "";
     return [
-        "Você é analista técnica de AUAS para validação de CAR.",
+        "Você é analista técnica de AUAS para validação de CAR em imóvel rural de Mato Grosso.",
         hasAuasLayer
-            ? `Avalie somente a área branca (AUAS) na imagem ${sat.label}.`
-            : `Não há shape AUAS vetorizado no ZIP. Avalie a área da propriedade na imagem ${sat.label}, buscando indícios de supressão pós-2008 que caracterizem AUAS não vetorizada.`,
+            ? `Avalie SOMENTE a área delimitada pelo polígono AUAS (contorno branco) na imagem ${sat.label}.`
+            : `Não há shape AUAS vetorizado no ZIP. Avalie toda a propriedade buscando supressão pós-2008 que caracterize AUAS não vetorizada.`,
         ...(baselineHint ? [baselineHint] : []),
         "",
-        `Metadados do satélite: sensor=${meta.sensor}; resolução=${meta.spatialResolution}; revisita=${meta.revisitDays} dias.`,
-        `Limitação operacional: ${meta.bestUseCase}.`,
+        `**Metadados:** sensor=${meta.sensor}; resolução=${meta.spatialResolution}; revisita=${meta.revisitDays} dias; bandas=${meta.spectralBands}.`,
+        `**Limitação operacional:** ${meta.bestUseCase}`,
         "",
         ...(cloudWarning
             ? [
-                `⚠ Cena com possível nebulosidade/oclusão (${Math.round(cloudWarning.cloudScore * 100)}%).`,
-                "Se isso afetar leitura de cobertura, classifique como INCONCLUSIVO no trecho impactado.",
+                `⚠️ Nebulosidade/oclusão detectada (${Math.round(cloudWarning.cloudScore * 100)}%). Se impactar área analisada, classifique o trecho como INCONCLUSIVO — não como uso antrópico.`,
                 "",
             ]
             : []),
         buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
         "",
-        `Referência legal: marco temporal em 22/07/2008. Esta cena é ${isPreMarco ? "pré-marco ou marco" : "pós-marco"}.`,
+        `**Referência legal:** marco temporal em 22/07/2008. Esta cena é ${isPreMarco ? "pré-marco ou marco (≤ 2008)" : "pós-marco (> 2008)"}.`,
         hasAuasLayer
-            ? (auasSummary ? `AUAS declarada: ${auasSummary.areaHa?.toFixed(2) ?? "0"} ha.` : "AUAS declarada sem quantitativo disponível.")
-            : "AUAS vetorizada: AUSENTE neste ZIP. Use 2008 como referência de cobertura e verifique conversão nos anos posteriores.",
-        ...(hasAuasLayer
-            ? [
-                "Considere como sinal principal somente mudanças DENTRO do shape AUAS.",
-                "Mudanças fora do shape AUAS não alteram o veredito da AUAS.",
-                "Evite falso positivo por solo exposto sazonal: confirme persistência temporal da mudança.",
-            ]
-            : [
-                "Sem shape AUAS, use a série temporal da propriedade para inferir possível AUAS não vetorizada.",
-            ]),
+            ? (auasSummary ? `**AUAS declarada:** ${auasSummary.areaHa?.toFixed(2) ?? "0"} ha.` : "**AUAS declarada:** sem quantitativo disponível.")
+            : "**AUAS vetorizada:** AUSENTE neste ZIP. Use 2008 como referência e identifique supressão nos anos subsequentes.",
         "",
-        "Responda em até 180 palavras, sem tabela, sem emoji e sem bloco <think>.",
+        "**Critérios de análise:**",
+        hasAuasLayer
+            ? "- Avalie somente mudanças DENTRO do shape AUAS. Mudanças fora do shape não alteram o veredito da AUAS."
+            : "- Sem shape AUAS, mapeie toda a área da propriedade em busca de supressão.",
+        "- Solo exposto sazonal (palhada, pastagem seca) ≠ desmatamento: confirme persistência temporal antes de classificar.",
+        "- Padrão de vegetação nativa: dossel rugoso/contínuo (Floresta) ou mosaico arbustivo-herbáceo (Cerrado). Tonalidade verde-escuro irregular.",
+        "- Padrão antrópico: tonalidade uniforme (pastagem), linhas regulares (agricultura), tons claros (solo exposto).",
+        "- Em áreas com Cerrado, confirme que o padrão não é campo nativo antes de classificar como suprimido.",
+        "",
+        "**Resposta em até 300 palavras, sem tabela, sem emoji e sem bloco <think>.**",
         "Estrutura obrigatória:",
-        "## Ano Avaliado",
+        "## Cena Avaliada",
         hasAuasLayer ? "## Cobertura Dentro da AUAS" : "## Cobertura na Propriedade",
-        "## Indícios de Supressão",
+        "## Indicadores de Supressão",
+        "## Comparação com Marco Temporal (2008)",
         "## Veredito do Ano",
         "",
-        "No veredito, usar apenas um rótulo:",
-        "- CONSOLIDADO",
-        "- VEGETACAO_NATIVA_PRESENTE",
-        "- DESMATAMENTO_RECENTE",
-        "- INCONCLUSIVO",
+        "No veredito, usar apenas um rótulo com justificativa de 1-2 frases:",
+        "- CONSOLIDADO — supressão claramente anterior a 22/07/2008",
+        "- VEGETACAO_NATIVA_PRESENTE — vegetação nativa dominante, sem evidência de supressão",
+        "- DESMATAMENTO_RECENTE — supressão após 22/07/2008 com evidência visual confirmada",
+        "- INCONCLUSIVO — qualidade da imagem, resolução ou sazonalidade impede conclusão segura",
     ].join("\n");
 }
 
@@ -4665,7 +4693,7 @@ function extractFirstDeforestationYearFromText(text: string): number | null {
 }
 
 /**
- * Build the final synthesis prompt for AUAS analysis â€” produces a
+ * Build the final synthesis prompt for AUAS analysis — produces a
  * professional environmental forensics report combining per-satellite
  * observations with previous AC/AVN analysis.
  */
@@ -4684,103 +4712,114 @@ function buildAuasFinalSynthesisPrompt(
     const years = perSatelliteAnalyses.map((a) => a.year).sort();
     const preMarco = years.filter((y) => y <= 2008);
     const postMarco = years.filter((y) => y > 2008);
+    const hasAuasLayer = options?.hasAuasLayer !== false;
 
     const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
+    const avnSummary = layerSummaries.find((l) => l.name === "AVN");
+    const acSummary = layerSummaries.find((l) => l.name === "AREA_CONSOLIDADA");
+
+    // Per-satellite analyses with year ordering
     const analysesBlock = perSatelliteAnalyses
-        .map((a) => `- ${a.satelliteLabel} (${a.year}): ${toSynthesisExcerpt(a.analysis, 600)}`)
-        .join("\n");
+        .sort((a, b) => a.year - b.year)
+        .map((a) => `### ${a.satelliteLabel} (${a.year})\n${toSynthesisExcerpt(a.analysis, 700)}`)
+        .join("\n\n");
 
     const parts: string[] = [
-        "Produza um laudo AUAS curto, técnico e claro.",
-        "Não usar tabela. Não usar emoji. Não incluir bloco <think>.",
-        "Tamanho obrigatório: entre 350 e 550 palavras.",
+        "Você é a **GeoForest IA**, responsável por produzir um laudo AUAS técnico e juridicamente preciso.",
+        "Sintetize as análises por satélite em um relatório coerente, com foco na progressão temporal da cobertura.",
+        "Não usar tabela. Não usar emoji. Não incluir bloco <think>. Tamanho: entre 400 e 600 palavras.",
         "",
         buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
         "",
-        auasSummary ? `AUAS declarada: ${auasSummary.areaHa?.toFixed(2) ?? "0"} ha.` : "AUAS declarada sem quantitativo disponível.",
-        `Série temporal analisada: ${years[0]} a ${years[years.length - 1]}.`,
-        `Anos pré-marco (<=2008): ${preMarco.length ? preMarco.join(", ") : "nenhum"}.`,
-        `Anos pós-marco (>2008): ${postMarco.length ? postMarco.join(", ") : "nenhum"}.`,
-        "",
-        "Resumo das análises por ano:",
-        analysesBlock,
+        "## Dados da AUAS",
+        hasAuasLayer
+            ? (auasSummary ? `- AUAS vetorizada: **${auasSummary.areaHa?.toFixed(2) ?? "0"} ha**` : "- AUAS vetorizada: presente (sem quantitativo)")
+            : "- AUAS vetorizada: **AUSENTE** — análise inferencial pela série temporal",
+        avnSummary ? `- AVN declarada: ${avnSummary.areaHa?.toFixed(2) ?? "0"} ha` : "",
+        acSummary ? `- AC declarada: ${acSummary.areaHa?.toFixed(2) ?? "0"} ha` : "",
+        `- Série temporal: ${years.length} satélites (${years[0]}–${years[years.length - 1]})`,
+        `- Anos pré-marco (≤2008): ${preMarco.length ? preMarco.join(", ") : "nenhum"}`,
+        `- Anos pós-marco (>2008): ${postMarco.length ? postMarco.join(", ") : "nenhum"}`,
         "",
     ];
 
-    if (previousAcAvnAnalysis) {
-        parts.push(
-            "Referência cruzada AC/AVN (resumo):",
-            toSynthesisExcerpt(previousAcAvnAnalysis, 2200),
-            "",
-        );
-    }
-    if (options?.acAvnMeta) {
-        parts.push(
-            "Referência estruturada AC/AVN (json simplificado):",
-            clampTextMiddle(JSON.stringify(options.acAvnMeta), 1200),
-            "- Use esse resultado AC/AVN para aumentar a precisão da validação AUAS.",
-            "- Se AC/AVN indicar AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS=SIM, valide explicitamente se o shape AUAS está coerente com a série temporal.",
-            "",
-        );
-    }
     if (options?.crossCheck) {
         const cc = options.crossCheck;
         parts.push(
-            "Cruzamento geométrico AUAS x AVN:",
-            `- AUAS total: ${cc.auasAreaHa.toFixed(2)} ha`,
-            `- AVN total: ${cc.avnAreaHa.toFixed(2)} ha`,
-            `- Interseção AUAS∩AVN: ${cc.overlapAreaHa.toFixed(2)} ha (${cc.overlapPctOfAuas.toFixed(2)}% da AUAS)`,
-            `- Sobreposição relevante: ${cc.hasAuasOverlapAvn ? "SIM" : "NAO"}`,
-            "- Use esse cruzamento para verificar se a área de AUAS tinha vegetação em 2008 e se a supressão ocorreu depois.",
+            "## Cruzamento Geométrico AUAS × AVN",
+            `- AUAS: ${cc.auasAreaHa.toFixed(2)} ha | AVN: ${cc.avnAreaHa.toFixed(2)} ha`,
+            `- Sobreposição AUAS∩AVN: ${cc.overlapAreaHa.toFixed(2)} ha (${cc.overlapPctOfAuas.toFixed(1)}% da AUAS, ${cc.overlapPctOfAvn.toFixed(1)}% da AVN)`,
+            `- AUAS fora do AVN: ${(cc.auasAreaHa - cc.overlapAreaHa).toFixed(2)} ha — zona de uso alternativo sem vegetação nativa declarada`,
+            `- Sobreposição relevante (>5% da AUAS): ${cc.hasAuasOverlapAvn ? "SIM — verificar se há vegetação nativa persistente nessa porção" : "NAO"}`,
+            "- Interprete: AUAS∩AVN indica porção da AUAS que está sobre vegetação declarada; AUAS fora do AVN é a área efetivamente de uso alternativo.",
             "",
         );
     }
-    if (options?.hasAuasLayer !== false) {
-        parts.push(
-            "AUAS vetorizada no ZIP: PRESENTE.",
-            "- Validar aderência entre limite do shape AUAS e padrão temporal observado nas imagens.",
-            "- Distinguir dois cenários: (1) passivo ambiental corretamente mapeado em AUAS; (2) divergência real de vetorização da AUAS.",
-            "- Só classificar inconsistência de vetorização quando houver incompatibilidade espacial/temporal clara dentro do shape AUAS.",
-            "",
-        );
-    }
-    if (options?.hasAuasLayer === false) {
-        parts.push(
-            "AUAS vetorizada no ZIP: AUSENTE.",
-            "- Avalie a série temporal na propriedade para identificar se há supressão pós-2008 que indique AUAS não vetorizada.",
-            "- Se houver indício consistente de supressão após 2008, declarar explicitamente: 'há AUAS não vetorizada'.",
-            "",
-        );
-    }
+
     if (options?.cloudWarnings && options.cloudWarnings.length > 0) {
         parts.push(
-            "Avisos de nebulosidade/oclusão por satélite:",
-            ...options.cloudWarnings.map((item) => `- ${item.satellite}: ${Math.round(item.cloudScore * 100)}%`),
+            "## Limitações por Nebulosidade",
+            ...options.cloudWarnings.map((item) => `- ${item.satellite}: ${Math.round(item.cloudScore * 100)}% de cobertura de nuvens — trechos impactados classificados como INCONCLUSIVO`),
             "",
         );
     }
 
     parts.push(
-        "Formato obrigatório de saída:",
+        "## Análises por Satélite",
+        analysesBlock,
+        "",
+    );
+
+    if (previousAcAvnAnalysis) {
+        parts.push(
+            "## Referência Cruzada AC/AVN",
+            toSynthesisExcerpt(previousAcAvnAnalysis, 2000),
+            "",
+        );
+    }
+
+    if (options?.acAvnMeta) {
+        parts.push(
+            "## Metadados AC/AVN (Estruturado)",
+            clampTextMiddle(JSON.stringify(options.acAvnMeta), 1000),
+            "- Se AC/AVN indica AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS=SIM: validar explicitamente se o shape AUAS delimita corretamente essa vegetação.",
+            "- Se AC_FORA_SHAPE=SIM: verificar sobreposição com shape AUAS — pode indicar erro de delimitação ou passivo dentro da AUAS.",
+            "",
+        );
+    }
+
+    parts.push(
+        hasAuasLayer
+            ? "AUAS vetorizada PRESENTE — valide se o limite do shape AUAS é consistente com a progressão temporal observada."
+            : "AUAS vetorizada AUSENTE — se houver evidência de supressão pós-2008, declarar AUAS não vetorizada.",
+        "",
+        "## Critérios de Classificação do Veredito Final",
+        "- **AUAS_VALIDA**: o shape AUAS mapeia corretamente área com uso alternativo do solo consolidado até 22/07/2008 OU passivo ambiental pós-2008 adequadamente registrado como tal.",
+        "- **AUAS_INVALIDA**: há inconsistência técnica grave na delimitação ou cronologia da AUAS (ex.: AUAS em área com vegetação nativa contínua sem nenhuma supressão temporal; AUAS em área claramente consolidada antes de 2008 sem evidência de uso alternativo).",
+        "- **AUAS_PARCIAL**: parte da AUAS é válida e parte apresenta inconsistências; ou AUAS ausente com evidências parciais de supressão pós-marco.",
+        "",
+        "**Regra para supressão pós-2008 dentro da AUAS vetorizada:**",
+        "- NÃO invalida automaticamente a AUAS. Trata-se de passivo ambiental mapeado — a AUAS registra uso alternativo do solo (desmate pós-marco) que requer regularização.",
+        "- Use AUAS_INVALIDA somente quando a delimitação espacial ou temporal da AUAS for tecnicamente incorreta (ex.: AUAS cobrindo vegetação nativa intacta desde 2008).",
+        "- Use AUAS_VALIDA quando o shape AUAS reflete fielmente a realidade temporal observada, mesmo que haja passivo.",
+        "",
+        "## Formato Obrigatório de Saída",
         "## Resumo Executivo",
-        "## Achados Objetivos por Ano",
+        "## Progressão Temporal da Cobertura",
+        "## Achados por Período",
         "## Não Conformidades Detectadas",
         "## Veredito Final AUAS",
-        "## Próximas Ações",
+        "## Próximas Ações Recomendadas",
         "",
-        "Regras do conteúdo:",
-        "- No veredito final, usar somente: AUAS_VALIDA, AUAS_INVALIDA ou AUAS_PARCIAL.",
-        "- No bloco 'Veredito Final AUAS', incluir as linhas:",
+        "No bloco 'Veredito Final AUAS', incluir obrigatoriamente:",
         "- STATUS_FINAL = AUAS_VALIDA | AUAS_INVALIDA | AUAS_PARCIAL",
         "- ANO_PROVAVEL_INICIO_DESMATE = YYYY | INCONCLUSIVO",
-        "- Se houver supressão confirmada após 22/07/2008 dentro da AUAS, tratar como PASSIVO AMBIENTAL identificado na AUAS (e não como erro automático de vetorização).",
-        "- Nessa situação (supressão pós-2008 dentro da AUAS), evitar frases como 'invalida a declaração da AUAS'. Explicar que a AUAS está mapeando área de passivo e que exige regularização.",
-        "- Use AUAS_INVALIDA somente quando houver inconsistência técnica de delimitação/cronologia da própria AUAS (ex.: AUAS em área sem evidência temporal compatível).",
-        "- Se AUAS vetorizada estiver ausente e houver evidência pós-2008, usar STATUS_FINAL = AUAS_PARCIAL e afirmar que há AUAS não vetorizada.",
-        "- Se AUAS vetorizada estiver ausente e não houver evidência pós-2008, informar explicitamente ausência de indício relevante de AUAS.",
-        "- Se houver incerteza relevante por imagem/ano ausente ou qualidade da cena, declarar explicitamente INCONCLUSIVO no trecho afetado.",
-        "- Em 'Não Conformidades Detectadas', citar intervalo de anos e localização aproximada quando houver supressão irregular.",
-        "- Em 'Próximas Ações', listar no máximo 4 ações diretas e priorizadas.",
+        "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA",
+        "- Se há supressão confirmada pós-2008 dentro da AUAS, adicionar: PASSIVO_AMBIENTAL = IDENTIFICADO",
+        "",
+        "Em 'Não Conformidades': citar intervalo de anos, localização aproximada e área estimada quando identificada supressão irregular.",
+        "Em 'Progressão Temporal': descrever cobertura em 2008 (referência), mudanças em períodos intermediários e situação atual.",
+        "Em 'Próximas Ações': máximo 4 ações, priorizadas e específicas para o caso.",
     );
 
     return parts.join("\n");
@@ -6385,11 +6424,18 @@ export function registerSimcarClipRoutes(app: Express) {
             }
 
             billingRequestId = createRequestId("simcar_auas");
+            // AUAS analysis: uses up to ~16 satellite images (8 satellites × 2 views each),
+            // plus per-satellite prompts (~4k tokens each) and synthesis call (~8k output tokens)
+            const auasSatCount = AUAS_SATELLITE_KEYS.length;
+            const auasImagesPerSat = 2; // outline + context views
             billingReserved = await estimateReserveForModels({
                 models: simcarBillingModels,
-                estimatedInputTokens: 200_000,
-                estimatedOutputTokens: 12_000,
-                safetyMultiplier: 1.2,
+                estimatedInputTokens: 4_500 * auasSatCount,
+                estimatedOutputTokens: 800 * auasSatCount + 8_000, // per-sat (~800) + synthesis (~8000)
+                safetyMultiplier: 1.3,
+                imageCount: auasSatCount * auasImagesPerSat,
+                imageWidthPx: 1024,
+                imageHeightPx: 768,
             });
             await reserveCredits({
                 uid,
@@ -6544,12 +6590,21 @@ export function registerSimcarClipRoutes(app: Express) {
 
             if (aiAnalysis) {
                 const satelliteFactor = Math.max(1, layers.length + 1);
+                // More accurate reserve: account for 3 images/satellite at Gemini resolution (1024x768)
+                // plus prompt text tokens and output tokens
+                const imagesPerSat = 3;
+                const totalImages = layers.length * imagesPerSat;
+                const promptTextTokens = 4_500; // buildAnalysisPrompt generates ~4.5k tokens
+                const outputTokensPerCall = 6_000;
                 billingRequestId = createRequestId("simcar_analyze");
                 billingReserved = await estimateReserveForModels({
                     models: simcarBillingModels,
-                    estimatedInputTokens: 80_000 * satelliteFactor,
-                    estimatedOutputTokens: 6_000 * satelliteFactor,
-                    safetyMultiplier: 1.2,
+                    estimatedInputTokens: promptTextTokens * satelliteFactor,
+                    estimatedOutputTokens: outputTokensPerCall * satelliteFactor,
+                    safetyMultiplier: 1.3,
+                    imageCount: totalImages,
+                    imageWidthPx: 1024,
+                    imageHeightPx: 768,
                 });
                 await reserveCredits({
                     uid,
