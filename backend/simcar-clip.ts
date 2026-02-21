@@ -1,12 +1,12 @@
 ﻿/**
- * SIMCAR Clip â€” Automated clipping of SEMA-MT SIMCAR WFS layers
+ * SIMCAR Clip — Automated clipping of SEMA-MT SIMCAR WFS layers
  * to the geometry of a user-provided property polygon.
  *
  * Registers endpoints:
- *   POST /api/simcar/clip          â€” SSE stream (progress + result)
- *   GET  /api/simcar/clip/download/:jobId â€” Download final ZIP
- *   POST /api/simcar/clip/analyze   â€” SSE stream (AI analysis of clips)
- *   GET  /api/simcar/gemini/config  â€” Runtime Gemini config (+ optional probe)
+ *   POST /api/simcar/clip          — SSE stream (progress + result)
+ *   GET  /api/simcar/clip/download/:jobId — Download final ZIP
+ *   POST /api/simcar/clip/analyze   — SSE stream (AI analysis of clips)
+ *   GET  /api/simcar/gemini/config  — Runtime Gemini config (+ optional probe)
  */
 import type { Express, Request, Response } from "express";
 import path from "path";
@@ -80,7 +80,7 @@ import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-/* â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Constants ──────────────────────────────────────────────── */
 
 const MODELO_ZIP_PATH = path.resolve(__dirname, "..", "Arquivo Modelo.zip");
 const WFS_MAX_FEATURES = 50000;
@@ -421,7 +421,7 @@ const TEMPLATE_LAYERS = [
 /** Layers that receive the property polygon directly (no WFS query). */
 const DIRECT_COPY_LAYERS = new Set(["AIR", "ATP"]);
 
-/* â”€â”€â”€ Job Cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Job Cache ──────────────────────────────────────────────── */
 
 type CachedJob = {
     buffer?: Buffer;
@@ -457,7 +457,7 @@ function pruneJobCache() {
 
 setInterval(pruneJobCache, CACHE_CLEANUP_INTERVAL).unref();
 
-/* â”€â”€â”€ SSE Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── SSE Helpers ────────────────────────────────────────────── */
 
 function sendSSE(res: Response, data: Record<string, unknown>) {
     if (res.writableEnded) return;
@@ -489,7 +489,7 @@ function throwIfClientDisconnected(res: Response): void {
     }
 }
 
-/* â”€â”€â”€ Shapefile Parsing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Shapefile Parsing ──────────────────────────────────────── */
 
 /**
  * Read ALL polygon records from a .shp buffer.
@@ -543,7 +543,7 @@ function readFullShapefile(shpBuffer: Buffer): number[][][][] {
 }
 
 /**
- * Parse user's shapefile ZIP â†’ single unified polygon in EPSG:4674.
+ * Parse user's shapefile ZIP → single unified polygon in EPSG:4674.
  */
 function parseUserShapefile(zipBuffer: Buffer): {
     polygon: Feature<Polygon | MultiPolygon>;
@@ -554,10 +554,10 @@ function parseUserShapefile(zipBuffer: Buffer): {
     const shpEntry = entries.find((e) => e.name.toLowerCase().endsWith(".shp"));
     const prjEntry = entries.find((e) => e.name.toLowerCase().endsWith(".prj"));
 
-    if (!shpEntry) throw new Error("ZIP nÃ£o contÃ©m arquivo .shp vÃ¡lido.");
+    if (!shpEntry) throw new Error("ZIP não contém arquivo .shp válido.");
 
     const allPolygons = readFullShapefile(shpEntry.data);
-    if (!allPolygons.length) throw new Error("Shapefile nÃ£o contÃ©m polÃ­gonos vÃ¡lidos.");
+    if (!allPolygons.length) throw new Error("Shapefile não contém polígonos válidos.");
 
     // Detect CRS from .prj and reproject if needed
     let needsReproject = false;
@@ -573,7 +573,7 @@ function parseUserShapefile(zipBuffer: Buffer): {
             if (upper.includes("SIRGAS") || upper.includes("4674")) {
                 needsReproject = false;
             } else if (upper.includes("WGS") && upper.includes("84")) {
-                // WGS84 â‰ˆ EPSG:4674 for practical purposes
+                // WGS84 ≈ EPSG:4674 for practical purposes
                 needsReproject = false;
             }
         }
@@ -614,7 +614,7 @@ function parseUserShapefile(zipBuffer: Buffer): {
         }
     }
 
-    if (!features.length) throw new Error("Nenhum polÃ­gono vÃ¡lido encontrado no Shapefile.");
+    if (!features.length) throw new Error("Nenhum polígono válido encontrado no Shapefile.");
 
     // Union all polygons into one
     let unified: Feature<Polygon | MultiPolygon> = features[0];
@@ -637,14 +637,14 @@ function parseUserShapefile(zipBuffer: Buffer): {
     }
 
     const geometry = normalizePolygonGeometry(unified.geometry);
-    if (!geometry) throw new Error("Geometria do imÃ³vel nÃ£o pÃ´de ser validada.");
+    if (!geometry) throw new Error("Geometria do imóvel não pôde ser validada.");
 
     const areaHa = Number((turfArea(unified) / 10000).toFixed(4));
 
     return { polygon: unified, geometry, areaHa };
 }
 
-/* â”€â”€â”€ Layer Name Mapping (Template â†’ WFS) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Layer Name Mapping (Template → WFS) ────────────────────── */
 
 function discoverLayerMapping(
     templateLayers: readonly string[],
@@ -694,7 +694,7 @@ function discoverLayerMapping(
             }
         }
 
-        // Fallback: fuzzy â€” find a WFS layer whose suffix matches SIMCAR_D_<name> or just <name>
+        // Fallback: fuzzy — find a WFS layer whose suffix matches SIMCAR_D_<name> or just <name>
         if (!matched) {
             for (const [wfsLow, wfsOriginal] of wfsLower) {
                 const wfsSuffix = (wfsLow.split(":")[1] || wfsLow).toLowerCase();
@@ -712,7 +712,7 @@ function discoverLayerMapping(
             }
         }
 
-        // Last resort: partial match â€” WFS layer ending with _<TEMPLATE_NAME>
+        // Last resort: partial match — WFS layer ending with _<TEMPLATE_NAME>
         if (!matched) {
             for (const [wfsLow, wfsOriginal] of wfsLower) {
                 const wfsSuffix = (wfsLow.split(":")[1] || wfsLow).toLowerCase();
@@ -732,7 +732,7 @@ function discoverLayerMapping(
     return mapping;
 }
 
-/* â”€â”€â”€ WFS Feature Fetching with Attributes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── WFS Feature Fetching with Attributes ───────────────────── */
 
 type WfsFeature = {
     geometry: Geometry | null;
@@ -811,7 +811,7 @@ async function fetchWfsClipFeatures(
     return allFeatures;
 }
 
-/* â”€â”€â”€ Feature Clipping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Feature Clipping ───────────────────────────────────────── */
 
 function clipFeaturesToPolygon(
     features: WfsFeature[],
@@ -840,7 +840,7 @@ function clipFeaturesToPolygon(
     return clipped;
 }
 
-/* â”€â”€â”€ Template Schema Extraction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Template Schema Extraction ─────────────────────────────── */
 
 function readTemplateSchemas(
     modeloEntries: Array<{ name: string; data: Buffer }>,
@@ -863,7 +863,7 @@ function readTemplateSchemas(
     return schemas;
 }
 
-/* â”€â”€â”€ Attribute Mapping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Attribute Mapping ──────────────────────────────────────── */
 
 function mapAttributes(
     properties: Record<string, unknown>,
@@ -891,7 +891,7 @@ function mapAttributes(
     return mapped;
 }
 
-/* â”€â”€â”€ ZIP Output Builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── ZIP Output Builder ─────────────────────────────────────── */
 
 async function buildOutputZip(
     templateEntries: Array<{ name: string; data: Buffer }>,
@@ -967,7 +967,7 @@ async function buildOutputZip(
     });
 }
 
-/* â”€â”€â”€ XLSX Quantitative Report Builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── XLSX Quantitative Report Builder ───────────────────────── */
 
 async function buildQuantitativeXlsx(
     layerSummaries: LayerSummary[],
@@ -996,25 +996,25 @@ async function buildQuantitativeXlsx(
         right: thinBorder,
     };
 
-    // â”€â”€ Sheet 1: Resumo â”€â”€
+    // ── Sheet 1: Resumo ──
     const resumo = workbook.addWorksheet("Resumo");
 
     // Title row
     resumo.mergeCells("A1:B1");
     const titleCell = resumo.getCell("A1");
-    titleCell.value = "RelatÃ³rio Quantitativo â€” Recorte SIMCAR";
+    titleCell.value = "Relatório Quantitativo — Recorte SIMCAR";
     titleCell.font = { bold: true, size: 14, color: { argb: "FF065F46" } };
     titleCell.alignment = { horizontal: "center" };
 
     // Summary data
     const summaryData: [string, string | number][] = [
         ["Data do Processamento", new Date().toLocaleString("pt-BR", { timeZone: "America/Cuiaba" })],
-        ["NÂº IdentificaÃ§Ã£o AIR", airIdentificacao || "â€”"],
-        ["Ãrea do ImÃ³vel (ha)", Number(propertyAreaHa.toFixed(4))],
-        ["Sistema de ReferÃªncia", "EPSG:4674 (SIRGAS 2000)"],
+        ["Nº Identificação AIR", airIdentificacao || "—"],
+        ["Área do Imóvel (ha)", Number(propertyAreaHa.toFixed(4))],
+        ["Sistema de Referência", "EPSG:4674 (SIRGAS 2000)"],
         ["Total de Camadas", layerSummaries.length],
         ["Camadas com Dados", layerSummaries.filter((l) => l.features > 0).length],
-        ["Total de FeiÃ§Ãµes Recortadas", layerSummaries.reduce((s, l) => s + l.features, 0)],
+        ["Total de Feições Recortadas", layerSummaries.reduce((s, l) => s + l.features, 0)],
     ];
 
     summaryData.forEach(([label, value], idx) => {
@@ -1030,11 +1030,11 @@ async function buildQuantitativeXlsx(
     resumo.getColumn(1).width = 32;
     resumo.getColumn(2).width = 40;
 
-    // â”€â”€ Sheet 2: Camadas â”€â”€
+    // ── Sheet 2: Camadas ──
     const camadas = workbook.addWorksheet("Camadas");
 
     // Header row
-    const headers = ["Camada", "Origem", "FeiÃ§Ãµes", "Ãrea (ha)", "% do ImÃ³vel", "ObservaÃ§Ãµes"];
+    const headers = ["Camada", "Origem", "Feições", "Área (ha)", "% do Imóvel", "Observações"];
     const headerRow = camadas.getRow(1);
     headers.forEach((h, i) => {
         const cell = headerRow.getCell(i + 1);
@@ -1054,7 +1054,7 @@ async function buildQuantitativeXlsx(
             : 0;
 
         row.getCell(1).value = layer.name;
-        row.getCell(2).value = layer.source === "property" ? "ImÃ³vel" : "WFS";
+        row.getCell(2).value = layer.source === "property" ? "Imóvel" : "WFS";
         row.getCell(3).value = layer.features;
         row.getCell(4).value = layer.areaHa ?? 0;
         row.getCell(5).value = pct;
@@ -1081,10 +1081,10 @@ async function buildQuantitativeXlsx(
     // Auto-fit columns
     camadas.getColumn(1).width = 28; // Camada
     camadas.getColumn(2).width = 12; // Origem
-    camadas.getColumn(3).width = 10; // FeiÃ§Ãµes
-    camadas.getColumn(4).width = 14; // Ãrea (ha)
-    camadas.getColumn(5).width = 14; // % do ImÃ³vel
-    camadas.getColumn(6).width = 36; // ObservaÃ§Ãµes
+    camadas.getColumn(3).width = 10; // Feições
+    camadas.getColumn(4).width = 14; // Área (ha)
+    camadas.getColumn(5).width = 14; // % do Imóvel
+    camadas.getColumn(6).width = 36; // Observações
 
     // Auto-filter
     camadas.autoFilter = { from: "A1", to: `F${layerSummaries.length + 1}` };
@@ -1094,7 +1094,7 @@ async function buildQuantitativeXlsx(
     return Buffer.from(arrayBuffer);
 }
 
-/* â”€â”€â”€ Main Processing Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Main Processing Pipeline ───────────────────────────────── */
 
 type LayerSummary = {
     name: string;
@@ -1203,7 +1203,7 @@ async function processClip(
     try {
         userResult = parseUserShapefile(propertyZip);
     } catch (err: any) {
-        sendSSE(res, { type: "error", message: err.message || "Erro ao processar shapefile do imÃ³vel." });
+        sendSSE(res, { type: "error", message: err.message || "Erro ao processar shapefile do imóvel." });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
 
@@ -1216,7 +1216,7 @@ async function processClip(
         const modeloBuffer = fs.readFileSync(MODELO_ZIP_PATH);
         templateEntries = extractZipEntries(modeloBuffer);
     } catch (err: any) {
-        sendSSE(res, { type: "error", message: "Arquivo Modelo.zip nÃ£o encontrado no servidor." });
+        sendSSE(res, { type: "error", message: "Arquivo Modelo.zip não encontrado no servidor." });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
 
@@ -1230,7 +1230,7 @@ async function processClip(
         }
     }
 
-    // 4. WFS GetCapabilities â†’ discover layer mapping
+    // 4. WFS GetCapabilities → discover layer mapping
     let layerMapping = new Map<string, string>();
     try {
         const caps = await getCapabilitiesCached(false);
@@ -1239,7 +1239,7 @@ async function processClip(
         console.log(`[SIMCAR CLIP] Layer mapping: ${layerMapping.size} layers matched`);
     } catch (err: any) {
         console.error("[SIMCAR CLIP] WFS capabilities error:", err.message);
-        sendSSE(res, { type: "error", message: "ServiÃ§o WFS da SEMA-MT indisponÃ­vel." });
+        sendSSE(res, { type: "error", message: "Serviço WFS da SEMA-MT indisponível." });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
 
@@ -1306,7 +1306,7 @@ async function processClip(
                 name: layerName,
                 source: "wfs",
                 features: 0,
-                warning: "Camada nÃ£o encontrada no WFS",
+                warning: "Camada não encontrada no WFS",
             });
             continue;
         }
@@ -1534,7 +1534,7 @@ async function processClip(
     return { ok: true, cloudinaryStoredBytes };
 }
 
-/* â”€â”€â”€ AI Analysis Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── AI Analysis Pipeline ───────────────────────────────────── */
 
 const SEMA_WMS_BASE = process.env.SEMA_WMS_BASE_URL || "https://geo.sema.mt.gov.br/geoserver/ows";
 const SEMA_WMS_AUTHKEY = process.env.SEMA_WMS_AUTHKEY || "541085de-9a2e-454e-bdba-eb3d57a2f492";
@@ -1556,15 +1556,15 @@ function buildSatLayer(sensor: string, year: number, wmsPrefix: string, labelPre
 const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]; label: string; year: number }> = {
     // SPOT (high-res 2.5m)
     spot_2008: { wmsLayer: SPOT_LAYER, label: "SPOT 2008", year: 2008 },
-    // Landsat 5 (30m) â€” 1984-2011
+    // Landsat 5 (30m) — 1984-2011
     ...Object.fromEntries([1984, 1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011].map(
         (y) => [`landsat5_${y}`, buildSatLayer("LANDSAT5", y, "LANDSAT_5", "Landsat 5")]
     )),
-    // Landsat 8 (30m) â€” 2013-2018
+    // Landsat 8 (30m) — 2013-2018
     ...Object.fromEntries([2013, 2014, 2015, 2016, 2017, 2018].map(
         (y) => [`landsat8_${y}`, buildSatLayer("LANDSAT8", y, "LANDSAT_8", "Landsat 8")]
     )),
-    // Sentinel-2 (10m) â€” 2016-2024
+    // Sentinel-2 (10m) — 2016-2024
     ...Object.fromEntries([2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024].map(
         (y) => [`sentinel2_${y}`, buildSatLayer("SENTINEL2", y, "SENTINEL_2", "Sentinel-2")]
     )),
@@ -1884,7 +1884,7 @@ async function fetchWmsImageBuffer(
     if (!isPng && !isJpeg) {
         // Likely an XML/text error response with 200 status
         const preview = buf.toString("utf8", 0, Math.min(200, buf.length));
-        throw new Error(`WMS retornou formato invÃ¡lido (nÃ£o Ã© PNG/JPEG): ${preview.slice(0, 150)}`);
+        throw new Error(`WMS retornou formato inválido (não é PNG/JPEG): ${preview.slice(0, 150)}`);
     }
 
     return buf;
@@ -1899,7 +1899,7 @@ function geoToPixel(
     height: number,
 ): [number, number] {
     const x = ((lon - bbox[0]) / (bbox[2] - bbox[0])) * width;
-    // WMS 1.1.1 with EPSG:4326 uses lon,lat order in bbox â†’ y is inverted
+    // WMS 1.1.1 with EPSG:4326 uses lon,lat order in bbox → y is inverted
     const y = ((bbox[3] - lat) / (bbox[3] - bbox[1])) * height;
     return [x, y];
 }
@@ -1999,7 +1999,7 @@ async function compositeOverlay(
 
 /**
  * Compress image for AI vision analysis (base64 fallback path, used when Cloudinary is unavailable).
- * Downscales to max 800Ã—600 and encodes as JPEG at quality 65 with metadata stripped.
+ * Downscales to max 800×600 and encodes as JPEG at quality 65 with metadata stripped.
  * Keeps enough detail for vegetation/land-use classification while minimising token cost.
  */
 async function compressForVision(dataUrl: string): Promise<string> {
@@ -2017,7 +2017,7 @@ const CLOUDINARY_CLOUD = "da19dwpgk";
 
 function cloudinarySign(params: Record<string, string>): string {
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
-    if (!apiSecret) throw new Error("Cloudinary nÃ£o configurado.");
+    if (!apiSecret) throw new Error("Cloudinary não configurado.");
     const base = Object.keys(params).sort().map((k) => `${k}=${params[k]}`).join("&");
     return crypto.createHash("sha1").update(base + apiSecret).digest("hex");
 }
@@ -2027,7 +2027,7 @@ async function uploadToCloudinary(dataUrl: string, filename: string): Promise<st
     const apiKey = process.env.CLOUDINARY_API_KEY;
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
     const folder = process.env.CLOUDINARY_FOLDER;
-    if (!apiKey || !apiSecret) throw new Error("Cloudinary nÃ£o configurado.");
+    if (!apiKey || !apiSecret) throw new Error("Cloudinary não configurado.");
 
     const timestamp = Math.floor(Date.now() / 1000);
     const publicId = `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_");
@@ -2062,8 +2062,8 @@ function extractCloudinaryPublicId(url: string): string | null {
 
 /**
  * Returns a Cloudinary URL with on-the-fly transformations optimized for AI vision APIs.
- * Resizes to max 800Ã—600, converts to JPEG at quality 65, strips metadata.
- * This reduces image token consumption by ~70â€“80% vs. sending the full-res PNG,
+ * Resizes to max 800×600, converts to JPEG at quality 65, strips metadata.
+ * This reduces image token consumption by ~70–80% vs. sending the full-res PNG,
  * while preserving enough detail for land-use / vegetation classification.
  * The original full-resolution URL is kept intact for user display.
  */
@@ -2076,7 +2076,7 @@ function getCloudinaryAiUrl(url: string): string {
 
 /**
  * Returns a Cloudinary URL optimized for Gemini vision analysis.
- * Uses a higher resolution (max 1024Ã—768) and better JPEG quality (82) than the
+ * Uses a higher resolution (max 1024×768) and better JPEG quality (82) than the
  * Groq path, taking advantage of Gemini's larger context window and superior image
  * understanding to produce more precise land-use / vegetation analyses.
  */
@@ -2121,7 +2121,7 @@ async function uploadRawBufferToCloudinary(
     const apiKey = process.env.CLOUDINARY_API_KEY;
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
     const folder = process.env.CLOUDINARY_FOLDER;
-    if (!apiKey || !apiSecret) throw new Error("Cloudinary nÃ£o configurado.");
+    if (!apiKey || !apiSecret) throw new Error("Cloudinary não configurado.");
 
     const timestamp = Math.floor(Date.now() / 1000);
     const publicId = `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_");
@@ -2153,9 +2153,9 @@ async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promi
 }
 
 type AiImage = {
-    /** URL for Groq vision (compressed 800Ã—600 JPEG). */
+    /** URL for Groq vision (compressed 800×600 JPEG). */
     url?: string;
-    /** Higher-quality URL for Gemini vision (1024Ã—768 JPEG). Falls back to `url` if absent. */
+    /** Higher-quality URL for Gemini vision (1024×768 JPEG). Falls back to `url` if absent. */
     geminiUrl?: string;
     /** Base64 data URL used when Cloudinary is unavailable. */
     dataUrl?: string;
@@ -2189,7 +2189,7 @@ function buildVisionContentParts(images: AiImage[], prompt: string): any[] {
 function reduceImageSet(
     images: AiImage[],
 ): AiImage[] {
-    return images.filter((img) => img.caption.includes("VisÃ£o Geral"));
+    return images.filter((img) => img.caption.includes("Visão Geral"));
 }
 
 /** Split images by provider weight, giving Gemini priority (all images by default). */
@@ -2233,7 +2233,7 @@ function splitImagesByProviderWeight(images: AiImage[]): { groqImages: AiImage[]
 function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!match) {
-        throw new Error("Formato de data URL invÃ¡lido para Gemini.");
+        throw new Error("Formato de data URL inválido para Gemini.");
     }
     return { mimeType: match[1], base64: match[2] };
 }
@@ -2251,10 +2251,10 @@ function isTruncationFinishReason(reason: unknown): boolean {
 const CONTINUATION_INSTRUCTION =
     "Sua resposta anterior foi cortada. Continue EXATAMENTE de onde parou.\n" +
     "Regras:\n" +
-    "- Nao repita o que ja foi escrito.\n" +
-    "- Mantenha o mesmo idioma, formato e nivel tecnico.\n" +
-    "- Entregue somente a continuacao a partir da proxima frase.\n" +
-    "- Nao invente dados novos fora do contexto ja fornecido.";
+    "- Não repita o que já foi escrito.\n" +
+    "- Mantenha o mesmo idioma, formato e nível técnico.\n" +
+    "- Entregue somente a continuação a partir da próxima frase.\n" +
+    "- Não invente dados novos fora do contexto já fornecido.";
 
 async function continueTruncatedAnalysisText(
     baseText: string,
@@ -2275,8 +2275,8 @@ async function continueTruncatedAnalysisText(
             {
                 role: "user" as const,
                 content:
-                    "VocÃª estÃ¡ finalizando um laudo tÃ©cnico de recorte ambiental.\n" +
-                    "Mantenha o mesmo estilo tÃ©cnico da resposta original.\n\n" +
+                    "Você está finalizando um laudo técnico de recorte ambiental.\n" +
+                    "Mantenha o mesmo estilo técnico da resposta original.\n\n" +
                     `Prompt original:\n${prompt}`,
             },
             { role: "assistant" as const, content: trimForContinuation(currentText) || currentText },
@@ -2315,11 +2315,11 @@ async function callGeminiTextOnce(
     maxOutputTokens = 8192,
 ): Promise<{ content: string; finishReason: string }> {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY nÃ£o configurada.");
+    if (!apiKey) throw new Error("GEMINI_API_KEY não configurada.");
 
     const contents = toGeminiContents(messages);
     if (contents.length === 0) {
-        throw new Error("Sem conteÃºdo textual para sÃ­ntese Gemini.");
+        throw new Error("Sem conteúdo textual para síntese Gemini.");
     }
 
     const controller = new AbortController();
@@ -2393,7 +2393,7 @@ async function callGeminiTextSynthesis(
 ): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-        throw new Error("GEMINI_API_KEY nÃ£o configurada para sÃ­ntese.");
+        throw new Error("GEMINI_API_KEY não configurada para síntese.");
     }
 
     const MAX_CONTINUATIONS = 2;
@@ -2439,7 +2439,7 @@ async function callGeminiTextSynthesis(
         }
     }
 
-    throw new Error(`Gemini synthesis falhou para ${contextLabel}. Ãšltimo erro: ${lastError}`);
+    throw new Error(`Gemini synthesis falhou para ${contextLabel}. Último erro: ${lastError}`);
 }
 
 async function probeGeminiModel(model: string): Promise<{ ok: boolean; error?: string }> {
@@ -2523,7 +2523,7 @@ async function callVisionAnalysis(
     prompt: string,
 ): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error("GROQ_API_KEY nÃ£o configurada.");
+    if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
 
     const VISION_TIMEOUT_MS = 120_000; // 2 minutes
     // Smaller images (post-compression) need fewer output tokens; cap output to reduce cost.
@@ -2580,7 +2580,7 @@ async function callVisionAnalysis(
                     const text = await response.text();
                     lastError = `${model}: ${response.status} - ${text.slice(0, 300)}`;
                     console.warn(`[SIMCAR ANALYSIS] Model ${model} failed:`, lastError);
-                    // Detect Groq rate limit â€” mark and propagate immediately
+                    // Detect Groq rate limit — mark and propagate immediately
                     if (isRateLimitError(response.status, text)) {
                         sawRateLimit = true;
                         const retryAfterMs = extractRetryAfterMs(response.headers, text);
@@ -2637,9 +2637,9 @@ async function callVisionAnalysis(
     }
     if (sawRateLimit && !hasAvailableGroqModels(ANALYSIS_VISION_MODELS)) {
         const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(ANALYSIS_VISION_MODELS) / 1000));
-        throw new GroqRateLimitError(`Todos os modelos de visÃ£o Groq estÃ£o em cooldown (~${waitSecs}s).`);
+        throw new GroqRateLimitError(`Todos os modelos de visão Groq estão em cooldown (~${waitSecs}s).`);
     }
-    throw new Error(`Todos os modelos Groq falharam. Ãšltimo erro: ${lastError}`);
+    throw new Error(`Todos os modelos Groq falharam. Último erro: ${lastError}`);
 }
 
 function buildDualModelMergePrompt(
@@ -2648,22 +2648,22 @@ function buildDualModelMergePrompt(
     geminiAnalysis: string,
 ): string {
     return [
-        "VocÃª Ã© a GeoForest IA e deve consolidar duas anÃ¡lises tÃ©cnicas da MESMA Ã¡rea e do MESMO perÃ­odo.",
+        "Você é a GeoForest IA e deve consolidar duas análises técnicas da MESMA área e do MESMO período.",
         `Contexto do recorte: ${contextLabel}`,
         "",
-        "## AnÃ¡lise Groq",
+        "## Análise Groq",
         groqAnalysis,
         "",
-        "## AnÃ¡lise Gemini",
+        "## Análise Gemini",
         geminiAnalysis,
         "",
         "## Tarefa",
-        "Produza um texto Ãºnico e tÃ©cnico em portuguÃªs com:",
+        "Produza um texto único e técnico em português com:",
         "1) Consensos principais entre os dois modelos.",
-        "2) DivergÃªncias relevantes e a hipÃ³tese mais provÃ¡vel.",
-        "3) ConclusÃ£o consolidada para este perÃ­odo.",
+        "2) Divergências relevantes e a hipótese mais provável.",
+        "3) Conclusão consolidada para este período.",
         "",
-        "Seja objetivo e nÃ£o repita integralmente os textos de origem.",
+        "Seja objetivo e não repita integralmente os textos de origem.",
     ].join("\n");
 }
 
@@ -2700,7 +2700,7 @@ async function callGeminiVisionAnalysis(
     prompt: string,
 ): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY nÃ£o configurada.");
+    if (!apiKey) throw new Error("GEMINI_API_KEY não configurada.");
 
     const VISION_TIMEOUT_MS = 120_000;
     const imageSets = [images];
@@ -2739,7 +2739,7 @@ async function callGeminiVisionAnalysis(
                             contents: [{ role: "user", parts }],
                             generationConfig: {
                                 temperature: 0.1,
-                                // Gemini 2.5 suporta saÃ­das longas (atÃ© 65k tokens).
+                                // Gemini 2.5 suporta saídas longas (até 65k tokens).
                                 // 8192 permite laudos detalhados sem corte artificial.
                                 maxOutputTokens: 8192,
                             },
@@ -2804,7 +2804,7 @@ async function callGeminiVisionAnalysis(
         }
     }
 
-    throw new Error(`Gemini falhou. Ãšltimo erro: ${lastError}`);
+    throw new Error(`Gemini falhou. Último erro: ${lastError}`);
 }
 
 async function analyzeWithGroqAndGemini(
@@ -2813,7 +2813,7 @@ async function analyzeWithGroqAndGemini(
     contextLabel: string,
 ): Promise<string> {
     if (images.length === 0) {
-        throw new Error(`Sem imagens para anÃ¡lise (${contextLabel}).`);
+        throw new Error(`Sem imagens para análise (${contextLabel}).`);
     }
 
     const hasGemini = Boolean(process.env.GEMINI_API_KEY);
@@ -2830,7 +2830,7 @@ async function analyzeWithGroqAndGemini(
 
     if (groqAvailable) {
         console.log(
-            `[SIMCAR ANALYSIS] ${contextLabel}: Groq-first â€” sending all ${images.length} images to Groq`,
+            `[SIMCAR ANALYSIS] ${contextLabel}: Groq-first — sending all ${images.length} images to Groq`,
         );
 
         try {
@@ -2855,7 +2855,7 @@ async function analyzeWithGroqAndGemini(
     } else if (hasGroq) {
         const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(ANALYSIS_VISION_MODELS) / 1000));
         console.log(
-            `[SIMCAR ANALYSIS] ${contextLabel}: modelos Groq de visÃ£o em cooldown (~${waitSecs}s), pulando direto para Gemini`,
+            `[SIMCAR ANALYSIS] ${contextLabel}: modelos Groq de visão em cooldown (~${waitSecs}s), pulando direto para Gemini`,
         );
     }
 
@@ -2892,7 +2892,7 @@ async function analyzeWithGroqAndGemini(
         );
     }
 
-    throw new Error(`Nenhum provedor disponÃ­vel para ${contextLabel}.`);
+    throw new Error(`Nenhum provedor disponível para ${contextLabel}.`);
 }
 
 /** Call Groq with text-only follow-up message. Multi-model fallback. */
@@ -3142,23 +3142,23 @@ async function callBestTextSynthesis(
         } catch (groqErr: any) {
             const groqError = groqErr?.message || String(groqErr);
             if (geminiError) {
-                throw new Error(`SÃ­ntese falhou. Gemini=${geminiError} | Groq=${groqError}`);
+                throw new Error(`Síntese falhou. Gemini=${geminiError} | Groq=${groqError}`);
             }
             throw groqErr;
         }
     }
 
     if (geminiError) {
-        throw new Error(`SÃ­ntese falhou com Gemini: ${geminiError}`);
+        throw new Error(`Síntese falhou com Gemini: ${geminiError}`);
     }
-    throw new Error("Nenhum provedor de texto configurado para sÃ­ntese.");
+    throw new Error("Nenhum provedor de texto configurado para síntese.");
 }
 
 async function callTextFollowUp(
     messages: Array<{ role: string; content: any }>,
 ): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error("GROQ_API_KEY nÃ£o configurada.");
+    if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
 
     const MAX_TOKENS = 2200;
     const MAX_CONTINUATIONS = 2;
@@ -3244,9 +3244,9 @@ async function callTextFollowUp(
     }
     if (sawRateLimit && !hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
         const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(GROQ_TEXT_MODELS) / 1000));
-        throw new GroqRateLimitError(`Todos os modelos de texto Groq estÃ£o em cooldown (~${waitSecs}s).`);
+        throw new GroqRateLimitError(`Todos os modelos de texto Groq estão em cooldown (~${waitSecs}s).`);
     }
-    throw new Error(`Falha nos modelos de texto Groq. Ãšltimo erro: ${lastError}`);
+    throw new Error(`Falha nos modelos de texto Groq. Último erro: ${lastError}`);
 }
 
 async function streamTextFollowUp(
@@ -3254,7 +3254,7 @@ async function streamTextFollowUp(
     messages: Array<{ role: string; content: any }>,
 ): Promise<void> {
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error("GROQ_API_KEY nÃ£o configurada.");
+    if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
 
     const MAX_TOKENS = 2200;
     const MAX_CONTINUATIONS = 2;
@@ -3378,9 +3378,9 @@ async function streamTextFollowUp(
     if (!firstResult) {
         if (!hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
             const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(GROQ_TEXT_MODELS) / 1000));
-            throw new GroqRateLimitError(`Todos os modelos de texto Groq estÃ£o em cooldown (~${waitSecs}s).`);
+            throw new GroqRateLimitError(`Todos os modelos de texto Groq estão em cooldown (~${waitSecs}s).`);
         }
-        throw new Error("Nenhum modelo disponÃ­vel para iniciar resposta.");
+        throw new Error("Nenhum modelo disponível para iniciar resposta.");
     }
 
     const firstSplit = splitThinkProgress(firstResult.segmentText);
@@ -3483,22 +3483,22 @@ function buildPropertyContext(
         });
 
     return [
-        "## Contexto do ImÃ³vel Rural",
+        "## Contexto do Imóvel Rural",
         "",
-        `| ParÃ¢metro | Valor |`,
+        `| Parâmetro | Valor |`,
         `|-----------|-------|`,
-        `| Ãrea Total da Propriedade (ATP) | **${areaHa.toFixed(2)} ha** |`,
-        `| Ãrea Consolidada (AC) | ${acSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((acSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) â€” ${acSummary?.features ?? 0} feiÃ§Ãµes |`,
-        `| VegetaÃ§Ã£o Nativa (AVN) | ${avnSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((avnSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) â€” ${avnSummary?.features ?? 0} feiÃ§Ãµes |`,
-        `| AUAS (uso alternativo) | ${auasSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((auasSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) - ${auasSummary?.features ?? 0} feicoes |`,
-        atpSummary ? `| ATP (polÃ­gono declarado) | ${atpSummary.areaHa?.toFixed(2) ?? '-'} ha |` : "",
+        `| Área Total da Propriedade (ATP) | **${areaHa.toFixed(2)} ha** |`,
+        `| Área Consolidada (AC) | ${acSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((acSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) — ${acSummary?.features ?? 0} feições |`,
+        `| Vegetação Nativa (AVN) | ${avnSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((avnSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) — ${avnSummary?.features ?? 0} feições |`,
+        `| AUAS (uso alternativo) | ${auasSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((auasSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) - ${auasSummary?.features ?? 0} feições |`,
+        atpSummary ? `| ATP (polígono declarado) | ${atpSummary.areaHa?.toFixed(2) ?? '-'} ha |` : "",
         "",
         compact ? "### Quantitativos-chave (SIMCAR Digital)" : "### Quantitativos completos (SIMCAR Digital)",
-        "| Camada | FeiÃ§Ãµes | Ãrea | % do ImÃ³vel |",
+        "| Camada | Feições | Área | % do Imóvel |",
         "|--------|---------|------|-----------|",
         ...quantRows,
         compact && nonZeroRows.length > chosenRows.length
-            ? `\n*Resumo reduzido para eficiÃªncia de tokens: exibindo ${chosenRows.length} de ${nonZeroRows.length} camadas com feiÃ§Ãµes.*`
+            ? `\n*Resumo reduzido para eficiência de tokens: exibindo ${chosenRows.length} de ${nonZeroRows.length} camadas com feições.*`
             : "",
     ].join("\n");
 }
@@ -3589,11 +3589,11 @@ function buildSingleSatellitePrompt(
         "- **⚠️ INCONCLUSIVO**: quando resolução, nuvem ou sazonalidade impedem conclusão segura.",
         "",
         "## Nível de Confiança",
-        "Classifique: **[ALTA]** (evidência clara em imagem de qualidade, ≥2 fontes concordando), **[MÉDIA]** (evidência presente mas com limitação técnica) ou **[BAIXA]** (nuvem >30%, resolução insuficiente ou imagem única degradada).",
+        "Classifique: **[ALTA]** (evidência clara em imagem de qualidade, ≥2 fontes concordando), **[MÉDIA]** (evidência presente mas com limitação técnica), **[BAIXA]** (nuvem >30%, resolução insuficiente ou imagem única degradada) ou **[INCONCLUSIVO]** (nuvem, sombra ou ausência de imagem impedem qualquer avaliação confiável).",
         "",
         "## Veredito deste Satélite",
         "Forneça obrigatoriamente no formato exato:",
-        `- ${sat.label} (${year}) | AC_FORA_SHAPE=SIM|NAO|INCONCLUSIVO | AVN_DENTRO_SHAPE_ANTROPIZADO=SIM|NAO|INCONCLUSIVO | CONFIANCA=ALTA|MEDIA|BAIXA|INCONCLUSIVO`,
+        `- ${sat.label} (${year}) | AC_FORA_SHAPE=SIM|NAO|INCONCLUSIVO | AVN_DENTRO_SHAPE_ANTROPIZADO=SIM|NAO|INCONCLUSIVO${hasAuas ? " | AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS=SIM|NAO|INCONCLUSIVO" : ""} | CONFIANCA=ALTA|MEDIA|BAIXA|INCONCLUSIVO`,
         "",
         "---",
         "Responda em **português**, use markdown, seja detalhado e técnico.",
@@ -3693,7 +3693,7 @@ function buildAnalysisPrompt(
         "- AVN_FORA_SHAPE = IGNORAR",
         "- AVN_DENTRO_SHAPE_ANTROPIZADO = SIM | NAO | INCONCLUSIVO",
         "- AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM | NAO | INCONCLUSIVO",
-        "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA",
+        "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA | INCONCLUSIVO",
         "",
         "**Vereditos por Satélite** — uma linha por satélite no formato EXATO:",
         "- <NOME_SATELITE> (AAAA) | AC_FORA_SHAPE=SIM|NAO|INCONCLUSIVO | AVN_DENTRO_SHAPE_ANTROPIZADO=SIM|NAO|INCONCLUSIVO | CONFIANCA=ALTA|MEDIA|BAIXA|INCONCLUSIVO",
@@ -4249,16 +4249,16 @@ function buildSynthesisPrompt(
     const years = perSatelliteAnalyses.map((a) => a.year).sort();
 
     const analysesBlock = perSatelliteAnalyses.map((a) => [
-        `### AnÃ¡lise: ${a.satelliteLabel} (${a.year})`,
+        `### Análise: ${a.satelliteLabel} (${a.year})`,
         "",
         toSynthesisExcerpt(a.analysis),
     ].join("\n")).join("\n\n---\n\n");
 
     return [
-        "VocÃª Ã© a **GeoForest IA**, especialista em sensoriamento remoto e anÃ¡lise ambiental para imÃ³veis rurais em Mato Grosso.",
+        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
         "",
-        "VocÃª receberÃ¡ anÃ¡lises individuais feitas por IA para diferentes imagens de satÃ©lite do MESMO imÃ³vel rural.",
-        "Sua tarefa Ã© **sintetizar e comparar** essas anÃ¡lises para produzir um **laudo temporal integrado**.",
+        "Você receberá análises individuais feitas por IA para diferentes imagens de satélite do MESMO imóvel rural.",
+        "Sua tarefa é **sintetizar e comparar** essas análises para produzir um **laudo temporal integrado**.",
         "",
         "---",
         "",
@@ -4266,7 +4266,7 @@ function buildSynthesisPrompt(
         "",
         "---",
         "",
-        `## AnÃ¡lises Individuais Realizadas (${labels.join(", ")})`,
+        `## Análises Individuais Realizadas (${labels.join(", ")})`,
         "",
         analysesBlock,
         "",
@@ -4274,47 +4274,47 @@ function buildSynthesisPrompt(
         "",
         "## Sua Tarefa: Laudo Integrado Multi-temporal",
         "",
-        "Produza um laudo ÃšNICO e COMPLETO que integre as anÃ¡lises acima. Seja objetivo e evite repetiÃ§Ãµes.",
+        "Produza um laudo ÚNICO e COMPLETO que integre as análises acima. Seja objetivo e evite repetições.",
         "",
-        "### 1. AnÃ¡lise por Ano (obrigatÃ³ria)",
-        `Crie um subtÃ­tulo para cada ano em **${years.join(", ")}** e descreva os achados de AC/AVN.`,
-        "Em cada ano, inclua: uso antrÃ³pico, integridade da vegetaÃ§Ã£o, pontos de dÃºvida.",
+        "### 1. Análise por Ano (obrigatória)",
+        `Crie um subtítulo para cada ano em **${years.join(", ")}** e descreva os achados de AC/AVN.`,
+        "Em cada ano, inclua: uso antrópico, integridade da vegetação, pontos de dúvida.",
         "",
-        "### 2. ConexÃµes Entre os Anos (obrigatÃ³ria)",
+        "### 2. Conexões Entre os Anos (obrigatória)",
         "Explique a linha do tempo conectando os anos entre si:",
-        "- O que permaneceu estÃ¡vel ao longo dos anos?",
-        "- Onde hÃ¡ indÃ­cio de mudanÃ§a (supressÃ£o ou regeneraÃ§Ã£o)?",
-        "- Qual sequÃªncia temporal mais provÃ¡vel para essas mudanÃ§as?",
+        "- O que permaneceu estável ao longo dos anos?",
+        "- Onde há indício de mudança (supressão ou regeneração)?",
+        "- Qual sequência temporal mais provável para essas mudanças?",
         "",
-        "### 3. ComparaÃ§Ã£o CAR x HistÃ³rico",
-        "- A Ãrea Consolidada (AC) jÃ¡ estava consolidada no ano mais antigo?",
-        "- HÃ¡ AC com sinal de vegetaÃ§Ã£o nativa no passado?",
-        "- HÃ¡ AVN com sinal de uso antrÃ³pico em algum ano?",
+        "### 3. Comparação CAR x Histórico",
+        "- A Área Consolidada (AC) já estava consolidada no ano mais antigo?",
+        "- Há AC com sinal de vegetação nativa no passado?",
+        "- Há AVN com sinal de uso antrópico em algum ano?",
         "",
         "### 4. Marco Temporal (Art. 68, Lei 12.651/2012)",
-        "- ReferÃªncia: **22/07/2008**.",
+        "- Referência: **22/07/2008**.",
         "- Relacione explicitamente os anos anteriores e posteriores a 2008.",
         "",
-        "### 5. ConcordÃ¢ncias e DiscordÃ¢ncias Consolidadas",
-        "- **âœ… CONCORDA**: quando os anos confirmam a classificaÃ§Ã£o do CAR.",
-        "- **âŒ DISCORDA**: quando algum ano contradiz o CAR (cite ano e evidÃªncia).",
-        "- **âš ï¸ INCONCLUSIVO**: quando a limitaÃ§Ã£o do sensor impede conclusÃ£o robusta.",
+        "### 5. Concordâncias e Discordâncias Consolidadas",
+        "- **✅ CONCORDA**: quando os anos confirmam a classificação do CAR.",
+        "- **❌ DISCORDA**: quando algum ano contradiz o CAR (cite ano e evidência).",
+        "- **⚠️ INCONCLUSIVO**: quando a limitação do sensor impede conclusão robusta.",
         "",
-        "### 6. NÃ­vel de ConfianÃ§a",
-        "Classifique: **[ALTA]**, **[MÃ‰DIA]** ou **[BAIXA]** e justifique.",
+        "### 6. Nível de Confiança",
+        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]** e justifique.",
         "",
-        "### 7. ConclusÃ£o Integrada + RecomendaÃ§Ãµes",
-        "- SÃ­ntese final da linha do tempo citando todos os anos.",
-        "- RecomendaÃ§Ãµes prÃ¡ticas: vistoria, imagens extras, retificaÃ§Ã£o do CAR.",
+        "### 7. Conclusão Integrada + Recomendações",
+        "- Síntese final da linha do tempo citando todos os anos.",
+        "- Recomendações práticas: vistoria, imagens extras, retificação do CAR.",
         "",
         "---",
-        "Responda em **portuguÃªs**, use markdown, seja detalhado e tÃ©cnico.",
-        "NÃ£o inclua cadeia de raciocÃ­nio interna nem bloco <think>; entregue sÃ³ a resposta final.",
-        "NÃƒO repita as anÃ¡lises individuais integralmente â€” sintetize e compare.",
+        "Responda em **português**, use markdown, seja detalhado e técnico.",
+        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
+        "NÃO repita as análises individuais integralmente — sintetize e compare.",
     ].join("\n");
 }
 
-/* â”€â”€â”€ AUAS Analysis Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── AUAS Analysis Pipeline ─────────────────────────────────── */
 
 /** Satellite keys used for AUAS analysis: starts at 2008, then chronological order. */
 const AUAS_SATELLITE_KEYS: string[] = [
@@ -4412,7 +4412,7 @@ async function generateAuasSatelliteImages(
             sendSSE(res, {
                 type: "progress", step: "generating_images",
                 percent: 10 + Math.round((step / totalSteps) * 40),
-                message: `Aviso: ${sat.label} indisponÃ­vel, pulando...`,
+                message: `Aviso: ${sat.label} indisponível, pulando...`,
             });
             step++;
             continue;
@@ -4444,7 +4444,7 @@ async function generateAuasSatelliteImages(
             ]);
             images.push({
                 dataUrl: await compositeOverlay(basePng, outlineSvg),
-                caption: `${sat.label} â€” AUAS contorno`,
+                caption: `${sat.label} — AUAS contorno`,
             });
 
             // View 2: contextual overlays to improve discrimination between AC/AVN/AUAS
@@ -4455,7 +4455,7 @@ async function generateAuasSatelliteImages(
             ]);
             images.push({
                 dataUrl: await compositeOverlay(basePng, contextSvg),
-                caption: `${sat.label} â€” AUAS contexto`,
+                caption: `${sat.label} — AUAS contexto`,
             });
         } else {
             const propertySvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
@@ -4463,7 +4463,7 @@ async function generateAuasSatelliteImages(
             ]);
             images.push({
                 dataUrl: await compositeOverlay(basePng, propertySvg),
-                caption: `${sat.label} â€” Propriedade (AUAS nao vetorizada)`,
+                caption: `${sat.label} — Propriedade (AUAS nao vetorizada)`,
             });
         }
         step++;
@@ -4471,7 +4471,7 @@ async function generateAuasSatelliteImages(
         sendSSE(res, {
             type: "progress", step: "generating_images",
             percent: 10 + Math.round((step / totalSteps) * 40),
-            message: `${sat.label}: imagem AUAS gerada âœ“`,
+            message: `${sat.label}: imagem AUAS gerada ✓`,
         });
     }
 
@@ -4814,7 +4814,7 @@ function buildAuasFinalSynthesisPrompt(
         "No bloco 'Veredito Final AUAS', incluir obrigatoriamente:",
         "- STATUS_FINAL = AUAS_VALIDA | AUAS_INVALIDA | AUAS_PARCIAL",
         "- ANO_PROVAVEL_INICIO_DESMATE = YYYY | INCONCLUSIVO",
-        "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA",
+        "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA | INCONCLUSIVO",
         "- Se há supressão confirmada pós-2008 dentro da AUAS, adicionar: PASSIVO_AMBIENTAL = IDENTIFICADO",
         "",
         "Em 'Não Conformidades': citar intervalo de anos, localização aproximada e área estimada quando identificada supressão irregular.",
@@ -4985,7 +4985,7 @@ async function processAuasAnalysis(
     if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
         sendSSE(res, {
             type: "error",
-            message: "Job nÃ£o encontrado. Envie contextUrl ou gere o recorte novamente.",
+            message: "Job não encontrado. Envie contextUrl ou gere o recorte novamente.",
         });
         return false;
     }
@@ -5007,7 +5007,7 @@ async function processAuasAnalysis(
     }
 
     // Step 1: Generate satellite images with AUAS overlay
-    sendSSE(res, { type: "progress", step: "generating_images", percent: 5, message: "Iniciando geraÃ§Ã£o de imagens AUAS..." });
+    sendSSE(res, { type: "progress", step: "generating_images", percent: 5, message: "Iniciando geração de imagens AUAS..." });
     throwIfClientDisconnected(res);
 
     let imagesToAnalyze: Array<{ dataUrl: string; caption: string }>;
@@ -5053,7 +5053,7 @@ async function processAuasAnalysis(
     }
 
     // Step 3: Prepare images for AI
-    sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens AUAS para anÃ¡lise IA..." });
+    sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens AUAS para análise IA..." });
     throwIfClientDisconnected(res);
 
     const aiImages: AiImage[] = [];
@@ -5142,7 +5142,7 @@ async function processAuasAnalysis(
             console.error(`[AUAS ANALYSIS] ${sat.label} failed:`, err.message);
             sendSSE(res, {
                 type: "progress", step: "analyzing", percent: progressPct,
-                message: `Aviso: anÃ¡lise AUAS de ${sat.label} falhou, continuando...`,
+                message: `Aviso: análise AUAS de ${sat.label} falhou, continuando...`,
             });
         }
         satIdx++;
@@ -5151,7 +5151,7 @@ async function processAuasAnalysis(
     perSatResults.sort((a, b) => a.year - b.year || a.satelliteLabel.localeCompare(b.satelliteLabel));
 
     if (perSatResults.length === 0) {
-        sendSSE(res, { type: "error", message: "Nenhuma anÃ¡lise AUAS individual foi concluÃ­da com sucesso." });
+        sendSSE(res, { type: "error", message: "Nenhuma análise AUAS individual foi concluída com sucesso." });
         return false;
     }
 
@@ -5182,7 +5182,7 @@ async function processAuasAnalysis(
         );
         const split = splitThinkProgress(auasSynthesisText);
         if (split.thinkingText) {
-            sendSSE(res, { type: "model_thinking", source: "SÃ­ntese AUAS", thinkingText: split.thinkingText });
+            sendSSE(res, { type: "model_thinking", source: "Síntese AUAS", thinkingText: split.thinkingText });
         }
         console.log(`[AUAS ANALYSIS] Final synthesis complete (${auasSynthesisText.length} chars)`);
     } catch (err: any) {
@@ -5543,7 +5543,7 @@ async function hydrateJobFromOutputZipUrl(jobId: string, outputZipUrl?: string):
             outputZipUrl,
         );
         if (!hydrated) {
-            throw new Error("NÃ£o foi possÃ­vel reconstruir contexto pelo ZIP");
+            throw new Error("Não foi possível reconstruir contexto pelo ZIP");
         }
         jobCache.set(jobId, hydrated);
         return hydrated;
@@ -5565,7 +5565,7 @@ async function hydrateJobFromPersistedContext(
         }
         const parsed = parsePersistedClipContext(await response.json());
         if (!parsed) {
-            throw new Error("Formato de contexto invÃ¡lido");
+            throw new Error("Formato de contexto inválido");
         }
         const clipMap = objectToMapGeometry(parsed.clippedGeometries);
         const hydrated: CachedJob = {
@@ -5818,7 +5818,7 @@ async function processAnalysis(
             // Only one satellite succeeded - return its analysis directly (no synthesis needed)
             analysisText = perSatelliteResults[0].analysis;
         } else {
-            // Multiple results â€” synthesize with temporal comparison
+            // Multiple results — synthesize with temporal comparison
             sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando analise temporal comparativa..." });
             try {
                 const synthesisPrompt = buildSynthesisPrompt(areaHa, layerSummaries, perSatelliteResults);
@@ -5836,7 +5836,7 @@ async function processAnalysis(
                 }
                 console.log(`[SIMCAR ANALYSIS] Synthesis complete (${analysisText.length} chars)`);
             } catch (err: any) {
-                // Synthesis failed â€” concatenate individual analyses as fallback
+                // Synthesis failed — concatenate individual analyses as fallback
                 console.error("[SIMCAR ANALYSIS] Synthesis failed, concatenating analyses:", err.message);
                 analysisText = perSatelliteResults.map((r) => [
                     `## Analise: ${r.satelliteLabel} (${r.year})`,
@@ -5933,7 +5933,7 @@ function buildEstimatedUsageForFallback(args: {
     };
 }
 
-/* â”€â”€â”€ Express Route Registration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Express Route Registration ─────────────────────────────── */
 
 async function attachOptionalAuth(req: Request, _res: Response, next: any) {
     try {
@@ -6042,7 +6042,7 @@ export function registerSimcarClipRoutes(app: Express) {
             };
 
             if (!body.propertyZip) {
-                sendSSE(res, { type: "error", message: "Campo propertyZip (base64) Ã© obrigatÃ³rio." });
+                sendSSE(res, { type: "error", message: "Campo propertyZip (base64) é obrigatório." });
                 res.end();
                 return;
             }
@@ -6051,13 +6051,13 @@ export function registerSimcarClipRoutes(app: Express) {
             try {
                 zipBuffer = Buffer.from(body.propertyZip, "base64");
             } catch {
-                sendSSE(res, { type: "error", message: "Base64 do ZIP invÃ¡lido." });
+                sendSSE(res, { type: "error", message: "Base64 do ZIP inválido." });
                 res.end();
                 return;
             }
 
             if (zipBuffer.length < 22) {
-                sendSSE(res, { type: "error", message: "ZIP muito pequeno para ser vÃ¡lido." });
+                sendSSE(res, { type: "error", message: "ZIP muito pequeno para ser válido." });
                 res.end();
                 return;
             }
@@ -6374,7 +6374,7 @@ export function registerSimcarClipRoutes(app: Express) {
         if (!cached || cached.expiresAt <= Date.now()) {
             if (cached) jobCache.delete(jobId);
             res.status(404).json({
-                error: "Download expirado ou nÃ£o encontrado. Processe novamente.",
+                error: "Download expirado ou não encontrado. Processe novamente.",
             });
             return;
         }
@@ -6383,7 +6383,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 res.redirect(cached.outputZipUrl);
                 return;
             }
-            res.status(404).json({ error: "Arquivo do recorte nÃ£o disponÃ­vel no cache." });
+            res.status(404).json({ error: "Arquivo do recorte não disponível no cache." });
             return;
         }
 
