@@ -7766,7 +7766,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
 
                   {/* Cards de resumo */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                     <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-4 hover:border-emerald-500/20 transition-colors">
                       <div className="flex items-center gap-2 mb-2">
                         <TrendingUp size={14} className="text-emerald-400" />
@@ -7803,6 +7803,31 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                   </div>
 
+                  {/* Token summary strip */}
+                  {(billingMe?.usageToday?.totalInputTokens || 0) + (billingMe?.usageToday?.totalOutputTokens || 0) > 0 && (
+                    <div className="flex items-center gap-4 px-4 py-2.5 mb-4 rounded-xl bg-white/[0.02] border border-white/[0.05] text-[11px] text-slate-400 flex-wrap">
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-blue-400/70" />
+                        <span>Tokens entrada hoje:</span>
+                        <span className="text-slate-200 font-medium">{(billingMe?.usageToday?.totalInputTokens || 0).toLocaleString('pt-BR')}</span>
+                      </span>
+                      <span className="text-white/10">|</span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400/70" />
+                        <span>Tokens saída hoje:</span>
+                        <span className="text-slate-200 font-medium">{(billingMe?.usageToday?.totalOutputTokens || 0).toLocaleString('pt-BR')}</span>
+                      </span>
+                      <span className="text-white/10">|</span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-purple-400/70" />
+                        <span>Total tokens:</span>
+                        <span className="text-slate-200 font-medium">
+                          {((billingMe?.usageToday?.totalInputTokens || 0) + (billingMe?.usageToday?.totalOutputTokens || 0)).toLocaleString('pt-BR')}
+                        </span>
+                      </span>
+                    </div>
+                  )}
+
                   {/* Consumo por modelo + Histórico lado a lado */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Consumo por modelo */}
@@ -7813,25 +7838,38 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         <span className="text-[10px] text-slate-500 ml-auto">últimos 7 dias</span>
                       </div>
                       {billingMe?.modelSnapshot?.length ? (
-                        <div className="space-y-2 max-h-56 overflow-auto custom-scrollbar pr-1">
+                        <div className="space-y-3 max-h-60 overflow-auto custom-scrollbar pr-1">
                           {billingMe.modelSnapshot.slice(0, 10).map((item) => {
                             const maxCost = Math.max(...(billingMe.modelSnapshot || []).map((m) => m.costBrl), 0.01);
                             const pct = Math.min(100, (item.costBrl / maxCost) * 100);
+                            const totalTk = (item.inputTokens || 0) + (item.outputTokens || 0);
                             return (
                               <div key={`${item.provider}-${item.model}`} className="group/row">
                                 <div className="flex items-center justify-between text-xs mb-1">
-                                  <span className="text-slate-300 truncate max-w-[55%] font-medium">{item.model}</span>
-                                  <div className="flex items-center gap-3">
+                                  <span className="text-slate-300 truncate max-w-[50%] font-medium" title={item.model}>{item.model}</span>
+                                  <div className="flex items-center gap-2">
                                     <span className="text-[10px] text-slate-500">{item.requests || 0} req</span>
                                     <span className="text-slate-200 font-medium">{formatBrl(item.costBrl)}</span>
                                   </div>
                                 </div>
-                                <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                                <div className="h-1.5 rounded-full bg-white/5 overflow-hidden mb-1">
                                   <div
                                     className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-500"
                                     style={{ width: `${pct}%` }}
                                   />
                                 </div>
+                                {totalTk > 0 && (
+                                  <div className="flex items-center gap-3 text-[10px] text-slate-600">
+                                    <span className="flex items-center gap-1">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500/60" />
+                                      {(item.inputTokens || 0).toLocaleString('pt-BR')} entrada
+                                    </span>
+                                    <span className="flex items-center gap-1">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/60" />
+                                      {(item.outputTokens || 0).toLocaleString('pt-BR')} saída
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
