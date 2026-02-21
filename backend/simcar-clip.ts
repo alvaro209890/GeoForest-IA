@@ -545,7 +545,7 @@ function readFullShapefile(shpBuffer: Buffer): number[][][][] {
 /**
  * Parse user's shapefile ZIP → single unified polygon in EPSG:4674.
  */
-function parseUserShapefile(zipBuffer: Buffer): {
+export function parseUserShapefile(zipBuffer: Buffer): {
     polygon: Feature<Polygon | MultiPolygon>;
     geometry: SupportedPolygonGeometry;
     areaHa: number;
