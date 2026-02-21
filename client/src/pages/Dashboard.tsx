@@ -1068,7 +1068,7 @@ const parseZipShpGeometryOnClient = async (file: File): Promise<ParsedGeometry> 
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'auas'>('chat');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -1177,6 +1177,37 @@ export default function Dashboard() {
     acAvn: false,
     auas: false,
   });
+
+  // ─── AUAS Tab State ───
+  const [auasFile, setAuasFile] = useState<File | null>(null);
+  const [auasProcessing, setAuasProcessing] = useState(false);
+  const [auasJobId, setAuasJobId] = useState<string | null>(null);
+  const [auasProgress, setAuasProgress] = useState<{ step: string; percent: number; message: string } | null>(null);
+  const [auasResult, setAuasResult] = useState<{
+    acAreaHa: number;
+    auasAreaHa: number;
+    avnAreaHa: number;
+    arlAreaHa: number;
+    propertyAreaHa: number;
+    riverBufferHa: number;
+    auasPolygons: Array<{ year: number; areaHa: number }>;
+    downloadUrl?: string;
+  } | null>(null);
+  const [auasError, setAuasError] = useState<string | null>(null);
+  const auasAbortRef = useRef<AbortController | null>(null);
+  const auasFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const resetAuasDraft = useCallback(() => {
+    auasAbortRef.current?.abort();
+    auasAbortRef.current = null;
+    setAuasFile(null);
+    setAuasProcessing(false);
+    setAuasJobId(null);
+    setAuasProgress(null);
+    setAuasResult(null);
+    setAuasError(null);
+    if (auasFileInputRef.current) auasFileInputRef.current.value = '';
+  }, []);
 
   // ─── SIMCAR Agent Log: elapsed timer ───
   useEffect(() => {
@@ -5493,70 +5524,83 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           </div>
         </div>
 
-        <div className="px-4 mb-6 space-y-2">
-          {activeView === 'simcar-clip' ? (
-            /* ─── SIMCAR Mode: Modo Assistente + Novo Recorte ─── */
-            <>
-              <button
-                onClick={() => setActiveView('chat')}
-                className="w-full group relative overflow-hidden rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-all duration-300 p-[1px]"
-              >
-                <div className="relative flex items-center justify-center gap-2 bg-[#0f241a] group-hover:bg-transparent text-emerald-100 py-2.5 rounded-[11px] transition-colors">
-                  <MessageSquare size={18} />
-                  <span className="font-medium xl:block lg:hidden">Modo Assistente</span>
-                </div>
-              </button>
-              <button
-                onClick={() => {
-                  resetSimcarDraft('auto-clip');
-                  setActiveView('simcar-clip');
-                }}
-                className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 transition-all duration-300 p-[1px] shadow-lg shadow-purple-900/30"
-              >
-                <div className="relative flex items-center justify-center gap-2 bg-[#120e1a] group-hover:bg-transparent text-purple-100 py-2.5 rounded-[11px] transition-colors">
-                  <Plus size={18} />
-                  <span className="font-medium xl:block lg:hidden">Novo Recorte</span>
-                </div>
-              </button>
-            </>
-          ) : (
-            /* ─── Chat Mode: Novo Chat + Recorte SIMCAR ─── */
-            <>
-              <button
-                onClick={() => createConversation()}
-                className="w-full group relative overflow-hidden rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-all duration-300 p-[1px]"
-              >
-                <div className="relative flex items-center justify-center gap-2 bg-[#0f241a] group-hover:bg-transparent text-emerald-100 py-2.5 rounded-[11px] transition-colors">
-                  <Plus size={18} />
-                  <span className="font-medium xl:block lg:hidden">Novo Chat</span>
-                </div>
-              </button>
-              <button
-                onClick={() => {
-                  setActiveView('simcar-clip');
-                  if (simcarClipLayers.length === 0) {
-                    fetch(apiUrl('/api/simcar/layers'))
-                      .then((r) => r.json())
-                      .then((data: any) => {
-                        if (Array.isArray(data?.layers)) {
-                          setSimcarClipLayers(
-                            data.layers.map((l: any) => ({ name: l.name, category: l.category, selected: true })),
-                          );
-                        }
-                      })
-                      .catch(() => { });
-                  }
-                }}
-                className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 transition-all duration-300 p-[1px] shadow-lg shadow-purple-900/30"
-              >
-                <div className="relative flex items-center justify-center gap-2 bg-[#120e1a] group-hover:bg-transparent text-purple-100 py-2.5 rounded-[11px] transition-colors">
-                  <Scissors size={18} />
-                  <span className="font-medium xl:block lg:hidden">Análise SIMCAR</span>
-                </div>
-              </button>
-            </>
+        <div className="px-4 mb-4 space-y-1.5">
+          {/* ─── 3 Abas permanentes ─── */}
+          <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-white/5 border border-white/5">
+            <button
+              onClick={() => setActiveView('chat')}
+              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'chat' ? 'bg-emerald-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+            >
+              <MessageSquare size={15} />
+              <span className="xl:block lg:hidden leading-none">Assistente</span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveView('simcar-clip');
+                if (simcarClipLayers.length === 0) {
+                  fetch(apiUrl('/api/simcar/layers'))
+                    .then((r) => r.json())
+                    .then((data: any) => {
+                      if (Array.isArray(data?.layers)) {
+                        setSimcarClipLayers(
+                          data.layers.map((l: any) => ({ name: l.name, category: l.category, selected: true })),
+                        );
+                      }
+                    })
+                    .catch(() => { });
+                }
+              }}
+              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'simcar-clip' ? 'bg-purple-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+            >
+              <Scissors size={15} />
+              <span className="xl:block lg:hidden leading-none">SIMCAR</span>
+            </button>
+            <button
+              onClick={() => setActiveView('auas')}
+              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'auas' ? 'bg-amber-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+            >
+              <Layers size={15} />
+              <span className="xl:block lg:hidden leading-none">AUAS</span>
+            </button>
+          </div>
+
+          {/* ─── Botão de ação contextual ─── */}
+          {activeView === 'chat' && (
+            <button
+              onClick={() => createConversation()}
+              className="w-full group relative overflow-hidden rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-all duration-300 p-[1px]"
+            >
+              <div className="relative flex items-center justify-center gap-2 bg-[#0f241a] group-hover:bg-transparent text-emerald-100 py-2.5 rounded-[11px] transition-colors">
+                <Plus size={16} />
+                <span className="font-medium xl:block lg:hidden text-sm">Novo Chat</span>
+              </div>
+            </button>
           )}
-          {activeView !== 'simcar-clip' && (
+          {activeView === 'simcar-clip' && (
+            <button
+              onClick={() => { resetSimcarDraft('auto-clip'); setActiveView('simcar-clip'); }}
+              className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 transition-all duration-300 p-[1px] shadow-lg shadow-purple-900/30"
+            >
+              <div className="relative flex items-center justify-center gap-2 bg-[#120e1a] group-hover:bg-transparent text-purple-100 py-2.5 rounded-[11px] transition-colors">
+                <Plus size={16} />
+                <span className="font-medium xl:block lg:hidden text-sm">Novo Recorte</span>
+              </div>
+            </button>
+          )}
+          {activeView === 'auas' && (
+            <button
+              onClick={() => resetAuasDraft()}
+              className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 transition-all duration-300 p-[1px] shadow-lg shadow-amber-900/30"
+            >
+              <div className="relative flex items-center justify-center gap-2 bg-[#1a1100] group-hover:bg-transparent text-amber-100 py-2.5 rounded-[11px] transition-colors">
+                <Plus size={16} />
+                <span className="font-medium xl:block lg:hidden text-sm">Nova Análise</span>
+              </div>
+            </button>
+          )}
+
+          {/* ─── Busca (só no chat) ─── */}
+          {activeView === 'chat' && (
             <div className="relative">
               <Search size={16} className="text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <Input
@@ -5570,7 +5614,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 space-y-1 custom-scrollbar">
-          {activeView === 'simcar-clip' ? (
+          {activeView === 'auas' ? (
+            /* ─── AUAS: placeholder de histórico ─── */
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Layers size={32} className="text-slate-600 mb-3" />
+              <p className="text-sm text-slate-400">Análise AUAS</p>
+              <p className="text-[10px] text-slate-600 mt-1">Carregue um shapefile para iniciar</p>
+            </div>
+          ) : activeView === 'simcar-clip' ? (
             /* ─── SIMCAR Clip History Cards ─── */
             simcarClipHistory.length > 0 ? (
               simcarClipHistory.map((clip) => (
@@ -5780,7 +5831,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2">
               <Zap size={16} className="text-emerald-400 fill-current" />
               <span className="font-medium text-slate-200">
-                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
+                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'auas' ? 'Análise AUAS' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
               </span>
               {activeView === 'chat' && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide">
@@ -7167,6 +7218,295 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </>
                 );
               })()}
+            </div>
+          </div>
+        ) : activeView === 'auas' ? (
+          /* ══════════════════════════════════════════════════════════
+             ABA AUAS — Área de Uso Alternativo do Solo
+             Desmatamento pós-2008 via PRODES + buffer rios SFB
+          ══════════════════════════════════════════════════════════ */
+          <div className="flex-1 overflow-y-auto px-6 py-8 custom-scrollbar">
+            <div className="max-w-4xl mx-auto space-y-6 animate-fade-in-up">
+
+              {/* ─── Cabeçalho ─── */}
+              <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#1a1000] to-[#0e0c00] p-7">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/8 rounded-full blur-3xl -translate-y-1/3 translate-x-1/4 pointer-events-none" />
+                <div className="relative flex items-start gap-5">
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-xl shadow-amber-900/40 shrink-0">
+                    <Layers size={28} className="text-white" />
+                  </div>
+                  <div>
+                    <h1 className="text-2xl font-bold text-white mb-1">Análise AUAS</h1>
+                    <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">
+                      Classifica as áreas do imóvel com base no PRODES (desmatamento pré e pós-2008),
+                      aplica buffer de 2 m para cada lado nos rios da base SFB e calcula
+                      <strong className="text-amber-300"> AC</strong>,
+                      <strong className="text-emerald-300"> AUAS</strong>,
+                      <strong className="text-blue-300"> AVN</strong> e
+                      <strong className="text-purple-300"> ARL</strong>.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-3 text-[11px]">
+                      {[
+                        { label: 'AC', desc: 'Desmatamento < 2008', color: 'amber' },
+                        { label: 'AUAS', desc: 'Desmatamento ≥ 2008', color: 'emerald' },
+                        { label: 'AVN', desc: 'Imóvel − AC − AUAS − Rios', color: 'blue' },
+                        { label: 'ARL', desc: 'Igual à AVN', color: 'purple' },
+                      ].map((item) => (
+                        <span key={item.label} className={`px-2.5 py-1 rounded-lg bg-${item.color}-500/10 border border-${item.color}-500/20 text-${item.color}-300`}>
+                          <strong>{item.label}</strong> — {item.desc}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* ─── Upload do Shapefile ─── */}
+              {!auasResult && !auasProcessing && (
+                <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6">
+                  <h2 className="font-semibold text-slate-200 mb-1 flex items-center gap-2">
+                    <Upload size={16} className="text-amber-400" />
+                    Shapefile do Imóvel
+                  </h2>
+                  <p className="text-xs text-slate-500 mb-4">
+                    Envie o ZIP com o shapefile da propriedade (.shp, .dbf, .prj).
+                    O servidor consultará o PRODES e a base SFB automaticamente.
+                  </p>
+
+                  <label className={`flex flex-col items-center justify-center gap-3 p-8 rounded-xl border-2 border-dashed transition-all cursor-pointer ${auasFile ? 'border-amber-500/40 bg-amber-500/5' : 'border-white/10 hover:border-amber-500/30 hover:bg-amber-500/5'}`}>
+                    <input
+                      ref={auasFileInputRef}
+                      type="file"
+                      accept=".zip"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] || null;
+                        setAuasFile(f);
+                        setAuasError(null);
+                      }}
+                    />
+                    {auasFile ? (
+                      <>
+                        <div className="p-3 rounded-xl bg-amber-500/15 text-amber-400">
+                          <CheckCircle2 size={28} />
+                        </div>
+                        <div className="text-center">
+                          <p className="font-medium text-slate-200 text-sm">{auasFile.name}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">{(auasFile.size / 1024).toFixed(0)} KB</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); setAuasFile(null); if (auasFileInputRef.current) auasFileInputRef.current.value = ''; }}
+                          className="text-xs text-slate-500 hover:text-red-400 transition-colors"
+                        >
+                          Remover arquivo
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="p-3 rounded-xl bg-white/5 text-slate-500">
+                          <Upload size={28} />
+                        </div>
+                        <div className="text-center">
+                          <p className="font-medium text-slate-300 text-sm">Arraste ou clique para selecionar</p>
+                          <p className="text-xs text-slate-600 mt-0.5">Arquivo ZIP com shapefile do imóvel</p>
+                        </div>
+                      </>
+                    )}
+                  </label>
+
+                  {auasError && (
+                    <div className="mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm flex items-start gap-2">
+                      <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                      <span>{auasError}</span>
+                    </div>
+                  )}
+
+                  <button
+                    disabled={!auasFile}
+                    onClick={async () => {
+                      if (!auasFile) return;
+                      setAuasError(null);
+                      setAuasProcessing(true);
+                      setAuasProgress({ step: 'upload', percent: 5, message: 'Enviando shapefile...' });
+                      auasAbortRef.current = new AbortController();
+                      try {
+                        const idToken = await (await import('../lib/auth')).getIdToken();
+                        const reader = new FileReader();
+                        const zipB64: string = await new Promise((resolve, reject) => {
+                          reader.onload = () => resolve((reader.result as string).split(',')[1]);
+                          reader.onerror = reject;
+                          reader.readAsDataURL(auasFile);
+                        });
+                        const resp = await fetch(apiUrl('/api/auas/analyze'), {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
+                          body: JSON.stringify({ propertyZip: zipB64, filename: auasFile.name }),
+                          signal: auasAbortRef.current.signal,
+                        });
+                        if (!resp.ok || !resp.body) {
+                          const err = await resp.json().catch(() => ({ error: 'Erro desconhecido' }));
+                          throw new Error(err.error || `HTTP ${resp.status}`);
+                        }
+                        const reader2 = resp.body.getReader();
+                        const decoder = new TextDecoder();
+                        let buf = '';
+                        while (true) {
+                          const { value, done } = await reader2.read();
+                          if (done) break;
+                          buf += decoder.decode(value, { stream: true });
+                          const lines = buf.split('\n');
+                          buf = lines.pop() ?? '';
+                          for (const line of lines) {
+                            if (!line.startsWith('data:')) continue;
+                            try {
+                              const evt = JSON.parse(line.slice(5));
+                              if (evt.type === 'progress') {
+                                setAuasProgress({ step: evt.step || '', percent: evt.percent || 0, message: evt.message || '' });
+                              } else if (evt.type === 'result') {
+                                setAuasResult(evt.data);
+                                setAuasJobId(evt.jobId || null);
+                                setAuasProcessing(false);
+                                setAuasProgress(null);
+                              } else if (evt.type === 'error') {
+                                throw new Error(evt.message || 'Erro na análise AUAS');
+                              }
+                            } catch { /* ignore parse errors */ }
+                          }
+                        }
+                      } catch (err: any) {
+                        if (err?.name !== 'AbortError') {
+                          setAuasError(err.message || 'Erro ao processar análise AUAS.');
+                        }
+                        setAuasProcessing(false);
+                        setAuasProgress(null);
+                      }
+                    }}
+                    className="mt-4 w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium transition-all shadow-lg shadow-amber-900/30"
+                  >
+                    <Zap size={16} />
+                    Iniciar Análise AUAS
+                  </button>
+                </section>
+              )}
+
+              {/* ─── Em processamento ─── */}
+              {auasProcessing && (
+                <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-8">
+                  <div className="flex flex-col items-center gap-5 text-center">
+                    <div className="relative">
+                      <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center">
+                        <Loader2 size={32} className="text-amber-400 animate-spin" />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-slate-200 mb-1">{auasProgress?.message || 'Processando...'}</p>
+                      <p className="text-xs text-slate-500">{auasProgress?.step}</p>
+                    </div>
+                    <div className="w-full max-w-xs">
+                      <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all duration-500"
+                          style={{ width: `${auasProgress?.percent || 0}%` }}
+                        />
+                      </div>
+                      <p className="text-[10px] text-slate-600 mt-1.5">{auasProgress?.percent || 0}% concluído</p>
+                    </div>
+                    <button
+                      onClick={() => { auasAbortRef.current?.abort(); setAuasProcessing(false); setAuasProgress(null); }}
+                      className="text-xs text-slate-500 hover:text-red-400 transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              {/* ─── Resultados ─── */}
+              {auasResult && !auasProcessing && (
+                <>
+                  {/* Cards de área */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      { label: 'Imóvel', value: auasResult.propertyAreaHa, color: 'slate', icon: '🏠' },
+                      { label: 'AC (pré-2008)', value: auasResult.acAreaHa, color: 'amber', icon: '📅' },
+                      { label: 'AUAS (pós-2008)', value: auasResult.auasAreaHa, color: 'emerald', icon: '🌿' },
+                      { label: 'AVN / ARL', value: auasResult.avnAreaHa, color: 'blue', icon: '🌳' },
+                    ].map((card) => (
+                      <div key={card.label} className={`rounded-2xl border border-white/5 bg-[#0e1612]/60 p-4`}>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">{card.icon} {card.label}</p>
+                        <p className={`text-2xl font-bold text-${card.color}-300`}>{card.value.toFixed(2)}</p>
+                        <p className="text-[10px] text-slate-600">hectares</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Buffer de rios */}
+                  {auasResult.riverBufferHa > 0 && (
+                    <section className="bg-[#0e1612]/60 border border-white/5 rounded-2xl p-5">
+                      <h3 className="font-semibold text-slate-300 text-sm mb-2 flex items-center gap-2">
+                        <Layers size={14} className="text-cyan-400" />
+                        Buffer de Rios SFB (2 m cada lado)
+                      </h3>
+                      <p className="text-slate-400 text-sm">
+                        Área excluída por buffer de rios:{' '}
+                        <strong className="text-cyan-300">{auasResult.riverBufferHa.toFixed(4)} ha</strong>
+                      </p>
+                      <p className="text-xs text-slate-600 mt-1">
+                        Nenhum polígono de AC, AUAS ou AVN sobrepõe os rios.
+                      </p>
+                    </section>
+                  )}
+
+                  {/* Detalhamento AUAS por ano */}
+                  {auasResult.auasPolygons.length > 0 && (
+                    <section className="bg-[#0e1612]/60 border border-white/5 rounded-2xl p-5">
+                      <h3 className="font-semibold text-slate-300 text-sm mb-3 flex items-center gap-2">
+                        <BarChart3 size={14} className="text-emerald-400" />
+                        AUAS por Ano de Desmatamento (PRODES)
+                      </h3>
+                      <div className="space-y-2">
+                        {auasResult.auasPolygons
+                          .sort((a, b) => a.year - b.year)
+                          .map((p) => (
+                            <div key={p.year} className="flex items-center gap-3">
+                              <span className="text-xs text-slate-400 w-12 shrink-0">{p.year}</span>
+                              <div className="flex-1 h-5 bg-white/5 rounded-md overflow-hidden">
+                                <div
+                                  className="h-full bg-emerald-600/60 rounded-md transition-all"
+                                  style={{ width: `${Math.min(100, (p.areaHa / auasResult.auasAreaHa) * 100)}%` }}
+                                />
+                              </div>
+                              <span className="text-xs text-emerald-300 w-20 text-right shrink-0">{p.areaHa.toFixed(2)} ha</span>
+                            </div>
+                          ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {/* Botões de ação */}
+                  <div className="flex gap-3">
+                    {auasResult.downloadUrl && (
+                      <a
+                        href={auasResult.downloadUrl}
+                        download
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-medium text-sm transition-all shadow-lg shadow-amber-900/30"
+                      >
+                        <Download size={16} />
+                        Baixar Shapefiles
+                      </a>
+                    )}
+                    <button
+                      onClick={() => resetAuasDraft()}
+                      className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 text-sm transition-all"
+                    >
+                      <Plus size={16} />
+                      Nova Análise
+                    </button>
+                  </div>
+                </>
+              )}
+
             </div>
           </div>
         ) : activeView === 'features' ? (

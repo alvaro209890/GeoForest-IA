@@ -34,6 +34,7 @@ import {
 } from "./geo-utils";
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
+import { registerAuasRoutes } from "./auas-analysis";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -232,6 +233,7 @@ async function startServer() {
       "/api/simcar/clip/analyze",
       "/api/simcar/clip/analyze-auas",
       "/api/simcar/clip/analyze/chat",
+      "/api/auas/analyze",
       "/api/billing/me",
       "/api/billing/topups/manual",
       "/api/billing/ledger",
@@ -242,6 +244,7 @@ async function startServer() {
 
   registerWfsIntersectionRoutes(app);
   registerSimcarClipRoutes(app);
+  registerAuasRoutes(app);
 
   const MODEL_CATALOG = [
     {
