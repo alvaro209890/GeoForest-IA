@@ -166,13 +166,13 @@ export default function Auth() {
   };
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-black">
+    <div className="fixed inset-0 overflow-auto bg-black">
       <div className="absolute inset-0 bg-[radial-gradient(1200px_800px_at_20%_10%,rgba(34,197,94,0.25),transparent_60%),radial-gradient(900px_700px_at_80%_20%,rgba(234,179,8,0.18),transparent_60%),linear-gradient(135deg,#0b1f16,#0b1b10_45%,#0a1210)]" />
       <div className="absolute inset-0 bg-[url('https://files.manuscdn.com/user_upload_by_module/session_file/310419663030608231/aWDbHEOGaMpaIiIr.jpg')] bg-cover bg-center opacity-35" />
       <div className="absolute inset-0 bg-black/40" />
 
-      <div className="relative z-10 h-full w-full flex items-center justify-center px-4">
-        <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="relative z-10 h-full w-full flex items-center justify-center px-3 sm:px-4 overflow-y-auto py-4 sm:py-8">
+        <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-8">
           <div className="hidden lg:flex flex-col justify-center">
             <div className="inline-flex items-center gap-3 mb-6">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center">
@@ -189,16 +189,16 @@ export default function Auth() {
           </div>
 
           <div className="flex flex-col justify-center">
-            <div className="lg:hidden text-center mb-6 flex flex-col items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center">
-                <span className="text-2xl">🌲</span>
+            <div className="lg:hidden text-center mb-4 sm:mb-6 flex flex-col items-center gap-2 sm:gap-3">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center">
+                <span className="text-xl sm:text-2xl">🌲</span>
               </div>
-              <h1 className="text-3xl font-bold text-white">GeoForest IA</h1>
-              <p className="text-green-200 text-sm">IA aplicada à Engenharia Florestal</p>
+              <h1 className="text-2xl sm:text-3xl font-bold text-white">GeoForest IA</h1>
+              <p className="text-green-200 text-xs sm:text-sm">IA aplicada à Engenharia Florestal</p>
             </div>
 
-            <div className="rounded-3xl border border-white/15 bg-white/8 backdrop-blur-xl shadow-2xl p-6 sm:p-8">
-              <div className="grid grid-cols-2 gap-2 bg-white/5 p-1 rounded-2xl mb-6">
+            <div className="rounded-2xl sm:rounded-3xl border border-white/15 bg-white/8 backdrop-blur-xl shadow-2xl p-4 sm:p-6 md:p-8">
+              <div className="grid grid-cols-2 gap-2 bg-white/5 p-1 rounded-2xl mb-4 sm:mb-6">
                 <button
                   onClick={() => setMode('login')}
                   className={`py-2.5 rounded-xl text-sm font-semibold transition-all ${
