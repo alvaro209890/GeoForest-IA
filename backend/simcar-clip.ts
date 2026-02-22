@@ -423,7 +423,7 @@ const DIRECT_COPY_LAYERS = new Set(["AIR", "ATP"]);
 
 /* ─── Job Cache ──────────────────────────────────────────────── */
 
-type CachedJob = {
+export type CachedJob = {
     buffer?: Buffer;
     expiresAt: number;
     filename: string;
@@ -1096,7 +1096,7 @@ async function buildQuantitativeXlsx(
 
 /* ─── Main Processing Pipeline ───────────────────────────────── */
 
-type LayerSummary = {
+export type LayerSummary = {
     name: string;
     source: "property" | "wfs";
     features: number;
@@ -1577,7 +1577,7 @@ const AC_AVN_FIXED_KEYS = [
     "landsat5_2008",
 ] as const;
 
-function getFixedAcAvnSatelliteKeys(): string[] {
+export function getFixedAcAvnSatelliteKeys(): string[] {
     return AC_AVN_FIXED_KEYS.filter((k) => Boolean(SATELLITE_LAYERS[k]));
 }
 
@@ -3724,7 +3724,7 @@ type AcAvnSatelliteVerdict = {
     avnDentroShapeAntropizado: AcAvnVerdict;
     confidence: AcAvnConfidence;
 };
-type AcAvnAnalysisMeta = {
+export type AcAvnAnalysisMeta = {
     globalVerdict: {
         acForaShape: AcAvnVerdict;
         avnDentroShapeAntropizado: AcAvnVerdict;
@@ -3738,6 +3738,18 @@ type AcAvnAnalysisMeta = {
     };
     cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
     auasContext?: AcAvnAuasContext | null;
+};
+
+export type AcAvnAnalysisResult = {
+    analysisText: string;
+    cloudinaryUrls: Array<{ url: string; caption: string }>;
+    usedSatelliteKeys: string[];
+    missingSatelliteKeys: string[];
+    cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
+    analysisMeta: AcAvnAnalysisMeta;
+    layerSummaries: LayerSummary[];
+    /** true when aiAnalysis=false (image-only mode, no analysisText/analysisMeta) */
+    imageOnly: boolean;
 };
 
 function parseAcAvnConfidenceToken(raw: string): AcAvnConfidence {
@@ -4547,7 +4559,7 @@ function buildAuasSingleSatPrompt(
     ].join("\n");
 }
 
-type AcAvnAuasContext = {
+export type AcAvnAuasContext = {
     hasAuasLayer: boolean;
     hasAvnLayer: boolean;
     auasAreaHa: number;
@@ -5588,31 +5600,22 @@ async function hydrateJobFromPersistedContext(
     }
 }
 
-/** Main analysis pipeline (called from the SSE endpoint). */
-async function processAnalysis(
+/**
+ * Core satellite image + AI analysis pipeline.
+ * Generates images, uploads to Cloudinary, runs the full AC/AVN analysis, and
+ * returns the result. Sends intermediate SSE events (progress, model_thinking, error)
+ * but does NOT send the final complete/result event — the caller is responsible.
+ *
+ * @returns AcAvnAnalysisResult or null if a fatal error occurred (error SSE was already sent).
+ */
+export async function runAcAvnSatelliteAnalysis(
     res: Response,
-    jobId: string,
-    selectedLayers: string[] = ["spot_2008"],
-    aiAnalysis = true,
-    contextUrl?: string,
-    outputZipUrl?: string,
-): Promise<boolean> {
-    throwIfClientDisconnected(res);
-    let job = jobCache.get(jobId);
-    if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
-        job = (await hydrateJobFromPersistedContext(jobId, contextUrl)) ?? undefined;
-    }
-    if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && outputZipUrl) {
-        job = (await hydrateJobFromOutputZipUrl(jobId, outputZipUrl)) ?? undefined;
-    }
-    if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
-        sendSSE(res, {
-            type: "error",
-            message:
-                "Job nao encontrado no cache do servidor. Envie contextUrl salvo no Firebase/Cloudinary para reidratar ou gere o recorte novamente.",
-        });
-        return false;
-    }
+    job: CachedJob,
+    selectedLayers: string[],
+    options: { tag?: string; aiAnalysis?: boolean } = {},
+): Promise<AcAvnAnalysisResult | null> {
+    const tag = options.tag ?? crypto.randomUUID().slice(0, 8);
+    const aiAnalysis = options.aiAnalysis !== false;
 
     const { layerSummaries, areaHa: propAreaHa } = job;
     const areaHa = propAreaHa ?? 0;
@@ -5639,30 +5642,29 @@ async function processAnalysis(
     } catch (err: any) {
         console.error("[SIMCAR ANALYSIS] Image generation error:", err.message);
         sendSSE(res, { type: "error", message: `Erro ao gerar imagens: ${err.message}` });
-        return false;
+        return null;
     }
 
-    if (imagesToAnalyze.length === 0) {
+    if (imagesToAnalyze!.length === 0) {
         sendSSE(res, { type: "error", message: "Nenhuma imagem de satelite foi gerada. Verifique a disponibilidade das camadas WMS." });
-        return false;
+        return null;
     }
 
     // Step 2: Upload to Cloudinary (full quality for user viewing)
     sendSSE(res, { type: "progress", step: "uploading_images", percent: 50, message: "Salvando imagens no Cloudinary..." });
-
     const cloudinaryUrls: Array<{ url: string; caption: string }> = [];
     try {
-        for (let i = 0; i < imagesToAnalyze.length; i++) {
+        for (let i = 0; i < imagesToAnalyze!.length; i++) {
             throwIfClientDisconnected(res);
-            const img = imagesToAnalyze[i];
-            const filename = `simcar_analysis_${jobId.slice(0, 8)}_img${i + 1}`;
+            const img = imagesToAnalyze![i];
+            const filename = `simcar_analysis_${tag}_img${i + 1}`;
             const url = await uploadToCloudinary(img.dataUrl, filename);
             cloudinaryUrls.push({ url, caption: img.caption });
             console.log(`[SIMCAR ANALYSIS] Uploaded image ${i + 1}: ${url}`);
             sendSSE(res, {
                 type: "progress", step: "uploading_images",
-                percent: 50 + Math.round(((i + 1) / imagesToAnalyze.length) * 10),
-                message: `Upload ${i + 1}/${imagesToAnalyze.length}...`,
+                percent: 50 + Math.round(((i + 1) / imagesToAnalyze!.length) * 10),
+                message: `Upload ${i + 1}/${imagesToAnalyze!.length}...`,
             });
         }
     } catch (err: any) {
@@ -5671,18 +5673,16 @@ async function processAnalysis(
     }
 
     if (!aiAnalysis) {
-        // Image-only mode: return images without AI analysis
-        sendSSE(res, {
-            type: "complete",
-            percent: 100,
-            images: cloudinaryUrls,
-            layerSummaries: layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
-            analysisRulesVersion: "acavn-fixed-v4",
-            satellitesUsed: usedSatelliteKeys,
-            satellitesMissing: missingSatelliteKeys,
-            cloudWarnings: cloudWarnings.length > 0 ? cloudWarnings : undefined,
-        });
-        return true;
+        return {
+            analysisText: "",
+            cloudinaryUrls,
+            usedSatelliteKeys,
+            missingSatelliteKeys,
+            cloudWarnings,
+            analysisMeta: {} as AcAvnAnalysisMeta,
+            layerSummaries: layerSummaries!,
+            imageOnly: true,
+        };
     }
 
     // Step 3: Prepare images for AI (use Cloudinary URLs or compress base64 as fallback)
@@ -5690,11 +5690,8 @@ async function processAnalysis(
     throwIfClientDisconnected(res);
 
     const aiImages: AiImage[] = [];
-    if (cloudinaryUrls.length === imagesToAnalyze.length) {
+    if (cloudinaryUrls.length === imagesToAnalyze!.length) {
         for (const cu of cloudinaryUrls) {
-            // url      -> Groq vision: 800x600 JPEG q65 (fewer input tokens)
-            // geminiUrl -> Gemini vision: 1024x768 JPEG q82 (more detail for precise analysis)
-            // Both derived via Cloudinary on-the-fly transformations from the original full-res PNG.
             aiImages.push({
                 url: getCloudinaryAiUrl(cu.url),
                 geminiUrl: getCloudinaryGeminiUrl(cu.url),
@@ -5703,8 +5700,8 @@ async function processAnalysis(
         }
         console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs (Groq: 800x600 q65 / Gemini: 1024x768 q82) for vision API`);
     } else {
-        console.log(`[SIMCAR ANALYSIS] Cloudinary partial/failed, compressing ${imagesToAnalyze.length} images for vision API`);
-        for (const img of imagesToAnalyze) {
+        console.log(`[SIMCAR ANALYSIS] Cloudinary partial/failed, compressing ${imagesToAnalyze!.length} images for vision API`);
+        for (const img of imagesToAnalyze!) {
             try {
                 const compressed = await compressForVision(img.dataUrl);
                 aiImages.push({ dataUrl: compressed, caption: img.caption });
@@ -5718,78 +5715,45 @@ async function processAnalysis(
     const validKeys = getOrderedSatelliteKeys(selectedLayers);
     const isMultiSatellite = validKeys.length > 1;
 
-    let analysisText: string;
-
     if (isMultiSatellite && SIMCAR_ANALYSIS_MODE !== "detailed") {
         console.log(
             `[SIMCAR ANALYSIS] Multi-satellite mode using efficient strategy (single unified call). ` +
             `Set SIMCAR_ANALYSIS_MODE=detailed to enable per-satellite synthesis.`,
         );
     }
-
     if (isMultiSatellite && SIMCAR_ANALYSIS_MODE === "detailed" && FORCE_AC_AVN_UNIFIED_ANALYSIS) {
         console.log("[SIMCAR ANALYSIS] Detailed mode requested, but AC/AVN is forced to unified mode for token efficiency.");
     }
 
-    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE === "detailed" && !FORCE_AC_AVN_UNIFIED_ANALYSIS) {
-        // MULTI-SATELLITE (detailed mode): analyze each satellite separately, then synthesize
-        console.log(`[SIMCAR ANALYSIS] Multi-satellite mode: ${validKeys.length} satellites, analyzing individually...`);
+    let analysisText: string;
 
+    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE === "detailed" && !FORCE_AC_AVN_UNIFIED_ANALYSIS) {
+        console.log(`[SIMCAR ANALYSIS] Multi-satellite mode: ${validKeys.length} satellites, analyzing individually...`);
         const perSatelliteResults: Array<{ satelliteLabel: string; year: number; analysis: string }> = [];
         const cloudBySatellite = new Map<string, { satellite: string; cloudScore: number }>();
-        for (const item of cloudWarnings) {
-            cloudBySatellite.set(item.satellite, item);
-        }
+        for (const item of cloudWarnings) cloudBySatellite.set(item.satellite, item);
         let satIdx = 0;
 
         for (const key of validKeys) {
             throwIfClientDisconnected(res);
             const sat = SATELLITE_LAYERS[key];
             if (!sat) continue;
-
-            // Extract the 3 images for this satellite (based on caption containing the label)
             const satImages = aiImages.filter((img) => img.caption.startsWith(sat.label));
-            if (satImages.length === 0) {
-                console.warn(`[SIMCAR ANALYSIS] No images found for ${sat.label}, skipping individual analysis`);
-                satIdx++;
-                continue;
-            }
+            if (satImages.length === 0) { satIdx++; continue; }
 
             const progressPct = 65 + Math.round((satIdx / validKeys.length) * 20);
-            sendSSE(res, {
-                type: "progress", step: "analyzing", percent: progressPct,
-                message: `IA analisando ${sat.label} (${satIdx + 1}/${validKeys.length})...`,
-            });
+            sendSSE(res, { type: "progress", step: "analyzing", percent: progressPct, message: `IA analisando ${sat.label} (${satIdx + 1}/${validKeys.length})...` });
 
             try {
-                const prompt = buildSingleSatellitePrompt(
-                    areaHa,
-                    layerSummaries,
-                    key,
-                    cloudBySatellite.get(sat.label),
-                    acAvnAuasContext,
-                );
-                const result = await analyzeWithGroqAndGemini(
-                    satImages,
-                    prompt,
-                    `${sat.label} (${sat.year})`,
-                );
+                const prompt = buildSingleSatellitePrompt(areaHa, layerSummaries!, key, cloudBySatellite.get(sat.label), acAvnAuasContext);
+                const result = await analyzeWithGroqAndGemini(satImages, prompt, `${sat.label} (${sat.year})`);
                 const split = splitThinkProgress(result);
-                if (split.thinkingText) {
-                    sendSSE(res, {
-                        type: "model_thinking",
-                        source: `${sat.label} (${sat.year})`,
-                        thinkingText: split.thinkingText,
-                    });
-                }
+                if (split.thinkingText) sendSSE(res, { type: "model_thinking", source: `${sat.label} (${sat.year})`, thinkingText: split.thinkingText });
                 perSatelliteResults.push({ satelliteLabel: sat.label, year: sat.year, analysis: result });
                 console.log(`[SIMCAR ANALYSIS] ${sat.label} analysis complete (${result.length} chars)`);
             } catch (err: any) {
                 console.error(`[SIMCAR ANALYSIS] ${sat.label} analysis failed:`, err.message);
-                sendSSE(res, {
-                    type: "progress", step: "analyzing", percent: progressPct,
-                    message: `Aviso: analise de ${sat.label} falhou, continuando com os demais...`,
-                });
+                sendSSE(res, { type: "progress", step: "analyzing", percent: progressPct, message: `Aviso: analise de ${sat.label} falhou, continuando com os demais...` });
             }
             satIdx++;
         }
@@ -5797,121 +5761,108 @@ async function processAnalysis(
         perSatelliteResults.sort((a, b) => (a.year - b.year) || a.satelliteLabel.localeCompare(b.satelliteLabel));
 
         if (perSatelliteResults.length === 0) {
-            // All individual analyses failed - try legacy single-call as last resort
-            console.warn(`[SIMCAR ANALYSIS] All individual analyses failed, trying legacy single-call...`);
             sendSSE(res, { type: "progress", step: "analyzing", percent: 85, message: "Tentando analise unificada como fallback..." });
             try {
-                const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers, {
-                    acAvnAuasContext,
-                });
-                analysisText = await analyzeWithGroqAndGemini(
-                    aiImages,
-                    prompt,
-                    "Analise unificada multitemporal",
-                );
+                const prompt = buildAnalysisPrompt(areaHa, layerSummaries!, selectedLayers, { acAvnAuasContext });
+                analysisText = await analyzeWithGroqAndGemini(aiImages, prompt, "Analise unificada multitemporal");
             } catch (err: any) {
                 console.error("[SIMCAR ANALYSIS] Legacy fallback also failed:", err.message);
                 sendSSE(res, { type: "error", message: `Erro na analise IA: ${err.message}` });
-                return false;
+                return null;
             }
         } else if (perSatelliteResults.length === 1) {
-            // Only one satellite succeeded - return its analysis directly (no synthesis needed)
             analysisText = perSatelliteResults[0].analysis;
         } else {
-            // Multiple results — synthesize with temporal comparison
             sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando analise temporal comparativa..." });
             try {
-                const synthesisPrompt = buildSynthesisPrompt(areaHa, layerSummaries, perSatelliteResults);
-                analysisText = await callBestTextSynthesis(
-                    [{ role: "user", content: synthesisPrompt }],
-                    "sintese temporal final",
-                );
+                const synthesisPrompt = buildSynthesisPrompt(areaHa, layerSummaries!, perSatelliteResults);
+                analysisText = await callBestTextSynthesis([{ role: "user", content: synthesisPrompt }], "sintese temporal final");
                 const split = splitThinkProgress(analysisText);
-                if (split.thinkingText) {
-                    sendSSE(res, {
-                        type: "model_thinking",
-                        source: "Sintese temporal",
-                        thinkingText: split.thinkingText,
-                    });
-                }
+                if (split.thinkingText) sendSSE(res, { type: "model_thinking", source: "Sintese temporal", thinkingText: split.thinkingText });
                 console.log(`[SIMCAR ANALYSIS] Synthesis complete (${analysisText.length} chars)`);
             } catch (err: any) {
-                // Synthesis failed — concatenate individual analyses as fallback
                 console.error("[SIMCAR ANALYSIS] Synthesis failed, concatenating analyses:", err.message);
-                analysisText = perSatelliteResults.map((r) => [
-                    `## Analise: ${r.satelliteLabel} (${r.year})`,
-                    "",
-                    r.analysis,
-                ].join("\n")).join("\n\n---\n\n");
+                analysisText = perSatelliteResults.map((r) => [`## Analise: ${r.satelliteLabel} (${r.year})`, "", r.analysis].join("\n")).join("\n\n---\n\n");
             }
         }
     } else {
-        // EFFICIENT MODE (default) OR SINGLE SATELLITE: one unified call
         const isUnifiedMulti = isMultiSatellite && SIMCAR_ANALYSIS_MODE !== "detailed";
         sendSSE(res, {
-            type: "progress",
-            step: "analyzing",
-            percent: 65,
-            message: isUnifiedMulti
-                ? "IA analisando recorte multitemporal em chamada unica (modo eficiente)..."
-                : "IA analisando imagens...",
+            type: "progress", step: "analyzing", percent: 65,
+            message: isUnifiedMulti ? "IA analisando recorte multitemporal em chamada unica (modo eficiente)..." : "IA analisando imagens...",
         });
         try {
             throwIfClientDisconnected(res);
-            const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers, {
-                acAvnAuasContext,
-            });
-            const singleContext = validKeys
-                .map((k) => `${SATELLITE_LAYERS[k]?.label || k} (${SATELLITE_LAYERS[k]?.year || "?"})`)
-                .join(" / ");
-            analysisText = await analyzeWithGroqAndGemini(
-                aiImages,
-                prompt,
-                singleContext || "Analise de um unico satelite",
-            );
+            const prompt = buildAnalysisPrompt(areaHa, layerSummaries!, selectedLayers, { acAvnAuasContext });
+            const singleContext = validKeys.map((k) => `${SATELLITE_LAYERS[k]?.label || k} (${SATELLITE_LAYERS[k]?.year || "?"})`).join(" / ");
+            analysisText = await analyzeWithGroqAndGemini(aiImages, prompt, singleContext || "Analise de um unico satelite");
             const split = splitThinkProgress(analysisText);
-            if (split.thinkingText) {
-                sendSSE(res, {
-                    type: "model_thinking",
-                    source: singleContext || "Analise unica",
-                    thinkingText: split.thinkingText,
-                });
-            }
+            if (split.thinkingText) sendSSE(res, { type: "model_thinking", source: singleContext || "Analise unica", thinkingText: split.thinkingText });
         } catch (err: any) {
             console.error("[SIMCAR ANALYSIS] AI analysis error:", err.message);
             sendSSE(res, { type: "error", message: `Erro na analise IA: ${err.message}` });
-            return false;
+            return null;
         }
     }
 
-    const normalizedAcAvn = normalizeAcAvnAnalysisOutput(analysisText, {
-        satellitesUsed: usedSatelliteKeys.map((k) => ({
-            key: k,
-            label: SATELLITE_LAYERS[k]?.label || k,
-            year: Number(SATELLITE_LAYERS[k]?.year || 0),
-        })),
-        satellitesMissing: missingSatelliteKeys.map((k) => ({
-            key: k,
-            label: SATELLITE_LAYERS[k]?.label || k,
-            year: Number(SATELLITE_LAYERS[k]?.year || 0),
-        })),
+    const normalizedAcAvn = normalizeAcAvnAnalysisOutput(analysisText!, {
+        satellitesUsed: usedSatelliteKeys.map((k) => ({ key: k, label: SATELLITE_LAYERS[k]?.label || k, year: Number(SATELLITE_LAYERS[k]?.year || 0) })),
+        satellitesMissing: missingSatelliteKeys.map((k) => ({ key: k, label: SATELLITE_LAYERS[k]?.label || k, year: Number(SATELLITE_LAYERS[k]?.year || 0) })),
         cloudWarnings,
         auasContext: acAvnAuasContext,
     });
-    analysisText = normalizedAcAvn.text;
 
-    // Step 5: Complete
+    return {
+        analysisText: normalizedAcAvn.text,
+        cloudinaryUrls,
+        usedSatelliteKeys,
+        missingSatelliteKeys,
+        cloudWarnings,
+        analysisMeta: normalizedAcAvn.meta,
+        layerSummaries: layerSummaries!,
+        imageOnly: false,
+    };
+}
+
+/** Main analysis pipeline (called from the SSE endpoint). */
+async function processAnalysis(
+    res: Response,
+    jobId: string,
+    selectedLayers: string[] = ["spot_2008"],
+    aiAnalysis = true,
+    contextUrl?: string,
+    outputZipUrl?: string,
+): Promise<boolean> {
+    throwIfClientDisconnected(res);
+    let job = jobCache.get(jobId);
+    if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
+        job = (await hydrateJobFromPersistedContext(jobId, contextUrl)) ?? undefined;
+    }
+    if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && outputZipUrl) {
+        job = (await hydrateJobFromOutputZipUrl(jobId, outputZipUrl)) ?? undefined;
+    }
+    if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
+        sendSSE(res, {
+            type: "error",
+            message:
+                "Job nao encontrado no cache do servidor. Envie contextUrl salvo no Firebase/Cloudinary para reidratar ou gere o recorte novamente.",
+        });
+        return false;
+    }
+
+    const result = await runAcAvnSatelliteAnalysis(res, job, selectedLayers, { tag: jobId.slice(0, 8), aiAnalysis });
+    if (!result) return false;
+
     sendSSE(res, {
         type: "complete",
         percent: 100,
-        analysis: analysisText,
-        images: cloudinaryUrls,
-        layerSummaries: layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
+        ...(!result.imageOnly && { analysis: result.analysisText, analysisMeta: result.analysisMeta }),
+        images: result.cloudinaryUrls,
+        layerSummaries: result.layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
         analysisRulesVersion: "acavn-fixed-v4",
-        satellitesUsed: usedSatelliteKeys,
-        satellitesMissing: missingSatelliteKeys,
-        analysisMeta: normalizedAcAvn.meta,
-        cloudWarnings: cloudWarnings.length > 0 ? cloudWarnings : undefined,
+        satellitesUsed: result.usedSatelliteKeys,
+        satellitesMissing: result.missingSatelliteKeys,
+        cloudWarnings: result.cloudWarnings.length > 0 ? result.cloudWarnings : undefined,
     });
     return true;
 }

@@ -25,6 +25,7 @@ import crypto from "crypto";
 import archiver from "archiver";
 import {
     area as turfArea,
+    bbox as turfBbox,
     buffer as turfBuffer,
     difference as turfDifference,
     intersect as turfIntersect,
@@ -39,7 +40,13 @@ import { fileURLToPath } from "url";
 
 import { extractZipEntries } from "./geo-utils";
 import { fetchJsonWithTimeout, polygonToWkt, toPolygonOrMultiFeature } from "./wfs-intersection";
-import { parseUserShapefile } from "./simcar-clip";
+import {
+    parseUserShapefile,
+    runAcAvnSatelliteAnalysis,
+    getFixedAcAvnSatelliteKeys,
+    type CachedJob,
+    type LayerSummary,
+} from "./simcar-clip";
 import {
     parseDbfSchema,
     buildShpAndShx,
@@ -444,9 +451,44 @@ async function runAuasAnalysis(
         expiresAt: Date.now() + CACHE_TTL,
     });
 
-    progress(res, 95, "done", "Análise concluída.");
+    progress(res, 95, "done", "Vetorização concluída. Iniciando análise de IA...");
 
-    // 10. Retornar resultado
+    // 10. Análise de IA — mesmo fluxo da aba de recorte com CAR já vetorizado
+    const auasLayerSummaries: LayerSummary[] = [
+        { name: "AREA_CONSOLIDADA", source: "wfs", features: acUnion ? 1 : 0, areaHa: acAreaHa },
+        { name: "AUAS",             source: "wfs", features: auasUnion ? 1 : 0, areaHa: auasAreaHa },
+        { name: "AVN",              source: "wfs", features: avnFeature ? 1 : 0, areaHa: avnAreaHa },
+        { name: "ARL",              source: "wfs", features: avnFeature ? 1 : 0, areaHa: arlAreaHa },
+    ];
+
+    const propertyBbox = turfBbox(propertyFeature) as [number, number, number, number];
+    const clippedGeometries = new Map<string, Geometry[]>();
+    if (acUnion?.geometry)   clippedGeometries.set("AREA_CONSOLIDADA", [acUnion.geometry]);
+    if (auasUnion?.geometry) clippedGeometries.set("AUAS", [auasUnion.geometry]);
+    if (avnFeature?.geometry) {
+        clippedGeometries.set("AVN", [avnFeature.geometry]);
+        clippedGeometries.set("ARL", [avnFeature.geometry]);
+    }
+
+    const aiJob: CachedJob = {
+        expiresAt: Date.now() + 3_600_000,
+        filename: "auas-ai",
+        bbox: propertyBbox,
+        polygon: propertyFeature,
+        layerSummaries: auasLayerSummaries,
+        areaHa: propertyAreaHa,
+        clippedGeometries,
+    };
+
+    let aiResult: Awaited<ReturnType<typeof runAcAvnSatelliteAnalysis>> = null;
+    try {
+        const satelliteLayers = getFixedAcAvnSatelliteKeys();
+        aiResult = await runAcAvnSatelliteAnalysis(res, aiJob, satelliteLayers, { tag: jobId.slice(0, 8) });
+    } catch (err: any) {
+        console.warn("[AUAS] AI analysis failed (continuing without it):", err.message);
+    }
+
+    // 11. Retornar resultado
     const auasPolygons = Array.from(auasPerYear.entries()).map(([year, ha]) => ({ year, areaHa: ha }));
 
     sendSSE(res, {
@@ -461,6 +503,15 @@ async function runAuasAnalysis(
             riverBufferHa,
             auasPolygons,
             downloadUrl: `/api/auas/download/${jobId}`,
+            ...(aiResult && !aiResult.imageOnly ? {
+                analysis: aiResult.analysisText,
+                images: aiResult.cloudinaryUrls,
+                satellitesUsed: aiResult.usedSatelliteKeys,
+                satellitesMissing: aiResult.missingSatelliteKeys,
+                cloudWarnings: aiResult.cloudWarnings.length > 0 ? aiResult.cloudWarnings : undefined,
+                analysisMeta: aiResult.analysisMeta,
+                analysisRulesVersion: "acavn-fixed-v4",
+            } : {}),
         },
     });
 }
