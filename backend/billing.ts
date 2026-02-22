@@ -136,28 +136,68 @@ export function getBillingUsageSessionRecords(): UsageRecordInput[] {
   return [...store.usages];
 }
 
+/**
+ * Estimate token count from text.
+ * Uses 3.7 chars/token — more accurate than 4.0 for mixed Portuguese/English
+ * technical content (Brazilian environmental legislation, GIS terms).
+ * Portuguese words average 5-6 chars but tokenize efficiently (~3.5-3.8 chars/token).
+ */
 export function estimateTokensFromText(text: string): number {
   const normalized = String(text || "").trim();
   if (!normalized) return 0;
-  return Math.max(1, Math.ceil(normalized.length / 4));
+  // Count words and chars separately for a blended estimate
+  const wordCount = normalized.split(/\s+/).length;
+  const charCount = normalized.length;
+  // Word-based estimate: ~1.35 tokens/word (Portuguese averages ~1.2-1.5)
+  const wordEstimate = Math.ceil(wordCount * 1.35);
+  // Char-based estimate: ~3.7 chars/token for mixed pt-BR/en technical text
+  const charEstimate = Math.ceil(charCount / 3.7);
+  // Blend: average of both to reduce bias
+  return Math.max(1, Math.round((wordEstimate + charEstimate) / 2));
+}
+
+/**
+ * Estimate tokens for a vision model image based on dimensions.
+ * Gemini: tiles of 258 tokens each, min 258, max ~2072 (for large images).
+ * Groq/LLaMA-Vision: approximately 1024-1600 tokens for 800x600 images.
+ * Returns a conservative estimate that works for both.
+ */
+export function estimateImageTokens(widthPx: number, heightPx: number): number {
+  const w = Math.max(1, widthPx);
+  const h = Math.max(1, heightPx);
+  // Gemini tile-based formula: ceil(w/768) * ceil(h/768) * 258, min 258
+  const tilesW = Math.ceil(w / 768);
+  const tilesH = Math.ceil(h / 768);
+  const geminiTokens = tilesW * tilesH * 258;
+  // Groq/LLaMA-Vision: roughly proportional to pixel count, ~0.0017 tokens/px for 800x600
+  const groqTokens = Math.round((w * h) * 0.00175);
+  // Use the higher of the two estimates (conservative for billing)
+  return Math.max(258, Math.max(geminiTokens, groqTokens));
 }
 
 export function estimateTokensFromMessages(messages: Array<{ role: string; content: any }>): number {
-  let chars = 0;
+  // Each message has ~4 tokens of overhead (role + separators in chat format)
+  const MESSAGE_OVERHEAD = 4;
+  let tokens = 0;
   for (const message of messages || []) {
+    tokens += MESSAGE_OVERHEAD;
     const content = message?.content;
     if (typeof content === "string") {
-      chars += content.length;
+      tokens += estimateTokensFromText(content);
       continue;
     }
     if (Array.isArray(content)) {
       for (const part of content) {
-        if (typeof part?.text === "string") chars += part.text.length;
-        if (typeof part?.input_text === "string") chars += part.input_text.length;
+        if (typeof part?.text === "string") tokens += estimateTokensFromText(part.text);
+        if (typeof part?.input_text === "string") tokens += estimateTokensFromText(part.input_text);
+        // Vision image parts: estimate based on standard analysis image size (1024x768)
+        if (part?.type === "image_url" || part?.inline_data) {
+          tokens += estimateImageTokens(1024, 768);
+        }
       }
     }
   }
-  return Math.max(1, Math.ceil(chars / 4));
+  return Math.max(1, tokens);
 }
 
 function sanitizeTokenCount(value: unknown): number {
@@ -969,12 +1009,26 @@ export async function estimateReserveForModels(args: {
   estimatedOutputTokens: number;
   safetyMultiplier?: number;
   endpoint?: string;
+  /** Number of vision images included (adds estimated image tokens to input) */
+  imageCount?: number;
+  /** Image dimensions for per-image token estimation (default 1024x768) */
+  imageWidthPx?: number;
+  imageHeightPx?: number;
 }): Promise<number> {
   const { rate } = await getUsdBrlRate();
   const safeModels = args.models.map((model) => normalizeModelName(model)).filter(Boolean);
   if (safeModels.length === 0) return MIN_CHARGE_BRL;
 
-  const estimateInput = Math.max(1, sanitizeTokenCount(args.estimatedInputTokens));
+  // Add image token overhead to input estimate when vision images are provided
+  let imageTokens = 0;
+  const imgCount = Math.max(0, Math.floor(args.imageCount || 0));
+  if (imgCount > 0) {
+    const imgW = Math.max(256, args.imageWidthPx || 1024);
+    const imgH = Math.max(256, args.imageHeightPx || 768);
+    imageTokens = imgCount * estimateImageTokens(imgW, imgH);
+  }
+
+  const estimateInput = Math.max(1, sanitizeTokenCount(args.estimatedInputTokens) + imageTokens);
   const estimateOutput = Math.max(1, sanitizeTokenCount(args.estimatedOutputTokens));
 
   let maxCost = 0;
