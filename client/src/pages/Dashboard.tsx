@@ -2243,6 +2243,8 @@ export default function Dashboard() {
   const onSelectConversation = async (id: string) => {
     if (!conversationsRef) return;
     await loadConversation(conversationsRef.collection, id);
+    // Close sidebar on mobile after selecting a conversation
+    if (window.innerWidth < 1024) setIsSidebarOpen(false);
   };
 
   const onDeleteConversation = async (id: string) => {
@@ -5293,7 +5295,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-[#203127] border border-emerald-500/20">
               <Sparkles size={14} className="text-emerald-300" />
             </div>
-            <div className="relative max-w-[85%] lg:max-w-[75%] p-4 rounded-2xl bg-[#0f1713]/90 border border-dashed border-emerald-500/35 text-slate-200">
+            <div className="relative max-w-[95%] sm:max-w-[85%] lg:max-w-[75%] p-3 sm:p-4 rounded-2xl bg-[#0f1713]/90 border border-dashed border-emerald-500/35 text-slate-200">
               <div className="mb-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
                 <div className="text-[10px] uppercase tracking-wider text-emerald-300/80 mb-1">
                   Pensamento da IA
@@ -5505,10 +5507,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
       <aside
         className={`
-          fixed lg:relative z-30 flex flex-col h-full w-80 
-          bg-[#0a120e]/80 backdrop-blur-xl border-r border-white/5
+          fixed lg:relative z-30 flex flex-col h-full w-[85vw] max-w-80
+          bg-[#0a120e]/95 lg:bg-[#0a120e]/80 backdrop-blur-xl border-r border-white/5
           transition-transform duration-300 ease-in-out
-          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-20 xl:w-80'}
+          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-20 xl:w-80 xl:max-w-80'}
         `}
       >
         <div className="p-6 flex items-center gap-3 cursor-pointer" onClick={() => setActiveView('chat')}>
@@ -5519,8 +5521,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           </div>
           <div className="flex flex-col xl:flex lg:hidden overflow-hidden">
-            <span className="font-bold text-lg tracking-tight text-white">GeoForest IA</span>
-            <span className="text-xs text-emerald-400/80 font-medium tracking-wide">INTELLIGENCE</span>
+            <span className="font-bold text-base sm:text-lg tracking-tight text-white">GeoForest IA</span>
+            <span className="text-[10px] sm:text-xs text-emerald-400/80 font-medium tracking-wide">INTELLIGENCE</span>
           </div>
         </div>
 
@@ -5532,7 +5534,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'chat' ? 'bg-emerald-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
             >
               <MessageSquare size={15} />
-              <span className="xl:block lg:hidden leading-none">Assistente</span>
+              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">Assistente</span>
             </button>
             <button
               onClick={() => {
@@ -5553,14 +5555,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'simcar-clip' ? 'bg-purple-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
             >
               <Scissors size={15} />
-              <span className="xl:block lg:hidden leading-none">SIMCAR</span>
+              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">SIMCAR</span>
             </button>
             <button
               onClick={() => setActiveView('auas')}
               className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'auas' ? 'bg-amber-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
             >
               <Layers size={15} />
-              <span className="xl:block lg:hidden leading-none">Novo CAR</span>
+              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">Novo CAR</span>
             </button>
           </div>
 
@@ -5572,7 +5574,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             >
               <div className="relative flex items-center justify-center gap-2 bg-[#0f241a] group-hover:bg-transparent text-emerald-100 py-2.5 rounded-[11px] transition-colors">
                 <Plus size={16} />
-                <span className="font-medium xl:block lg:hidden text-sm">Novo Chat</span>
+                <span className="font-medium block lg:hidden xl:block text-sm">Novo Chat</span>
               </div>
             </button>
           )}
@@ -5583,7 +5585,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             >
               <div className="relative flex items-center justify-center gap-2 bg-[#120e1a] group-hover:bg-transparent text-purple-100 py-2.5 rounded-[11px] transition-colors">
                 <Plus size={16} />
-                <span className="font-medium xl:block lg:hidden text-sm">Novo Recorte</span>
+                <span className="font-medium block lg:hidden xl:block text-sm">Novo Recorte</span>
               </div>
             </button>
           )}
@@ -5594,7 +5596,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             >
               <div className="relative flex items-center justify-center gap-2 bg-[#1a1100] group-hover:bg-transparent text-amber-100 py-2.5 rounded-[11px] transition-colors">
                 <Plus size={16} />
-                <span className="font-medium xl:block lg:hidden text-sm">Novo CAR</span>
+                <span className="font-medium block lg:hidden xl:block text-sm">Novo CAR</span>
               </div>
             </button>
           )}
@@ -5665,7 +5667,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
                     <Scissors size={16} />
                   </div>
-                  <div className="flex-1 min-w-0 xl:block lg:hidden">
+                  <div className="flex-1 min-w-0 block lg:hidden xl:block">
                     <p className="text-sm text-slate-200 truncate">{clip.filename}</p>
                     <p className="text-[10px] text-slate-500">
                       {clip.layersWithData}/{clip.totalLayers} camadas • {clip.totalFeatures} feições
@@ -5724,7 +5726,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         setActiveView('simcar-clip');
                       }
                     }}
-                    className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition xl:block lg:hidden"
+                    className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition block lg:hidden xl:block"
                     title="Excluir recorte"
                   >
                     <Trash2 size={14} />
@@ -5753,7 +5755,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     size={18}
                     className={conv.id === activeConversationId ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}
                   />
-                  <div className="overflow-hidden xl:block lg:hidden">
+                  <div className="overflow-hidden block lg:hidden xl:block">
                     <p className="text-sm text-slate-300 truncate group-hover:text-white transition-colors inline-flex items-center gap-2">
                       {conv.lastAttachmentType === 'pdf' && <FileText size={12} className="text-emerald-300 shrink-0" />}
                       {conv.lastAttachmentType === 'image' && <ImagePlus size={12} className="text-emerald-300 shrink-0" />}
@@ -5784,7 +5786,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'features' ? 'bg-white/10' : ''}`}
           >
             <BookOpen size={18} className={`transition-colors ${activeView === 'features' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
-            <span className="text-sm text-slate-300 group-hover:text-white transition-colors xl:block lg:hidden">
+            <span className="text-sm text-slate-300 group-hover:text-white transition-colors block lg:hidden xl:block">
               Funcionalidades
             </span>
           </button>
@@ -5793,7 +5795,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'settings' ? 'bg-white/10' : ''}`}
           >
             <Settings size={18} className={`transition-colors ${activeView === 'settings' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
-            <span className="text-sm text-slate-300 group-hover:text-white transition-colors xl:block lg:hidden">
+            <span className="text-sm text-slate-300 group-hover:text-white transition-colors block lg:hidden xl:block">
               Configurações
             </span>
           </button>
@@ -5807,11 +5809,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   .join('')}
               </span>
             </div>
-            <div className="flex-1 text-left overflow-hidden xl:block lg:hidden">
+            <div className="flex-1 text-left overflow-hidden block lg:hidden xl:block">
               <p className="text-sm font-medium text-white truncate">{userProfile?.fullName || 'Usuário'}</p>
               <p className="text-xs text-emerald-400/70">{userProfile?.email || 'Plano Pro'}</p>
             </div>
-            <LogOut size={18} className="text-slate-500 group-hover:text-red-400 transition-colors xl:block lg:hidden" />
+            <LogOut size={18} className="text-slate-500 group-hover:text-red-400 transition-colors block lg:hidden xl:block" />
           </div>
         </div>
       </aside>
@@ -5820,21 +5822,21 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         className={`flex-1 flex flex-col relative h-full w-full overflow-hidden ${mapDialogOpen ? 'z-[220]' : 'z-10'
           }`}
       >
-        <header className="h-16 flex-shrink-0 flex items-center justify-between px-6 border-b border-white/5 bg-[#050b08]/50 backdrop-blur-md">
-          <div className="flex items-center gap-3">
+        <header className="h-14 sm:h-16 flex-shrink-0 flex items-center justify-between px-3 sm:px-6 border-b border-white/5 bg-[#050b08]/50 backdrop-blur-md">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="lg:hidden p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+              className="lg:hidden p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors shrink-0"
             >
               <Menu size={20} />
             </button>
-            <div className="flex items-center gap-2">
-              <Zap size={16} className="text-emerald-400 fill-current" />
-              <span className="font-medium text-slate-200">
+            <div className="flex items-center gap-2 min-w-0">
+              <Zap size={16} className="text-emerald-400 fill-current shrink-0" />
+              <span className="font-medium text-slate-200 text-sm sm:text-base truncate">
                 {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'auas' ? 'Novo CAR' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
               </span>
               {activeView === 'chat' && (
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide">
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide shrink-0 hidden sm:inline-block">
                   Online
                 </span>
               )}
@@ -5845,13 +5847,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
         {activeView === 'chat' ? (
           <>
-            <div className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth custom-scrollbar relative z-0">
-              <div className="max-w-3xl mx-auto space-y-6">
+            <div className="flex-1 overflow-y-auto px-2 sm:px-4 py-4 sm:py-6 scroll-smooth custom-scrollbar relative z-0">
+              <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
                 {chatTimeline}
               </div>
             </div>
 
-            <div className="p-4 pb-6 w-full flex-shrink-0 relative z-30">
+            <div className="p-2 sm:p-4 pb-4 sm:pb-6 w-full flex-shrink-0 relative z-30">
               <div className="max-w-3xl mx-auto relative group z-30">
                 <div className="absolute inset-0 bg-emerald-500/5 rounded-2xl blur-sm group-focus-within:bg-emerald-500/10 transition-all duration-500" />
                 <div className="relative bg-[#0e1612]/90 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/50 overflow-visible focus-within:border-emerald-500/40 focus-within:ring-1 focus-within:ring-emerald-500/20 transition-all duration-300">
@@ -5905,11 +5907,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </div>
                     </div>
                   )}
-                  <div className="flex items-center justify-between px-3 pb-3 pt-1">
-                    <div className="flex items-center gap-2">
-                      <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs cursor-pointer">
+                  <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-3 pt-1">
+                    <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                      <label className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs cursor-pointer">
                         <ImagePlus size={16} className="text-emerald-300" />
-                        Anexar
+                        <span className="hidden sm:inline">Anexar</span>
                         <input
                           type="file"
                           accept="image/*,application/pdf"
@@ -5924,19 +5926,19 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <button
                         type="button"
                         onClick={openMapDialog}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs"
+                        className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs"
                       >
                         <MapIcon size={16} className="text-emerald-300" />
-                        Mapa
+                        <span className="hidden sm:inline">Mapa</span>
                       </button>
                       <div className="relative z-40" ref={modelMenuRef}>
                         <button
                           type="button"
                           onClick={() => setModelMenuOpen((v) => !v)}
-                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs"
+                          className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs"
                         >
                           <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.7)]"></span>
-                          <span className="max-w-[140px] truncate">{selectedModelLabel}</span>
+                          <span className="max-w-[80px] sm:max-w-[140px] truncate">{selectedModelLabel}</span>
                           <ChevronDown
                             size={13}
                             className={`text-slate-400 transition-transform ${modelMenuOpen ? 'rotate-180' : ''}`}
@@ -5944,7 +5946,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         </button>
 
                         {modelMenuOpen && (
-                          <div className="absolute left-0 bottom-full mb-2 w-80 rounded-2xl bg-[#0d1612]/95 border border-white/10 shadow-2xl backdrop-blur-xl z-[120] overflow-hidden">
+                          <div className="absolute left-0 sm:left-0 right-0 sm:right-auto bottom-full mb-2 w-[calc(100vw-2rem)] sm:w-80 max-w-80 rounded-2xl bg-[#0d1612]/95 border border-white/10 shadow-2xl backdrop-blur-xl z-[120] overflow-hidden">
                             <div className="px-4 py-3 border-b border-white/10">
                               <p className="text-[10px] uppercase tracking-wider text-slate-500">Seleção de modelo</p>
                               <p className="text-xs text-slate-300 mt-1">Escolha manualmente ou use Auto</p>
@@ -5995,17 +5997,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <div className="h-4 w-[1px] bg-white/10 mx-1"></div>
+                    <div className="flex items-center gap-2 sm:gap-3 ml-auto">
+                      <div className="h-4 w-[1px] bg-white/10 hidden sm:block"></div>
                       <button
                         onClick={handleSend}
                         disabled={!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl && queuedFiles.length === 0}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${input.trim() || imageFile || pdfFile || pendingMapImageUrl || queuedFiles.length > 0
+                        className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${input.trim() || imageFile || pdfFile || pendingMapImageUrl || queuedFiles.length > 0
                           ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/25 hover:bg-emerald-400'
                           : 'bg-white/5 text-slate-500 cursor-not-allowed'
                           }`}
                       >
-                        <span>{sending || uploading ? 'Enviando...' : 'Enviar'}</span>
+                        <span className="hidden sm:inline">{sending || uploading ? 'Enviando...' : 'Enviar'}</span>
                         <Send size={14} className={input.trim() ? 'fill-current' : ''} />
                       </button>
                     </div>
@@ -6018,19 +6020,19 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           </>
         ) : activeView === 'simcar-clip' ? (
-          <div className="flex-1 overflow-y-auto px-6 py-8 custom-scrollbar">
-            <div className="max-w-4xl mx-auto space-y-6 animate-fade-in-up">
-              <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6">
-                <div className="flex items-start justify-between gap-4 mb-4">
+          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+            <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6 animate-fade-in-up">
+              <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-4 sm:p-6">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
                   <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                    <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 shrink-0">
                       <Scissors size={20} />
                     </div>
-                    <div>
-                      <h2 className="font-semibold text-lg text-slate-200">
+                    <div className="min-w-0">
+                      <h2 className="font-semibold text-base sm:text-lg text-slate-200">
                         {simcarClipMode === 'auto-clip' ? 'Recorte Automático SIMCAR' : 'Análise SIMCAR Vetorizado com IA'}
                       </h2>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-[11px] sm:text-xs text-slate-400">
                         {simcarClipMode === 'auto-clip'
                           ? 'Envie o shapefile do imóvel e receba as camadas SIMCAR recortadas'
                           : 'Envie o ZIP do modelo vetorizado para analisar diretamente com IA, sem recorte WFS'}
@@ -6042,7 +6044,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       )}
                     </div>
                   </div>
-                  <div className="shrink-0 min-w-[240px]">
+                  <div className="shrink-0 w-full sm:w-auto sm:min-w-[240px]">
                     <p className="text-[10px] uppercase tracking-wider text-slate-500">Modo de Importação Ativo</p>
                     <div className="mt-1.5 grid grid-cols-2 gap-2">
                       {([
@@ -6541,21 +6543,21 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         </section>
 
                         {/* Download + Detailed Table */}
-                        <section className="bg-[#0e1612]/60 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-6 space-y-4">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                        <section className="bg-[#0e1612]/60 backdrop-blur-md border border-emerald-500/20 rounded-2xl p-4 sm:p-6 space-y-4">
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                            <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 shrink-0">
                               <Download size={20} />
                             </div>
-                            <div className="flex-1">
+                            <div className="flex-1 min-w-0">
                               <h3 className="font-semibold text-white">Recorte Concluído</h3>
-                              <p className="text-xs text-slate-400">
+                              <p className="text-[11px] sm:text-xs text-slate-400">
                                 Processado em {(simcarClipSummary.processingTimeMs / 1000).toFixed(1)}s • CRS: {simcarClipSummary.crs}
                               </p>
                             </div>
                             <a
                               href={simcarClipDownloadUrl}
                               download
-                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/30"
+                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/30 w-full sm:w-auto justify-center sm:justify-start"
                             >
                               <Download size={14} />
                               Baixar ZIP
@@ -7225,19 +7227,20 @@ Arquivo de imagem previamente anexado pelo usuário.`;
              ABA AUAS — Área de Uso Alternativo do Solo
              Desmatamento pós-2008 via PRODES + buffer rios SFB
           ══════════════════════════════════════════════════════════ */
-          <div className="flex-1 overflow-y-auto px-6 py-8 custom-scrollbar">
-            <div className="max-w-4xl mx-auto space-y-6 animate-fade-in-up">
+          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+            <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6 animate-fade-in-up">
 
               {/* ─── Cabeçalho ─── */}
-              <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#1a1000] to-[#0e0c00] p-7">
+              <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#1a1000] to-[#0e0c00] p-4 sm:p-7">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/8 rounded-full blur-3xl -translate-y-1/3 translate-x-1/4 pointer-events-none" />
-                <div className="relative flex items-start gap-5">
-                  <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-xl shadow-amber-900/40 shrink-0">
-                    <Layers size={28} className="text-white" />
+                <div className="relative flex flex-col sm:flex-row items-start gap-4 sm:gap-5">
+                  <div className="p-3 sm:p-3.5 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-xl shadow-amber-900/40 shrink-0">
+                    <Layers size={24} className="text-white sm:hidden" />
+                    <Layers size={28} className="text-white hidden sm:block" />
                   </div>
                   <div>
-                    <h1 className="text-2xl font-bold text-white mb-1">Novo CAR</h1>
-                    <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">
+                    <h1 className="text-xl sm:text-2xl font-bold text-white mb-1">Novo CAR</h1>
+                    <p className="text-slate-400 text-xs sm:text-sm leading-relaxed max-w-2xl">
                       Classifica as áreas do imóvel com base no PRODES (desmatamento pré e pós-2008),
                       aplica buffer de 2 m para cada lado nos rios da base SFB e calcula
                       <strong className="text-amber-300"> AC</strong>,
@@ -7245,7 +7248,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <strong className="text-blue-300"> AVN</strong> e
                       <strong className="text-purple-300"> ARL</strong>.
                     </p>
-                    <div className="mt-3 flex flex-wrap gap-3 text-[11px]">
+                    <div className="mt-3 flex flex-wrap gap-2 sm:gap-3 text-[10px] sm:text-[11px]">
                       {[
                         { label: 'AC', desc: 'Desmatamento < 2008', color: 'amber' },
                         { label: 'AUAS', desc: 'Desmatamento ≥ 2008', color: 'emerald' },
@@ -7426,16 +7429,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               {auasResult && !auasProcessing && (
                 <>
                   {/* Cards de área */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
                     {[
                       { label: 'Imóvel', value: auasResult.propertyAreaHa, color: 'slate', icon: '🏠' },
                       { label: 'AC (pré-2008)', value: auasResult.acAreaHa, color: 'amber', icon: '📅' },
                       { label: 'AUAS (pós-2008)', value: auasResult.auasAreaHa, color: 'emerald', icon: '🌿' },
                       { label: 'AVN / ARL', value: auasResult.avnAreaHa, color: 'blue', icon: '🌳' },
                     ].map((card) => (
-                      <div key={card.label} className={`rounded-2xl border border-white/5 bg-[#0e1612]/60 p-4`}>
+                      <div key={card.label} className={`rounded-2xl border border-white/5 bg-[#0e1612]/60 p-3 sm:p-4`}>
                         <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">{card.icon} {card.label}</p>
-                        <p className={`text-2xl font-bold text-${card.color}-300`}>{card.value.toFixed(2)}</p>
+                        <p className={`text-xl sm:text-2xl font-bold text-${card.color}-300`}>{card.value.toFixed(2)}</p>
                         <p className="text-[10px] text-slate-600">hectares</p>
                       </div>
                     ))}
@@ -7485,12 +7488,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   )}
 
                   {/* Botões de ação */}
-                  <div className="flex gap-3">
+                  <div className="flex flex-col sm:flex-row gap-3">
                     {auasResult.downloadUrl && (
                       <a
                         href={auasResult.downloadUrl}
                         download
-                        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-medium text-sm transition-all shadow-lg shadow-amber-900/30"
+                        className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-medium text-sm transition-all shadow-lg shadow-amber-900/30"
                       >
                         <Download size={16} />
                         Baixar Shapefiles
@@ -7498,7 +7501,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     )}
                     <button
                       onClick={() => resetAuasDraft()}
-                      className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 text-sm transition-all"
+                      className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 text-sm transition-all"
                     >
                       <Plus size={16} />
                       Novo CAR
@@ -7510,20 +7513,21 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           </div>
         ) : activeView === 'features' ? (
-          <div className="flex-1 overflow-y-auto px-6 py-8 custom-scrollbar">
-            <div className="max-w-5xl mx-auto space-y-8 animate-fade-in-up">
+          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+            <div className="max-w-5xl mx-auto space-y-5 sm:space-y-8 animate-fade-in-up">
 
               {/* ═══ Hero ═══ */}
-              <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#0e1612] to-[#0a1a10] p-8 md:p-10">
+              <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#0e1612] to-[#0a1a10] p-5 sm:p-8 md:p-10">
                 <div className="absolute top-0 right-0 w-72 h-72 bg-emerald-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3 pointer-events-none" />
                 <div className="absolute bottom-0 left-0 w-48 h-48 bg-purple-500/8 rounded-full blur-3xl translate-y-1/3 -translate-x-1/4 pointer-events-none" />
-                <div className="relative flex flex-col md:flex-row items-start md:items-center gap-6">
-                  <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700 shadow-xl shadow-emerald-900/40">
-                    <Leaf size={36} className="text-white" fill="currentColor" fillOpacity={0.2} />
+                <div className="relative flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-6">
+                  <div className="p-3 sm:p-4 rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700 shadow-xl shadow-emerald-900/40 shrink-0">
+                    <Leaf size={28} className="text-white sm:hidden" fill="currentColor" fillOpacity={0.2} />
+                    <Leaf size={36} className="text-white hidden sm:block" fill="currentColor" fillOpacity={0.2} />
                   </div>
                   <div>
-                    <div className="flex items-center gap-3 mb-2">
-                      <h1 className="text-3xl font-bold text-white">Manual do GeoForest IA</h1>
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2">
+                      <h1 className="text-2xl sm:text-3xl font-bold text-white">Manual do GeoForest IA</h1>
                       <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide">v2.0</span>
                     </div>
                     <p className="text-slate-400 max-w-2xl leading-relaxed">
@@ -7535,7 +7539,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </section>
 
               {/* ═══ Quick Nav ═══ */}
-              <nav className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <nav className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
                 {[
                   { id: 'chat', icon: Brain, label: 'Assistente IA', color: 'emerald' },
                   { id: 'simcar', icon: Scissors, label: 'Recorte SIMCAR', color: 'purple' },
@@ -7565,7 +7569,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <section id="manual-chat" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
                   onClick={() => setManualSection(manualSection === 'chat' ? null : 'chat')}
-                  className="w-full flex items-center justify-between p-6 text-left hover:bg-white/5 transition-colors"
+                  className="w-full flex items-center justify-between p-4 sm:p-6 text-left hover:bg-white/5 transition-colors"
                 >
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400"><Brain size={22} /></div>
@@ -7577,7 +7581,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <ChevronDown size={18} className={`text-slate-500 transition-transform duration-200 ${manualSection === 'chat' ? 'rotate-180' : ''}`} />
                 </button>
                 {manualSection === 'chat' && (
-                  <div className="px-6 pb-6 space-y-6 border-t border-white/5 pt-5">
+                  <div className="px-4 sm:px-6 pb-4 sm:pb-6 space-y-4 sm:space-y-6 border-t border-white/5 pt-4 sm:pt-5">
                     <div>
                       <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2"><span className="text-emerald-400">O que faz</span></h4>
                       <p className="text-sm text-slate-400 leading-relaxed">
@@ -7631,7 +7635,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <section id="manual-simcar" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
                   onClick={() => setManualSection(manualSection === 'simcar' ? null : 'simcar')}
-                  className="w-full flex items-center justify-between p-6 text-left hover:bg-white/5 transition-colors"
+                  className="w-full flex items-center justify-between p-4 sm:p-6 text-left hover:bg-white/5 transition-colors"
                 >
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400"><Scissors size={22} /></div>
@@ -7643,7 +7647,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <ChevronDown size={18} className={`text-slate-500 transition-transform duration-200 ${manualSection === 'simcar' ? 'rotate-180' : ''}`} />
                 </button>
                 {manualSection === 'simcar' && (
-                  <div className="px-6 pb-6 space-y-6 border-t border-white/5 pt-5">
+                  <div className="px-4 sm:px-6 pb-4 sm:pb-6 space-y-4 sm:space-y-6 border-t border-white/5 pt-4 sm:pt-5">
                     <div>
                       <h4 className="text-sm font-semibold text-slate-300 mb-3"><span className="text-purple-400">O que faz</span></h4>
                       <p className="text-sm text-slate-400 leading-relaxed">
@@ -7702,7 +7706,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
                     <div>
                       <h4 className="text-sm font-semibold text-slate-300 mb-3">Camadas incluídas (28)</h4>
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                         {['AIR', 'ATP', 'APP', 'APP_LINHA_DAGUA', 'APP_NASCENTE', 'APP_RIO_ATE_10M',
                           'APP_RIO_10_A_50M', 'APP_RIO_50_A_200M', 'APP_RIO_200_A_600M', 'APP_RIO_ACIMA_600M',
                           'APP_RESERVATORIO', 'APP_TOPO_DE_MORRO', 'APP_BORDA_CHAPADA', 'APP_DECLIVIDADE',
@@ -7748,7 +7752,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <section id="manual-analysis" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
                   onClick={() => setManualSection(manualSection === 'analysis' ? null : 'analysis')}
-                  className="w-full flex items-center justify-between p-6 text-left hover:bg-white/5 transition-colors"
+                  className="w-full flex items-center justify-between p-4 sm:p-6 text-left hover:bg-white/5 transition-colors"
                 >
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400"><Satellite size={22} /></div>
@@ -7760,7 +7764,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <ChevronDown size={18} className={`text-slate-500 transition-transform duration-200 ${manualSection === 'analysis' ? 'rotate-180' : ''}`} />
                 </button>
                 {manualSection === 'analysis' && (
-                  <div className="px-6 pb-6 space-y-6 border-t border-white/5 pt-5">
+                  <div className="px-4 sm:px-6 pb-4 sm:pb-6 space-y-4 sm:space-y-6 border-t border-white/5 pt-4 sm:pt-5">
                     <div>
                       <h4 className="text-sm font-semibold text-slate-300 mb-3"><span className="text-amber-400">O que faz</span></h4>
                       <p className="text-sm text-slate-400 leading-relaxed">
@@ -7844,7 +7848,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <section id="manual-map" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
                   onClick={() => setManualSection(manualSection === 'map' ? null : 'map')}
-                  className="w-full flex items-center justify-between p-6 text-left hover:bg-white/5 transition-colors"
+                  className="w-full flex items-center justify-between p-4 sm:p-6 text-left hover:bg-white/5 transition-colors"
                 >
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400"><Globe size={22} /></div>
@@ -7856,7 +7860,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <ChevronDown size={18} className={`text-slate-500 transition-transform duration-200 ${manualSection === 'map' ? 'rotate-180' : ''}`} />
                 </button>
                 {manualSection === 'map' && (
-                  <div className="px-6 pb-6 space-y-6 border-t border-white/5 pt-5">
+                  <div className="px-4 sm:px-6 pb-4 sm:pb-6 space-y-4 sm:space-y-6 border-t border-white/5 pt-4 sm:pt-5">
                     <div>
                       <h4 className="text-sm font-semibold text-slate-300 mb-3"><span className="text-blue-400">O que faz</span></h4>
                       <p className="text-sm text-slate-400 leading-relaxed">
@@ -7922,7 +7926,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
                   onClick={() => setManualSection(manualSection === 'faq' ? null : 'faq')}
-                  className="w-full flex items-center justify-between p-6 text-left hover:bg-white/5 transition-colors"
+                  className="w-full flex items-center justify-between p-4 sm:p-6 text-left hover:bg-white/5 transition-colors"
                 >
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-slate-500/10 text-slate-400"><HelpCircle size={22} /></div>
@@ -7995,7 +7999,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className="p-2.5 rounded-xl bg-slate-500/10 text-slate-400"><Cpu size={22} /></div>
                   <h3 className="font-semibold text-lg text-slate-200">Stack Tecnológico</h3>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
                   {[
                     { label: 'Frontend', value: 'React 19 + Vite + Tailwind' },
                     { label: 'Backend', value: 'Node.js + Express + TypeScript' },
@@ -8017,13 +8021,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto px-6 py-8 custom-scrollbar">
-            <div className="max-w-4xl mx-auto space-y-8 animate-fade-in-up">
+          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+            <div className="max-w-4xl mx-auto space-y-5 sm:space-y-8 animate-fade-in-up">
               <section className="relative group">
                 <div className="absolute inset-0 bg-emerald-500/5 rounded-2xl blur-sm" />
-                <div className="relative bg-[#0e1612]/80 backdrop-blur-xl border border-white/10 rounded-2xl p-6 md:p-8 flex flex-col md:flex-row items-center gap-6">
-                  <div className="relative">
-                    <div className="w-24 h-24 rounded-full bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center text-3xl font-bold text-white shadow-2xl ring-4 ring-[#0e1612]">
+                <div className="relative bg-[#0e1612]/80 backdrop-blur-xl border border-white/10 rounded-2xl p-4 sm:p-6 md:p-8 flex flex-col items-center gap-4 sm:gap-6 md:flex-row">
+                  <div className="relative shrink-0">
+                    <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center text-2xl sm:text-3xl font-bold text-white shadow-2xl ring-4 ring-[#0e1612]">
                       {(userProfile?.fullName || 'U')
                         .split(' ')
                         .map((n) => n[0])
@@ -8034,10 +8038,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <Plus size={16} />
                     </button>
                   </div>
-                  <div className="flex-1 text-center md:text-left space-y-2">
-                    <h2 className="text-2xl font-semibold text-white">{userProfile?.fullName || 'Usuário'}</h2>
-                    <p className="text-slate-400">{userProfile?.email || 'email@exemplo.com'}</p>
-                    <div className="flex items-center justify-center md:justify-start gap-2 pt-2">
+                  <div className="flex-1 text-center md:text-left space-y-1 sm:space-y-2 min-w-0">
+                    <h2 className="text-xl sm:text-2xl font-semibold text-white truncate">{userProfile?.fullName || 'Usuário'}</h2>
+                    <p className="text-sm sm:text-base text-slate-400 truncate">{userProfile?.email || 'email@exemplo.com'}</p>
+                    <div className="flex items-center justify-center md:justify-start gap-2 pt-2 flex-wrap">
                       <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-medium border border-emerald-500/20">
                         Plano Pro
                       </span>
@@ -8046,10 +8050,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </span>
                     </div>
                   </div>
-                  <div className="flex gap-3">
+                  <div className="flex gap-3 w-full md:w-auto">
                     <button
                       onClick={onEditProfileName}
-                      className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm text-slate-200 transition-all"
+                      className="w-full md:w-auto px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm text-slate-200 transition-all"
                     >
                       Editar Perfil
                     </button>
@@ -8060,21 +8064,21 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               {/* ── Saldo e Créditos ── */}
               <section className="relative group">
                 <div className="absolute inset-0 bg-emerald-500/5 rounded-2xl blur-sm" />
-                <div className="relative bg-[#0e1612]/80 backdrop-blur-xl border border-white/10 rounded-2xl p-6 md:p-8">
-                  <div className="flex items-center justify-between mb-6">
+                <div className="relative bg-[#0e1612]/80 backdrop-blur-xl border border-white/10 rounded-2xl p-4 sm:p-6 md:p-8">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 mb-5 sm:mb-6">
                     <div className="flex items-center gap-3">
-                      <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400">
+                      <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 shrink-0">
                         <Wallet size={22} />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-lg text-white">Meus Créditos</h3>
-                        <p className="text-xs text-slate-500">Cobrança por uso real. Sem plano mensal.</p>
+                        <h3 className="font-semibold text-base sm:text-lg text-white">Meus Créditos</h3>
+                        <p className="text-[11px] sm:text-xs text-slate-500">Cobrança por uso real. Sem plano mensal.</p>
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={() => setBillingTopupOpen(true)}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-emerald-500 text-white hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20"
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-emerald-500 text-white hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20 w-full sm:w-auto justify-center sm:justify-start"
                     >
                       <Plus size={16} />
                       Adicionar créditos
@@ -8082,11 +8086,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
 
                   {/* Saldo principal */}
-                  <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-900/30 via-[#0e1612] to-slate-900/30 border border-emerald-500/20 p-6 mb-6">
+                  <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-900/30 via-[#0e1612] to-slate-900/30 border border-emerald-500/20 p-4 sm:p-6 mb-4 sm:mb-6">
                     <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/5 rounded-full blur-3xl -mr-16 -mt-16" />
                     <div className="relative">
                       <p className="text-xs text-slate-400 uppercase tracking-widest font-medium mb-1">Saldo disponível</p>
-                      <p className="text-4xl font-bold text-white tracking-tight">
+                      <p className="text-2xl sm:text-4xl font-bold text-white tracking-tight">
                         {billingLoading ? (
                           <span className="flex items-center gap-2">
                             <Loader2 size={24} className="animate-spin text-emerald-400" />
@@ -8106,7 +8110,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
 
                   {/* Cards de resumo */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4 mb-4">
                     <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-4 hover:border-emerald-500/20 transition-colors">
                       <div className="flex items-center gap-2 mb-2">
                         <TrendingUp size={14} className="text-emerald-400" />
@@ -8145,7 +8149,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
                   {/* Token summary strip */}
                   {(billingMe?.usageToday?.totalInputTokens || 0) + (billingMe?.usageToday?.totalOutputTokens || 0) > 0 && (
-                    <div className="flex items-center gap-4 px-4 py-2.5 mb-4 rounded-xl bg-white/[0.02] border border-white/[0.05] text-[11px] text-slate-400 flex-wrap">
+                    <div className="flex items-center gap-2 sm:gap-4 px-3 sm:px-4 py-2.5 mb-4 rounded-xl bg-white/[0.02] border border-white/[0.05] text-[10px] sm:text-[11px] text-slate-400 flex-wrap">
                       <span className="flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full bg-blue-400/70" />
                         <span>Tokens entrada hoje:</span>
@@ -8169,7 +8173,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   )}
 
                   {/* Consumo por modelo + Histórico lado a lado */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2">
                     {/* Consumo por modelo */}
                     <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-5">
                       <div className="flex items-center gap-2 mb-4">
@@ -8295,7 +8299,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
                   <h3 className="font-semibold text-lg text-slate-200">Segurança</h3>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-2 sm:gap-3 md:grid-cols-2">
                   <button
                     type="button"
                     onClick={onResetPassword}
@@ -8328,9 +8332,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         )}
 
         {mapDialogOpen && (
-          <div className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="w-full max-w-6xl h-[82vh] rounded-2xl border border-white/10 bg-[#0b120f] shadow-2xl overflow-hidden flex flex-col">
-              <div className="h-14 px-4 border-b border-white/10 flex items-center justify-between">
+          <div className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4">
+            <div className="w-full h-full sm:max-w-6xl sm:h-[82vh] sm:rounded-2xl border-0 sm:border border-white/10 bg-[#0b120f] shadow-2xl overflow-hidden flex flex-col">
+              <div className="h-12 sm:h-14 px-3 sm:px-4 border-b border-white/10 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2">
                   <MapIcon size={16} className="text-emerald-300" />
                   <span className="text-sm text-white font-medium">Selecionar Área no Mapa</span>
@@ -8338,13 +8342,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 <button
                   type="button"
                   onClick={() => setMapDialogOpen(false)}
-                  className="h-8 w-8 rounded-md text-slate-400 hover:text-white hover:bg-white/10"
+                  className="h-8 w-8 rounded-md text-slate-400 hover:text-white hover:bg-white/10 flex items-center justify-center"
                 >
                   <X size={16} />
                 </button>
               </div>
-              <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] min-h-0 flex-1">
-                <div className="border-r border-white/10 overflow-auto custom-scrollbar flex flex-col">
+              <div className="flex flex-col lg:grid lg:grid-cols-[280px_1fr] min-h-0 flex-1 overflow-hidden">
+                <div className="border-b lg:border-b-0 lg:border-r border-white/10 overflow-auto custom-scrollbar flex flex-col max-h-[40vh] lg:max-h-none">
                   {/* ── Section: Camada Base (Imagery) ── */}
                   <div className="border-b border-white/10">
                     <button
@@ -8722,7 +8726,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </button>
                   </div>
                 </div>
-                <div className="relative min-h-0">
+                <div className="relative min-h-[200px] flex-1">
                   {mapLoading && !mapPreviewDataUrl ? (
                     <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm">
                       <div className="flex flex-col items-center gap-3">
@@ -8820,8 +8824,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         )}
 
         {billingTopupOpen && (
-          <div className="fixed inset-0 z-[145] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0b120f] p-5 space-y-4 shadow-2xl">
+          <div className="fixed inset-0 z-[145] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#0b120f] p-4 sm:p-5 space-y-4 shadow-2xl">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-slate-200">Adicionar Créditos</h3>
                 <button
@@ -8859,6 +8863,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         )}
 
         <style>{`
+          .custom-scrollbar {
+            -webkit-overflow-scrolling: touch;
+          }
           .custom-scrollbar::-webkit-scrollbar {
             width: 6px;
           }
@@ -8871,6 +8878,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           }
           .custom-scrollbar::-webkit-scrollbar-thumb:hover {
             background: rgba(16, 185, 129, 0.4);
+          }
+          @media (max-width: 640px) {
+            .custom-scrollbar::-webkit-scrollbar {
+              width: 3px;
+            }
           }
           @keyframes fade-in-up {
             from { opacity: 0; transform: translateY(12px) scale(0.995); }
@@ -8960,7 +8972,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           .chat-markdown .chat-table {
             width: 100%;
             border-collapse: collapse;
-            min-width: 420px;
+            min-width: 320px;
           }
           .chat-markdown .chat-table th {
             text-align: left;
