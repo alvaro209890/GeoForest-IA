@@ -1,12 +1,12 @@
 ﻿/**
- * SIMCAR Clip â€” Automated clipping of SEMA-MT SIMCAR WFS layers
+ * SIMCAR Clip — Automated clipping of SEMA-MT SIMCAR WFS layers
  * to the geometry of a user-provided property polygon.
  *
  * Registers endpoints:
- *   POST /api/simcar/clip          â€” SSE stream (progress + result)
- *   GET  /api/simcar/clip/download/:jobId â€” Download final ZIP
- *   POST /api/simcar/clip/analyze   â€” SSE stream (AI analysis of clips)
- *   GET  /api/simcar/gemini/config  â€” Runtime Gemini config (+ optional probe)
+ *   POST /api/simcar/clip          — SSE stream (progress + result)
+ *   GET  /api/simcar/clip/download/:jobId — Download final ZIP
+ *   POST /api/simcar/clip/analyze   — SSE stream (AI analysis of clips)
+ *   GET  /api/simcar/gemini/config  — Runtime Gemini config (+ optional probe)
  */
 import type { Express, Request, Response } from "express";
 import path from "path";
@@ -63,6 +63,7 @@ import {
     buildUsageFromGroq,
     createRequestId,
     estimateCloudinaryStorageReserve,
+    estimateImageTokens,
     estimateReserveForModels,
     estimateTokensFromMessages,
     estimateTokensFromText,
@@ -79,7 +80,7 @@ import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-/* â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Constants ──────────────────────────────────────────────── */
 
 const MODELO_ZIP_PATH = path.resolve(__dirname, "..", "Arquivo Modelo.zip");
 const WFS_MAX_FEATURES = 50000;
@@ -420,9 +421,9 @@ const TEMPLATE_LAYERS = [
 /** Layers that receive the property polygon directly (no WFS query). */
 const DIRECT_COPY_LAYERS = new Set(["AIR", "ATP"]);
 
-/* â”€â”€â”€ Job Cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Job Cache ──────────────────────────────────────────────── */
 
-type CachedJob = {
+export type CachedJob = {
     buffer?: Buffer;
     expiresAt: number;
     filename: string;
@@ -456,7 +457,7 @@ function pruneJobCache() {
 
 setInterval(pruneJobCache, CACHE_CLEANUP_INTERVAL).unref();
 
-/* â”€â”€â”€ SSE Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── SSE Helpers ────────────────────────────────────────────── */
 
 function sendSSE(res: Response, data: Record<string, unknown>) {
     if (res.writableEnded) return;
@@ -488,7 +489,7 @@ function throwIfClientDisconnected(res: Response): void {
     }
 }
 
-/* â”€â”€â”€ Shapefile Parsing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Shapefile Parsing ──────────────────────────────────────── */
 
 /**
  * Read ALL polygon records from a .shp buffer.
@@ -542,9 +543,9 @@ function readFullShapefile(shpBuffer: Buffer): number[][][][] {
 }
 
 /**
- * Parse user's shapefile ZIP â†’ single unified polygon in EPSG:4674.
+ * Parse user's shapefile ZIP → single unified polygon in EPSG:4674.
  */
-function parseUserShapefile(zipBuffer: Buffer): {
+export function parseUserShapefile(zipBuffer: Buffer): {
     polygon: Feature<Polygon | MultiPolygon>;
     geometry: SupportedPolygonGeometry;
     areaHa: number;
@@ -553,10 +554,10 @@ function parseUserShapefile(zipBuffer: Buffer): {
     const shpEntry = entries.find((e) => e.name.toLowerCase().endsWith(".shp"));
     const prjEntry = entries.find((e) => e.name.toLowerCase().endsWith(".prj"));
 
-    if (!shpEntry) throw new Error("ZIP nÃ£o contÃ©m arquivo .shp vÃ¡lido.");
+    if (!shpEntry) throw new Error("ZIP não contém arquivo .shp válido.");
 
     const allPolygons = readFullShapefile(shpEntry.data);
-    if (!allPolygons.length) throw new Error("Shapefile nÃ£o contÃ©m polÃ­gonos vÃ¡lidos.");
+    if (!allPolygons.length) throw new Error("Shapefile não contém polígonos válidos.");
 
     // Detect CRS from .prj and reproject if needed
     let needsReproject = false;
@@ -572,7 +573,7 @@ function parseUserShapefile(zipBuffer: Buffer): {
             if (upper.includes("SIRGAS") || upper.includes("4674")) {
                 needsReproject = false;
             } else if (upper.includes("WGS") && upper.includes("84")) {
-                // WGS84 â‰ˆ EPSG:4674 for practical purposes
+                // WGS84 ≈ EPSG:4674 for practical purposes
                 needsReproject = false;
             }
         }
@@ -613,7 +614,7 @@ function parseUserShapefile(zipBuffer: Buffer): {
         }
     }
 
-    if (!features.length) throw new Error("Nenhum polÃ­gono vÃ¡lido encontrado no Shapefile.");
+    if (!features.length) throw new Error("Nenhum polígono válido encontrado no Shapefile.");
 
     // Union all polygons into one
     let unified: Feature<Polygon | MultiPolygon> = features[0];
@@ -636,14 +637,14 @@ function parseUserShapefile(zipBuffer: Buffer): {
     }
 
     const geometry = normalizePolygonGeometry(unified.geometry);
-    if (!geometry) throw new Error("Geometria do imÃ³vel nÃ£o pÃ´de ser validada.");
+    if (!geometry) throw new Error("Geometria do imóvel não pôde ser validada.");
 
     const areaHa = Number((turfArea(unified) / 10000).toFixed(4));
 
     return { polygon: unified, geometry, areaHa };
 }
 
-/* â”€â”€â”€ Layer Name Mapping (Template â†’ WFS) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Layer Name Mapping (Template → WFS) ────────────────────── */
 
 function discoverLayerMapping(
     templateLayers: readonly string[],
@@ -693,7 +694,7 @@ function discoverLayerMapping(
             }
         }
 
-        // Fallback: fuzzy â€” find a WFS layer whose suffix matches SIMCAR_D_<name> or just <name>
+        // Fallback: fuzzy — find a WFS layer whose suffix matches SIMCAR_D_<name> or just <name>
         if (!matched) {
             for (const [wfsLow, wfsOriginal] of wfsLower) {
                 const wfsSuffix = (wfsLow.split(":")[1] || wfsLow).toLowerCase();
@@ -711,7 +712,7 @@ function discoverLayerMapping(
             }
         }
 
-        // Last resort: partial match â€” WFS layer ending with _<TEMPLATE_NAME>
+        // Last resort: partial match — WFS layer ending with _<TEMPLATE_NAME>
         if (!matched) {
             for (const [wfsLow, wfsOriginal] of wfsLower) {
                 const wfsSuffix = (wfsLow.split(":")[1] || wfsLow).toLowerCase();
@@ -731,7 +732,7 @@ function discoverLayerMapping(
     return mapping;
 }
 
-/* â”€â”€â”€ WFS Feature Fetching with Attributes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── WFS Feature Fetching with Attributes ───────────────────── */
 
 type WfsFeature = {
     geometry: Geometry | null;
@@ -810,7 +811,7 @@ async function fetchWfsClipFeatures(
     return allFeatures;
 }
 
-/* â”€â”€â”€ Feature Clipping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Feature Clipping ───────────────────────────────────────── */
 
 function clipFeaturesToPolygon(
     features: WfsFeature[],
@@ -839,7 +840,7 @@ function clipFeaturesToPolygon(
     return clipped;
 }
 
-/* â”€â”€â”€ Template Schema Extraction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Template Schema Extraction ─────────────────────────────── */
 
 function readTemplateSchemas(
     modeloEntries: Array<{ name: string; data: Buffer }>,
@@ -862,7 +863,7 @@ function readTemplateSchemas(
     return schemas;
 }
 
-/* â”€â”€â”€ Attribute Mapping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Attribute Mapping ──────────────────────────────────────── */
 
 function mapAttributes(
     properties: Record<string, unknown>,
@@ -890,7 +891,7 @@ function mapAttributes(
     return mapped;
 }
 
-/* â”€â”€â”€ ZIP Output Builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── ZIP Output Builder ─────────────────────────────────────── */
 
 async function buildOutputZip(
     templateEntries: Array<{ name: string; data: Buffer }>,
@@ -966,7 +967,7 @@ async function buildOutputZip(
     });
 }
 
-/* â”€â”€â”€ XLSX Quantitative Report Builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── XLSX Quantitative Report Builder ───────────────────────── */
 
 async function buildQuantitativeXlsx(
     layerSummaries: LayerSummary[],
@@ -995,25 +996,25 @@ async function buildQuantitativeXlsx(
         right: thinBorder,
     };
 
-    // â”€â”€ Sheet 1: Resumo â”€â”€
+    // ── Sheet 1: Resumo ──
     const resumo = workbook.addWorksheet("Resumo");
 
     // Title row
     resumo.mergeCells("A1:B1");
     const titleCell = resumo.getCell("A1");
-    titleCell.value = "RelatÃ³rio Quantitativo â€” Recorte SIMCAR";
+    titleCell.value = "Relatório Quantitativo — Recorte SIMCAR";
     titleCell.font = { bold: true, size: 14, color: { argb: "FF065F46" } };
     titleCell.alignment = { horizontal: "center" };
 
     // Summary data
     const summaryData: [string, string | number][] = [
         ["Data do Processamento", new Date().toLocaleString("pt-BR", { timeZone: "America/Cuiaba" })],
-        ["NÂº IdentificaÃ§Ã£o AIR", airIdentificacao || "â€”"],
-        ["Ãrea do ImÃ³vel (ha)", Number(propertyAreaHa.toFixed(4))],
-        ["Sistema de ReferÃªncia", "EPSG:4674 (SIRGAS 2000)"],
+        ["Nº Identificação AIR", airIdentificacao || "—"],
+        ["Área do Imóvel (ha)", Number(propertyAreaHa.toFixed(4))],
+        ["Sistema de Referência", "EPSG:4674 (SIRGAS 2000)"],
         ["Total de Camadas", layerSummaries.length],
         ["Camadas com Dados", layerSummaries.filter((l) => l.features > 0).length],
-        ["Total de FeiÃ§Ãµes Recortadas", layerSummaries.reduce((s, l) => s + l.features, 0)],
+        ["Total de Feições Recortadas", layerSummaries.reduce((s, l) => s + l.features, 0)],
     ];
 
     summaryData.forEach(([label, value], idx) => {
@@ -1029,11 +1030,11 @@ async function buildQuantitativeXlsx(
     resumo.getColumn(1).width = 32;
     resumo.getColumn(2).width = 40;
 
-    // â”€â”€ Sheet 2: Camadas â”€â”€
+    // ── Sheet 2: Camadas ──
     const camadas = workbook.addWorksheet("Camadas");
 
     // Header row
-    const headers = ["Camada", "Origem", "FeiÃ§Ãµes", "Ãrea (ha)", "% do ImÃ³vel", "ObservaÃ§Ãµes"];
+    const headers = ["Camada", "Origem", "Feições", "Área (ha)", "% do Imóvel", "Observações"];
     const headerRow = camadas.getRow(1);
     headers.forEach((h, i) => {
         const cell = headerRow.getCell(i + 1);
@@ -1053,7 +1054,7 @@ async function buildQuantitativeXlsx(
             : 0;
 
         row.getCell(1).value = layer.name;
-        row.getCell(2).value = layer.source === "property" ? "ImÃ³vel" : "WFS";
+        row.getCell(2).value = layer.source === "property" ? "Imóvel" : "WFS";
         row.getCell(3).value = layer.features;
         row.getCell(4).value = layer.areaHa ?? 0;
         row.getCell(5).value = pct;
@@ -1080,10 +1081,10 @@ async function buildQuantitativeXlsx(
     // Auto-fit columns
     camadas.getColumn(1).width = 28; // Camada
     camadas.getColumn(2).width = 12; // Origem
-    camadas.getColumn(3).width = 10; // FeiÃ§Ãµes
-    camadas.getColumn(4).width = 14; // Ãrea (ha)
-    camadas.getColumn(5).width = 14; // % do ImÃ³vel
-    camadas.getColumn(6).width = 36; // ObservaÃ§Ãµes
+    camadas.getColumn(3).width = 10; // Feições
+    camadas.getColumn(4).width = 14; // Área (ha)
+    camadas.getColumn(5).width = 14; // % do Imóvel
+    camadas.getColumn(6).width = 36; // Observações
 
     // Auto-filter
     camadas.autoFilter = { from: "A1", to: `F${layerSummaries.length + 1}` };
@@ -1093,9 +1094,9 @@ async function buildQuantitativeXlsx(
     return Buffer.from(arrayBuffer);
 }
 
-/* â”€â”€â”€ Main Processing Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Main Processing Pipeline ───────────────────────────────── */
 
-type LayerSummary = {
+export type LayerSummary = {
     name: string;
     source: "property" | "wfs";
     features: number;
@@ -1202,7 +1203,7 @@ async function processClip(
     try {
         userResult = parseUserShapefile(propertyZip);
     } catch (err: any) {
-        sendSSE(res, { type: "error", message: err.message || "Erro ao processar shapefile do imÃ³vel." });
+        sendSSE(res, { type: "error", message: err.message || "Erro ao processar shapefile do imóvel." });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
 
@@ -1215,7 +1216,7 @@ async function processClip(
         const modeloBuffer = fs.readFileSync(MODELO_ZIP_PATH);
         templateEntries = extractZipEntries(modeloBuffer);
     } catch (err: any) {
-        sendSSE(res, { type: "error", message: "Arquivo Modelo.zip nÃ£o encontrado no servidor." });
+        sendSSE(res, { type: "error", message: "Arquivo Modelo.zip não encontrado no servidor." });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
 
@@ -1229,7 +1230,7 @@ async function processClip(
         }
     }
 
-    // 4. WFS GetCapabilities â†’ discover layer mapping
+    // 4. WFS GetCapabilities → discover layer mapping
     let layerMapping = new Map<string, string>();
     try {
         const caps = await getCapabilitiesCached(false);
@@ -1238,7 +1239,7 @@ async function processClip(
         console.log(`[SIMCAR CLIP] Layer mapping: ${layerMapping.size} layers matched`);
     } catch (err: any) {
         console.error("[SIMCAR CLIP] WFS capabilities error:", err.message);
-        sendSSE(res, { type: "error", message: "ServiÃ§o WFS da SEMA-MT indisponÃ­vel." });
+        sendSSE(res, { type: "error", message: "Serviço WFS da SEMA-MT indisponível." });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
 
@@ -1305,7 +1306,7 @@ async function processClip(
                 name: layerName,
                 source: "wfs",
                 features: 0,
-                warning: "Camada nÃ£o encontrada no WFS",
+                warning: "Camada não encontrada no WFS",
             });
             continue;
         }
@@ -1533,7 +1534,7 @@ async function processClip(
     return { ok: true, cloudinaryStoredBytes };
 }
 
-/* â”€â”€â”€ AI Analysis Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── AI Analysis Pipeline ───────────────────────────────────── */
 
 const SEMA_WMS_BASE = process.env.SEMA_WMS_BASE_URL || "https://geo.sema.mt.gov.br/geoserver/ows";
 const SEMA_WMS_AUTHKEY = process.env.SEMA_WMS_AUTHKEY || "541085de-9a2e-454e-bdba-eb3d57a2f492";
@@ -1555,15 +1556,15 @@ function buildSatLayer(sensor: string, year: number, wmsPrefix: string, labelPre
 const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]; label: string; year: number }> = {
     // SPOT (high-res 2.5m)
     spot_2008: { wmsLayer: SPOT_LAYER, label: "SPOT 2008", year: 2008 },
-    // Landsat 5 (30m) â€” 1984-2011
+    // Landsat 5 (30m) — 1984-2011
     ...Object.fromEntries([1984, 1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011].map(
         (y) => [`landsat5_${y}`, buildSatLayer("LANDSAT5", y, "LANDSAT_5", "Landsat 5")]
     )),
-    // Landsat 8 (30m) â€” 2013-2018
+    // Landsat 8 (30m) — 2013-2018
     ...Object.fromEntries([2013, 2014, 2015, 2016, 2017, 2018].map(
         (y) => [`landsat8_${y}`, buildSatLayer("LANDSAT8", y, "LANDSAT_8", "Landsat 8")]
     )),
-    // Sentinel-2 (10m) â€” 2016-2024
+    // Sentinel-2 (10m) — 2016-2024
     ...Object.fromEntries([2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024].map(
         (y) => [`sentinel2_${y}`, buildSatLayer("SENTINEL2", y, "SENTINEL_2", "Sentinel-2")]
     )),
@@ -1576,7 +1577,7 @@ const AC_AVN_FIXED_KEYS = [
     "landsat5_2008",
 ] as const;
 
-function getFixedAcAvnSatelliteKeys(): string[] {
+export function getFixedAcAvnSatelliteKeys(): string[] {
     return AC_AVN_FIXED_KEYS.filter((k) => Boolean(SATELLITE_LAYERS[k]));
 }
 
@@ -1883,7 +1884,7 @@ async function fetchWmsImageBuffer(
     if (!isPng && !isJpeg) {
         // Likely an XML/text error response with 200 status
         const preview = buf.toString("utf8", 0, Math.min(200, buf.length));
-        throw new Error(`WMS retornou formato invÃ¡lido (nÃ£o Ã© PNG/JPEG): ${preview.slice(0, 150)}`);
+        throw new Error(`WMS retornou formato inválido (não é PNG/JPEG): ${preview.slice(0, 150)}`);
     }
 
     return buf;
@@ -1898,7 +1899,7 @@ function geoToPixel(
     height: number,
 ): [number, number] {
     const x = ((lon - bbox[0]) / (bbox[2] - bbox[0])) * width;
-    // WMS 1.1.1 with EPSG:4326 uses lon,lat order in bbox â†’ y is inverted
+    // WMS 1.1.1 with EPSG:4326 uses lon,lat order in bbox → y is inverted
     const y = ((bbox[3] - lat) / (bbox[3] - bbox[1])) * height;
     return [x, y];
 }
@@ -1998,7 +1999,7 @@ async function compositeOverlay(
 
 /**
  * Compress image for AI vision analysis (base64 fallback path, used when Cloudinary is unavailable).
- * Downscales to max 800Ã—600 and encodes as JPEG at quality 65 with metadata stripped.
+ * Downscales to max 800×600 and encodes as JPEG at quality 65 with metadata stripped.
  * Keeps enough detail for vegetation/land-use classification while minimising token cost.
  */
 async function compressForVision(dataUrl: string): Promise<string> {
@@ -2016,7 +2017,7 @@ const CLOUDINARY_CLOUD = "da19dwpgk";
 
 function cloudinarySign(params: Record<string, string>): string {
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
-    if (!apiSecret) throw new Error("Cloudinary nÃ£o configurado.");
+    if (!apiSecret) throw new Error("Cloudinary não configurado.");
     const base = Object.keys(params).sort().map((k) => `${k}=${params[k]}`).join("&");
     return crypto.createHash("sha1").update(base + apiSecret).digest("hex");
 }
@@ -2026,7 +2027,7 @@ async function uploadToCloudinary(dataUrl: string, filename: string): Promise<st
     const apiKey = process.env.CLOUDINARY_API_KEY;
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
     const folder = process.env.CLOUDINARY_FOLDER;
-    if (!apiKey || !apiSecret) throw new Error("Cloudinary nÃ£o configurado.");
+    if (!apiKey || !apiSecret) throw new Error("Cloudinary não configurado.");
 
     const timestamp = Math.floor(Date.now() / 1000);
     const publicId = `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_");
@@ -2061,8 +2062,8 @@ function extractCloudinaryPublicId(url: string): string | null {
 
 /**
  * Returns a Cloudinary URL with on-the-fly transformations optimized for AI vision APIs.
- * Resizes to max 800Ã—600, converts to JPEG at quality 65, strips metadata.
- * This reduces image token consumption by ~70â€“80% vs. sending the full-res PNG,
+ * Resizes to max 800×600, converts to JPEG at quality 65, strips metadata.
+ * This reduces image token consumption by ~70–80% vs. sending the full-res PNG,
  * while preserving enough detail for land-use / vegetation classification.
  * The original full-resolution URL is kept intact for user display.
  */
@@ -2075,7 +2076,7 @@ function getCloudinaryAiUrl(url: string): string {
 
 /**
  * Returns a Cloudinary URL optimized for Gemini vision analysis.
- * Uses a higher resolution (max 1024Ã—768) and better JPEG quality (82) than the
+ * Uses a higher resolution (max 1024×768) and better JPEG quality (82) than the
  * Groq path, taking advantage of Gemini's larger context window and superior image
  * understanding to produce more precise land-use / vegetation analyses.
  */
@@ -2120,7 +2121,7 @@ async function uploadRawBufferToCloudinary(
     const apiKey = process.env.CLOUDINARY_API_KEY;
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
     const folder = process.env.CLOUDINARY_FOLDER;
-    if (!apiKey || !apiSecret) throw new Error("Cloudinary nÃ£o configurado.");
+    if (!apiKey || !apiSecret) throw new Error("Cloudinary não configurado.");
 
     const timestamp = Math.floor(Date.now() / 1000);
     const publicId = `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_");
@@ -2152,9 +2153,9 @@ async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promi
 }
 
 type AiImage = {
-    /** URL for Groq vision (compressed 800Ã—600 JPEG). */
+    /** URL for Groq vision (compressed 800×600 JPEG). */
     url?: string;
-    /** Higher-quality URL for Gemini vision (1024Ã—768 JPEG). Falls back to `url` if absent. */
+    /** Higher-quality URL for Gemini vision (1024×768 JPEG). Falls back to `url` if absent. */
     geminiUrl?: string;
     /** Base64 data URL used when Cloudinary is unavailable. */
     dataUrl?: string;
@@ -2188,7 +2189,7 @@ function buildVisionContentParts(images: AiImage[], prompt: string): any[] {
 function reduceImageSet(
     images: AiImage[],
 ): AiImage[] {
-    return images.filter((img) => img.caption.includes("VisÃ£o Geral"));
+    return images.filter((img) => img.caption.includes("Visão Geral"));
 }
 
 /** Split images by provider weight, giving Gemini priority (all images by default). */
@@ -2232,7 +2233,7 @@ function splitImagesByProviderWeight(images: AiImage[]): { groqImages: AiImage[]
 function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!match) {
-        throw new Error("Formato de data URL invÃ¡lido para Gemini.");
+        throw new Error("Formato de data URL inválido para Gemini.");
     }
     return { mimeType: match[1], base64: match[2] };
 }
@@ -2250,10 +2251,10 @@ function isTruncationFinishReason(reason: unknown): boolean {
 const CONTINUATION_INSTRUCTION =
     "Sua resposta anterior foi cortada. Continue EXATAMENTE de onde parou.\n" +
     "Regras:\n" +
-    "- Nao repita o que ja foi escrito.\n" +
-    "- Mantenha o mesmo idioma, formato e nivel tecnico.\n" +
-    "- Entregue somente a continuacao a partir da proxima frase.\n" +
-    "- Nao invente dados novos fora do contexto ja fornecido.";
+    "- Não repita o que já foi escrito.\n" +
+    "- Mantenha o mesmo idioma, formato e nível técnico.\n" +
+    "- Entregue somente a continuação a partir da próxima frase.\n" +
+    "- Não invente dados novos fora do contexto já fornecido.";
 
 async function continueTruncatedAnalysisText(
     baseText: string,
@@ -2274,8 +2275,8 @@ async function continueTruncatedAnalysisText(
             {
                 role: "user" as const,
                 content:
-                    "VocÃª estÃ¡ finalizando um laudo tÃ©cnico de recorte ambiental.\n" +
-                    "Mantenha o mesmo estilo tÃ©cnico da resposta original.\n\n" +
+                    "Você está finalizando um laudo técnico de recorte ambiental.\n" +
+                    "Mantenha o mesmo estilo técnico da resposta original.\n\n" +
                     `Prompt original:\n${prompt}`,
             },
             { role: "assistant" as const, content: trimForContinuation(currentText) || currentText },
@@ -2314,11 +2315,11 @@ async function callGeminiTextOnce(
     maxOutputTokens = 8192,
 ): Promise<{ content: string; finishReason: string }> {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY nÃ£o configurada.");
+    if (!apiKey) throw new Error("GEMINI_API_KEY não configurada.");
 
     const contents = toGeminiContents(messages);
     if (contents.length === 0) {
-        throw new Error("Sem conteÃºdo textual para sÃ­ntese Gemini.");
+        throw new Error("Sem conteúdo textual para síntese Gemini.");
     }
 
     const controller = new AbortController();
@@ -2392,7 +2393,7 @@ async function callGeminiTextSynthesis(
 ): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-        throw new Error("GEMINI_API_KEY nÃ£o configurada para sÃ­ntese.");
+        throw new Error("GEMINI_API_KEY não configurada para síntese.");
     }
 
     const MAX_CONTINUATIONS = 2;
@@ -2438,7 +2439,7 @@ async function callGeminiTextSynthesis(
         }
     }
 
-    throw new Error(`Gemini synthesis falhou para ${contextLabel}. Ãšltimo erro: ${lastError}`);
+    throw new Error(`Gemini synthesis falhou para ${contextLabel}. Último erro: ${lastError}`);
 }
 
 async function probeGeminiModel(model: string): Promise<{ ok: boolean; error?: string }> {
@@ -2522,7 +2523,7 @@ async function callVisionAnalysis(
     prompt: string,
 ): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error("GROQ_API_KEY nÃ£o configurada.");
+    if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
 
     const VISION_TIMEOUT_MS = 120_000; // 2 minutes
     // Smaller images (post-compression) need fewer output tokens; cap output to reduce cost.
@@ -2579,7 +2580,7 @@ async function callVisionAnalysis(
                     const text = await response.text();
                     lastError = `${model}: ${response.status} - ${text.slice(0, 300)}`;
                     console.warn(`[SIMCAR ANALYSIS] Model ${model} failed:`, lastError);
-                    // Detect Groq rate limit â€” mark and propagate immediately
+                    // Detect Groq rate limit — mark and propagate immediately
                     if (isRateLimitError(response.status, text)) {
                         sawRateLimit = true;
                         const retryAfterMs = extractRetryAfterMs(response.headers, text);
@@ -2636,9 +2637,9 @@ async function callVisionAnalysis(
     }
     if (sawRateLimit && !hasAvailableGroqModels(ANALYSIS_VISION_MODELS)) {
         const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(ANALYSIS_VISION_MODELS) / 1000));
-        throw new GroqRateLimitError(`Todos os modelos de visÃ£o Groq estÃ£o em cooldown (~${waitSecs}s).`);
+        throw new GroqRateLimitError(`Todos os modelos de visão Groq estão em cooldown (~${waitSecs}s).`);
     }
-    throw new Error(`Todos os modelos Groq falharam. Ãšltimo erro: ${lastError}`);
+    throw new Error(`Todos os modelos Groq falharam. Último erro: ${lastError}`);
 }
 
 function buildDualModelMergePrompt(
@@ -2647,22 +2648,22 @@ function buildDualModelMergePrompt(
     geminiAnalysis: string,
 ): string {
     return [
-        "VocÃª Ã© a GeoForest IA e deve consolidar duas anÃ¡lises tÃ©cnicas da MESMA Ã¡rea e do MESMO perÃ­odo.",
+        "Você é a GeoForest IA e deve consolidar duas análises técnicas da MESMA área e do MESMO período.",
         `Contexto do recorte: ${contextLabel}`,
         "",
-        "## AnÃ¡lise Groq",
+        "## Análise Groq",
         groqAnalysis,
         "",
-        "## AnÃ¡lise Gemini",
+        "## Análise Gemini",
         geminiAnalysis,
         "",
         "## Tarefa",
-        "Produza um texto Ãºnico e tÃ©cnico em portuguÃªs com:",
+        "Produza um texto único e técnico em português com:",
         "1) Consensos principais entre os dois modelos.",
-        "2) DivergÃªncias relevantes e a hipÃ³tese mais provÃ¡vel.",
-        "3) ConclusÃ£o consolidada para este perÃ­odo.",
+        "2) Divergências relevantes e a hipótese mais provável.",
+        "3) Conclusão consolidada para este período.",
         "",
-        "Seja objetivo e nÃ£o repita integralmente os textos de origem.",
+        "Seja objetivo e não repita integralmente os textos de origem.",
     ].join("\n");
 }
 
@@ -2699,7 +2700,7 @@ async function callGeminiVisionAnalysis(
     prompt: string,
 ): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY nÃ£o configurada.");
+    if (!apiKey) throw new Error("GEMINI_API_KEY não configurada.");
 
     const VISION_TIMEOUT_MS = 120_000;
     const imageSets = [images];
@@ -2738,7 +2739,7 @@ async function callGeminiVisionAnalysis(
                             contents: [{ role: "user", parts }],
                             generationConfig: {
                                 temperature: 0.1,
-                                // Gemini 2.5 suporta saÃ­das longas (atÃ© 65k tokens).
+                                // Gemini 2.5 suporta saídas longas (até 65k tokens).
                                 // 8192 permite laudos detalhados sem corte artificial.
                                 maxOutputTokens: 8192,
                             },
@@ -2766,9 +2767,11 @@ async function callGeminiVisionAnalysis(
                 if (content) {
                     const usage = buildUsageFromGemini(model, data?.usageMetadata, "/api/simcar/clip/analyze");
                     if (usage.estimated) {
+                        // Use tile-based formula for Gemini (1024x768 = 2 tiles wide, 1 tile tall = 2*258=516 tokens/image)
+                        const geminiImageTokensPerImg = estimateImageTokens(1024, 768);
                         usage.inputTokens = Math.max(
                             Number(usage.inputTokens || 0),
-                            estimateTokensFromText(prompt) + currentImages.length * 1800,
+                            estimateTokensFromText(prompt) + currentImages.length * geminiImageTokensPerImg,
                         );
                         usage.outputTokens = Math.max(
                             Number(usage.outputTokens || 0),
@@ -2801,7 +2804,7 @@ async function callGeminiVisionAnalysis(
         }
     }
 
-    throw new Error(`Gemini falhou. Ãšltimo erro: ${lastError}`);
+    throw new Error(`Gemini falhou. Último erro: ${lastError}`);
 }
 
 async function analyzeWithGroqAndGemini(
@@ -2810,7 +2813,7 @@ async function analyzeWithGroqAndGemini(
     contextLabel: string,
 ): Promise<string> {
     if (images.length === 0) {
-        throw new Error(`Sem imagens para anÃ¡lise (${contextLabel}).`);
+        throw new Error(`Sem imagens para análise (${contextLabel}).`);
     }
 
     const hasGemini = Boolean(process.env.GEMINI_API_KEY);
@@ -2827,7 +2830,7 @@ async function analyzeWithGroqAndGemini(
 
     if (groqAvailable) {
         console.log(
-            `[SIMCAR ANALYSIS] ${contextLabel}: Groq-first â€” sending all ${images.length} images to Groq`,
+            `[SIMCAR ANALYSIS] ${contextLabel}: Groq-first — sending all ${images.length} images to Groq`,
         );
 
         try {
@@ -2852,7 +2855,7 @@ async function analyzeWithGroqAndGemini(
     } else if (hasGroq) {
         const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(ANALYSIS_VISION_MODELS) / 1000));
         console.log(
-            `[SIMCAR ANALYSIS] ${contextLabel}: modelos Groq de visÃ£o em cooldown (~${waitSecs}s), pulando direto para Gemini`,
+            `[SIMCAR ANALYSIS] ${contextLabel}: modelos Groq de visão em cooldown (~${waitSecs}s), pulando direto para Gemini`,
         );
     }
 
@@ -2889,7 +2892,7 @@ async function analyzeWithGroqAndGemini(
         );
     }
 
-    throw new Error(`Nenhum provedor disponÃ­vel para ${contextLabel}.`);
+    throw new Error(`Nenhum provedor disponível para ${contextLabel}.`);
 }
 
 /** Call Groq with text-only follow-up message. Multi-model fallback. */
@@ -3139,23 +3142,23 @@ async function callBestTextSynthesis(
         } catch (groqErr: any) {
             const groqError = groqErr?.message || String(groqErr);
             if (geminiError) {
-                throw new Error(`SÃ­ntese falhou. Gemini=${geminiError} | Groq=${groqError}`);
+                throw new Error(`Síntese falhou. Gemini=${geminiError} | Groq=${groqError}`);
             }
             throw groqErr;
         }
     }
 
     if (geminiError) {
-        throw new Error(`SÃ­ntese falhou com Gemini: ${geminiError}`);
+        throw new Error(`Síntese falhou com Gemini: ${geminiError}`);
     }
-    throw new Error("Nenhum provedor de texto configurado para sÃ­ntese.");
+    throw new Error("Nenhum provedor de texto configurado para síntese.");
 }
 
 async function callTextFollowUp(
     messages: Array<{ role: string; content: any }>,
 ): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error("GROQ_API_KEY nÃ£o configurada.");
+    if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
 
     const MAX_TOKENS = 2200;
     const MAX_CONTINUATIONS = 2;
@@ -3241,9 +3244,9 @@ async function callTextFollowUp(
     }
     if (sawRateLimit && !hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
         const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(GROQ_TEXT_MODELS) / 1000));
-        throw new GroqRateLimitError(`Todos os modelos de texto Groq estÃ£o em cooldown (~${waitSecs}s).`);
+        throw new GroqRateLimitError(`Todos os modelos de texto Groq estão em cooldown (~${waitSecs}s).`);
     }
-    throw new Error(`Falha nos modelos de texto Groq. Ãšltimo erro: ${lastError}`);
+    throw new Error(`Falha nos modelos de texto Groq. Último erro: ${lastError}`);
 }
 
 async function streamTextFollowUp(
@@ -3251,7 +3254,7 @@ async function streamTextFollowUp(
     messages: Array<{ role: string; content: any }>,
 ): Promise<void> {
     const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error("GROQ_API_KEY nÃ£o configurada.");
+    if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
 
     const MAX_TOKENS = 2200;
     const MAX_CONTINUATIONS = 2;
@@ -3375,9 +3378,9 @@ async function streamTextFollowUp(
     if (!firstResult) {
         if (!hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
             const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(GROQ_TEXT_MODELS) / 1000));
-            throw new GroqRateLimitError(`Todos os modelos de texto Groq estÃ£o em cooldown (~${waitSecs}s).`);
+            throw new GroqRateLimitError(`Todos os modelos de texto Groq estão em cooldown (~${waitSecs}s).`);
         }
-        throw new Error("Nenhum modelo disponÃ­vel para iniciar resposta.");
+        throw new Error("Nenhum modelo disponível para iniciar resposta.");
     }
 
     const firstSplit = splitThinkProgress(firstResult.segmentText);
@@ -3480,22 +3483,22 @@ function buildPropertyContext(
         });
 
     return [
-        "## Contexto do ImÃ³vel Rural",
+        "## Contexto do Imóvel Rural",
         "",
-        `| ParÃ¢metro | Valor |`,
+        `| Parâmetro | Valor |`,
         `|-----------|-------|`,
-        `| Ãrea Total da Propriedade (ATP) | **${areaHa.toFixed(2)} ha** |`,
-        `| Ãrea Consolidada (AC) | ${acSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((acSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) â€” ${acSummary?.features ?? 0} feiÃ§Ãµes |`,
-        `| VegetaÃ§Ã£o Nativa (AVN) | ${avnSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((avnSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) â€” ${avnSummary?.features ?? 0} feiÃ§Ãµes |`,
-        `| AUAS (uso alternativo) | ${auasSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((auasSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) - ${auasSummary?.features ?? 0} feicoes |`,
-        atpSummary ? `| ATP (polÃ­gono declarado) | ${atpSummary.areaHa?.toFixed(2) ?? '-'} ha |` : "",
+        `| Área Total da Propriedade (ATP) | **${areaHa.toFixed(2)} ha** |`,
+        `| Área Consolidada (AC) | ${acSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((acSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) — ${acSummary?.features ?? 0} feições |`,
+        `| Vegetação Nativa (AVN) | ${avnSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((avnSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) — ${avnSummary?.features ?? 0} feições |`,
+        `| AUAS (uso alternativo) | ${auasSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((auasSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) - ${auasSummary?.features ?? 0} feições |`,
+        atpSummary ? `| ATP (polígono declarado) | ${atpSummary.areaHa?.toFixed(2) ?? '-'} ha |` : "",
         "",
         compact ? "### Quantitativos-chave (SIMCAR Digital)" : "### Quantitativos completos (SIMCAR Digital)",
-        "| Camada | FeiÃ§Ãµes | Ãrea | % do ImÃ³vel |",
+        "| Camada | Feições | Área | % do Imóvel |",
         "|--------|---------|------|-----------|",
         ...quantRows,
         compact && nonZeroRows.length > chosenRows.length
-            ? `\n*Resumo reduzido para eficiÃªncia de tokens: exibindo ${chosenRows.length} de ${nonZeroRows.length} camadas com feiÃ§Ãµes.*`
+            ? `\n*Resumo reduzido para eficiência de tokens: exibindo ${chosenRows.length} de ${nonZeroRows.length} camadas com feições.*`
             : "",
     ].join("\n");
 }
@@ -3513,10 +3516,12 @@ function buildSingleSatellitePrompt(
     const sensor = `${meta.sensor} (${meta.spatialResolution})`;
     const hasAuas = Boolean(acAvnAuasContext?.hasAuasLayer);
     const auasContext = hasAuas && acAvnAuasContext ? acAvnAuasContext : null;
+    const year = Number(sat?.year || 0);
+    const isPreMarco = year <= 2008;
 
     return [
-        "VocÃª Ã© a **GeoForest IA**, especialista em sensoriamento remoto e anÃ¡lise ambiental para imÃ³veis rurais em Mato Grosso.",
-        "Analise as 3 imagens do satÃ©lite fornecido comparando com os dados vetoriais do CAR.",
+        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
+        "Analise as 3 imagens do satélite fornecido comparando com os dados vetoriais do CAR.",
         "",
         "---",
         "",
@@ -3524,69 +3529,75 @@ function buildSingleSatellitePrompt(
         "",
         "---",
         "",
-        `## Imagens: ${sat.label} â€” ${sensor}`,
+        `## Imagens: ${sat.label} — ${sensor}`,
+        `**Referência temporal:** esta cena é ${isPreMarco ? "pré-marco ou marco temporal (≤ 2008)" : "pós-marco temporal (> 2008)"} — referência legal: 22/07/2008 (Art. 68, Lei 12.651/2012).`,
         "",
         `- **Bandas espectrais**: ${meta.spectralBands}`,
         `- **Revisita**: a cada ${meta.revisitDays} dias`,
-        `- **Melhor uso**: ${meta.bestUseCase}`,
+        `- **Resolução espacial**: ${meta.spatialResolution}`,
+        `- **Uso ideal**: ${meta.bestUseCase}`,
         "",
-        ...(hasAuas
-            ? [
-                "Contexto vetorial AUAS x AVN para este recorte:",
-                `- AUAS total: ${auasContext?.auasAreaHa.toFixed(2)} ha`,
-                `- AVN total: ${auasContext?.avnAreaHa.toFixed(2)} ha`,
-                `- Interseção AUAS∩AVN: ${auasContext?.overlapAreaHa.toFixed(2)} ha`,
-                `- AUAS fora do AVN: ${auasContext?.auasOutsideAvnAreaHa.toFixed(2)} ha (${auasContext?.auasOutsideAvnPct.toFixed(2)}% da AUAS)`,
-                "",
-            ]
-            : []),
         ...(cloudWarning
             ? [
-                "> ⚠️ **Atenção: Cobertura de nuvens detectada** neste satélite ",
-                `> (score de nebulosidade: ${(cloudWarning.cloudScore * 100).toFixed(0)}%). `,
-                "> Considere que algumas áreas podem estar parcialmente ocluídas.",
+                `> ⚠️ **Atenção: Cobertura de nuvens detectada** (score: ${(cloudWarning.cloudScore * 100).toFixed(0)}%).`,
+                "> Áreas ocluídas devem ser classificadas como INCONCLUSIVO, não como uso antrópico.",
                 "",
             ]
             : []),
-        "**Legenda dos polÃ­gonos:**",
-        "- ðŸŸ¥ **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
-        "- ðŸŸª **Roxo semi-transparente**: ÃREA CONSOLIDADA (AC)",
-        "- ðŸŸ¨ **Amarelo semi-transparente**: VEGETAÃ‡ÃƒO NATIVA (AVN)",
-        ...(hasAuas ? ["- ⬜ **Branco semi-transparente**: AUAS (uso alternativo do solo)"] : []),
+        ...(hasAuas
+            ? [
+                "**Contexto vetorial AUAS × AVN:**",
+                `- AUAS declarada: **${auasContext?.auasAreaHa.toFixed(2)} ha**`,
+                `- AVN declarada: **${auasContext?.avnAreaHa.toFixed(2)} ha**`,
+                `- Sobreposição AUAS∩AVN: ${auasContext?.overlapAreaHa.toFixed(2)} ha (${auasContext?.overlapPctOfAuas.toFixed(1)}% da AUAS)`,
+                `- AUAS fora do AVN: ${auasContext?.auasOutsideAvnAreaHa.toFixed(2)} ha — verifique cobertura nessa zona`,
+                "",
+            ]
+            : []),
+        "**Legenda dos polígonos:**",
+        "- 🟥 **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
+        "- 🟪 **Roxo semi-transparente**: ÁREA CONSOLIDADA (AC) — uso antrópico declarado",
+        "- 🟨 **Amarelo semi-transparente**: VEGETAÇÃO NATIVA (AVN) — vegetação nativa declarada",
+        ...(hasAuas ? ["- ⬜ **Branco semi-transparente**: AUAS — uso alternativo do solo"] : []),
         "",
-        `- Imagem 1: VisÃ£o Geral â€” base ${sat.label} + propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}`,
-        `- Imagem 2: Ãrea Consolidada â€” base ${sat.label} + propriedade + somente AC`,
-        `- Imagem 3: AVN â€” base ${sat.label} + propriedade + somente AVN`,
+        `- Imagem 1: Visão Geral — base ${sat.label} + propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}`,
+        `- Imagem 2: Área Consolidada — base ${sat.label} + propriedade + somente AC`,
+        `- Imagem 3: AVN — base ${sat.label} + propriedade + somente AVN`,
         "",
         "---",
         "",
-        "## InstruÃ§Ãµes",
+        "## Análise da Área Consolidada (AC — polígono roxo)",
+        "- As áreas em roxo correspondem a uso antrópico visível (pastagem limpa, agricultura, solo exposto, benfeitorias)?",
+        "- Padrão de textura antrópica: pastagem → tonalidade uniforme; agricultura → linhas regulares; solo exposto → tons claros sem estrutura.",
+        "- Algum trecho de AC apresenta textura de vegetação nativa (dossel rugoso, gradiente verde-escuro, estrutura de Cerrado/Floresta)?",
+        "- Indicar localização aproximada dos trechos discordantes: 'porção norte', 'borda leste', 'setor central', etc.",
         "",
-        "### AnÃ¡lise da Ãrea Consolidada (AC)",
-        "- As Ã¡reas em roxo correspondem a uso antrÃ³pico (pastagem, agricultura, solo exposto)?",
-        "- Algum trecho de AC apresenta textura de vegetaÃ§Ã£o nativa?",
-        "- Descreva a localizaÃ§Ã£o de trechos discordantes (ex: 'porÃ§Ã£o norte', 'borda leste').",
-        "",
-        "### AnÃ¡lise da VegetaÃ§Ã£o Nativa (AVN)",
-        "- As Ã¡reas em amarelo correspondem a vegetaÃ§Ã£o nativa (floresta, cerrado, mata ciliar)?",
-        "- Algum trecho de AVN parece antropizado (pastagem, desmatamento, queimada)?",
-        "- Avalie integridade e conectividade da vegetaÃ§Ã£o.",
+        "## Análise da Vegetação Nativa (AVN — polígono amarelo)",
+        "- As áreas em amarelo apresentam textura de vegetação nativa contínua (floresta, cerrado, mata ciliar)?",
+        "- Distinguir tipologias: Floresta → dossel denso e contínuo; Cerrado → mosaico arbustivo-herbáceo; Campo nativo → tonalidade mais clara com textura variada.",
+        "- Algum trecho de AVN parece antropizado (pastagem, desmatamento, queimada recente, cicatriz de fogo)?",
+        "- Avaliar integridade e conectividade: fragmentação, clareiras, bordas antropizadas.",
         ...(hasAuas
             ? [
-                "- Verifique se existe vegetação nativa aparente fora do AVN, porém dentro do shape AUAS.",
+                "- Verificar se existe vegetação nativa aparente fora do AVN, porém dentro do shape AUAS (contorno branco).",
             ]
             : []),
         "",
-        "### ConcordÃ¢ncias e DiscordÃ¢ncias",
-        "- **âœ… CONCORDA**: Ã¡reas onde classificaÃ§Ã£o coincide com a imagem.",
-        "- **âŒ DISCORDA**: Ã¡reas onde classificaÃ§Ã£o nÃ£o condiz. Indique a classificaÃ§Ã£o mais apropriada.",
+        "## Concordâncias e Discordâncias",
+        "- **✅ CONCORDA**: áreas onde a classificação CAR coincide com o uso visível.",
+        "- **❌ DISCORDA**: áreas onde a classificação não condiz. Indicar classificação mais apropriada e localização aproximada.",
+        "- **⚠️ INCONCLUSIVO**: quando resolução, nuvem ou sazonalidade impedem conclusão segura.",
         "",
-        "### NÃ­vel de ConfianÃ§a",
-        "Classifique: **[ALTA]**, **[MÃ‰DIA]** ou **[BAIXA]**.",
+        "## Nível de Confiança",
+        "Classifique: **[ALTA]** (evidência clara em imagem de qualidade, ≥2 fontes concordando), **[MÉDIA]** (evidência presente mas com limitação técnica), **[BAIXA]** (nuvem >30%, resolução insuficiente ou imagem única degradada) ou **[INCONCLUSIVO]** (nuvem, sombra ou ausência de imagem impedem qualquer avaliação confiável).",
+        "",
+        "## Veredito deste Satélite",
+        "Forneça obrigatoriamente no formato exato:",
+        `- ${sat.label} (${year}) | AC_FORA_SHAPE=SIM|NAO|INCONCLUSIVO | AVN_DENTRO_SHAPE_ANTROPIZADO=SIM|NAO|INCONCLUSIVO${hasAuas ? " | AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS=SIM|NAO|INCONCLUSIVO" : ""} | CONFIANCA=ALTA|MEDIA|BAIXA|INCONCLUSIVO`,
         "",
         "---",
-        "Responda em **portuguÃªs**, use markdown, seja detalhado e tÃ©cnico.",
-        "NÃ£o inclua cadeia de raciocÃ­nio interna nem bloco <think>; entregue sÃ³ a resposta final.",
+        "Responda em **português**, use markdown, seja detalhado e técnico.",
+        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
     ].join("\n");
 }
 
@@ -3606,52 +3617,70 @@ function buildAnalysisPrompt(
         const meta = getSatelliteMetadata(k);
         const imgBase = i * 3 + 1;
         return [
-            `### ${sat.label}`,
-            `- Metadados: sensor=${meta.sensor}; resolução=${meta.spatialResolution}; revisita=${meta.revisitDays} dias`,
-            `- Limitações: ${meta.bestUseCase}`,
+            `### ${sat.label} — ${meta.sensor} (${meta.spatialResolution})`,
+            `- Bandas: ${meta.spectralBands}`,
+            `- Revisita: ${meta.revisitDays} dias | Uso ideal: ${meta.bestUseCase}`,
             `- Imagem ${imgBase}: visão geral (propriedade + AC + AVN${hasAuas ? " + AUAS" : ""})`,
-            `- Imagem ${imgBase + 1}: foco AC (roxo)`,
-            `- Imagem ${imgBase + 2}: foco AVN (amarelo)`,
+            `- Imagem ${imgBase + 1}: foco AC (polígono roxo)`,
+            `- Imagem ${imgBase + 2}: foco AVN (polígono amarelo)`,
         ].join("\n");
     }).join("\n\n");
 
     return [
-        "Você é a GeoForest IA, perita em interpretação de satélite para validação de CAR.",
-        "A análise deve considerar somente áreas dentro do polígono da propriedade.",
+        "Você é a **GeoForest IA**, perita em interpretação de imagens de satélite para validação de CAR em imóveis rurais de Mato Grosso.",
+        "Analise **somente** o que está dentro do polígono da propriedade (contorno vermelho).",
         "",
         buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
         "",
         ...(hasAuas
             ? [
-                "## Contexto Vetorial AUAS x AVN",
-                `- AUAS total: ${auasContext?.auasAreaHa.toFixed(2)} ha`,
-                `- AVN total: ${auasContext?.avnAreaHa.toFixed(2)} ha`,
-                `- Interseção AUAS∩AVN: ${auasContext?.overlapAreaHa.toFixed(2)} ha (${auasContext?.overlapPctOfAuas.toFixed(2)}% da AUAS)`,
-                `- AUAS fora do AVN: ${auasContext?.auasOutsideAvnAreaHa.toFixed(2)} ha (${auasContext?.auasOutsideAvnPct.toFixed(2)}% da AUAS)`,
-                "- Use este contexto somente como apoio; a decisão final deve seguir o que está visível nas imagens.",
+                "## Contexto Vetorial AUAS × AVN",
+                `- AUAS declarada: **${auasContext?.auasAreaHa.toFixed(2)} ha**`,
+                `- AVN declarada: **${auasContext?.avnAreaHa.toFixed(2)} ha**`,
+                `- Sobreposição AUAS∩AVN: ${auasContext?.overlapAreaHa.toFixed(2)} ha (${auasContext?.overlapPctOfAuas.toFixed(1)}% da AUAS, ${auasContext?.overlapPctOfAvn.toFixed(1)}% da AVN)`,
+                `- AUAS fora do AVN: ${auasContext?.auasOutsideAvnAreaHa.toFixed(2)} ha (${auasContext?.auasOutsideAvnPct.toFixed(1)}% da AUAS) — área de uso alternativo do solo não coincidente com vegetação nativa declarada`,
+                "- Use este contexto como referência quantitativa; a decisão final deve seguir a evidência visual das imagens.",
                 "",
             ]
             : []),
         "## Regras Técnicas Obrigatórias",
-        "- AC_FORA_SHAPE = SIM somente quando houver EVIDÊNCIA CLARA de uso antrópico dentro do imóvel e fora do polígono AC.",
-        "- Evidência clara: SPOT 2008 sozinho já confirma, ou ao menos 2 imagens Landsat concordando.",
-        "- AVN_FORA_SHAPE = IGNORAR sempre. Não reportar vegetação fora do shape AVN.",
-        "- AVN_DENTRO_SHAPE_ANTROPIZADO = SIM apenas quando houver área sem mata DENTRO do shape AVN.",
+        "",
+        "### Área Consolidada (AC — polígono roxo)",
+        "- AC_FORA_SHAPE = **SIM** somente quando houver EVIDÊNCIA VISUAL CLARA de uso antrópico (pastagem, agricultura, solo exposto, estrada, benfeitorias) em área do imóvel que NÃO está coberta pelo polígono AC.",
+        "- Critério de evidência clara: SPOT 2008 confirmando sozinho É suficiente (2.5m de resolução). Para Landsat, exige concordância de ao menos 2 cenas independentes.",
+        "- Padrão de textura antrópica: tonalidade uniforme sem gradiente de dossel, estrutura regular de lavoura ou pasto limpo, cicatrizes de fogo.",
+        "- Padrão de vegetação nativa: textura rugosa de copas, gradiente de cor verde-escuro, estrutura irregular de dossel (Floresta), ou manchas herbáceas intercaladas com arbustos (Cerrado).",
+        "- Se a área em questão apresentar textura ambígua (campo nativo, palhada, solo seco), classifique como INCONCLUSIVO.",
+        "",
+        "### Vegetação Nativa (AVN — polígono amarelo)",
+        "- AVN_FORA_SHAPE = **IGNORAR** sempre. Não reportar vegetação fora do shape AVN.",
+        "- AVN_DENTRO_SHAPE_ANTROPIZADO = **SIM** apenas quando houver área CLARAMENTE antropizada DENTRO do polígono AVN.",
+        "- Avalie integridade do dossel, continuidade da cobertura e sinais de fragmentação.",
+        "- Atenção especial em bordas: áreas de borda podem apresentar transição gradual — só classifique como antropizado se a textura antrópica for dominante no trecho.",
         ...(hasAuas
             ? [
-                "- AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM quando houver evidencia de vegetacao nativa fora do AVN, mas dentro do shape AUAS.",
-                "- Se AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM, manter AVN_FORA_SHAPE como IGNORAR e sinalizar pendencia para validar no fluxo AUAS.",
+                "",
+                "### AUAS (polígono branco)",
+                "- AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = **SIM** quando houver evidência visual de vegetação nativa fora do AVN mas dentro do shape AUAS.",
+                "- Se AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM, manter AVN_FORA_SHAPE como IGNORAR e sinalizar necessidade de validação no fluxo AUAS.",
+                `- Área de AUAS fora do AVN: ${auasContext?.auasOutsideAvnAreaHa.toFixed(2)} ha — verifique se há vegetação nativa remanescente nessa porção.`,
             ]
             : [
-                "- Se AUAS não estiver disponível no recorte, use AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = INCONCLUSIVO.",
+                "- Como AUAS não está disponível no recorte, use AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = INCONCLUSIVO.",
             ]),
-        "- Se nuvem, sombra, baixa resolução ou ausência de imagem impedir certeza, use INCONCLUSIVO.",
+        "",
+        "### Critérios de Confiança",
+        "- **ALTA**: evidência direta e inequívoca em ao menos 2 imagens de qualidade, sem nuvem ou sombra relevante.",
+        "- **MEDIA**: evidência presente mas com limitação de resolução, sazonalidade (palhada, campo seco), ou discordância entre cenas.",
+        "- **BAIXA**: cobertura de nuvens >30%, resolução insuficiente para distinção, ou única fonte disponível com imagem degradada.",
+        "- Se nuvem, sombra, queimada recente ou ausência de imagem impedir certeza, use INCONCLUSIVO.",
         "",
         "## Imagens Disponíveis",
         satDescriptions,
         "",
         "## Formato Obrigatório da Resposta",
-        "Use EXATAMENTE estes títulos:",
+        "Use EXATAMENTE estes títulos de seção (não invente outros):",
+        "",
         "## Veredito Objetivo",
         "## Vereditos por Satélite",
         "## Validação de Coerência AC/AVN",
@@ -3659,26 +3688,25 @@ function buildAnalysisPrompt(
         "## Conclusão Técnica",
         "## Recomendação Operacional",
         "",
-        "No bloco 'Veredito Objetivo', incluir obrigatoriamente:",
+        "**Veredito Objetivo** — incluir obrigatoriamente:",
         "- AC_FORA_SHAPE = SIM | NAO | INCONCLUSIVO",
         "- AVN_FORA_SHAPE = IGNORAR",
         "- AVN_DENTRO_SHAPE_ANTROPIZADO = SIM | NAO | INCONCLUSIVO",
         "- AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM | NAO | INCONCLUSIVO",
-        "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA",
+        "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA | INCONCLUSIVO",
         "",
-        "No bloco 'Vereditos por Satélite', incluir uma linha por satélite no formato EXATO:",
-        "- <SATELITE> | AC_FORA_SHAPE=SIM|NAO|INCONCLUSIVO | AVN_DENTRO_SHAPE_ANTROPIZADO=SIM|NAO|INCONCLUSIVO | CONFIANCA=ALTA|MEDIA|BAIXA|INCONCLUSIVO",
+        "**Vereditos por Satélite** — uma linha por satélite no formato EXATO:",
+        "- <NOME_SATELITE> (AAAA) | AC_FORA_SHAPE=SIM|NAO|INCONCLUSIVO | AVN_DENTRO_SHAPE_ANTROPIZADO=SIM|NAO|INCONCLUSIVO | CONFIANCA=ALTA|MEDIA|BAIXA|INCONCLUSIVO",
         "",
-        "No bloco 'Validação de Coerência AC/AVN':",
-        "- Indicar se o veredito global está coerente com os vereditos por satélite.",
-        "- Se houver conflito, declarar explicitamente e recomendar veredito global INCONCLUSIVO para o item conflitante.",
+        "**Validação de Coerência AC/AVN** — indicar se o veredito global é coerente com os vereditos individuais. Se houver conflito, declarar explicitamente e usar INCONCLUSIVO no item conflitante.",
         "",
-        "Regra de comunicacao para o texto:",
-        "- Escreva em linguagem clara, direta e sem jargao desnecessario.",
-        "- Se AC_FORA_SHAPE = SIM e/ou AVN_DENTRO_SHAPE_ANTROPIZADO = SIM, comece a conclusao com alerta objetivo.",
-        "- Se AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM, inclua literalmente a mensagem: 'Area de AVN parcialmente nao inserida no shape de AVN, porem inserida no shape de AUAS. Para confirmar se essa vetorizacao esta correta, execute a analise de AUAS.'",
-        "- Evite recomendacoes genericas que contradigam o veredito.",
-        "- Informe acao pratica imediata (o que revisar no shape e onde).",
+        "**Evidências por Imagem** — descrever os achados por satélite com localização geográfica aproximada (ex.: 'porção nordeste', 'borda sul'). Citar textura, tonalidade e padrão observado.",
+        "",
+        "**Comunicação da conclusão:**",
+        "- Linguagem clara, direta e sem jargão desnecessário.",
+        "- Se AC_FORA_SHAPE = SIM ou AVN_DENTRO_SHAPE_ANTROPIZADO = SIM, inicie a conclusão com alerta objetivo e indique localização aproximada.",
+        "- Se AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = SIM, inclua: 'Área de AVN parcialmente não inserida no shape AVN, porém inserida no shape AUAS. Execute a análise de AUAS para confirmar a vetorização.'",
+        "- Recomendações práticas: especifique o que revisar no shape e em qual região da propriedade.",
         "",
         "Não use tabela. Não inclua cadeia de raciocínio interna nem bloco <think>.",
     ].join("\n");
@@ -3696,7 +3724,7 @@ type AcAvnSatelliteVerdict = {
     avnDentroShapeAntropizado: AcAvnVerdict;
     confidence: AcAvnConfidence;
 };
-type AcAvnAnalysisMeta = {
+export type AcAvnAnalysisMeta = {
     globalVerdict: {
         acForaShape: AcAvnVerdict;
         avnDentroShapeAntropizado: AcAvnVerdict;
@@ -3710,6 +3738,18 @@ type AcAvnAnalysisMeta = {
     };
     cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
     auasContext?: AcAvnAuasContext | null;
+};
+
+export type AcAvnAnalysisResult = {
+    analysisText: string;
+    cloudinaryUrls: Array<{ url: string; caption: string }>;
+    usedSatelliteKeys: string[];
+    missingSatelliteKeys: string[];
+    cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
+    analysisMeta: AcAvnAnalysisMeta;
+    layerSummaries: LayerSummary[];
+    /** true when aiAnalysis=false (image-only mode, no analysisText/analysisMeta) */
+    imageOnly: boolean;
 };
 
 function parseAcAvnConfidenceToken(raw: string): AcAvnConfidence {
@@ -4221,16 +4261,16 @@ function buildSynthesisPrompt(
     const years = perSatelliteAnalyses.map((a) => a.year).sort();
 
     const analysesBlock = perSatelliteAnalyses.map((a) => [
-        `### AnÃ¡lise: ${a.satelliteLabel} (${a.year})`,
+        `### Análise: ${a.satelliteLabel} (${a.year})`,
         "",
         toSynthesisExcerpt(a.analysis),
     ].join("\n")).join("\n\n---\n\n");
 
     return [
-        "VocÃª Ã© a **GeoForest IA**, especialista em sensoriamento remoto e anÃ¡lise ambiental para imÃ³veis rurais em Mato Grosso.",
+        "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
         "",
-        "VocÃª receberÃ¡ anÃ¡lises individuais feitas por IA para diferentes imagens de satÃ©lite do MESMO imÃ³vel rural.",
-        "Sua tarefa Ã© **sintetizar e comparar** essas anÃ¡lises para produzir um **laudo temporal integrado**.",
+        "Você receberá análises individuais feitas por IA para diferentes imagens de satélite do MESMO imóvel rural.",
+        "Sua tarefa é **sintetizar e comparar** essas análises para produzir um **laudo temporal integrado**.",
         "",
         "---",
         "",
@@ -4238,7 +4278,7 @@ function buildSynthesisPrompt(
         "",
         "---",
         "",
-        `## AnÃ¡lises Individuais Realizadas (${labels.join(", ")})`,
+        `## Análises Individuais Realizadas (${labels.join(", ")})`,
         "",
         analysesBlock,
         "",
@@ -4246,47 +4286,47 @@ function buildSynthesisPrompt(
         "",
         "## Sua Tarefa: Laudo Integrado Multi-temporal",
         "",
-        "Produza um laudo ÃšNICO e COMPLETO que integre as anÃ¡lises acima. Seja objetivo e evite repetiÃ§Ãµes.",
+        "Produza um laudo ÚNICO e COMPLETO que integre as análises acima. Seja objetivo e evite repetições.",
         "",
-        "### 1. AnÃ¡lise por Ano (obrigatÃ³ria)",
-        `Crie um subtÃ­tulo para cada ano em **${years.join(", ")}** e descreva os achados de AC/AVN.`,
-        "Em cada ano, inclua: uso antrÃ³pico, integridade da vegetaÃ§Ã£o, pontos de dÃºvida.",
+        "### 1. Análise por Ano (obrigatória)",
+        `Crie um subtítulo para cada ano em **${years.join(", ")}** e descreva os achados de AC/AVN.`,
+        "Em cada ano, inclua: uso antrópico, integridade da vegetação, pontos de dúvida.",
         "",
-        "### 2. ConexÃµes Entre os Anos (obrigatÃ³ria)",
+        "### 2. Conexões Entre os Anos (obrigatória)",
         "Explique a linha do tempo conectando os anos entre si:",
-        "- O que permaneceu estÃ¡vel ao longo dos anos?",
-        "- Onde hÃ¡ indÃ­cio de mudanÃ§a (supressÃ£o ou regeneraÃ§Ã£o)?",
-        "- Qual sequÃªncia temporal mais provÃ¡vel para essas mudanÃ§as?",
+        "- O que permaneceu estável ao longo dos anos?",
+        "- Onde há indício de mudança (supressão ou regeneração)?",
+        "- Qual sequência temporal mais provável para essas mudanças?",
         "",
-        "### 3. ComparaÃ§Ã£o CAR x HistÃ³rico",
-        "- A Ãrea Consolidada (AC) jÃ¡ estava consolidada no ano mais antigo?",
-        "- HÃ¡ AC com sinal de vegetaÃ§Ã£o nativa no passado?",
-        "- HÃ¡ AVN com sinal de uso antrÃ³pico em algum ano?",
+        "### 3. Comparação CAR x Histórico",
+        "- A Área Consolidada (AC) já estava consolidada no ano mais antigo?",
+        "- Há AC com sinal de vegetação nativa no passado?",
+        "- Há AVN com sinal de uso antrópico em algum ano?",
         "",
         "### 4. Marco Temporal (Art. 68, Lei 12.651/2012)",
-        "- ReferÃªncia: **22/07/2008**.",
+        "- Referência: **22/07/2008**.",
         "- Relacione explicitamente os anos anteriores e posteriores a 2008.",
         "",
-        "### 5. ConcordÃ¢ncias e DiscordÃ¢ncias Consolidadas",
-        "- **âœ… CONCORDA**: quando os anos confirmam a classificaÃ§Ã£o do CAR.",
-        "- **âŒ DISCORDA**: quando algum ano contradiz o CAR (cite ano e evidÃªncia).",
-        "- **âš ï¸ INCONCLUSIVO**: quando a limitaÃ§Ã£o do sensor impede conclusÃ£o robusta.",
+        "### 5. Concordâncias e Discordâncias Consolidadas",
+        "- **✅ CONCORDA**: quando os anos confirmam a classificação do CAR.",
+        "- **❌ DISCORDA**: quando algum ano contradiz o CAR (cite ano e evidência).",
+        "- **⚠️ INCONCLUSIVO**: quando a limitação do sensor impede conclusão robusta.",
         "",
-        "### 6. NÃ­vel de ConfianÃ§a",
-        "Classifique: **[ALTA]**, **[MÃ‰DIA]** ou **[BAIXA]** e justifique.",
+        "### 6. Nível de Confiança",
+        "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]** e justifique.",
         "",
-        "### 7. ConclusÃ£o Integrada + RecomendaÃ§Ãµes",
-        "- SÃ­ntese final da linha do tempo citando todos os anos.",
-        "- RecomendaÃ§Ãµes prÃ¡ticas: vistoria, imagens extras, retificaÃ§Ã£o do CAR.",
+        "### 7. Conclusão Integrada + Recomendações",
+        "- Síntese final da linha do tempo citando todos os anos.",
+        "- Recomendações práticas: vistoria, imagens extras, retificação do CAR.",
         "",
         "---",
-        "Responda em **portuguÃªs**, use markdown, seja detalhado e tÃ©cnico.",
-        "NÃ£o inclua cadeia de raciocÃ­nio interna nem bloco <think>; entregue sÃ³ a resposta final.",
-        "NÃƒO repita as anÃ¡lises individuais integralmente â€” sintetize e compare.",
+        "Responda em **português**, use markdown, seja detalhado e técnico.",
+        "Não inclua cadeia de raciocínio interna nem bloco <think>; entregue só a resposta final.",
+        "NÃO repita as análises individuais integralmente — sintetize e compare.",
     ].join("\n");
 }
 
-/* â”€â”€â”€ AUAS Analysis Pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── AUAS Analysis Pipeline ─────────────────────────────────── */
 
 /** Satellite keys used for AUAS analysis: starts at 2008, then chronological order. */
 const AUAS_SATELLITE_KEYS: string[] = [
@@ -4384,7 +4424,7 @@ async function generateAuasSatelliteImages(
             sendSSE(res, {
                 type: "progress", step: "generating_images",
                 percent: 10 + Math.round((step / totalSteps) * 40),
-                message: `Aviso: ${sat.label} indisponÃ­vel, pulando...`,
+                message: `Aviso: ${sat.label} indisponível, pulando...`,
             });
             step++;
             continue;
@@ -4416,7 +4456,7 @@ async function generateAuasSatelliteImages(
             ]);
             images.push({
                 dataUrl: await compositeOverlay(basePng, outlineSvg),
-                caption: `${sat.label} â€” AUAS contorno`,
+                caption: `${sat.label} — AUAS contorno`,
             });
 
             // View 2: contextual overlays to improve discrimination between AC/AVN/AUAS
@@ -4427,7 +4467,7 @@ async function generateAuasSatelliteImages(
             ]);
             images.push({
                 dataUrl: await compositeOverlay(basePng, contextSvg),
-                caption: `${sat.label} â€” AUAS contexto`,
+                caption: `${sat.label} — AUAS contexto`,
             });
         } else {
             const propertySvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
@@ -4435,7 +4475,7 @@ async function generateAuasSatelliteImages(
             ]);
             images.push({
                 dataUrl: await compositeOverlay(basePng, propertySvg),
-                caption: `${sat.label} â€” Propriedade (AUAS nao vetorizada)`,
+                caption: `${sat.label} — Propriedade (AUAS nao vetorizada)`,
             });
         }
         step++;
@@ -4443,7 +4483,7 @@ async function generateAuasSatelliteImages(
         sendSSE(res, {
             type: "progress", step: "generating_images",
             percent: 10 + Math.round((step / totalSteps) * 40),
-            message: `${sat.label}: imagem AUAS gerada âœ“`,
+            message: `${sat.label}: imagem AUAS gerada ✓`,
         });
     }
 
@@ -4468,58 +4508,58 @@ function buildAuasSingleSatPrompt(
     const baselineHint =
         year > 2008
             ? (baselineReferenceLabel
-                ? `Use a imagem de referencia de 2008 (${baselineReferenceLabel}) para comparar diretamente com ${sat.label}.`
-                : "Use 2008 como referencia temporal para comparar diretamente com a cena do ano avaliado.")
+                ? `Compare diretamente com a imagem de referência de 2008 (${baselineReferenceLabel}) para detectar mudanças de cobertura após o marco temporal.`
+                : "Compare com 2008 como referência de linha base para detectar supressão após o marco temporal.")
             : "";
     return [
-        "Você é analista técnica de AUAS para validação de CAR.",
+        "Você é analista técnica de AUAS para validação de CAR em imóvel rural de Mato Grosso.",
         hasAuasLayer
-            ? `Avalie somente a área branca (AUAS) na imagem ${sat.label}.`
-            : `Não há shape AUAS vetorizado no ZIP. Avalie a área da propriedade na imagem ${sat.label}, buscando indícios de supressão pós-2008 que caracterizem AUAS não vetorizada.`,
+            ? `Avalie SOMENTE a área delimitada pelo polígono AUAS (contorno branco) na imagem ${sat.label}.`
+            : `Não há shape AUAS vetorizado no ZIP. Avalie toda a propriedade buscando supressão pós-2008 que caracterize AUAS não vetorizada.`,
         ...(baselineHint ? [baselineHint] : []),
         "",
-        `Metadados do satélite: sensor=${meta.sensor}; resolução=${meta.spatialResolution}; revisita=${meta.revisitDays} dias.`,
-        `Limitação operacional: ${meta.bestUseCase}.`,
+        `**Metadados:** sensor=${meta.sensor}; resolução=${meta.spatialResolution}; revisita=${meta.revisitDays} dias; bandas=${meta.spectralBands}.`,
+        `**Limitação operacional:** ${meta.bestUseCase}`,
         "",
         ...(cloudWarning
             ? [
-                `⚠ Cena com possível nebulosidade/oclusão (${Math.round(cloudWarning.cloudScore * 100)}%).`,
-                "Se isso afetar leitura de cobertura, classifique como INCONCLUSIVO no trecho impactado.",
+                `⚠️ Nebulosidade/oclusão detectada (${Math.round(cloudWarning.cloudScore * 100)}%). Se impactar área analisada, classifique o trecho como INCONCLUSIVO — não como uso antrópico.`,
                 "",
             ]
             : []),
         buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
         "",
-        `Referência legal: marco temporal em 22/07/2008. Esta cena é ${isPreMarco ? "pré-marco ou marco" : "pós-marco"}.`,
+        `**Referência legal:** marco temporal em 22/07/2008. Esta cena é ${isPreMarco ? "pré-marco ou marco (≤ 2008)" : "pós-marco (> 2008)"}.`,
         hasAuasLayer
-            ? (auasSummary ? `AUAS declarada: ${auasSummary.areaHa?.toFixed(2) ?? "0"} ha.` : "AUAS declarada sem quantitativo disponível.")
-            : "AUAS vetorizada: AUSENTE neste ZIP. Use 2008 como referência de cobertura e verifique conversão nos anos posteriores.",
-        ...(hasAuasLayer
-            ? [
-                "Considere como sinal principal somente mudanças DENTRO do shape AUAS.",
-                "Mudanças fora do shape AUAS não alteram o veredito da AUAS.",
-                "Evite falso positivo por solo exposto sazonal: confirme persistência temporal da mudança.",
-            ]
-            : [
-                "Sem shape AUAS, use a série temporal da propriedade para inferir possível AUAS não vetorizada.",
-            ]),
+            ? (auasSummary ? `**AUAS declarada:** ${auasSummary.areaHa?.toFixed(2) ?? "0"} ha.` : "**AUAS declarada:** sem quantitativo disponível.")
+            : "**AUAS vetorizada:** AUSENTE neste ZIP. Use 2008 como referência e identifique supressão nos anos subsequentes.",
         "",
-        "Responda em até 180 palavras, sem tabela, sem emoji e sem bloco <think>.",
+        "**Critérios de análise:**",
+        hasAuasLayer
+            ? "- Avalie somente mudanças DENTRO do shape AUAS. Mudanças fora do shape não alteram o veredito da AUAS."
+            : "- Sem shape AUAS, mapeie toda a área da propriedade em busca de supressão.",
+        "- Solo exposto sazonal (palhada, pastagem seca) ≠ desmatamento: confirme persistência temporal antes de classificar.",
+        "- Padrão de vegetação nativa: dossel rugoso/contínuo (Floresta) ou mosaico arbustivo-herbáceo (Cerrado). Tonalidade verde-escuro irregular.",
+        "- Padrão antrópico: tonalidade uniforme (pastagem), linhas regulares (agricultura), tons claros (solo exposto).",
+        "- Em áreas com Cerrado, confirme que o padrão não é campo nativo antes de classificar como suprimido.",
+        "",
+        "**Resposta em até 300 palavras, sem tabela, sem emoji e sem bloco <think>.**",
         "Estrutura obrigatória:",
-        "## Ano Avaliado",
+        "## Cena Avaliada",
         hasAuasLayer ? "## Cobertura Dentro da AUAS" : "## Cobertura na Propriedade",
-        "## Indícios de Supressão",
+        "## Indicadores de Supressão",
+        "## Comparação com Marco Temporal (2008)",
         "## Veredito do Ano",
         "",
-        "No veredito, usar apenas um rótulo:",
-        "- CONSOLIDADO",
-        "- VEGETACAO_NATIVA_PRESENTE",
-        "- DESMATAMENTO_RECENTE",
-        "- INCONCLUSIVO",
+        "No veredito, usar apenas um rótulo com justificativa de 1-2 frases:",
+        "- CONSOLIDADO — supressão claramente anterior a 22/07/2008",
+        "- VEGETACAO_NATIVA_PRESENTE — vegetação nativa dominante, sem evidência de supressão",
+        "- DESMATAMENTO_RECENTE — supressão após 22/07/2008 com evidência visual confirmada",
+        "- INCONCLUSIVO — qualidade da imagem, resolução ou sazonalidade impede conclusão segura",
     ].join("\n");
 }
 
-type AcAvnAuasContext = {
+export type AcAvnAuasContext = {
     hasAuasLayer: boolean;
     hasAvnLayer: boolean;
     auasAreaHa: number;
@@ -4665,7 +4705,7 @@ function extractFirstDeforestationYearFromText(text: string): number | null {
 }
 
 /**
- * Build the final synthesis prompt for AUAS analysis â€” produces a
+ * Build the final synthesis prompt for AUAS analysis — produces a
  * professional environmental forensics report combining per-satellite
  * observations with previous AC/AVN analysis.
  */
@@ -4684,103 +4724,114 @@ function buildAuasFinalSynthesisPrompt(
     const years = perSatelliteAnalyses.map((a) => a.year).sort();
     const preMarco = years.filter((y) => y <= 2008);
     const postMarco = years.filter((y) => y > 2008);
+    const hasAuasLayer = options?.hasAuasLayer !== false;
 
     const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
+    const avnSummary = layerSummaries.find((l) => l.name === "AVN");
+    const acSummary = layerSummaries.find((l) => l.name === "AREA_CONSOLIDADA");
+
+    // Per-satellite analyses with year ordering
     const analysesBlock = perSatelliteAnalyses
-        .map((a) => `- ${a.satelliteLabel} (${a.year}): ${toSynthesisExcerpt(a.analysis, 600)}`)
-        .join("\n");
+        .sort((a, b) => a.year - b.year)
+        .map((a) => `### ${a.satelliteLabel} (${a.year})\n${toSynthesisExcerpt(a.analysis, 700)}`)
+        .join("\n\n");
 
     const parts: string[] = [
-        "Produza um laudo AUAS curto, técnico e claro.",
-        "Não usar tabela. Não usar emoji. Não incluir bloco <think>.",
-        "Tamanho obrigatório: entre 350 e 550 palavras.",
+        "Você é a **GeoForest IA**, responsável por produzir um laudo AUAS técnico e juridicamente preciso.",
+        "Sintetize as análises por satélite em um relatório coerente, com foco na progressão temporal da cobertura.",
+        "Não usar tabela. Não usar emoji. Não incluir bloco <think>. Tamanho: entre 400 e 600 palavras.",
         "",
         buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
         "",
-        auasSummary ? `AUAS declarada: ${auasSummary.areaHa?.toFixed(2) ?? "0"} ha.` : "AUAS declarada sem quantitativo disponível.",
-        `Série temporal analisada: ${years[0]} a ${years[years.length - 1]}.`,
-        `Anos pré-marco (<=2008): ${preMarco.length ? preMarco.join(", ") : "nenhum"}.`,
-        `Anos pós-marco (>2008): ${postMarco.length ? postMarco.join(", ") : "nenhum"}.`,
-        "",
-        "Resumo das análises por ano:",
-        analysesBlock,
+        "## Dados da AUAS",
+        hasAuasLayer
+            ? (auasSummary ? `- AUAS vetorizada: **${auasSummary.areaHa?.toFixed(2) ?? "0"} ha**` : "- AUAS vetorizada: presente (sem quantitativo)")
+            : "- AUAS vetorizada: **AUSENTE** — análise inferencial pela série temporal",
+        avnSummary ? `- AVN declarada: ${avnSummary.areaHa?.toFixed(2) ?? "0"} ha` : "",
+        acSummary ? `- AC declarada: ${acSummary.areaHa?.toFixed(2) ?? "0"} ha` : "",
+        `- Série temporal: ${years.length} satélites (${years[0]}–${years[years.length - 1]})`,
+        `- Anos pré-marco (≤2008): ${preMarco.length ? preMarco.join(", ") : "nenhum"}`,
+        `- Anos pós-marco (>2008): ${postMarco.length ? postMarco.join(", ") : "nenhum"}`,
         "",
     ];
 
-    if (previousAcAvnAnalysis) {
-        parts.push(
-            "Referência cruzada AC/AVN (resumo):",
-            toSynthesisExcerpt(previousAcAvnAnalysis, 2200),
-            "",
-        );
-    }
-    if (options?.acAvnMeta) {
-        parts.push(
-            "Referência estruturada AC/AVN (json simplificado):",
-            clampTextMiddle(JSON.stringify(options.acAvnMeta), 1200),
-            "- Use esse resultado AC/AVN para aumentar a precisão da validação AUAS.",
-            "- Se AC/AVN indicar AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS=SIM, valide explicitamente se o shape AUAS está coerente com a série temporal.",
-            "",
-        );
-    }
     if (options?.crossCheck) {
         const cc = options.crossCheck;
         parts.push(
-            "Cruzamento geométrico AUAS x AVN:",
-            `- AUAS total: ${cc.auasAreaHa.toFixed(2)} ha`,
-            `- AVN total: ${cc.avnAreaHa.toFixed(2)} ha`,
-            `- Interseção AUAS∩AVN: ${cc.overlapAreaHa.toFixed(2)} ha (${cc.overlapPctOfAuas.toFixed(2)}% da AUAS)`,
-            `- Sobreposição relevante: ${cc.hasAuasOverlapAvn ? "SIM" : "NAO"}`,
-            "- Use esse cruzamento para verificar se a área de AUAS tinha vegetação em 2008 e se a supressão ocorreu depois.",
+            "## Cruzamento Geométrico AUAS × AVN",
+            `- AUAS: ${cc.auasAreaHa.toFixed(2)} ha | AVN: ${cc.avnAreaHa.toFixed(2)} ha`,
+            `- Sobreposição AUAS∩AVN: ${cc.overlapAreaHa.toFixed(2)} ha (${cc.overlapPctOfAuas.toFixed(1)}% da AUAS, ${cc.overlapPctOfAvn.toFixed(1)}% da AVN)`,
+            `- AUAS fora do AVN: ${(cc.auasAreaHa - cc.overlapAreaHa).toFixed(2)} ha — zona de uso alternativo sem vegetação nativa declarada`,
+            `- Sobreposição relevante (>5% da AUAS): ${cc.hasAuasOverlapAvn ? "SIM — verificar se há vegetação nativa persistente nessa porção" : "NAO"}`,
+            "- Interprete: AUAS∩AVN indica porção da AUAS que está sobre vegetação declarada; AUAS fora do AVN é a área efetivamente de uso alternativo.",
             "",
         );
     }
-    if (options?.hasAuasLayer !== false) {
-        parts.push(
-            "AUAS vetorizada no ZIP: PRESENTE.",
-            "- Validar aderência entre limite do shape AUAS e padrão temporal observado nas imagens.",
-            "- Distinguir dois cenários: (1) passivo ambiental corretamente mapeado em AUAS; (2) divergência real de vetorização da AUAS.",
-            "- Só classificar inconsistência de vetorização quando houver incompatibilidade espacial/temporal clara dentro do shape AUAS.",
-            "",
-        );
-    }
-    if (options?.hasAuasLayer === false) {
-        parts.push(
-            "AUAS vetorizada no ZIP: AUSENTE.",
-            "- Avalie a série temporal na propriedade para identificar se há supressão pós-2008 que indique AUAS não vetorizada.",
-            "- Se houver indício consistente de supressão após 2008, declarar explicitamente: 'há AUAS não vetorizada'.",
-            "",
-        );
-    }
+
     if (options?.cloudWarnings && options.cloudWarnings.length > 0) {
         parts.push(
-            "Avisos de nebulosidade/oclusão por satélite:",
-            ...options.cloudWarnings.map((item) => `- ${item.satellite}: ${Math.round(item.cloudScore * 100)}%`),
+            "## Limitações por Nebulosidade",
+            ...options.cloudWarnings.map((item) => `- ${item.satellite}: ${Math.round(item.cloudScore * 100)}% de cobertura de nuvens — trechos impactados classificados como INCONCLUSIVO`),
             "",
         );
     }
 
     parts.push(
-        "Formato obrigatório de saída:",
+        "## Análises por Satélite",
+        analysesBlock,
+        "",
+    );
+
+    if (previousAcAvnAnalysis) {
+        parts.push(
+            "## Referência Cruzada AC/AVN",
+            toSynthesisExcerpt(previousAcAvnAnalysis, 2000),
+            "",
+        );
+    }
+
+    if (options?.acAvnMeta) {
+        parts.push(
+            "## Metadados AC/AVN (Estruturado)",
+            clampTextMiddle(JSON.stringify(options.acAvnMeta), 1000),
+            "- Se AC/AVN indica AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS=SIM: validar explicitamente se o shape AUAS delimita corretamente essa vegetação.",
+            "- Se AC_FORA_SHAPE=SIM: verificar sobreposição com shape AUAS — pode indicar erro de delimitação ou passivo dentro da AUAS.",
+            "",
+        );
+    }
+
+    parts.push(
+        hasAuasLayer
+            ? "AUAS vetorizada PRESENTE — valide se o limite do shape AUAS é consistente com a progressão temporal observada."
+            : "AUAS vetorizada AUSENTE — se houver evidência de supressão pós-2008, declarar AUAS não vetorizada.",
+        "",
+        "## Critérios de Classificação do Veredito Final",
+        "- **AUAS_VALIDA**: o shape AUAS mapeia corretamente área com uso alternativo do solo consolidado até 22/07/2008 OU passivo ambiental pós-2008 adequadamente registrado como tal.",
+        "- **AUAS_INVALIDA**: há inconsistência técnica grave na delimitação ou cronologia da AUAS (ex.: AUAS em área com vegetação nativa contínua sem nenhuma supressão temporal; AUAS em área claramente consolidada antes de 2008 sem evidência de uso alternativo).",
+        "- **AUAS_PARCIAL**: parte da AUAS é válida e parte apresenta inconsistências; ou AUAS ausente com evidências parciais de supressão pós-marco.",
+        "",
+        "**Regra para supressão pós-2008 dentro da AUAS vetorizada:**",
+        "- NÃO invalida automaticamente a AUAS. Trata-se de passivo ambiental mapeado — a AUAS registra uso alternativo do solo (desmate pós-marco) que requer regularização.",
+        "- Use AUAS_INVALIDA somente quando a delimitação espacial ou temporal da AUAS for tecnicamente incorreta (ex.: AUAS cobrindo vegetação nativa intacta desde 2008).",
+        "- Use AUAS_VALIDA quando o shape AUAS reflete fielmente a realidade temporal observada, mesmo que haja passivo.",
+        "",
+        "## Formato Obrigatório de Saída",
         "## Resumo Executivo",
-        "## Achados Objetivos por Ano",
+        "## Progressão Temporal da Cobertura",
+        "## Achados por Período",
         "## Não Conformidades Detectadas",
         "## Veredito Final AUAS",
-        "## Próximas Ações",
+        "## Próximas Ações Recomendadas",
         "",
-        "Regras do conteúdo:",
-        "- No veredito final, usar somente: AUAS_VALIDA, AUAS_INVALIDA ou AUAS_PARCIAL.",
-        "- No bloco 'Veredito Final AUAS', incluir as linhas:",
+        "No bloco 'Veredito Final AUAS', incluir obrigatoriamente:",
         "- STATUS_FINAL = AUAS_VALIDA | AUAS_INVALIDA | AUAS_PARCIAL",
         "- ANO_PROVAVEL_INICIO_DESMATE = YYYY | INCONCLUSIVO",
-        "- Se houver supressão confirmada após 22/07/2008 dentro da AUAS, tratar como PASSIVO AMBIENTAL identificado na AUAS (e não como erro automático de vetorização).",
-        "- Nessa situação (supressão pós-2008 dentro da AUAS), evitar frases como 'invalida a declaração da AUAS'. Explicar que a AUAS está mapeando área de passivo e que exige regularização.",
-        "- Use AUAS_INVALIDA somente quando houver inconsistência técnica de delimitação/cronologia da própria AUAS (ex.: AUAS em área sem evidência temporal compatível).",
-        "- Se AUAS vetorizada estiver ausente e houver evidência pós-2008, usar STATUS_FINAL = AUAS_PARCIAL e afirmar que há AUAS não vetorizada.",
-        "- Se AUAS vetorizada estiver ausente e não houver evidência pós-2008, informar explicitamente ausência de indício relevante de AUAS.",
-        "- Se houver incerteza relevante por imagem/ano ausente ou qualidade da cena, declarar explicitamente INCONCLUSIVO no trecho afetado.",
-        "- Em 'Não Conformidades Detectadas', citar intervalo de anos e localização aproximada quando houver supressão irregular.",
-        "- Em 'Próximas Ações', listar no máximo 4 ações diretas e priorizadas.",
+        "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA | INCONCLUSIVO",
+        "- Se há supressão confirmada pós-2008 dentro da AUAS, adicionar: PASSIVO_AMBIENTAL = IDENTIFICADO",
+        "",
+        "Em 'Não Conformidades': citar intervalo de anos, localização aproximada e área estimada quando identificada supressão irregular.",
+        "Em 'Progressão Temporal': descrever cobertura em 2008 (referência), mudanças em períodos intermediários e situação atual.",
+        "Em 'Próximas Ações': máximo 4 ações, priorizadas e específicas para o caso.",
     );
 
     return parts.join("\n");
@@ -4946,7 +4997,7 @@ async function processAuasAnalysis(
     if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
         sendSSE(res, {
             type: "error",
-            message: "Job nÃ£o encontrado. Envie contextUrl ou gere o recorte novamente.",
+            message: "Job não encontrado. Envie contextUrl ou gere o recorte novamente.",
         });
         return false;
     }
@@ -4968,7 +5019,7 @@ async function processAuasAnalysis(
     }
 
     // Step 1: Generate satellite images with AUAS overlay
-    sendSSE(res, { type: "progress", step: "generating_images", percent: 5, message: "Iniciando geraÃ§Ã£o de imagens AUAS..." });
+    sendSSE(res, { type: "progress", step: "generating_images", percent: 5, message: "Iniciando geração de imagens AUAS..." });
     throwIfClientDisconnected(res);
 
     let imagesToAnalyze: Array<{ dataUrl: string; caption: string }>;
@@ -5014,7 +5065,7 @@ async function processAuasAnalysis(
     }
 
     // Step 3: Prepare images for AI
-    sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens AUAS para anÃ¡lise IA..." });
+    sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens AUAS para análise IA..." });
     throwIfClientDisconnected(res);
 
     const aiImages: AiImage[] = [];
@@ -5103,7 +5154,7 @@ async function processAuasAnalysis(
             console.error(`[AUAS ANALYSIS] ${sat.label} failed:`, err.message);
             sendSSE(res, {
                 type: "progress", step: "analyzing", percent: progressPct,
-                message: `Aviso: anÃ¡lise AUAS de ${sat.label} falhou, continuando...`,
+                message: `Aviso: análise AUAS de ${sat.label} falhou, continuando...`,
             });
         }
         satIdx++;
@@ -5112,7 +5163,7 @@ async function processAuasAnalysis(
     perSatResults.sort((a, b) => a.year - b.year || a.satelliteLabel.localeCompare(b.satelliteLabel));
 
     if (perSatResults.length === 0) {
-        sendSSE(res, { type: "error", message: "Nenhuma anÃ¡lise AUAS individual foi concluÃ­da com sucesso." });
+        sendSSE(res, { type: "error", message: "Nenhuma análise AUAS individual foi concluída com sucesso." });
         return false;
     }
 
@@ -5143,7 +5194,7 @@ async function processAuasAnalysis(
         );
         const split = splitThinkProgress(auasSynthesisText);
         if (split.thinkingText) {
-            sendSSE(res, { type: "model_thinking", source: "SÃ­ntese AUAS", thinkingText: split.thinkingText });
+            sendSSE(res, { type: "model_thinking", source: "Síntese AUAS", thinkingText: split.thinkingText });
         }
         console.log(`[AUAS ANALYSIS] Final synthesis complete (${auasSynthesisText.length} chars)`);
     } catch (err: any) {
@@ -5504,7 +5555,7 @@ async function hydrateJobFromOutputZipUrl(jobId: string, outputZipUrl?: string):
             outputZipUrl,
         );
         if (!hydrated) {
-            throw new Error("NÃ£o foi possÃ­vel reconstruir contexto pelo ZIP");
+            throw new Error("Não foi possível reconstruir contexto pelo ZIP");
         }
         jobCache.set(jobId, hydrated);
         return hydrated;
@@ -5526,7 +5577,7 @@ async function hydrateJobFromPersistedContext(
         }
         const parsed = parsePersistedClipContext(await response.json());
         if (!parsed) {
-            throw new Error("Formato de contexto invÃ¡lido");
+            throw new Error("Formato de contexto inválido");
         }
         const clipMap = objectToMapGeometry(parsed.clippedGeometries);
         const hydrated: CachedJob = {
@@ -5547,6 +5598,230 @@ async function hydrateJobFromPersistedContext(
         console.warn(`[SIMCAR ANALYSIS] context hydrate failed for ${jobId}:`, err?.message || err);
         return null;
     }
+}
+
+/**
+ * Core satellite image + AI analysis pipeline.
+ * Generates images, uploads to Cloudinary, runs the full AC/AVN analysis, and
+ * returns the result. Sends intermediate SSE events (progress, model_thinking, error)
+ * but does NOT send the final complete/result event — the caller is responsible.
+ *
+ * @returns AcAvnAnalysisResult or null if a fatal error occurred (error SSE was already sent).
+ */
+export async function runAcAvnSatelliteAnalysis(
+    res: Response,
+    job: CachedJob,
+    selectedLayers: string[],
+    options: { tag?: string; aiAnalysis?: boolean } = {},
+): Promise<AcAvnAnalysisResult | null> {
+    const tag = options.tag ?? crypto.randomUUID().slice(0, 8);
+    const aiAnalysis = options.aiAnalysis !== false;
+
+    const { layerSummaries, areaHa: propAreaHa } = job;
+    const areaHa = propAreaHa ?? 0;
+    const acAvnAuasContext = computeAcAvnAuasContext(job);
+
+    // Step 1: Generate satellite images with polygon overlays
+    sendSSE(res, { type: "progress", step: "generating_images", percent: 10, message: "Iniciando geracao de imagens..." });
+    throwIfClientDisconnected(res);
+
+    let imagesToAnalyze: Array<{ dataUrl: string; caption: string }>;
+    let usedSatelliteKeys: string[] = [];
+    let missingSatelliteKeys: string[] = [];
+    let cloudWarnings: Array<{ satellite: string; cloudScore: number }> = [];
+    try {
+        const generated = await generateSatelliteImages(res, job, selectedLayers);
+        imagesToAnalyze = generated.images;
+        usedSatelliteKeys = generated.usedKeys;
+        missingSatelliteKeys = generated.missingKeys;
+        cloudWarnings = generated.cloudWarnings;
+        console.log(
+            `[SIMCAR ANALYSIS] Fixed AC/AVN set: requested=${selectedLayers.join(", ")}; used=${usedSatelliteKeys.join(", ") || "none"}; missing=${missingSatelliteKeys.join(", ") || "none"}` +
+            (cloudWarnings.length > 0 ? `; cloudWarnings=${cloudWarnings.map(c => `${c.satellite}(${Math.round(c.cloudScore * 100)}%)`).join(", ")}` : ""),
+        );
+    } catch (err: any) {
+        console.error("[SIMCAR ANALYSIS] Image generation error:", err.message);
+        sendSSE(res, { type: "error", message: `Erro ao gerar imagens: ${err.message}` });
+        return null;
+    }
+
+    if (imagesToAnalyze!.length === 0) {
+        sendSSE(res, { type: "error", message: "Nenhuma imagem de satelite foi gerada. Verifique a disponibilidade das camadas WMS." });
+        return null;
+    }
+
+    // Step 2: Upload to Cloudinary (full quality for user viewing)
+    sendSSE(res, { type: "progress", step: "uploading_images", percent: 50, message: "Salvando imagens no Cloudinary..." });
+    const cloudinaryUrls: Array<{ url: string; caption: string }> = [];
+    try {
+        for (let i = 0; i < imagesToAnalyze!.length; i++) {
+            throwIfClientDisconnected(res);
+            const img = imagesToAnalyze![i];
+            const filename = `simcar_analysis_${tag}_img${i + 1}`;
+            const url = await uploadToCloudinary(img.dataUrl, filename);
+            cloudinaryUrls.push({ url, caption: img.caption });
+            console.log(`[SIMCAR ANALYSIS] Uploaded image ${i + 1}: ${url}`);
+            sendSSE(res, {
+                type: "progress", step: "uploading_images",
+                percent: 50 + Math.round(((i + 1) / imagesToAnalyze!.length) * 10),
+                message: `Upload ${i + 1}/${imagesToAnalyze!.length}...`,
+            });
+        }
+    } catch (err: any) {
+        console.error("[SIMCAR ANALYSIS] Cloudinary upload error:", err.message);
+        sendSSE(res, { type: "progress", step: "uploading_images", percent: 60, message: "Aviso: falha ao salvar no Cloudinary. Continuando..." });
+    }
+
+    if (!aiAnalysis) {
+        return {
+            analysisText: "",
+            cloudinaryUrls,
+            usedSatelliteKeys,
+            missingSatelliteKeys,
+            cloudWarnings,
+            analysisMeta: {} as AcAvnAnalysisMeta,
+            layerSummaries: layerSummaries!,
+            imageOnly: true,
+        };
+    }
+
+    // Step 3: Prepare images for AI (use Cloudinary URLs or compress base64 as fallback)
+    sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens para analise IA..." });
+    throwIfClientDisconnected(res);
+
+    const aiImages: AiImage[] = [];
+    if (cloudinaryUrls.length === imagesToAnalyze!.length) {
+        for (const cu of cloudinaryUrls) {
+            aiImages.push({
+                url: getCloudinaryAiUrl(cu.url),
+                geminiUrl: getCloudinaryGeminiUrl(cu.url),
+                caption: cu.caption,
+            });
+        }
+        console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs (Groq: 800x600 q65 / Gemini: 1024x768 q82) for vision API`);
+    } else {
+        console.log(`[SIMCAR ANALYSIS] Cloudinary partial/failed, compressing ${imagesToAnalyze!.length} images for vision API`);
+        for (const img of imagesToAnalyze!) {
+            try {
+                const compressed = await compressForVision(img.dataUrl);
+                aiImages.push({ dataUrl: compressed, caption: img.caption });
+            } catch {
+                aiImages.push({ dataUrl: img.dataUrl, caption: img.caption });
+            }
+        }
+    }
+
+    // Step 4: AI Analysis - strategy depends on number of satellites
+    const validKeys = getOrderedSatelliteKeys(selectedLayers);
+    const isMultiSatellite = validKeys.length > 1;
+
+    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE !== "detailed") {
+        console.log(
+            `[SIMCAR ANALYSIS] Multi-satellite mode using efficient strategy (single unified call). ` +
+            `Set SIMCAR_ANALYSIS_MODE=detailed to enable per-satellite synthesis.`,
+        );
+    }
+    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE === "detailed" && FORCE_AC_AVN_UNIFIED_ANALYSIS) {
+        console.log("[SIMCAR ANALYSIS] Detailed mode requested, but AC/AVN is forced to unified mode for token efficiency.");
+    }
+
+    let analysisText: string;
+
+    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE === "detailed" && !FORCE_AC_AVN_UNIFIED_ANALYSIS) {
+        console.log(`[SIMCAR ANALYSIS] Multi-satellite mode: ${validKeys.length} satellites, analyzing individually...`);
+        const perSatelliteResults: Array<{ satelliteLabel: string; year: number; analysis: string }> = [];
+        const cloudBySatellite = new Map<string, { satellite: string; cloudScore: number }>();
+        for (const item of cloudWarnings) cloudBySatellite.set(item.satellite, item);
+        let satIdx = 0;
+
+        for (const key of validKeys) {
+            throwIfClientDisconnected(res);
+            const sat = SATELLITE_LAYERS[key];
+            if (!sat) continue;
+            const satImages = aiImages.filter((img) => img.caption.startsWith(sat.label));
+            if (satImages.length === 0) { satIdx++; continue; }
+
+            const progressPct = 65 + Math.round((satIdx / validKeys.length) * 20);
+            sendSSE(res, { type: "progress", step: "analyzing", percent: progressPct, message: `IA analisando ${sat.label} (${satIdx + 1}/${validKeys.length})...` });
+
+            try {
+                const prompt = buildSingleSatellitePrompt(areaHa, layerSummaries!, key, cloudBySatellite.get(sat.label), acAvnAuasContext);
+                const result = await analyzeWithGroqAndGemini(satImages, prompt, `${sat.label} (${sat.year})`);
+                const split = splitThinkProgress(result);
+                if (split.thinkingText) sendSSE(res, { type: "model_thinking", source: `${sat.label} (${sat.year})`, thinkingText: split.thinkingText });
+                perSatelliteResults.push({ satelliteLabel: sat.label, year: sat.year, analysis: result });
+                console.log(`[SIMCAR ANALYSIS] ${sat.label} analysis complete (${result.length} chars)`);
+            } catch (err: any) {
+                console.error(`[SIMCAR ANALYSIS] ${sat.label} analysis failed:`, err.message);
+                sendSSE(res, { type: "progress", step: "analyzing", percent: progressPct, message: `Aviso: analise de ${sat.label} falhou, continuando com os demais...` });
+            }
+            satIdx++;
+        }
+
+        perSatelliteResults.sort((a, b) => (a.year - b.year) || a.satelliteLabel.localeCompare(b.satelliteLabel));
+
+        if (perSatelliteResults.length === 0) {
+            sendSSE(res, { type: "progress", step: "analyzing", percent: 85, message: "Tentando analise unificada como fallback..." });
+            try {
+                const prompt = buildAnalysisPrompt(areaHa, layerSummaries!, selectedLayers, { acAvnAuasContext });
+                analysisText = await analyzeWithGroqAndGemini(aiImages, prompt, "Analise unificada multitemporal");
+            } catch (err: any) {
+                console.error("[SIMCAR ANALYSIS] Legacy fallback also failed:", err.message);
+                sendSSE(res, { type: "error", message: `Erro na analise IA: ${err.message}` });
+                return null;
+            }
+        } else if (perSatelliteResults.length === 1) {
+            analysisText = perSatelliteResults[0].analysis;
+        } else {
+            sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando analise temporal comparativa..." });
+            try {
+                const synthesisPrompt = buildSynthesisPrompt(areaHa, layerSummaries!, perSatelliteResults);
+                analysisText = await callBestTextSynthesis([{ role: "user", content: synthesisPrompt }], "sintese temporal final");
+                const split = splitThinkProgress(analysisText);
+                if (split.thinkingText) sendSSE(res, { type: "model_thinking", source: "Sintese temporal", thinkingText: split.thinkingText });
+                console.log(`[SIMCAR ANALYSIS] Synthesis complete (${analysisText.length} chars)`);
+            } catch (err: any) {
+                console.error("[SIMCAR ANALYSIS] Synthesis failed, concatenating analyses:", err.message);
+                analysisText = perSatelliteResults.map((r) => [`## Analise: ${r.satelliteLabel} (${r.year})`, "", r.analysis].join("\n")).join("\n\n---\n\n");
+            }
+        }
+    } else {
+        const isUnifiedMulti = isMultiSatellite && SIMCAR_ANALYSIS_MODE !== "detailed";
+        sendSSE(res, {
+            type: "progress", step: "analyzing", percent: 65,
+            message: isUnifiedMulti ? "IA analisando recorte multitemporal em chamada unica (modo eficiente)..." : "IA analisando imagens...",
+        });
+        try {
+            throwIfClientDisconnected(res);
+            const prompt = buildAnalysisPrompt(areaHa, layerSummaries!, selectedLayers, { acAvnAuasContext });
+            const singleContext = validKeys.map((k) => `${SATELLITE_LAYERS[k]?.label || k} (${SATELLITE_LAYERS[k]?.year || "?"})`).join(" / ");
+            analysisText = await analyzeWithGroqAndGemini(aiImages, prompt, singleContext || "Analise de um unico satelite");
+            const split = splitThinkProgress(analysisText);
+            if (split.thinkingText) sendSSE(res, { type: "model_thinking", source: singleContext || "Analise unica", thinkingText: split.thinkingText });
+        } catch (err: any) {
+            console.error("[SIMCAR ANALYSIS] AI analysis error:", err.message);
+            sendSSE(res, { type: "error", message: `Erro na analise IA: ${err.message}` });
+            return null;
+        }
+    }
+
+    const normalizedAcAvn = normalizeAcAvnAnalysisOutput(analysisText!, {
+        satellitesUsed: usedSatelliteKeys.map((k) => ({ key: k, label: SATELLITE_LAYERS[k]?.label || k, year: Number(SATELLITE_LAYERS[k]?.year || 0) })),
+        satellitesMissing: missingSatelliteKeys.map((k) => ({ key: k, label: SATELLITE_LAYERS[k]?.label || k, year: Number(SATELLITE_LAYERS[k]?.year || 0) })),
+        cloudWarnings,
+        auasContext: acAvnAuasContext,
+    });
+
+    return {
+        analysisText: normalizedAcAvn.text,
+        cloudinaryUrls,
+        usedSatelliteKeys,
+        missingSatelliteKeys,
+        cloudWarnings,
+        analysisMeta: normalizedAcAvn.meta,
+        layerSummaries: layerSummaries!,
+        imageOnly: false,
+    };
 }
 
 /** Main analysis pipeline (called from the SSE endpoint). */
@@ -5575,304 +5850,19 @@ async function processAnalysis(
         return false;
     }
 
-    const { layerSummaries, areaHa: propAreaHa } = job;
-    const areaHa = propAreaHa ?? 0;
-    const acAvnAuasContext = computeAcAvnAuasContext(job);
+    const result = await runAcAvnSatelliteAnalysis(res, job, selectedLayers, { tag: jobId.slice(0, 8), aiAnalysis });
+    if (!result) return false;
 
-    // Step 1: Generate satellite images with polygon overlays
-    sendSSE(res, { type: "progress", step: "generating_images", percent: 10, message: "Iniciando geracao de imagens..." });
-    throwIfClientDisconnected(res);
-
-    let imagesToAnalyze: Array<{ dataUrl: string; caption: string }>;
-    let usedSatelliteKeys: string[] = [];
-    let missingSatelliteKeys: string[] = [];
-    let cloudWarnings: Array<{ satellite: string; cloudScore: number }> = [];
-    try {
-        const generated = await generateSatelliteImages(res, job, selectedLayers);
-        imagesToAnalyze = generated.images;
-        usedSatelliteKeys = generated.usedKeys;
-        missingSatelliteKeys = generated.missingKeys;
-        cloudWarnings = generated.cloudWarnings;
-        console.log(
-            `[SIMCAR ANALYSIS] Fixed AC/AVN set: requested=${selectedLayers.join(", ")}; used=${usedSatelliteKeys.join(", ") || "none"}; missing=${missingSatelliteKeys.join(", ") || "none"}` +
-            (cloudWarnings.length > 0 ? `; cloudWarnings=${cloudWarnings.map(c => `${c.satellite}(${Math.round(c.cloudScore * 100)}%)`).join(", ")}` : ""),
-        );
-    } catch (err: any) {
-        console.error("[SIMCAR ANALYSIS] Image generation error:", err.message);
-        sendSSE(res, { type: "error", message: `Erro ao gerar imagens: ${err.message}` });
-        return false;
-    }
-
-    if (imagesToAnalyze.length === 0) {
-        sendSSE(res, { type: "error", message: "Nenhuma imagem de satelite foi gerada. Verifique a disponibilidade das camadas WMS." });
-        return false;
-    }
-
-    // Step 2: Upload to Cloudinary (full quality for user viewing)
-    sendSSE(res, { type: "progress", step: "uploading_images", percent: 50, message: "Salvando imagens no Cloudinary..." });
-
-    const cloudinaryUrls: Array<{ url: string; caption: string }> = [];
-    try {
-        for (let i = 0; i < imagesToAnalyze.length; i++) {
-            throwIfClientDisconnected(res);
-            const img = imagesToAnalyze[i];
-            const filename = `simcar_analysis_${jobId.slice(0, 8)}_img${i + 1}`;
-            const url = await uploadToCloudinary(img.dataUrl, filename);
-            cloudinaryUrls.push({ url, caption: img.caption });
-            console.log(`[SIMCAR ANALYSIS] Uploaded image ${i + 1}: ${url}`);
-            sendSSE(res, {
-                type: "progress", step: "uploading_images",
-                percent: 50 + Math.round(((i + 1) / imagesToAnalyze.length) * 10),
-                message: `Upload ${i + 1}/${imagesToAnalyze.length}...`,
-            });
-        }
-    } catch (err: any) {
-        console.error("[SIMCAR ANALYSIS] Cloudinary upload error:", err.message);
-        sendSSE(res, { type: "progress", step: "uploading_images", percent: 60, message: "Aviso: falha ao salvar no Cloudinary. Continuando..." });
-    }
-
-    if (!aiAnalysis) {
-        // Image-only mode: return images without AI analysis
-        sendSSE(res, {
-            type: "complete",
-            percent: 100,
-            images: cloudinaryUrls,
-            layerSummaries: layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
-            analysisRulesVersion: "acavn-fixed-v4",
-            satellitesUsed: usedSatelliteKeys,
-            satellitesMissing: missingSatelliteKeys,
-            cloudWarnings: cloudWarnings.length > 0 ? cloudWarnings : undefined,
-        });
-        return true;
-    }
-
-    // Step 3: Prepare images for AI (use Cloudinary URLs or compress base64 as fallback)
-    sendSSE(res, { type: "progress", step: "analyzing", percent: 62, message: "Preparando imagens para analise IA..." });
-    throwIfClientDisconnected(res);
-
-    const aiImages: AiImage[] = [];
-    if (cloudinaryUrls.length === imagesToAnalyze.length) {
-        for (const cu of cloudinaryUrls) {
-            // url      -> Groq vision: 800x600 JPEG q65 (fewer input tokens)
-            // geminiUrl -> Gemini vision: 1024x768 JPEG q82 (more detail for precise analysis)
-            // Both derived via Cloudinary on-the-fly transformations from the original full-res PNG.
-            aiImages.push({
-                url: getCloudinaryAiUrl(cu.url),
-                geminiUrl: getCloudinaryGeminiUrl(cu.url),
-                caption: cu.caption,
-            });
-        }
-        console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs (Groq: 800x600 q65 / Gemini: 1024x768 q82) for vision API`);
-    } else {
-        console.log(`[SIMCAR ANALYSIS] Cloudinary partial/failed, compressing ${imagesToAnalyze.length} images for vision API`);
-        for (const img of imagesToAnalyze) {
-            try {
-                const compressed = await compressForVision(img.dataUrl);
-                aiImages.push({ dataUrl: compressed, caption: img.caption });
-            } catch {
-                aiImages.push({ dataUrl: img.dataUrl, caption: img.caption });
-            }
-        }
-    }
-
-    // Step 4: AI Analysis - strategy depends on number of satellites
-    const validKeys = getOrderedSatelliteKeys(selectedLayers);
-    const isMultiSatellite = validKeys.length > 1;
-
-    let analysisText: string;
-
-    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE !== "detailed") {
-        console.log(
-            `[SIMCAR ANALYSIS] Multi-satellite mode using efficient strategy (single unified call). ` +
-            `Set SIMCAR_ANALYSIS_MODE=detailed to enable per-satellite synthesis.`,
-        );
-    }
-
-    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE === "detailed" && FORCE_AC_AVN_UNIFIED_ANALYSIS) {
-        console.log("[SIMCAR ANALYSIS] Detailed mode requested, but AC/AVN is forced to unified mode for token efficiency.");
-    }
-
-    if (isMultiSatellite && SIMCAR_ANALYSIS_MODE === "detailed" && !FORCE_AC_AVN_UNIFIED_ANALYSIS) {
-        // MULTI-SATELLITE (detailed mode): analyze each satellite separately, then synthesize
-        console.log(`[SIMCAR ANALYSIS] Multi-satellite mode: ${validKeys.length} satellites, analyzing individually...`);
-
-        const perSatelliteResults: Array<{ satelliteLabel: string; year: number; analysis: string }> = [];
-        const cloudBySatellite = new Map<string, { satellite: string; cloudScore: number }>();
-        for (const item of cloudWarnings) {
-            cloudBySatellite.set(item.satellite, item);
-        }
-        let satIdx = 0;
-
-        for (const key of validKeys) {
-            throwIfClientDisconnected(res);
-            const sat = SATELLITE_LAYERS[key];
-            if (!sat) continue;
-
-            // Extract the 3 images for this satellite (based on caption containing the label)
-            const satImages = aiImages.filter((img) => img.caption.startsWith(sat.label));
-            if (satImages.length === 0) {
-                console.warn(`[SIMCAR ANALYSIS] No images found for ${sat.label}, skipping individual analysis`);
-                satIdx++;
-                continue;
-            }
-
-            const progressPct = 65 + Math.round((satIdx / validKeys.length) * 20);
-            sendSSE(res, {
-                type: "progress", step: "analyzing", percent: progressPct,
-                message: `IA analisando ${sat.label} (${satIdx + 1}/${validKeys.length})...`,
-            });
-
-            try {
-                const prompt = buildSingleSatellitePrompt(
-                    areaHa,
-                    layerSummaries,
-                    key,
-                    cloudBySatellite.get(sat.label),
-                    acAvnAuasContext,
-                );
-                const result = await analyzeWithGroqAndGemini(
-                    satImages,
-                    prompt,
-                    `${sat.label} (${sat.year})`,
-                );
-                const split = splitThinkProgress(result);
-                if (split.thinkingText) {
-                    sendSSE(res, {
-                        type: "model_thinking",
-                        source: `${sat.label} (${sat.year})`,
-                        thinkingText: split.thinkingText,
-                    });
-                }
-                perSatelliteResults.push({ satelliteLabel: sat.label, year: sat.year, analysis: result });
-                console.log(`[SIMCAR ANALYSIS] ${sat.label} analysis complete (${result.length} chars)`);
-            } catch (err: any) {
-                console.error(`[SIMCAR ANALYSIS] ${sat.label} analysis failed:`, err.message);
-                sendSSE(res, {
-                    type: "progress", step: "analyzing", percent: progressPct,
-                    message: `Aviso: analise de ${sat.label} falhou, continuando com os demais...`,
-                });
-            }
-            satIdx++;
-        }
-
-        perSatelliteResults.sort((a, b) => (a.year - b.year) || a.satelliteLabel.localeCompare(b.satelliteLabel));
-
-        if (perSatelliteResults.length === 0) {
-            // All individual analyses failed - try legacy single-call as last resort
-            console.warn(`[SIMCAR ANALYSIS] All individual analyses failed, trying legacy single-call...`);
-            sendSSE(res, { type: "progress", step: "analyzing", percent: 85, message: "Tentando analise unificada como fallback..." });
-            try {
-                const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers, {
-                    acAvnAuasContext,
-                });
-                analysisText = await analyzeWithGroqAndGemini(
-                    aiImages,
-                    prompt,
-                    "Analise unificada multitemporal",
-                );
-            } catch (err: any) {
-                console.error("[SIMCAR ANALYSIS] Legacy fallback also failed:", err.message);
-                sendSSE(res, { type: "error", message: `Erro na analise IA: ${err.message}` });
-                return false;
-            }
-        } else if (perSatelliteResults.length === 1) {
-            // Only one satellite succeeded - return its analysis directly (no synthesis needed)
-            analysisText = perSatelliteResults[0].analysis;
-        } else {
-            // Multiple results â€” synthesize with temporal comparison
-            sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando analise temporal comparativa..." });
-            try {
-                const synthesisPrompt = buildSynthesisPrompt(areaHa, layerSummaries, perSatelliteResults);
-                analysisText = await callBestTextSynthesis(
-                    [{ role: "user", content: synthesisPrompt }],
-                    "sintese temporal final",
-                );
-                const split = splitThinkProgress(analysisText);
-                if (split.thinkingText) {
-                    sendSSE(res, {
-                        type: "model_thinking",
-                        source: "Sintese temporal",
-                        thinkingText: split.thinkingText,
-                    });
-                }
-                console.log(`[SIMCAR ANALYSIS] Synthesis complete (${analysisText.length} chars)`);
-            } catch (err: any) {
-                // Synthesis failed â€” concatenate individual analyses as fallback
-                console.error("[SIMCAR ANALYSIS] Synthesis failed, concatenating analyses:", err.message);
-                analysisText = perSatelliteResults.map((r) => [
-                    `## Analise: ${r.satelliteLabel} (${r.year})`,
-                    "",
-                    r.analysis,
-                ].join("\n")).join("\n\n---\n\n");
-            }
-        }
-    } else {
-        // EFFICIENT MODE (default) OR SINGLE SATELLITE: one unified call
-        const isUnifiedMulti = isMultiSatellite && SIMCAR_ANALYSIS_MODE !== "detailed";
-        sendSSE(res, {
-            type: "progress",
-            step: "analyzing",
-            percent: 65,
-            message: isUnifiedMulti
-                ? "IA analisando recorte multitemporal em chamada unica (modo eficiente)..."
-                : "IA analisando imagens...",
-        });
-        try {
-            throwIfClientDisconnected(res);
-            const prompt = buildAnalysisPrompt(areaHa, layerSummaries, selectedLayers, {
-                acAvnAuasContext,
-            });
-            const singleContext = validKeys
-                .map((k) => `${SATELLITE_LAYERS[k]?.label || k} (${SATELLITE_LAYERS[k]?.year || "?"})`)
-                .join(" / ");
-            analysisText = await analyzeWithGroqAndGemini(
-                aiImages,
-                prompt,
-                singleContext || "Analise de um unico satelite",
-            );
-            const split = splitThinkProgress(analysisText);
-            if (split.thinkingText) {
-                sendSSE(res, {
-                    type: "model_thinking",
-                    source: singleContext || "Analise unica",
-                    thinkingText: split.thinkingText,
-                });
-            }
-        } catch (err: any) {
-            console.error("[SIMCAR ANALYSIS] AI analysis error:", err.message);
-            sendSSE(res, { type: "error", message: `Erro na analise IA: ${err.message}` });
-            return false;
-        }
-    }
-
-    const normalizedAcAvn = normalizeAcAvnAnalysisOutput(analysisText, {
-        satellitesUsed: usedSatelliteKeys.map((k) => ({
-            key: k,
-            label: SATELLITE_LAYERS[k]?.label || k,
-            year: Number(SATELLITE_LAYERS[k]?.year || 0),
-        })),
-        satellitesMissing: missingSatelliteKeys.map((k) => ({
-            key: k,
-            label: SATELLITE_LAYERS[k]?.label || k,
-            year: Number(SATELLITE_LAYERS[k]?.year || 0),
-        })),
-        cloudWarnings,
-        auasContext: acAvnAuasContext,
-    });
-    analysisText = normalizedAcAvn.text;
-
-    // Step 5: Complete
     sendSSE(res, {
         type: "complete",
         percent: 100,
-        analysis: analysisText,
-        images: cloudinaryUrls,
-        layerSummaries: layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
+        ...(!result.imageOnly && { analysis: result.analysisText, analysisMeta: result.analysisMeta }),
+        images: result.cloudinaryUrls,
+        layerSummaries: result.layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
         analysisRulesVersion: "acavn-fixed-v4",
-        satellitesUsed: usedSatelliteKeys,
-        satellitesMissing: missingSatelliteKeys,
-        analysisMeta: normalizedAcAvn.meta,
-        cloudWarnings: cloudWarnings.length > 0 ? cloudWarnings : undefined,
+        satellitesUsed: result.usedSatelliteKeys,
+        satellitesMissing: result.missingSatelliteKeys,
+        cloudWarnings: result.cloudWarnings.length > 0 ? result.cloudWarnings : undefined,
     });
     return true;
 }
@@ -5894,7 +5884,7 @@ function buildEstimatedUsageForFallback(args: {
     };
 }
 
-/* â”€â”€â”€ Express Route Registration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Express Route Registration ─────────────────────────────── */
 
 async function attachOptionalAuth(req: Request, _res: Response, next: any) {
     try {
@@ -6003,7 +5993,7 @@ export function registerSimcarClipRoutes(app: Express) {
             };
 
             if (!body.propertyZip) {
-                sendSSE(res, { type: "error", message: "Campo propertyZip (base64) Ã© obrigatÃ³rio." });
+                sendSSE(res, { type: "error", message: "Campo propertyZip (base64) é obrigatório." });
                 res.end();
                 return;
             }
@@ -6012,13 +6002,13 @@ export function registerSimcarClipRoutes(app: Express) {
             try {
                 zipBuffer = Buffer.from(body.propertyZip, "base64");
             } catch {
-                sendSSE(res, { type: "error", message: "Base64 do ZIP invÃ¡lido." });
+                sendSSE(res, { type: "error", message: "Base64 do ZIP inválido." });
                 res.end();
                 return;
             }
 
             if (zipBuffer.length < 22) {
-                sendSSE(res, { type: "error", message: "ZIP muito pequeno para ser vÃ¡lido." });
+                sendSSE(res, { type: "error", message: "ZIP muito pequeno para ser válido." });
                 res.end();
                 return;
             }
@@ -6335,7 +6325,7 @@ export function registerSimcarClipRoutes(app: Express) {
         if (!cached || cached.expiresAt <= Date.now()) {
             if (cached) jobCache.delete(jobId);
             res.status(404).json({
-                error: "Download expirado ou nÃ£o encontrado. Processe novamente.",
+                error: "Download expirado ou não encontrado. Processe novamente.",
             });
             return;
         }
@@ -6344,7 +6334,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 res.redirect(cached.outputZipUrl);
                 return;
             }
-            res.status(404).json({ error: "Arquivo do recorte nÃ£o disponÃ­vel no cache." });
+            res.status(404).json({ error: "Arquivo do recorte não disponível no cache." });
             return;
         }
 
@@ -6385,11 +6375,18 @@ export function registerSimcarClipRoutes(app: Express) {
             }
 
             billingRequestId = createRequestId("simcar_auas");
+            // AUAS analysis: uses up to ~16 satellite images (8 satellites × 2 views each),
+            // plus per-satellite prompts (~4k tokens each) and synthesis call (~8k output tokens)
+            const auasSatCount = AUAS_SATELLITE_KEYS.length;
+            const auasImagesPerSat = 2; // outline + context views
             billingReserved = await estimateReserveForModels({
                 models: simcarBillingModels,
-                estimatedInputTokens: 200_000,
-                estimatedOutputTokens: 12_000,
-                safetyMultiplier: 1.2,
+                estimatedInputTokens: 4_500 * auasSatCount,
+                estimatedOutputTokens: 800 * auasSatCount + 8_000, // per-sat (~800) + synthesis (~8000)
+                safetyMultiplier: 1.3,
+                imageCount: auasSatCount * auasImagesPerSat,
+                imageWidthPx: 1024,
+                imageHeightPx: 768,
             });
             await reserveCredits({
                 uid,
@@ -6544,12 +6541,21 @@ export function registerSimcarClipRoutes(app: Express) {
 
             if (aiAnalysis) {
                 const satelliteFactor = Math.max(1, layers.length + 1);
+                // More accurate reserve: account for 3 images/satellite at Gemini resolution (1024x768)
+                // plus prompt text tokens and output tokens
+                const imagesPerSat = 3;
+                const totalImages = layers.length * imagesPerSat;
+                const promptTextTokens = 4_500; // buildAnalysisPrompt generates ~4.5k tokens
+                const outputTokensPerCall = 6_000;
                 billingRequestId = createRequestId("simcar_analyze");
                 billingReserved = await estimateReserveForModels({
                     models: simcarBillingModels,
-                    estimatedInputTokens: 80_000 * satelliteFactor,
-                    estimatedOutputTokens: 6_000 * satelliteFactor,
-                    safetyMultiplier: 1.2,
+                    estimatedInputTokens: promptTextTokens * satelliteFactor,
+                    estimatedOutputTokens: outputTokensPerCall * satelliteFactor,
+                    safetyMultiplier: 1.3,
+                    imageCount: totalImages,
+                    imageWidthPx: 1024,
+                    imageHeightPx: 768,
                 });
                 await reserveCredits({
                     uid,
