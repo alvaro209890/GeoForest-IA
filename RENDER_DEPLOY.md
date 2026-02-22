@@ -102,10 +102,10 @@ PRODES_YEAR_FIELD=year
 # SFB (rios) — a camada de hidrografia já está dentro do WFS da SEMA
 # Use o mesmo endpoint da SEMA e informe o nome da camada correta:
 SFB_WFS_URL=https://geo.sema.mt.gov.br/geoserver/wfs
-SFB_RIVER_LAYER=nome:da_camada_rios_no_geoserver_sema
+SFB_RIVER_LAYER=Geoportal:SFB_HIDRO_TRECHO_DRENAGEM
 ```
 
-> O `SFB_WFS_URL` já pode apontar para o mesmo GeoServer da SEMA — é a mesma infra. Só precisas confirmar o nome exato da camada de hidrografia disponível no servidor (ex: `sema:hidrografia_base` ou similar). Enquanto `SFB_RIVER_LAYER` estiver vazio, o módulo Novo CAR funciona normalmente mas ignora o buffer de rios.
+> Camada confirmada no GetCapabilities do GeoServer da SEMA. Outras camadas de hidrografia disponíveis no mesmo servidor: `Geoportal:SFB_HIDRO_CATEGORIZADA`, `Geoportal:SFB_HIDRO_APP_HIDRICA`, `Geoportal:SFB_HIDRO_MASSA_DAGUA`, `Geoportal:HID_CURSOS_DAGUA`.
 
 ---
 
