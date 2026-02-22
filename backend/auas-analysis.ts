@@ -339,24 +339,19 @@ async function runAuasAnalysis(
 
     if (SFB_WFS_URL && SFB_RIVER_LAYER) {
         try {
-            const riverCql = `INTERSECTS(geom,${wkt})`;
+            // CLASSE = 1 → "Ate 10m": apenas rios pequenos recebem o buffer de 4 m (2 m cada lado).
+            // Rios maiores (CLASSE >= 2) possuem largura superior ao buffer e são ignorados.
+            const riverCql = `INTERSECTS(geom,${wkt}) AND CLASSE = 1`;
             const riverGeoJson = await fetchWfsGeoJson(SFB_WFS_URL, SFB_RIVER_LAYER, wkt, riverCql);
             progress(res, 62, "rivers", `SFB: ${riverGeoJson.features.length} rios encontrados. Aplicando buffer...`);
 
             const riverBuffers: Feature<Polygon | MultiPolygon>[] = [];
             for (const feat of riverGeoJson.features) {
                 if (!feat.geometry) continue;
-                let buf: Feature<Polygon | MultiPolygon> | null = null;
                 const g = feat.geometry as Geometry;
-                if (g.type === "LineString" || g.type === "MultiLineString") {
-                    buf = lineToBuffer(g as LineString | MultiLineString, RIVER_BUFFER_METERS);
-                } else if (g.type === "Polygon" || g.type === "MultiPolygon") {
-                    // Já é polígono — aplicar buffer de expansão
-                    const base = geometryToFeature(g);
-                    if (base) {
-                        buf = turfBuffer(base, RIVER_BUFFER_METERS, { units: "meters" }) as Feature<Polygon | MultiPolygon> | null;
-                    }
-                }
+                // Apenas linhas recebem buffer — polígonos representam corpos d'água já mais largos que 4 m
+                if (g.type !== "LineString" && g.type !== "MultiLineString") continue;
+                const buf = lineToBuffer(g as LineString | MultiLineString, RIVER_BUFFER_METERS);
                 if (!buf) continue;
                 const clippedRiver = clip(buf, propertyFeature as Feature<Polygon | MultiPolygon>);
                 if (clippedRiver) riverBuffers.push(clippedRiver);
