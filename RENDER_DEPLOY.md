@@ -99,13 +99,13 @@ PRODES_WFS_URL=https://terrabrasilis.dpi.inpe.br/geoserver/prodes-amz-nb/ows
 PRODES_LAYER=prodes-amz-nb:yearly_deforestation
 PRODES_YEAR_FIELD=year
 
-# SFB — base de rios (obrigatório para buffer de rios funcionar)
-# Preencha com a URL WFS do Serviço Florestal Brasileiro
-SFB_WFS_URL=https://...
-SFB_RIVER_LAYER=nome:da_camada_rios
+# SFB (rios) — a camada de hidrografia já está dentro do WFS da SEMA
+# Use o mesmo endpoint da SEMA e informe o nome da camada correta:
+SFB_WFS_URL=https://geo.sema.mt.gov.br/geoserver/wfs
+SFB_RIVER_LAYER=nome:da_camada_rios_no_geoserver_sema
 ```
 
-> Enquanto `SFB_WFS_URL` não estiver preenchido, o módulo Novo CAR roda normalmente mas ignora o buffer de rios.
+> O `SFB_WFS_URL` já pode apontar para o mesmo GeoServer da SEMA — é a mesma infra. Só precisas confirmar o nome exato da camada de hidrografia disponível no servidor (ex: `sema:hidrografia_base` ou similar). Enquanto `SFB_RIVER_LAYER` estiver vazio, o módulo Novo CAR funciona normalmente mas ignora o buffer de rios.
 
 ---
 
