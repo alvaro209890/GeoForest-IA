@@ -5560,7 +5560,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'auas' ? 'bg-amber-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
             >
               <Layers size={15} />
-              <span className="xl:block lg:hidden leading-none">AUAS</span>
+              <span className="xl:block lg:hidden leading-none">Novo CAR</span>
             </button>
           </div>
 
@@ -5594,7 +5594,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             >
               <div className="relative flex items-center justify-center gap-2 bg-[#1a1100] group-hover:bg-transparent text-amber-100 py-2.5 rounded-[11px] transition-colors">
                 <Plus size={16} />
-                <span className="font-medium xl:block lg:hidden text-sm">Nova Análise</span>
+                <span className="font-medium xl:block lg:hidden text-sm">Novo CAR</span>
               </div>
             </button>
           )}
@@ -5618,7 +5618,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             /* ─── AUAS: placeholder de histórico ─── */
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <Layers size={32} className="text-slate-600 mb-3" />
-              <p className="text-sm text-slate-400">Análise AUAS</p>
+              <p className="text-sm text-slate-400">Novo CAR</p>
               <p className="text-[10px] text-slate-600 mt-1">Carregue um shapefile para iniciar</p>
             </div>
           ) : activeView === 'simcar-clip' ? (
@@ -5831,7 +5831,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2">
               <Zap size={16} className="text-emerald-400 fill-current" />
               <span className="font-medium text-slate-200">
-                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'auas' ? 'Análise AUAS' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
+                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'auas' ? 'Novo CAR' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
               </span>
               {activeView === 'chat' && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide">
@@ -7236,7 +7236,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <Layers size={28} className="text-white" />
                   </div>
                   <div>
-                    <h1 className="text-2xl font-bold text-white mb-1">Análise AUAS</h1>
+                    <h1 className="text-2xl font-bold text-white mb-1">Novo CAR</h1>
                     <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">
                       Classifica as áreas do imóvel com base no PRODES (desmatamento pré e pós-2008),
                       aplica buffer de 2 m para cada lado nos rios da base SFB e calcula
@@ -7385,7 +7385,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     className="mt-4 w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium transition-all shadow-lg shadow-amber-900/30"
                   >
                     <Zap size={16} />
-                    Iniciar Análise AUAS
+                    Iniciar Novo CAR
                   </button>
                 </section>
               )}
@@ -7501,7 +7501,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 text-sm transition-all"
                     >
                       <Plus size={16} />
-                      Nova Análise
+                      Novo CAR
                     </button>
                   </div>
                 </>
