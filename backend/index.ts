@@ -10,6 +10,7 @@ import { createKnowledgeBase } from "./knowledge-base";
 import { requireAuth } from "./auth";
 import {
   BillingError,
+  applyCancelFloorDebit,
   buildUsageFromGroq,
   createManualTopup,
   createRequestId,
@@ -36,6 +37,14 @@ import {
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerAuasRoutes } from "./auas-analysis";
+import {
+  JobCancelledError,
+  finishJob,
+  isCancelRequested,
+  markDisconnected,
+  requestCancel,
+  startJob,
+} from "./processing-jobs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -235,6 +244,7 @@ async function startServer() {
       "/api/simcar/clip/analyze-auas",
       "/api/simcar/clip/analyze/chat",
       "/api/auas/analyze",
+      "/api/process/cancel",
       "/api/billing/me",
       "/api/billing/topups/manual",
       "/api/billing/ledger",
@@ -242,6 +252,29 @@ async function startServer() {
     requireAuth,
   );
   app.use(["/api/upload-image", "/api/upload-file"], attachOptionalAuth);
+
+  app.post("/api/process/cancel", async (req, res) => {
+    const uid = String(req.authUid || "");
+    if (!uid) {
+      res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+      return;
+    }
+    const jobId = String((req.body as any)?.jobId || "").trim();
+    if (!jobId) {
+      res.status(400).json({ error: "jobId é obrigatório.", code: "INVALID_JOB_ID" });
+      return;
+    }
+    const result = requestCancel(jobId, uid);
+    if (!result.ok) {
+      if (result.status === "forbidden") {
+        res.status(403).json({ error: "Sem permissão para cancelar este processamento.", code: "FORBIDDEN" });
+        return;
+      }
+      res.status(404).json({ error: "jobId não encontrado.", code: "JOB_NOT_FOUND" });
+      return;
+    }
+    res.status(202).json({ ok: true, status: "cancel_requested" });
+  });
 
   registerWfsIntersectionRoutes(app);
   registerSimcarClipRoutes(app);
@@ -1694,6 +1727,22 @@ async function startServer() {
     let billingRequestId = "";
     let billingReserved = 0;
     let billingUid = "";
+    let processingJobId = "";
+    const usageInputs: Array<{
+      provider: "groq";
+      model: string;
+      inputTokens: number;
+      outputTokens: number;
+      estimated: boolean;
+    }> = [];
+    const writeChunk = (payload: Record<string, any>) => {
+      if (res.writableEnded || (res as any).destroyed || (res as any)?.socket?.destroyed) return;
+      try {
+        res.write(`${JSON.stringify(payload)}\n`);
+      } catch {
+        // Cliente pode ter desconectado; o processamento segue no backend.
+      }
+    };
     try {
       console.log("[/api/chat-stream] request received");
       const uid = String(req.authUid || "");
@@ -1799,17 +1848,23 @@ async function startServer() {
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
 
-      const writeChunk = (payload: Record<string, any>) => {
-        res.write(`${JSON.stringify(payload)}\n`);
+      const processingJob = startJob({
+        uid,
+        endpoint: "/api/chat-stream",
+        metadata: { model: resolvedModel },
+      });
+      processingJobId = processingJob.jobId;
+      req.on("close", () => {
+        markDisconnected(processingJobId);
+      });
+
+      const throwIfCancelled = () => {
+        if (processingJobId && isCancelRequested(processingJobId)) {
+          throw new JobCancelledError();
+        }
       };
 
-      const usageInputs: Array<{
-        provider: "groq";
-        model: string;
-        inputTokens: number;
-        outputTokens: number;
-        estimated: boolean;
-      }> = [];
+      writeChunk({ type: "job_started", jobId: processingJobId });
 
       // --- Accumulated answer (visible to user) and thinking (hidden) ---
       let accumulatedAnswer = "";
@@ -1826,6 +1881,20 @@ async function startServer() {
         segmentMessages: Array<{ role: string; content: any }>
       ): Promise<{ finishReason: string; segmentText: string }> => {
         const segmentInputTokens = estimateTokensFromMessages(segmentMessages);
+        let segmentRaw = "";
+        let usageRecorded = false;
+        const recordUsage = () => {
+          if (usageRecorded) return;
+          usageRecorded = true;
+          usageInputs.push({
+            provider: "groq",
+            model: segmentModel,
+            inputTokens: Math.max(1, segmentInputTokens),
+            outputTokens: Math.max(1, estimateTokensFromText(segmentRaw)),
+            estimated: true,
+          });
+        };
+        throwIfCancelled();
         const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -1850,9 +1919,17 @@ async function startServer() {
         const reader = upstream.body.getReader();
         let buffer = "";
         let finishReason = "";
-        let segmentRaw = "";
 
         while (true) {
+          if (processingJobId && isCancelRequested(processingJobId)) {
+            recordUsage();
+            try {
+              await reader.cancel();
+            } catch {
+              // ignore
+            }
+            throw new JobCancelledError();
+          }
           const { value, done } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
@@ -1866,13 +1943,7 @@ async function startServer() {
             const data = trimmed.slice(5).trim();
             if (!data) continue;
             if (data === "[DONE]") {
-              usageInputs.push({
-                provider: "groq",
-                model: segmentModel,
-                inputTokens: Math.max(1, segmentInputTokens),
-                outputTokens: Math.max(1, estimateTokensFromText(segmentRaw)),
-                estimated: true,
-              });
+              recordUsage();
               return { finishReason: finishReason || "stop", segmentText: segmentRaw };
             }
             try {
@@ -1899,13 +1970,7 @@ async function startServer() {
           }
         }
 
-        usageInputs.push({
-          provider: "groq",
-          model: segmentModel,
-          inputTokens: Math.max(1, segmentInputTokens),
-          outputTokens: Math.max(1, estimateTokensFromText(segmentRaw)),
-          estimated: true,
-        });
+        recordUsage();
         return { finishReason: finishReason || "stop", segmentText: segmentRaw };
       };
 
@@ -1919,6 +1984,7 @@ async function startServer() {
           activeModel = candidate;
           break;
         } catch (err) {
+          if (err instanceof JobCancelledError) throw err;
           console.warn(`[chat-stream] startup model failed (${candidate})`, err);
         }
       }
@@ -1938,6 +2004,7 @@ async function startServer() {
       let lastFinishReason = firstResult.finishReason;
 
       while (lastFinishReason === "length" && continuationsUsed < MAX_CONTINUATIONS) {
+        throwIfCancelled();
         continuationsUsed += 1;
 
         // Trim trailing incomplete sentence to avoid garbled joins
@@ -1969,6 +2036,7 @@ async function startServer() {
             activeModel = candidate;
             break;
           } catch (err) {
+            if (err instanceof JobCancelledError) throw err;
             console.warn(`[chat-stream] continuation model failed (${candidate})`, err);
           }
         }
@@ -2005,6 +2073,14 @@ async function startServer() {
         usageInputs,
       });
       billingReserved = 0;
+      finishJob({
+        jobId: processingJobId,
+        status: "completed",
+        billingSummary: {
+          chargedBrl: billing.chargedBrl,
+          balanceAfterBrl: billing.balanceAfterBrl,
+        },
+      });
 
       console.log(
         "[/api/chat-stream] knowledge:",
@@ -2016,18 +2092,74 @@ async function startServer() {
           latencyMs: Date.now() - requestStartedAt,
         }),
       );
-      res.write(
-        `${JSON.stringify({
-          type: "done",
-          model: clientModel,
-          thinkingText: finalSplit.thinkingText,
-          content: finalSplit.answerText,
-          knowledge: knowledgeTelemetry,
-          billing,
-        })}\n`
-      );
-      res.end();
+      writeChunk({
+        type: "done",
+        model: clientModel,
+        thinkingText: finalSplit.thinkingText,
+        content: finalSplit.answerText,
+        knowledge: knowledgeTelemetry,
+        billing,
+      });
+      if (!res.writableEnded && !(res as any).destroyed) res.end();
     } catch (error: any) {
+      if (error instanceof JobCancelledError) {
+        let chargedBrl = 0;
+        try {
+          if (billingUid && billingReserved > 0 && billingRequestId) {
+            if (usageInputs.length > 0) {
+              const settled = await settleReservedCredits({
+                uid: billingUid,
+                requestId: billingRequestId,
+                endpoint: "/api/chat-stream",
+                reservedBrl: billingReserved,
+                usageInputs,
+              });
+              chargedBrl = settled.chargedBrl;
+              billingReserved = 0;
+            } else {
+              await refundReserve({
+                uid: billingUid,
+                requestId: billingRequestId,
+                amountBrl: billingReserved,
+                endpoint: "/api/chat-stream",
+                reason: "cancel_requested_without_usage",
+              });
+              billingReserved = 0;
+            }
+            const cancelFloor = await applyCancelFloorDebit({
+              uid: billingUid,
+              requestId: billingRequestId,
+              endpoint: "/api/chat-stream",
+              chargedBrl,
+            });
+            finishJob({
+              jobId: processingJobId,
+              status: "cancelled",
+              billingSummary: {
+                chargedBrl,
+                finalChargedBrl: cancelFloor.finalChargedBrl,
+                floorDeltaBrl: cancelFloor.floorDeltaBrl,
+                balanceAfterBrl: cancelFloor.balanceAfterBrl,
+              },
+            });
+          } else {
+            finishJob({ jobId: processingJobId, status: "cancelled" });
+          }
+        } catch (billingErr) {
+          console.error("[/api/chat-stream] cancel billing error:", billingErr);
+          finishJob({
+            jobId: processingJobId,
+            status: "failed",
+            error: (billingErr as any)?.message || "cancel_billing_failed",
+          });
+        }
+        writeChunk({
+          type: "cancelled",
+          message: "Cancelamento solicitado. Cobrança proporcional aplicada.",
+        });
+        if (!res.writableEnded && !(res as any).destroyed) res.end();
+        return;
+      }
       if (billingUid && billingReserved > 0 && billingRequestId) {
         try {
           await refundReserve({
@@ -2042,19 +2174,29 @@ async function startServer() {
         }
       }
       if (error instanceof BillingError) {
+        finishJob({
+          jobId: processingJobId,
+          status: "failed",
+          error: error.message,
+        });
         if (!res.headersSent) {
           res.status(error.statusCode).json({ error: error.message, code: error.code });
         } else {
-          res.write(`${JSON.stringify({ type: "error", error: error.message, code: error.code })}\n`);
-          res.end();
+          writeChunk({ type: "error", error: error.message, code: error.code });
+          if (!res.writableEnded && !(res as any).destroyed) res.end();
         }
         return;
       }
       console.error("Erro no /api/chat-stream:", error);
+      finishJob({
+        jobId: processingJobId,
+        status: "failed",
+        error: error?.message || "stream_failed",
+      });
       if (!res.headersSent) {
         res.status(500).json({ error: error?.message || "Erro interno" });
       } else {
-        res.end();
+        if (!res.writableEnded && !(res as any).destroyed) res.end();
       }
     }
   });

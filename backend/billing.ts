@@ -43,6 +43,8 @@ const usageStorage = new AsyncLocalStorage<BillingSessionStore>();
 
 const BILLING_MARGIN = Number.parseFloat(process.env.BILLING_MARGIN || "2.50") || 2.5;
 const MIN_CHARGE_BRL = Number.parseFloat(process.env.BILLING_MIN_CHARGE_BRL || "0.01") || 0.01;
+const BILLING_CANCEL_MIN_CHARGE_BRL =
+  Number.parseFloat(process.env.BILLING_CANCEL_MIN_CHARGE_BRL || "0.50") || 0.5;
 const BILLING_ASSISTANT_CHAT_MULTIPLIER =
   Number.parseFloat(process.env.BILLING_ASSISTANT_CHAT_MULTIPLIER || "2.0") || 2.0;
 const USD_BRL_FALLBACK = Number.parseFloat(process.env.USD_BRL_FALLBACK || "5.2257") || 5.2257;
@@ -704,6 +706,112 @@ export async function settleReservedCredits(args: {
     chargedBrl: charged,
     balanceAfterBrl: result.balanceAfterBrl,
     usage: normalizedUsage,
+  };
+}
+
+export async function applyCancelFloorDebit(args: {
+  uid: string;
+  requestId: string;
+  endpoint: string;
+  chargedBrl: number;
+  minChargeBrl?: number;
+}): Promise<{
+  chargedBrl: number;
+  finalChargedBrl: number;
+  floorDeltaBrl: number;
+  balanceAfterBrl: number;
+}> {
+  const charged = roundCurrency(Math.max(0, Number(args.chargedBrl) || 0));
+  const configuredFloor = Number.isFinite(args.minChargeBrl as number)
+    ? Number(args.minChargeBrl)
+    : BILLING_CANCEL_MIN_CHARGE_BRL;
+  const cancelFloor = roundCurrency(Math.max(0, configuredFloor));
+  await ensureWallet(args.uid);
+
+  if (charged >= cancelFloor || cancelFloor <= 0) {
+    const snap = await walletRef(args.uid).get();
+    return {
+      chargedBrl: charged,
+      finalChargedBrl: charged,
+      floorDeltaBrl: 0,
+      balanceAfterBrl: Number(snap.data()?.balanceBrl || 0),
+    };
+  }
+
+  const delta = roundCurrency(Math.max(0, cancelFloor - charged));
+  if (delta <= 0) {
+    const snap = await walletRef(args.uid).get();
+    return {
+      chargedBrl: charged,
+      finalChargedBrl: charged,
+      floorDeltaBrl: 0,
+      balanceAfterBrl: Number(snap.data()?.balanceBrl || 0),
+    };
+  }
+
+  const result = await adminDb.runTransaction(async (tx) => {
+    const walletSnapshot = await tx.get(walletRef(args.uid));
+    const currentBalance = Number(walletSnapshot.data()?.balanceBrl || 0);
+    const ledgerRef = ledgerCollection(args.uid).doc(`cancel_floor_${args.requestId}`);
+    const existing = await tx.get(ledgerRef);
+    if (existing.exists) {
+      return {
+        balanceAfterBrl: currentBalance,
+        floorDeltaBrl: Math.max(0, Number(existing.data()?.floorDeltaBrl || 0)),
+      };
+    }
+
+    if (currentBalance < delta) {
+      throw new BillingError(
+        402,
+        "INSUFFICIENT_CREDITS",
+        "Saldo insuficiente para concluir a taxa mínima de cancelamento.",
+      );
+    }
+
+    const balanceAfter = roundCurrency(currentBalance - delta);
+    tx.set(
+      walletRef(args.uid),
+      {
+        balanceBrl: balanceAfter,
+        totalSpentBrl: FieldValue.increment(delta),
+        version: Number(walletSnapshot.data()?.version || 0) + 1,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    tx.set(ledgerRef, {
+      type: "cancel_floor_debit",
+      amountBrl: -delta,
+      floorDeltaBrl: delta,
+      balanceAfterBrl: balanceAfter,
+      requestId: args.requestId,
+      endpoint: args.endpoint,
+      chargedBrl: charged,
+      minChargeBrl: cancelFloor,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    const dateId = getDateId();
+    const usageRef = usageDailyCollection(args.uid).doc(dateId);
+    tx.set(
+      usageRef,
+      {
+        date: dateId,
+        updatedAt: FieldValue.serverTimestamp(),
+        totalCostBrl: FieldValue.increment(delta),
+      },
+      { merge: true },
+    );
+
+    return { balanceAfterBrl: balanceAfter, floorDeltaBrl: delta };
+  });
+
+  return {
+    chargedBrl: charged,
+    finalChargedBrl: roundCurrency(charged + result.floorDeltaBrl),
+    floorDeltaBrl: result.floorDeltaBrl,
+    balanceAfterBrl: result.balanceAfterBrl,
   };
 }
 

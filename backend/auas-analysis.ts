@@ -58,6 +58,7 @@ import {
 } from "./shapefile-writer";
 import {
     BillingError,
+    applyCancelFloorDebit,
     createRequestId,
     estimateCloudinaryStorageReserve,
     estimateReserveForModels,
@@ -69,6 +70,12 @@ import {
     settleReservedCredits,
 } from "./billing";
 import { adminDb } from "./firebase-admin";
+import {
+    finishJob,
+    isCancelRequested,
+    markDisconnected,
+    startJob,
+} from "./processing-jobs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -315,12 +322,42 @@ setInterval(pruneAuasCache, 10 * 60 * 1000).unref();
 
 /* ─── SSE helpers ────────────────────────────────────────────────── */
 function sendSSE(res: Response, data: Record<string, unknown>) {
-    if (res.writableEnded) return;
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    if (isSseConnectionClosed(res)) return;
+    try {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch {
+        return;
+    }
     if (typeof (res as any).flush === "function") (res as any).flush();
 }
 
+function isSseConnectionClosed(res: Response): boolean {
+    const anyRes = res as any;
+    return Boolean(
+        res.writableEnded ||
+        res.destroyed ||
+        anyRes?.writableAborted ||
+        anyRes?.socket?.destroyed,
+    );
+}
+
+class AuasCancelError extends Error {
+    constructor(message = "Cancelamento solicitado pelo usuário.") {
+        super(message);
+        this.name = "AuasCancelError";
+    }
+}
+
+function throwIfAuasCancelRequested(res: Response): void {
+    const jobId = String((res as any).__processingJobId || "").trim();
+    if (!jobId) return;
+    if (isCancelRequested(jobId)) {
+        throw new AuasCancelError();
+    }
+}
+
 function progress(res: Response, percent: number, step: string, message: string) {
+    throwIfAuasCancelRequested(res);
     sendSSE(res, { type: "progress", percent, step, message });
 }
 
@@ -737,6 +774,7 @@ async function runAuasAnalysis(
     propertyZip: Buffer,
     options?: { inputFilename?: string; uid?: string },
 ): Promise<{ completed: boolean; cloudinaryStoredBytes: number }> {
+    throwIfAuasCancelRequested(res);
     // 1. Parse shapefile da propriedade
     progress(res, 5, "parse", "Lendo shapefile da propriedade...");
     let userResult: ReturnType<typeof parseUserShapefile>;
@@ -748,6 +786,7 @@ async function runAuasAnalysis(
     }
     const { polygon: propertyFeature, geometry: propertyGeom, areaHa: propertyAreaHa } = userResult;
     const wkt = polygonToWkt(propertyGeom);
+    throwIfAuasCancelRequested(res);
 
     // 2. Ler template (Arquivo Modelo.zip) para schemas dos shapefiles de saída
     progress(res, 10, "template", "Carregando template de shapefiles...");
@@ -763,6 +802,7 @@ async function runAuasAnalysis(
     progress(res, 20, "prodes", "Consultando PRODES (desmatamento)...");
     let prodesFeatures: FeatureCollection = { type: "FeatureCollection", features: [] };
     try {
+        throwIfAuasCancelRequested(res);
         prodesFeatures = await fetchProdesGeoJson(wkt);
     } catch (err: any) {
         console.warn("[AUAS] PRODES WFS error:", err.message);
@@ -802,6 +842,7 @@ async function runAuasAnalysis(
     if (SFB_WFS_URL && SFB_RIVER_LAYER) {
         try {
             // Preferir rios de menor classe (<= 10 m), com fallback automático para schemas/campos diferentes.
+            throwIfAuasCancelRequested(res);
             const riverGeoJson = await fetchSfbRiversGeoJson(wkt);
             progress(res, 62, "rivers", `SFB: ${riverGeoJson.features.length} rios encontrados. Aplicando buffer...`);
 
@@ -899,6 +940,7 @@ async function runAuasAnalysis(
 
     let aiResult: Awaited<ReturnType<typeof runAcAvnSatelliteAnalysis>> = null;
     try {
+        throwIfAuasCancelRequested(res);
         const satelliteLayers = getFixedAcAvnSatelliteKeys();
         aiResult = await runAcAvnSatelliteAnalysis(res, aiJob, satelliteLayers, { tag: jobId.slice(0, 8) });
     } catch (err: any) {
@@ -1004,6 +1046,7 @@ async function runAuasAnalysis(
     ];
 
     for (const task of uploadTasks) {
+        throwIfAuasCancelRequested(res);
         const url = await withRetry(
             `cloudinary_${task.label}`,
             AUAS_CLOUDINARY_UPLOAD_RETRY_ATTEMPTS,
@@ -1099,6 +1142,8 @@ export function registerAuasRoutes(app: Express) {
         let storageRequestId = "";
         let storageReserved = 0;
         let usageInputs: Array<any> = [];
+        let chargedBrl = 0;
+        let processingJobId = "";
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
@@ -1164,6 +1209,17 @@ export function registerAuasRoutes(app: Express) {
             res.setHeader("Cache-Control", "no-cache");
             res.setHeader("Connection", "keep-alive");
             res.flushHeaders?.();
+            const processingJob = startJob({
+                uid,
+                endpoint: "/api/auas/analyze",
+                metadata: { filename: body.filename || null },
+            });
+            processingJobId = processingJob.jobId;
+            (res as any).__processingJobId = processingJobId;
+            req.on("close", () => {
+                markDisconnected(processingJobId);
+            });
+            sendSSE(res, { type: "job_started", jobId: processingJobId });
 
             let analysisResult: { completed: boolean; cloudinaryStoredBytes: number } = {
                 completed: false,
@@ -1200,6 +1256,7 @@ export function registerAuasRoutes(app: Express) {
                     usageInputs: usageForSettle,
                 });
                 operationReserved = 0;
+                chargedBrl += Number(billing.chargedBrl || 0);
                 sendSSE(res, { type: "billing", billing });
             } else if (operationReserved > 0) {
                 await refundReserve({
@@ -1223,6 +1280,7 @@ export function registerAuasRoutes(app: Express) {
                         assetKind: "novo_car_bundle",
                     });
                     storageReserved = 0;
+                    chargedBrl += Number(storageBilling.chargedBrl || 0);
                     sendSSE(res, { type: "billing", billing: storageBilling });
                 } else {
                     await refundReserve({
@@ -1244,7 +1302,73 @@ export function registerAuasRoutes(app: Express) {
                 });
                 storageReserved = 0;
             }
+            finishJob({
+                jobId: processingJobId,
+                status: analysisResult.completed ? "completed" : "failed",
+                billingSummary: {
+                    chargedBrl: Number(chargedBrl.toFixed(4)),
+                },
+                error: analysisResult.completed ? undefined : "analysis_not_completed",
+            });
         } catch (err: any) {
+            if (err instanceof AuasCancelError) {
+                if (billingUid && operationReserved > 0 && operationRequestId) {
+                    try {
+                        if (usageInputs.length > 0) {
+                            const billing = await settleReservedCredits({
+                                uid: billingUid,
+                                requestId: operationRequestId,
+                                endpoint: AUAS_BILLING_ENDPOINT,
+                                reservedBrl: operationReserved,
+                                usageInputs,
+                            });
+                            chargedBrl += Number(billing.chargedBrl || 0);
+                            operationReserved = 0;
+                        } else {
+                            await refundReserve({
+                                uid: billingUid,
+                                requestId: operationRequestId,
+                                amountBrl: operationReserved,
+                                endpoint: AUAS_BILLING_ENDPOINT,
+                                reason: "cancel_requested_without_usage",
+                            });
+                            operationReserved = 0;
+                        }
+                        const cancelFloor = await applyCancelFloorDebit({
+                            uid: billingUid,
+                            requestId: operationRequestId,
+                            endpoint: AUAS_BILLING_ENDPOINT,
+                            chargedBrl,
+                        });
+                        chargedBrl = cancelFloor.finalChargedBrl;
+                    } catch (cancelErr) {
+                        console.error("[AUAS] cancel billing error:", cancelErr);
+                    }
+                }
+                if (billingUid && storageReserved > 0 && storageRequestId) {
+                    try {
+                        await refundReserve({
+                            uid: billingUid,
+                            requestId: storageRequestId,
+                            amountBrl: storageReserved,
+                            endpoint: AUAS_STORAGE_ENDPOINT,
+                            reason: "cancel_requested",
+                        });
+                        storageReserved = 0;
+                    } catch (refundErr) {
+                        console.error("[AUAS] cancel storage refund error:", refundErr);
+                    }
+                }
+                finishJob({
+                    jobId: processingJobId,
+                    status: "cancelled",
+                    billingSummary: {
+                        chargedBrl: Number(chargedBrl.toFixed(4)),
+                    },
+                    error: "cancel_requested",
+                });
+                return;
+            }
             console.error("[AUAS] Unhandled error:", err);
             if (billingUid && operationReserved > 0 && operationRequestId) {
                 try {
@@ -1275,6 +1399,11 @@ export function registerAuasRoutes(app: Express) {
                 }
             }
             if (err instanceof BillingError) {
+                finishJob({
+                    jobId: processingJobId,
+                    status: "failed",
+                    error: err.message,
+                });
                 if (!res.headersSent) {
                     res.status(err.statusCode).json({ error: err.message, code: err.code });
                 } else {
@@ -1282,6 +1411,11 @@ export function registerAuasRoutes(app: Express) {
                 }
                 return;
             }
+            finishJob({
+                jobId: processingJobId,
+                status: "failed",
+                error: err?.message || "unexpected_error",
+            });
             if (!res.writableEnded) {
                 if (res.headersSent) {
                     sendSSE(res, { type: "error", message: err.message || "Erro interno na análise AUAS." });

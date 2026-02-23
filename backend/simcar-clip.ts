@@ -59,6 +59,7 @@ import {
 } from "./shapefile-writer";
 import {
     BillingError,
+    applyCancelFloorDebit,
     buildUsageFromGemini,
     buildUsageFromGroq,
     createRequestId,
@@ -76,6 +77,12 @@ import {
     settleReservedCredits,
 } from "./billing";
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
+import {
+    finishJob,
+    isCancelRequested,
+    markDisconnected,
+    startJob,
+} from "./processing-jobs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -515,8 +522,12 @@ setInterval(pruneJobCache, CACHE_CLEANUP_INTERVAL).unref();
 /* ─── SSE Helpers ────────────────────────────────────────────── */
 
 function sendSSE(res: Response, data: Record<string, unknown>) {
-    if (res.writableEnded) return;
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    if (isSseConnectionClosed(res)) return;
+    try {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch {
+        return;
+    }
     // Flush if available (for proxied/streamed connections)
     if (typeof (res as any).flush === "function") (res as any).flush();
 }
@@ -539,8 +550,9 @@ function isSseConnectionClosed(res: Response): boolean {
 }
 
 function throwIfClientDisconnected(res: Response): void {
-    if (isSseConnectionClosed(res)) {
-        throw new ClientAbortError();
+    const jobId = String((res as any).__processingJobId || "").trim();
+    if (jobId && isCancelRequested(jobId)) {
+        throw new ClientAbortError("Cancelamento solicitado pelo usuário.");
     }
 }
 
@@ -3394,6 +3406,7 @@ async function callTextFollowUp(
 async function streamTextFollowUp(
     res: Response,
     messages: Array<{ role: string; content: any }>,
+    options?: { throwIfCancelled?: () => void },
 ): Promise<void> {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
@@ -3404,6 +3417,9 @@ async function streamTextFollowUp(
     let accumulatedAnswer = "";
     let accumulatedThinking = "";
     let activeModel = "";
+    const assertNotCancelled = () => {
+        options?.throwIfCancelled?.();
+    };
 
     const writeChunk = (payload: Record<string, any>) => {
         sendSSE(res, payload);
@@ -3414,6 +3430,20 @@ async function streamTextFollowUp(
         segmentMessages: Array<{ role: string; content: any }>,
     ): Promise<{ finishReason: string; segmentText: string }> => {
         const segmentInputTokens = estimateTokensFromMessages(segmentMessages);
+        let segmentRaw = "";
+        let usageRecorded = false;
+        const recordUsage = () => {
+            if (usageRecorded) return;
+            usageRecorded = true;
+            recordModelUsage({
+                provider: "groq",
+                model: segmentModel,
+                inputTokens: Math.max(1, segmentInputTokens),
+                outputTokens: Math.max(1, estimateTokensFromText(segmentRaw)),
+                estimated: true,
+            });
+        };
+        assertNotCancelled();
         const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -3447,9 +3477,19 @@ async function streamTextFollowUp(
         const reader = upstream.body.getReader();
         let buffer = "";
         let finishReason = "";
-        let segmentRaw = "";
 
         while (true) {
+            try {
+                assertNotCancelled();
+            } catch {
+                recordUsage();
+                try {
+                    await reader.cancel();
+                } catch {
+                    // ignore
+                }
+                throw new ClientAbortError();
+            }
             const { value, done } = await reader.read();
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
@@ -3463,13 +3503,7 @@ async function streamTextFollowUp(
                 const data = trimmed.slice(5).trim();
                 if (!data) continue;
                 if (data === "[DONE]") {
-                    recordModelUsage({
-                        provider: "groq",
-                        model: segmentModel,
-                        inputTokens: Math.max(1, segmentInputTokens),
-                        outputTokens: Math.max(1, estimateTokensFromText(segmentRaw)),
-                        estimated: true,
-                    });
+                    recordUsage();
                     return { finishReason: finishReason || "stop", segmentText: segmentRaw };
                 }
                 try {
@@ -3494,13 +3528,7 @@ async function streamTextFollowUp(
             }
         }
 
-        recordModelUsage({
-            provider: "groq",
-            model: segmentModel,
-            inputTokens: Math.max(1, segmentInputTokens),
-            outputTokens: Math.max(1, estimateTokensFromText(segmentRaw)),
-            estimated: true,
-        });
+        recordUsage();
         return { finishReason: finishReason || "stop", segmentText: segmentRaw };
     };
 
@@ -3514,6 +3542,7 @@ async function streamTextFollowUp(
             activeModel = candidate;
             break;
         } catch (err) {
+            if (err instanceof ClientAbortError) throw err;
             console.warn(`[SIMCAR ANALYSIS CHAT] startup model failed (${candidate})`, err);
         }
     }
@@ -3533,6 +3562,7 @@ async function streamTextFollowUp(
     let lastFinishReason = firstResult.finishReason;
 
     while (lastFinishReason === "length" && continuationsUsed < MAX_CONTINUATIONS) {
+        assertNotCancelled();
         continuationsUsed += 1;
         const assistantSoFar = trimForContinuation(accumulatedAnswer);
         const continuationMessages = [
@@ -3550,6 +3580,7 @@ async function streamTextFollowUp(
                 activeModel = candidate;
                 break;
             } catch (err) {
+                if (err instanceof ClientAbortError) throw err;
                 console.warn(`[SIMCAR ANALYSIS CHAT] continuation failed (${candidate})`, err);
             }
         }
@@ -6291,6 +6322,8 @@ export function registerSimcarClipRoutes(app: Express) {
         let operationReserved = 0;
         let storageRequestId = "";
         let storageReserved = 0;
+        let processingJobId = "";
+        let totalChargedBrl = 0;
         // SSE headers
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
@@ -6332,6 +6365,18 @@ export function registerSimcarClipRoutes(app: Express) {
                 res.end();
                 return;
             }
+
+            const processingJob = startJob({
+                uid,
+                endpoint: "/api/simcar/clip",
+                metadata: { filename: body.filename || null },
+            });
+            processingJobId = processingJob.jobId;
+            (res as any).__processingJobId = processingJobId;
+            req.on("close", () => {
+                markDisconnected(processingJobId);
+            });
+            sendSSE(res, { type: "job_started", jobId: processingJobId });
 
             console.log(
                 `[SIMCAR CLIP] Processing: ${body.filename || "unknown"}, ` +
@@ -6389,6 +6434,7 @@ export function registerSimcarClipRoutes(app: Express) {
                     usageInputs: [fallbackUsage],
                 });
                 operationReserved = 0;
+                totalChargedBrl += Number(billing.chargedBrl || 0);
                 sendSSE(res, { type: "billing", billing });
             } else if (billingEnabled && operationReserved > 0) {
                 await refundReserve({
@@ -6412,6 +6458,7 @@ export function registerSimcarClipRoutes(app: Express) {
                         assetKind: "simcar_zip_bundle",
                     });
                     storageReserved = 0;
+                    totalChargedBrl += Number(storageBilling.chargedBrl || 0);
                     sendSSE(res, { type: "billing", billing: storageBilling });
                 } else {
                     await refundReserve({
@@ -6433,7 +6480,67 @@ export function registerSimcarClipRoutes(app: Express) {
                 });
                 storageReserved = 0;
             }
+            finishJob({
+                jobId: processingJobId,
+                status: clipResult.ok ? "completed" : "failed",
+                billingSummary: {
+                    chargedBrl: Number(totalChargedBrl.toFixed(4)),
+                },
+                error: clipResult.ok ? undefined : "clip_failed_or_invalid",
+            });
         } catch (err: any) {
+            if (err instanceof ClientAbortError) {
+                if (billingUid && operationReserved > 0 && operationRequestId) {
+                    try {
+                        await refundReserve({
+                            uid: billingUid,
+                            requestId: operationRequestId,
+                            amountBrl: operationReserved,
+                            endpoint: "/api/simcar/clip",
+                            reason: "cancel_requested",
+                        });
+                        operationReserved = 0;
+                    } catch (refundErr) {
+                        console.error("[SIMCAR CLIP] cancel refund error:", refundErr);
+                    }
+                }
+                if (billingUid && storageReserved > 0 && storageRequestId) {
+                    try {
+                        await refundReserve({
+                            uid: billingUid,
+                            requestId: storageRequestId,
+                            amountBrl: storageReserved,
+                            endpoint: "/api/simcar/clip",
+                            reason: "cancel_requested",
+                        });
+                        storageReserved = 0;
+                    } catch (refundErr) {
+                        console.error("[SIMCAR CLIP] cancel storage refund error:", refundErr);
+                    }
+                }
+                if (billingUid && operationRequestId) {
+                    try {
+                        const cancelFloor = await applyCancelFloorDebit({
+                            uid: billingUid,
+                            requestId: operationRequestId,
+                            endpoint: "/api/simcar/clip",
+                            chargedBrl: totalChargedBrl,
+                        });
+                        totalChargedBrl = cancelFloor.finalChargedBrl;
+                    } catch (cancelBillingErr) {
+                        console.error("[SIMCAR CLIP] cancel floor billing error:", cancelBillingErr);
+                    }
+                }
+                finishJob({
+                    jobId: processingJobId,
+                    status: "cancelled",
+                    billingSummary: {
+                        chargedBrl: Number(totalChargedBrl.toFixed(4)),
+                    },
+                    error: "cancel_requested",
+                });
+                return;
+            }
             if (billingUid && operationReserved > 0 && operationRequestId) {
                 try {
                     await refundReserve({
@@ -6461,10 +6568,20 @@ export function registerSimcarClipRoutes(app: Express) {
                 }
             }
             if (err instanceof BillingError) {
+                finishJob({
+                    jobId: processingJobId,
+                    status: "failed",
+                    error: err.message,
+                });
                 sendSSE(res, { type: "error", message: err.message, code: err.code });
                 return;
             }
             console.error("[SIMCAR CLIP] Unexpected error:", err);
+            finishJob({
+                jobId: processingJobId,
+                status: "failed",
+                error: err?.message || "clip_unexpected_error",
+            });
             sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
         } finally {
             if (!res.writableEnded) res.end();
@@ -6670,10 +6787,8 @@ export function registerSimcarClipRoutes(app: Express) {
         let billingRequestId = "";
         let billingReserved = 0;
         let usageInputs: Array<any> = [];
-        let clientDisconnected = false;
-        req.on("close", () => {
-            clientDisconnected = true;
-        });
+        let chargedBrl = 0;
+        let processingJobId = "";
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
@@ -6716,6 +6831,17 @@ export function registerSimcarClipRoutes(app: Express) {
             });
 
             sendSseHeaders(res);
+            const processingJob = startJob({
+                uid,
+                endpoint: "/api/simcar/clip/analyze-auas",
+                metadata: { clipJobId: jobId },
+            });
+            processingJobId = processingJob.jobId;
+            (res as any).__processingJobId = processingJobId;
+            req.on("close", () => {
+                markDisconnected(processingJobId);
+            });
+            sendSSE(res, { type: "job_started", jobId: processingJobId });
             console.log(`[AUAS ANALYSIS] Starting AUAS analysis for job: ${jobId}`);
             let completed = false;
             await runWithBillingUsageSession(async () => {
@@ -6725,9 +6851,6 @@ export function registerSimcarClipRoutes(app: Express) {
                     usageInputs = getBillingUsageSessionRecords();
                 }
             });
-            if (clientDisconnected || isSseConnectionClosed(res)) {
-                throw new ClientAbortError();
-            }
             if (usageInputs.length > 0 || completed) {
                 const usageForSettle = usageInputs.length > 0
                     ? usageInputs
@@ -6748,6 +6871,7 @@ export function registerSimcarClipRoutes(app: Express) {
                     usageInputs: usageForSettle,
                 });
                 billingReserved = 0;
+                chargedBrl = Number(billing.chargedBrl || 0);
                 sendSSE(res, { type: "billing", billing });
             } else if (billingReserved > 0) {
                 await refundReserve({
@@ -6759,18 +6883,26 @@ export function registerSimcarClipRoutes(app: Express) {
                 });
                 billingReserved = 0;
             }
+            finishJob({
+                jobId: processingJobId,
+                status: "completed",
+                billingSummary: {
+                    chargedBrl: Number(chargedBrl.toFixed(4)),
+                },
+            });
         } catch (err: any) {
             if (err instanceof ClientAbortError) {
                 if (billingUid && billingReserved > 0 && billingRequestId) {
                     try {
                         if (usageInputs.length > 0) {
-                            await settleReservedCredits({
+                            const billing = await settleReservedCredits({
                                 uid: billingUid,
                                 requestId: billingRequestId,
                                 endpoint: "/api/simcar/clip/analyze-auas",
                                 reservedBrl: billingReserved,
                                 usageInputs,
                             });
+                            chargedBrl = Number(billing.chargedBrl || 0);
                             billingReserved = 0;
                         } else {
                             await refundReserve({
@@ -6782,10 +6914,25 @@ export function registerSimcarClipRoutes(app: Express) {
                             });
                             billingReserved = 0;
                         }
+                        const cancelFloor = await applyCancelFloorDebit({
+                            uid: billingUid,
+                            requestId: billingRequestId,
+                            endpoint: "/api/simcar/clip/analyze-auas",
+                            chargedBrl,
+                        });
+                        chargedBrl = cancelFloor.finalChargedBrl;
                     } catch (billingErr) {
                         console.error("[AUAS ANALYSIS] client-abort billing error:", billingErr);
                     }
                 }
+                finishJob({
+                    jobId: processingJobId,
+                    status: "cancelled",
+                    billingSummary: {
+                        chargedBrl: Number(chargedBrl.toFixed(4)),
+                    },
+                    error: "cancel_requested",
+                });
                 return;
             }
             if (billingUid && billingReserved > 0 && billingRequestId) {
@@ -6802,6 +6949,11 @@ export function registerSimcarClipRoutes(app: Express) {
                 }
             }
             if (err instanceof BillingError) {
+                finishJob({
+                    jobId: processingJobId,
+                    status: "failed",
+                    error: err.message,
+                });
                 if (!res.headersSent) {
                     res.status(err.statusCode).json({ error: err.message, code: err.code });
                 } else {
@@ -6810,6 +6962,11 @@ export function registerSimcarClipRoutes(app: Express) {
                 return;
             }
             console.error("[AUAS ANALYSIS] Unexpected error:", err);
+            finishJob({
+                jobId: processingJobId,
+                status: "failed",
+                error: err?.message || "unexpected_error",
+            });
             if (res.headersSent) {
                 sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
             } else {
@@ -6826,10 +6983,8 @@ export function registerSimcarClipRoutes(app: Express) {
         let billingRequestId = "";
         let billingReserved = 0;
         let usageInputs: Array<any> = [];
-        let clientDisconnected = false;
-        req.on("close", () => {
-            clientDisconnected = true;
-        });
+        let chargedBrl = 0;
+        let processingJobId = "";
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
@@ -6886,6 +7041,17 @@ export function registerSimcarClipRoutes(app: Express) {
             }
 
             sendSseHeaders(res);
+            const processingJob = startJob({
+                uid,
+                endpoint: "/api/simcar/clip/analyze",
+                metadata: { clipJobId: jobId, imageOnly: !aiAnalysis },
+            });
+            processingJobId = processingJob.jobId;
+            (res as any).__processingJobId = processingJobId;
+            req.on("close", () => {
+                markDisconnected(processingJobId);
+            });
+            sendSSE(res, { type: "job_started", jobId: processingJobId });
             console.log(`[SIMCAR ANALYSIS] Starting analysis for job: ${jobId}, layers: ${layers.join(",")}, aiAnalysis: ${aiAnalysis}`);
 
             if (aiAnalysis) {
@@ -6897,9 +7063,6 @@ export function registerSimcarClipRoutes(app: Express) {
                         usageInputs = getBillingUsageSessionRecords();
                     }
                 });
-                if (clientDisconnected || isSseConnectionClosed(res)) {
-                    throw new ClientAbortError();
-                }
                 if (usageInputs.length > 0 || completed) {
                     const usageForSettle = usageInputs.length > 0
                         ? usageInputs
@@ -6920,6 +7083,7 @@ export function registerSimcarClipRoutes(app: Express) {
                         usageInputs: usageForSettle,
                     });
                     billingReserved = 0;
+                    chargedBrl = Number(billing.chargedBrl || 0);
                     sendSSE(res, { type: "billing", billing });
                 } else if (billingReserved > 0) {
                     await refundReserve({
@@ -6934,18 +7098,26 @@ export function registerSimcarClipRoutes(app: Express) {
             } else {
                 await processAnalysis(res, jobId, layers, false, contextUrl, outputZipUrl);
             }
+            finishJob({
+                jobId: processingJobId,
+                status: "completed",
+                billingSummary: {
+                    chargedBrl: Number(chargedBrl.toFixed(4)),
+                },
+            });
         } catch (err: any) {
             if (err instanceof ClientAbortError) {
                 if (billingUid && billingReserved > 0 && billingRequestId) {
                     try {
                         if (usageInputs.length > 0) {
-                            await settleReservedCredits({
+                            const billing = await settleReservedCredits({
                                 uid: billingUid,
                                 requestId: billingRequestId,
                                 endpoint: "/api/simcar/clip/analyze",
                                 reservedBrl: billingReserved,
                                 usageInputs,
                             });
+                            chargedBrl = Number(billing.chargedBrl || 0);
                             billingReserved = 0;
                         } else {
                             await refundReserve({
@@ -6957,10 +7129,25 @@ export function registerSimcarClipRoutes(app: Express) {
                             });
                             billingReserved = 0;
                         }
+                        const cancelFloor = await applyCancelFloorDebit({
+                            uid: billingUid,
+                            requestId: billingRequestId,
+                            endpoint: "/api/simcar/clip/analyze",
+                            chargedBrl,
+                        });
+                        chargedBrl = cancelFloor.finalChargedBrl;
                     } catch (billingErr) {
                         console.error("[SIMCAR ANALYSIS] client-abort billing error:", billingErr);
                     }
                 }
+                finishJob({
+                    jobId: processingJobId,
+                    status: "cancelled",
+                    billingSummary: {
+                        chargedBrl: Number(chargedBrl.toFixed(4)),
+                    },
+                    error: "cancel_requested",
+                });
                 return;
             }
             if (billingUid && billingReserved > 0 && billingRequestId) {
@@ -6977,6 +7164,11 @@ export function registerSimcarClipRoutes(app: Express) {
                 }
             }
             if (err instanceof BillingError) {
+                finishJob({
+                    jobId: processingJobId,
+                    status: "failed",
+                    error: err.message,
+                });
                 if (!res.headersSent) {
                     res.status(err.statusCode).json({ error: err.message, code: err.code });
                 } else {
@@ -6985,6 +7177,11 @@ export function registerSimcarClipRoutes(app: Express) {
                 return;
             }
             console.error("[SIMCAR ANALYSIS] Unexpected error:", err);
+            finishJob({
+                jobId: processingJobId,
+                status: "failed",
+                error: err?.message || "unexpected_error",
+            });
             if (res.headersSent) {
                 sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
             } else {
@@ -7001,6 +7198,8 @@ export function registerSimcarClipRoutes(app: Express) {
         let billingUid = "";
         let billingRequestId = "";
         let billingReserved = 0;
+        let chargedBrl = 0;
+        let processingJobId = "";
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
@@ -7072,8 +7271,25 @@ export function registerSimcarClipRoutes(app: Express) {
 
             if (streamMode) {
                 sendSseHeaders(res);
+                const processingJob = startJob({
+                    uid,
+                    endpoint: "/api/simcar/clip/analyze/chat",
+                    metadata: { mode: "stream" },
+                });
+                processingJobId = processingJob.jobId;
+                (res as any).__processingJobId = processingJobId;
+                req.on("close", () => {
+                    markDisconnected(processingJobId);
+                });
+                sendSSE(res, { type: "job_started", jobId: processingJobId });
                 await runWithBillingUsageSession(async () => {
-                    await streamTextFollowUp(res, optimizedMessages);
+                    await streamTextFollowUp(res, optimizedMessages, {
+                        throwIfCancelled: () => {
+                            if (processingJobId && isCancelRequested(processingJobId)) {
+                                throw new ClientAbortError();
+                            }
+                        },
+                    });
                 });
                 const usageInputs = getBillingUsageSessionRecords();
                 const usageForSettle = usageInputs.length > 0
@@ -7095,7 +7311,13 @@ export function registerSimcarClipRoutes(app: Express) {
                     usageInputs: usageForSettle,
                 });
                 billingReserved = 0;
+                chargedBrl = Number(billing.chargedBrl || 0);
                 sendSSE(res, { type: "billing", billing });
+                finishJob({
+                    jobId: processingJobId,
+                    status: "completed",
+                    billingSummary: { chargedBrl: Number(chargedBrl.toFixed(4)) },
+                });
                 if (!res.writableEnded) res.end();
                 return;
             }
@@ -7125,6 +7347,53 @@ export function registerSimcarClipRoutes(app: Express) {
             billingReserved = 0;
             res.json({ content: reply, billing });
         } catch (err: any) {
+            if (err instanceof ClientAbortError && streamMode) {
+                if (billingUid && billingReserved > 0 && billingRequestId) {
+                    try {
+                        const usageInputs = getBillingUsageSessionRecords();
+                        if (usageInputs.length > 0) {
+                            const settled = await settleReservedCredits({
+                                uid: billingUid,
+                                requestId: billingRequestId,
+                                endpoint: "/api/simcar/clip/analyze/chat",
+                                reservedBrl: billingReserved,
+                                usageInputs,
+                            });
+                            chargedBrl = Number(settled.chargedBrl || 0);
+                            billingReserved = 0;
+                        } else {
+                            await refundReserve({
+                                uid: billingUid,
+                                requestId: billingRequestId,
+                                amountBrl: billingReserved,
+                                endpoint: "/api/simcar/clip/analyze/chat",
+                                reason: "cancel_requested_without_usage",
+                            });
+                            billingReserved = 0;
+                        }
+                        const cancelFloor = await applyCancelFloorDebit({
+                            uid: billingUid,
+                            requestId: billingRequestId,
+                            endpoint: "/api/simcar/clip/analyze/chat",
+                            chargedBrl,
+                        });
+                        chargedBrl = cancelFloor.finalChargedBrl;
+                    } catch (cancelErr) {
+                        console.error("[SIMCAR ANALYSIS CHAT] cancel billing error:", cancelErr);
+                    }
+                }
+                finishJob({
+                    jobId: processingJobId,
+                    status: "cancelled",
+                    billingSummary: { chargedBrl: Number(chargedBrl.toFixed(4)) },
+                    error: "cancel_requested",
+                });
+                if (streamMode && !res.writableEnded) {
+                    sendSSE(res, { type: "cancelled", message: "Cancelamento solicitado. Cobrança proporcional aplicada." });
+                    res.end();
+                }
+                return;
+            }
             if (billingUid && billingReserved > 0 && billingRequestId) {
                 try {
                     await refundReserve({
@@ -7139,6 +7408,11 @@ export function registerSimcarClipRoutes(app: Express) {
                 }
             }
             if (err instanceof BillingError) {
+                finishJob({
+                    jobId: processingJobId,
+                    status: "failed",
+                    error: err.message,
+                });
                 if (!res.headersSent) {
                     res.status(err.statusCode).json({ error: err.message, code: err.code });
                 } else {
@@ -7148,6 +7422,11 @@ export function registerSimcarClipRoutes(app: Express) {
                 return;
             }
             console.error("[SIMCAR ANALYSIS CHAT] Error:", err);
+            finishJob({
+                jobId: processingJobId,
+                status: "failed",
+                error: err?.message || "unexpected_error",
+            });
             if (streamMode) {
                 if (res.headersSent) {
                     sendSSE(res, { type: "error", message: err.message || "Erro interno." });
