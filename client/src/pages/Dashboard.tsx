@@ -523,6 +523,11 @@ const DEFAULT_SETTINGS: UserSettings = {
   twoFactorEnabled: true,
 };
 
+const SETTINGS_THEME_OPTIONS = ['Escuro (Floresta)', 'Claro (Dia)'] as const;
+const SETTINGS_FONT_SIZE_OPTIONS = ['Pequeno', 'Padrão', 'Grande'] as const;
+const AUAS_FIRESTORE_WRITE_RETRIES = 3;
+const AUAS_FIRESTORE_RETRY_BASE_MS = 450;
+
 const CONFIGURED_API_BASE = String(import.meta.env.VITE_API_BASE || '').trim().replace(/\/+$/, '');
 const apiUrl = (path: string) => {
   if (!path) return CONFIGURED_API_BASE || '';
@@ -1413,6 +1418,12 @@ export default function Dashboard() {
   const processingTimerRef = useRef<number | null>(null);
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
+  const [settingsActionLoading, setSettingsActionLoading] = useState<string | null>(null);
+  const [settingsHealthCheck, setSettingsHealthCheck] = useState<{
+    ok: boolean;
+    summary: string;
+    checkedAtIso: string;
+  } | null>(null);
   const [billingMe, setBillingMe] = useState<BillingMePayload | null>(null);
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingPricing, setBillingPricing] = useState<any | null>(null);
@@ -1429,6 +1440,7 @@ export default function Dashboard() {
   const [auasJobsRef, setAuasJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
   const [settingsRef, setSettingsRef] = useState<DocumentReference | null>(null);
+  const settingsImportInputRef = useRef<HTMLInputElement | null>(null);
   const selectedSimcarClipLayerNames = useMemo(
     () => simcarClipLayers.filter((layer) => layer.selected).map((layer) => layer.name),
     [simcarClipLayers]
@@ -1931,7 +1943,7 @@ export default function Dashboard() {
 
   const persistAuasHistoryEntry = useCallback(
     async (entry: AuasHistoryItem) => {
-      if (!auasJobsRef) return;
+      if (!auasJobsRef || !entry?.jobId) return;
       const auasDocRef = doc(auasJobsRef, entry.jobId);
       const cleanEntry = stripUndefinedDeep(entry);
       const payload = stripUndefinedDeep({
@@ -1944,16 +1956,32 @@ export default function Dashboard() {
           contextUrl: cleanEntry.contextUrl,
         },
         analysisImageCount: cleanEntry.images?.length ?? 0,
+        cloudinaryPersisted:
+          Boolean(cleanEntry.inputZipUrl) &&
+          Boolean(cleanEntry.outputZipUrl) &&
+          Boolean(cleanEntry.contextUrl),
       });
-      await setDoc(
-        auasDocRef,
-        {
-          ...payload,
-          updatedAt: serverTimestamp(),
-          createdAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
+      let lastError: any = null;
+      for (let attempt = 1; attempt <= AUAS_FIRESTORE_WRITE_RETRIES; attempt += 1) {
+        try {
+          await setDoc(
+            auasDocRef,
+            {
+              ...payload,
+              updatedAt: serverTimestamp(),
+              createdAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+          return;
+        } catch (error: any) {
+          lastError = error;
+          if (attempt >= AUAS_FIRESTORE_WRITE_RETRIES) break;
+          const waitMs = AUAS_FIRESTORE_RETRY_BASE_MS * attempt;
+          await new Promise<void>((resolve) => window.setTimeout(resolve, waitMs));
+        }
+      }
+      throw lastError || new Error('Falha ao persistir historico Novo CAR no Firestore.');
     },
     [auasJobsRef]
   );
@@ -4116,13 +4144,205 @@ export default function Dashboard() {
     );
   };
 
-  const updateSettings = async (next: Partial<UserSettings>) => {
-    const updated = { ...settings, ...next };
-    setSettings(updated);
-    if (settingsRef) {
-      await setDoc(settingsRef, updated, { merge: true });
+  const normalizeSettingsPayload = useCallback((raw: any): UserSettings => {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const themeRaw = String(source.theme || '').trim();
+    const fontRaw = String(source.fontSize || '').trim();
+    const normalizeEnum = <T extends string>(value: string, allowed: readonly T[], fallback: T): T => {
+      return (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
+    };
+    return {
+      ...DEFAULT_SETTINGS,
+      ...source,
+      theme: normalizeEnum(themeRaw, SETTINGS_THEME_OPTIONS, DEFAULT_SETTINGS.theme),
+      fontSize: normalizeEnum(fontRaw, SETTINGS_FONT_SIZE_OPTIONS, DEFAULT_SETTINGS.fontSize),
+      includeMetadata: typeof source.includeMetadata === 'boolean' ? source.includeMetadata : DEFAULT_SETTINGS.includeMetadata,
+      compressLarge: typeof source.compressLarge === 'boolean' ? source.compressLarge : DEFAULT_SETTINGS.compressLarge,
+      alertProcessing: typeof source.alertProcessing === 'boolean' ? source.alertProcessing : DEFAULT_SETTINGS.alertProcessing,
+      alertNewFeatures: typeof source.alertNewFeatures === 'boolean' ? source.alertNewFeatures : DEFAULT_SETTINGS.alertNewFeatures,
+      alertFires: typeof source.alertFires === 'boolean' ? source.alertFires : DEFAULT_SETTINGS.alertFires,
+      twoFactorEnabled: typeof source.twoFactorEnabled === 'boolean' ? source.twoFactorEnabled : DEFAULT_SETTINGS.twoFactorEnabled,
+    };
+  }, []);
+
+  const updateSettings = useCallback(
+    async (next: Partial<UserSettings>) => {
+      const previous = settings;
+      const updated = normalizeSettingsPayload({ ...settings, ...next });
+      setSettings(updated);
+      if (!settingsRef) return true;
+      try {
+        await setDoc(settingsRef, updated, { merge: true });
+        return true;
+      } catch (error: any) {
+        setSettings(previous);
+        toast.error(error?.message || 'Erro ao salvar preferências.');
+        return false;
+      }
+    },
+    [normalizeSettingsPayload, settings, settingsRef]
+  );
+
+  const onCopyAccountUid = useCallback(async () => {
+    const uid = auth.currentUser?.uid || '';
+    if (!uid) {
+      toast.error('UID não disponível.');
+      return;
     }
-  };
+    try {
+      await navigator.clipboard.writeText(uid);
+      toast.success('UID copiado para a área de transferência.');
+    } catch {
+      toast.error('Falha ao copiar UID.');
+    }
+  }, []);
+
+  const onExportSettingsJson = useCallback(() => {
+    try {
+      const payload = {
+        version: 1,
+        exportedAtIso: new Date().toISOString(),
+        settings,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `geoforest_settings_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Preferências exportadas.');
+    } catch {
+      toast.error('Não foi possível exportar as preferências.');
+    }
+  }, [settings]);
+
+  const onImportSettingsJson = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.currentTarget.value = '';
+      if (!file) return;
+      setSettingsActionLoading('import_settings');
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const candidate = parsed?.settings ?? parsed;
+        const normalized = normalizeSettingsPayload(candidate);
+        const saved = await updateSettings(normalized);
+        if (saved) toast.success('Preferências importadas com sucesso.');
+      } catch (error: any) {
+        toast.error(error?.message || 'Arquivo de preferências inválido.');
+      } finally {
+        setSettingsActionLoading(null);
+      }
+    },
+    [normalizeSettingsPayload, updateSettings]
+  );
+
+  const onResetSettingsDefaults = useCallback(async () => {
+    setSettingsActionLoading('reset_defaults');
+    try {
+      const saved = await updateSettings(DEFAULT_SETTINGS);
+      if (saved) toast.success('Preferências restauradas para o padrão.');
+    } finally {
+      setSettingsActionLoading(null);
+    }
+  }, [updateSettings]);
+
+  const onClearLocalCaches = useCallback(() => {
+    mapPreviewCacheRef.current.clear();
+    mapCapabilitiesCacheRef.current = null;
+    intersectionResultCacheRef.current.clear();
+    wfsCapabilitiesCacheRef.current = null;
+    wfsDescribeCacheRef.current.clear();
+    try {
+      window.sessionStorage.removeItem(FRONT_MAP_CAPABILITIES_STORAGE_KEY);
+      const localKeys = Object.keys(window.localStorage).filter((k) => k.startsWith('geoforest.'));
+      for (const key of localKeys) window.localStorage.removeItem(key);
+    } catch {
+      // noop
+    }
+    toast.success('Caches locais limpos.');
+  }, []);
+
+  const onReloadBillingData = useCallback(async () => {
+    setSettingsActionLoading('reload_billing');
+    try {
+      await Promise.all([loadBillingMe(), loadBillingPricing(), loadBillingLedger()]);
+      toast.success('Dados financeiros atualizados.');
+    } catch {
+      toast.error('Falha ao atualizar dados financeiros.');
+    } finally {
+      setSettingsActionLoading(null);
+    }
+  }, [loadBillingLedger, loadBillingMe, loadBillingPricing]);
+
+  const onProbeBackendHealth = useCallback(async () => {
+    setSettingsActionLoading('probe_backend');
+    try {
+      const checks = await Promise.all([
+        apiFetch('/api/health', { method: 'GET' }, { auth: false }),
+        apiFetch('/api/models', { method: 'GET' }, { auth: false }),
+        apiFetch('/api/billing/pricing', { method: 'GET' }, { auth: false }),
+      ]);
+      const allOk = checks.every((res) => res.ok);
+      const summary = allOk
+        ? 'API online (health/models/pricing)'
+        : `Falha em ${checks.filter((res) => !res.ok).length} endpoint(s)`;
+      const next = { ok: allOk, summary, checkedAtIso: new Date().toISOString() };
+      setSettingsHealthCheck(next);
+      if (allOk) toast.success('Conectividade com backend validada.');
+      else toast.error(summary);
+    } catch (error: any) {
+      const next = {
+        ok: false,
+        summary: error?.message || 'Backend indisponível.',
+        checkedAtIso: new Date().toISOString(),
+      };
+      setSettingsHealthCheck(next);
+      toast.error(next.summary);
+    } finally {
+      setSettingsActionLoading(null);
+    }
+  }, [apiFetch]);
+
+  const onExportLedgerCsv = useCallback(() => {
+    if (!billingLedger.length) {
+      toast.error('Sem transações para exportar.');
+      return;
+    }
+    const rows = [
+      ['id', 'tipo', 'valor_brl', 'modelo', 'endpoint', 'created_at'].join(','),
+      ...billingLedger.map((entry) => {
+        const createdAt = entry.createdAt?.toDate
+          ? entry.createdAt.toDate().toISOString()
+          : entry.createdAt?._seconds
+            ? new Date(entry.createdAt._seconds * 1000).toISOString()
+            : '';
+        const safe = (value: any) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+        return [
+          safe(entry.id),
+          safe(entry.type),
+          safe(Number(entry.amountBrl || 0).toFixed(4)),
+          safe(entry.model || ''),
+          safe(entry.endpoint || ''),
+          safe(createdAt),
+        ].join(',');
+      }),
+    ];
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `geoforest_ledger_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success('Extrato exportado em CSV.');
+  }, [billingLedger]);
 
   const splitThinkContent = useCallback((raw: string) => {
     const thinkRegex = /<think>([\s\S]*?)<\/think>/gi;
@@ -6154,7 +6374,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               auasHistory.map((entry) => (
                 <div
                   key={entry.id}
-                  className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors group cursor-pointer mb-1"
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${auasJobId === entry.jobId ? 'bg-amber-500/10 border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.05)]' : 'bg-[#0a110e]/60 hover:bg-[#131b17] hover:border-amber-500/20'}`}
                   onClick={() => {
                     setAuasResult(normalizeAuasResultPayload(entry));
                     setAuasJobId(entry.jobId);
@@ -6163,14 +6383,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     setAuasError(null);
                   }}
                 >
-                  <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400">
-                    <Layers size={16} />
+                  <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${auasJobId === entry.jobId ? 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-md shadow-amber-900/40' : 'bg-white/5 text-slate-400 group-hover:text-amber-400 group-hover:bg-amber-500/10'}`}>
+                    <Layers size={18} />
                   </div>
                   <div className="flex-1 min-w-0 block lg:hidden xl:block">
-                    <p className="text-sm text-slate-200 truncate">{entry.filename}</p>
-                    <p className="text-[10px] text-slate-500">
-                      AUAS {entry.auasAreaHa.toFixed(2)} ha • AVN {entry.avnAreaHa.toFixed(2)} ha
-                    </p>
+                    <p className={`text-sm truncate font-medium ${auasJobId === entry.jobId ? 'text-amber-100' : 'text-slate-200 group-hover:text-amber-100'}`}>{entry.filename}</p>
+                    <div className="flex items-center gap-2 mt-1 opacity-80">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold text-emerald-400 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        AUAS: {entry.auasAreaHa.toFixed(1)}ha
+                      </span>
+                    </div>
                   </div>
                   <button
                     onClick={(e) => {
@@ -6208,18 +6431,19 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         setAuasError(null);
                       }
                     }}
-                    className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition block lg:hidden xl:block"
-                    title="Excluir análise"
+                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                    title="Excluir histórico"
                   >
                     <Trash2 size={14} />
                   </button>
                 </div>
               ))
             ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Layers size={32} className="text-slate-600 mb-3" />
-                <p className="text-sm text-slate-400">Nenhum Novo CAR ainda</p>
-                <p className="text-[10px] text-slate-600 mt-1">Clique em "Novo CAR" para começar</p>
+              <div className="text-center py-6 block lg:hidden xl:block">
+                <div className="inline-flex justify-center items-center w-10 h-10 rounded-full bg-white/5 text-slate-500 mb-2">
+                  <Clock size={16} />
+                </div>
+                <p className="text-xs text-slate-500">Nenhum histórico de Novo CAR.</p>
               </div>
             )
           ) : activeView === 'simcar-clip' ? (
@@ -7866,21 +8090,23 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         ) : activeView === 'auas' ? (
           /* ══════════════════════════════════════════════════════════
              ABA AUAS — Área de Uso Alternativo do Solo
-             Desmatamento pós-2008 via PRODES + buffer rios SFB
           ══════════════════════════════════════════════════════════ */
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
             <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6 animate-fade-in-up">
 
               {/* ─── Cabeçalho ─── */}
-              <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#1a1000] to-[#0e0c00] p-4 sm:p-7">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/8 rounded-full blur-3xl -translate-y-1/3 translate-x-1/4 pointer-events-none" />
-                <div className="relative flex flex-col sm:flex-row items-start gap-4 sm:gap-5">
-                  <div className="p-3 sm:p-3.5 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-xl shadow-amber-900/40 shrink-0">
-                    <Layers size={24} className="text-white sm:hidden" />
-                    <Layers size={28} className="text-white hidden sm:block" />
+              <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-[#0a110e]/70 backdrop-blur-2xl p-5 sm:p-8 md:p-10 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+                {/* Decorative glowing orbs */}
+                <div className="absolute -top-32 -right-32 w-64 h-64 bg-amber-500/20 rounded-full blur-3xl pointer-events-none" />
+                <div className="absolute -bottom-32 -left-32 w-64 h-64 bg-orange-500/10 rounded-full blur-3xl pointer-events-none" />
+                <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 via-transparent to-orange-500/10 rounded-3xl blur-xl group-hover:blur-2xl transition-all duration-700 pointer-events-none" />
+
+                <div className="relative flex flex-col sm:flex-row items-start gap-5 sm:gap-6">
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-500/20 to-orange-600/10 border border-amber-500/20 shadow-[0_0_20px_rgba(245,158,11,0.15)] shrink-0 text-amber-400">
+                    <Layers size={28} strokeWidth={2} />
                   </div>
                   <div>
-                    <h1 className="text-xl sm:text-2xl font-bold text-white mb-1">Novo CAR</h1>
+                    <h1 className="text-xl sm:text-2xl font-bold text-white mb-2 tracking-tight">Novo CAR</h1>
                     <p className="text-slate-400 text-xs sm:text-sm leading-relaxed max-w-2xl">
                       Classifica as áreas do imóvel com base no PRODES (desmatamento pré e pós-2008),
                       aplica buffer de 2 m para cada lado nos rios da base SFB e calcula
@@ -7889,15 +8115,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <strong className="text-blue-300"> AVN</strong> e
                       <strong className="text-purple-300"> ARL</strong>.
                     </p>
-                    <div className="mt-3 flex flex-wrap gap-2 sm:gap-3 text-[10px] sm:text-[11px]">
+                    <div className="mt-4 flex flex-wrap gap-2 sm:gap-3 text-[10px] sm:text-xs">
                       {[
                         { label: 'AC', desc: 'Desmatamento < 2008', color: 'amber' },
                         { label: 'AUAS', desc: 'Desmatamento ≥ 2008', color: 'emerald' },
                         { label: 'AVN', desc: 'Imóvel − AC − AUAS − Rios', color: 'blue' },
                         { label: 'ARL', desc: 'Igual à AVN', color: 'purple' },
                       ].map((item) => (
-                        <span key={item.label} className={`px-2.5 py-1 rounded-lg bg-${item.color}-500/10 border border-${item.color}-500/20 text-${item.color}-300`}>
-                          <strong>{item.label}</strong> — {item.desc}
+                        <span key={item.label} className={`px-3 py-1.5 rounded-xl bg-${item.color}-500/10 border border-${item.color}-500/20 text-${item.color}-300 flex items-center gap-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]`}>
+                          <span className={`w-1.5 h-1.5 rounded-full bg-${item.color}-400`} />
+                          <strong>{item.label}</strong> <span className="text-white/20">|</span> <span className="opacity-80 font-medium">{item.desc}</span>
                         </span>
                       ))}
                     </div>
@@ -7907,17 +8134,20 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
               {/* ─── Upload do Shapefile ─── */}
               {!auasResult && !auasProcessing && (
-                <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6">
-                  <h2 className="font-semibold text-slate-200 mb-1 flex items-center gap-2">
-                    <Upload size={16} className="text-amber-400" />
+                <section className="bg-gradient-to-br from-white/[0.04] to-transparent backdrop-blur-md border border-white/[0.08] rounded-3xl p-6 sm:p-8 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
+                  <h2 className="font-semibold text-slate-200 mb-1.5 flex items-center gap-2 text-base">
+                    <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400">
+                      <Upload size={16} strokeWidth={2.5} />
+                    </div>
                     Shapefile do Imóvel
                   </h2>
-                  <p className="text-xs text-slate-500 mb-4">
+                  <p className="text-xs sm:text-sm text-slate-400 mb-6">
                     Envie o ZIP com o shapefile da propriedade (.shp, .dbf, .prj).
                     O servidor consultará o PRODES e a base SFB automaticamente.
                   </p>
 
-                  <label className={`flex flex-col items-center justify-center gap-3 p-8 rounded-xl border-2 border-dashed transition-all cursor-pointer ${auasFile ? 'border-amber-500/40 bg-amber-500/5' : 'border-white/10 hover:border-amber-500/30 hover:bg-amber-500/5'}`}>
+                  <label className={`group relative flex flex-col items-center justify-center gap-3 p-10 rounded-2xl border-2 border-dashed transition-all cursor-pointer overflow-hidden isolate ${auasFile ? 'border-amber-500/40 bg-amber-500/5' : 'border-white/10 hover:border-amber-500/30 bg-white/[0.02] hover:bg-white/[0.03]'}`}>
+                    <div className={`absolute inset-0 bg-gradient-to-br from-amber-500/0 via-amber-500/0 to-amber-500/5 transition-opacity ${auasFile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
                     <input
                       ref={auasFileInputRef}
                       type="file"
@@ -7931,38 +8161,38 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     />
                     {auasFile ? (
                       <>
-                        <div className="p-3 rounded-xl bg-amber-500/15 text-amber-400">
-                          <CheckCircle2 size={28} />
+                        <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 text-amber-400 border border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.15)] relative z-10">
+                          <CheckCircle2 size={32} strokeWidth={2} />
                         </div>
-                        <div className="text-center">
-                          <p className="font-medium text-slate-200 text-sm">{auasFile.name}</p>
-                          <p className="text-xs text-slate-500 mt-0.5">{(auasFile.size / 1024).toFixed(0)} KB</p>
+                        <div className="text-center relative z-10">
+                          <p className="font-bold text-white text-base tracking-tight">{auasFile.name}</p>
+                          <p className="text-xs text-slate-400 mt-1 font-medium">{(auasFile.size / 1024).toFixed(0)} KB</p>
                         </div>
                         <button
                           type="button"
                           onClick={(e) => { e.preventDefault(); setAuasFile(null); if (auasFileInputRef.current) auasFileInputRef.current.value = ''; }}
-                          className="text-xs text-slate-500 hover:text-red-400 transition-colors"
+                          className="text-xs font-semibold text-slate-400 hover:text-red-400 transition-colors mt-2 px-3 py-1.5 rounded-lg hover:bg-red-500/10 relative z-10"
                         >
                           Remover arquivo
                         </button>
                       </>
                     ) : (
                       <>
-                        <div className="p-3 rounded-xl bg-white/5 text-slate-500">
-                          <Upload size={28} />
+                        <div className="p-4 rounded-2xl bg-white/5 text-slate-400 border border-white/5 group-hover:-translate-y-1 transition-transform duration-300 relative z-10 shadow-sm">
+                          <Upload size={32} strokeWidth={1.5} />
                         </div>
-                        <div className="text-center">
-                          <p className="font-medium text-slate-300 text-sm">Arraste ou clique para selecionar</p>
-                          <p className="text-xs text-slate-600 mt-0.5">Arquivo ZIP com shapefile do imóvel</p>
+                        <div className="text-center relative z-10">
+                          <p className="font-semibold text-slate-200 text-sm sm:text-base">Arraste ou clique para selecionar</p>
+                          <p className="text-xs text-slate-500 mt-1.5 font-medium">Arquivo ZIP com shapefile do imóvel</p>
                         </div>
                       </>
                     )}
                   </label>
 
                   {auasError && (
-                    <div className="mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm flex items-start gap-2">
-                      <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-                      <span>{auasError}</span>
+                    <div className="mt-5 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm flex items-start gap-3 shadow-[0_0_15px_rgba(239,68,68,0.1)]">
+                      <AlertTriangle size={18} className="shrink-0 mt-0.5 text-red-400" />
+                      <span className="font-medium">{auasError}</span>
                     </div>
                   )}
 
@@ -8058,77 +8288,86 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 ? evt.jobId.trim()
                                 : evt?.data?.downloadUrl?.match?.(/\/auas\/download\/([^/?]+)/)?.[1] || null;
                               const normalizedResult = normalizeAuasResultPayload(evt.data);
+                              if (!nextJobId) {
+                                throw new Error('Resultado do Novo CAR sem jobId valido.');
+                              }
+                              const missingArtifacts = [
+                                !normalizedResult.inputZipUrl ? 'ZIP original' : '',
+                                !normalizedResult.outputZipUrl ? 'ZIP de saida' : '',
+                                !normalizedResult.contextUrl ? 'Contexto JSON' : '',
+                              ].filter(Boolean);
+                              if (missingArtifacts.length > 0) {
+                                throw new Error(`Falha na persistencia Cloudinary do Novo CAR: ${missingArtifacts.join(', ')}.`);
+                              }
                               setAuasResult(normalizedResult);
-                              setAuasJobId(nextJobId || null);
+                              setAuasJobId(nextJobId);
                               setAuasProcessing(false);
                               setAuasProgress(null);
                               setAuasAgentLog((prev) => prev.map((item) => ({ ...item, done: true })));
 
-                              if (nextJobId) {
-                                const entry: AuasHistoryItem = {
-                                  id: nextJobId,
-                                  timestamp: new Date().toISOString(),
-                                  filename: `Novo CAR ${new Date().toLocaleString('pt-BR', {
-                                    day: '2-digit',
-                                    month: '2-digit',
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                  })}`,
-                                  jobId: nextJobId,
-                                  inputFilename: auasFile.name,
-                                  ...normalizedResult,
-                                };
-                                setAuasHistory((prev) => {
-                                  const filtered = prev.filter((item) => item.jobId !== nextJobId);
-                                  return [entry, ...filtered];
-                                });
-                                void persistAuasHistoryEntry(entry).catch((error) => {
-                                  console.warn('Falha ao persistir histórico Novo CAR:', error);
-                                  toast.error('Nao foi possivel salvar o card do Novo CAR no Firestore.');
-                                });
+                              const entry: AuasHistoryItem = {
+                                id: nextJobId,
+                                timestamp: new Date().toISOString(),
+                                filename: `Novo CAR ${new Date().toLocaleString('pt-BR', {
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}`,
+                                jobId: nextJobId,
+                                inputFilename: auasFile.name,
+                                ...normalizedResult,
+                              };
+                              setAuasHistory((prev) => {
+                                const filtered = prev.filter((item) => item.jobId !== nextJobId);
+                                return [entry, ...filtered];
+                              });
+                              void persistAuasHistoryEntry(entry).catch((error) => {
+                                console.warn('Falha ao persistir histórico Novo CAR:', error);
+                                toast.error('Nao foi possivel sincronizar o card do Novo CAR no Firestore pelo app.');
+                              });
 
-                                const cloudinaryFiles = [
-                                  entry.inputZipUrl ? `- ZIP original: ${entry.inputZipUrl}` : '',
-                                  entry.outputZipUrl ? `- ZIP Novo CAR: ${entry.outputZipUrl}` : '',
-                                  entry.contextUrl ? `- Contexto JSON: ${entry.contextUrl}` : '',
-                                ].filter(Boolean);
-                                const summaryLines = [
-                                  `Novo CAR concluído (job ${nextJobId}).`,
-                                  `Área do imóvel: ${entry.propertyAreaHa.toFixed(2)} ha.`,
-                                  `AC: ${entry.acAreaHa.toFixed(2)} ha | AUAS: ${entry.auasAreaHa.toFixed(2)} ha | AVN/ARL: ${entry.avnAreaHa.toFixed(2)} ha.`,
-                                  entry.riverBufferHa > 0 ? `Buffer de rios removido: ${entry.riverBufferHa.toFixed(4)} ha.` : '',
-                                  entry.auasOpeningDate
-                                    ? `ABERTURA automática do shape AUAS: ${entry.auasOpeningDate} (${entry.auasOpeningSource === 'PRODES' ? 'fonte PRODES' : 'fallback IA'}).`
-                                    : 'ABERTURA do shape AUAS não preenchida (ano não detectado).',
-                                  cloudinaryFiles.length > 0 ? `Arquivos no Cloudinary:\n${cloudinaryFiles.join('\n')}` : '',
-                                  entry.downloadUrl ? `Download do resultado: ${entry.downloadUrl}` : '',
-                                ].filter(Boolean);
-                                if (entry.analysis) {
-                                  const excerpt = entry.analysis.length > 1800
-                                    ? `${entry.analysis.slice(0, 1800)}...`
-                                    : entry.analysis;
-                                  summaryLines.push(`Síntese IA:\n${excerpt}`);
-                                }
-                                void appendAuasEntriesToConversation(
-                                  entry,
-                                  [
-                                    {
-                                      role: 'user',
-                                      text: [
-                                        'Solicitei um processamento de Novo CAR (AUAS).',
-                                        `Arquivo: ${auasFile.name}.`,
-                                      ].join('\n'),
-                                    },
-                                    {
-                                      role: 'ai',
-                                      text: summaryLines.join('\n\n'),
-                                    },
-                                  ],
-                                  { title: entry.filename }
-                                ).catch((error) => {
-                                  console.warn('Falha ao anexar resultado Novo CAR na conversa:', error);
-                                });
+                              const cloudinaryFiles = [
+                                entry.inputZipUrl ? `- ZIP original: ${entry.inputZipUrl}` : '',
+                                entry.outputZipUrl ? `- ZIP Novo CAR: ${entry.outputZipUrl}` : '',
+                                entry.contextUrl ? `- Contexto JSON: ${entry.contextUrl}` : '',
+                              ].filter(Boolean);
+                              const summaryLines = [
+                                `Novo CAR concluído (job ${nextJobId}).`,
+                                `Área do imóvel: ${entry.propertyAreaHa.toFixed(2)} ha.`,
+                                `AC: ${entry.acAreaHa.toFixed(2)} ha | AUAS: ${entry.auasAreaHa.toFixed(2)} ha | AVN/ARL: ${entry.avnAreaHa.toFixed(2)} ha.`,
+                                entry.riverBufferHa > 0 ? `Buffer de rios removido: ${entry.riverBufferHa.toFixed(4)} ha.` : '',
+                                entry.auasOpeningDate
+                                  ? `ABERTURA automática do shape AUAS: ${entry.auasOpeningDate} (${entry.auasOpeningSource === 'PRODES' ? 'fonte PRODES' : 'fallback IA'}).`
+                                  : 'ABERTURA do shape AUAS não preenchida (ano não detectado).',
+                                cloudinaryFiles.length > 0 ? `Arquivos no Cloudinary:\n${cloudinaryFiles.join('\n')}` : '',
+                                entry.downloadUrl ? `Download do resultado: ${entry.downloadUrl}` : '',
+                              ].filter(Boolean);
+                              if (entry.analysis) {
+                                const excerpt = entry.analysis.length > 1800
+                                  ? `${entry.analysis.slice(0, 1800)}...`
+                                  : entry.analysis;
+                                summaryLines.push(`Síntese IA:\n${excerpt}`);
                               }
+                              void appendAuasEntriesToConversation(
+                                entry,
+                                [
+                                  {
+                                    role: 'user',
+                                    text: [
+                                      'Solicitei um processamento de Novo CAR (AUAS).',
+                                      `Arquivo: ${auasFile.name}.`,
+                                    ].join('\n'),
+                                  },
+                                  {
+                                    role: 'ai',
+                                    text: summaryLines.join('\n\n'),
+                                  },
+                                ],
+                                { title: entry.filename }
+                              ).catch((error) => {
+                                console.warn('Falha ao anexar resultado Novo CAR na conversa:', error);
+                              });
                             }
                           }
                         }
@@ -8308,68 +8547,112 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       { label: 'AC (pré-2008)', value: auasResult.acAreaHa, color: 'amber', icon: '📅' },
                       { label: 'AUAS (pós-2008)', value: auasResult.auasAreaHa, color: 'emerald', icon: '🌿' },
                       { label: 'AVN / ARL', value: auasResult.avnAreaHa, color: 'blue', icon: '🌳' },
-                    ].map((card) => (
-                      <div key={card.label} className={`rounded-2xl border border-white/5 bg-[#0e1612]/60 p-3 sm:p-4`}>
-                        <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">{card.icon} {card.label}</p>
-                        <p className={`text-xl sm:text-2xl font-bold text-${card.color}-300`}>{card.value.toFixed(2)}</p>
-                        <p className="text-[10px] text-slate-600">hectares</p>
+                    ].map((card, idx) => (
+                      <div key={card.label} className={`group/card relative overflow-hidden rounded-2xl bg-[#131b17] border border-white/[0.05] p-4 sm:p-5 hover:border-${card.color}-500/30 hover:bg-[#16201b] transition-all duration-300 shadow-sm animate-fade-in-up`} style={{ animationDelay: `${idx * 50}ms` }}>
+                        <div className={`absolute -right-4 -top-4 w-16 h-16 bg-${card.color}-500/5 rounded-full blur-xl group-hover/card:bg-${card.color}-500/10 transition-colors pointer-events-none`} />
+                        <div className="flex flex-col h-full relative z-10">
+                          <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2 flex items-center gap-1.5">
+                            <span className="text-sm">{card.icon}</span> {card.label}
+                          </p>
+                          <div className="mt-auto">
+                            <p className={`text-2xl sm:text-3xl font-bold text-${card.color}-300 tracking-tight group-hover/card:scale-105 origin-left transition-transform duration-300`}>
+                              {card.value.toFixed(2)}
+                            </p>
+                            <p className="text-[10px] font-medium text-slate-500 mt-0.5">hectares</p>
+                          </div>
+                        </div>
                       </div>
                     ))}
                   </div>
 
-                  <section className="bg-[#0e1612]/60 border border-white/5 rounded-2xl p-5">
+                  <section className="relative overflow-hidden bg-gradient-to-br from-[#0e1612]/80 to-[#0a110e]/90 border border-white/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] rounded-2xl p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
                     {auasResult.auasOpeningDate ? (
-                      <p className="text-sm text-slate-300">
-                        <strong className="text-amber-300">ABERTURA</strong> preenchida automaticamente no shape AUAS:{' '}
-                        <strong className="text-white">{auasResult.auasOpeningDate}</strong>{' '}
-                        <span className="text-xs text-slate-500">
-                          ({auasResult.auasOpeningSource === 'PRODES' ? 'fonte PRODES' : 'fallback IA'})
-                        </span>
-                      </p>
+                      <div className="flex items-start sm:items-center gap-4 relative z-10">
+                        <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
+                          <Clock size={20} />
+                        </div>
+                        <div>
+                          <p className="text-sm text-slate-300 leading-relaxed">
+                            <strong className="text-amber-300 font-semibold tracking-wide">DATA DE ABERTURA</strong> preenchida no shape AUAS:{' '}
+                            <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-md bg-white/10 text-white font-bold ml-1">
+                              {auasResult.auasOpeningDate}
+                            </span>
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
+                            <CheckCircle2 size={12} className="text-emerald-500/70" />
+                            Fonte: {auasResult.auasOpeningSource === 'PRODES' ? 'Detectado via PRODES' : 'Fallback IA Estimado'}
+                          </p>
+                        </div>
+                      </div>
                     ) : (
-                      <p className="text-sm text-slate-400">
-                        ABERTURA não preenchida automaticamente por ausência de ano detectável.
-                      </p>
+                      <div className="flex items-start sm:items-center gap-4 relative z-10 opacity-70">
+                        <div className="p-2.5 rounded-xl bg-slate-500/10 text-slate-400 border border-slate-500/20 shrink-0">
+                          <AlertTriangle size={20} />
+                        </div>
+                        <p className="text-sm text-slate-400">
+                          ABERTURA não preenchida automaticamente por ausência de ano detectável.
+                        </p>
+                      </div>
                     )}
                   </section>
 
                   {/* Buffer de rios */}
                   {auasResult.riverBufferHa > 0 && (
-                    <section className="bg-[#0e1612]/60 border border-white/5 rounded-2xl p-5">
-                      <h3 className="font-semibold text-slate-300 text-sm mb-2 flex items-center gap-2">
-                        <Layers size={14} className="text-cyan-400" />
-                        Buffer de Rios SFB (2 m cada lado)
-                      </h3>
-                      <p className="text-slate-400 text-sm">
-                        Área excluída por buffer de rios:{' '}
-                        <strong className="text-cyan-300">{auasResult.riverBufferHa.toFixed(4)} ha</strong>
-                      </p>
-                      <p className="text-xs text-slate-600 mt-1">
-                        Nenhum polígono de AC, AUAS ou AVN sobrepõe os rios.
-                      </p>
+                    <section className="relative overflow-hidden bg-gradient-to-br from-cyan-950/20 to-[#0e1612]/80 border border-cyan-500/10 shadow-[0_0_15px_rgba(6,182,212,0.03)] rounded-2xl p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '250ms' }}>
+                      <div className="absolute bottom-0 left-0 w-40 h-40 bg-cyan-500/5 rounded-full blur-2xl pointer-events-none" />
+                      <div className="relative z-10 flex items-start gap-4">
+                        <div className="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shrink-0 mt-0.5">
+                          <Layers size={20} />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-cyan-300 text-sm mb-1">
+                            Buffer de Rios SFB Aplicado
+                          </h3>
+                          <p className="text-slate-300 text-sm leading-relaxed mb-2">
+                            Área excluída por buffer (2m de cada lado):{' '}
+                            <strong className="text-cyan-400 text-base">{auasResult.riverBufferHa.toFixed(4)} ha</strong>
+                          </p>
+                          <div className="inline-flex items-center gap-1.5 text-xs text-cyan-500/70 bg-cyan-500/5 px-2.5 py-1 rounded-lg border border-cyan-500/10">
+                            <CheckCircle2 size={12} />
+                            <span>Interseções com rios removidas das classes AC, AUAS e AVN.</span>
+                          </div>
+                        </div>
+                      </div>
                     </section>
                   )}
 
                   {/* Detalhamento AUAS por ano */}
                   {auasResult.auasPolygons.length > 0 && (
-                    <section className="bg-[#0e1612]/60 border border-white/5 rounded-2xl p-5">
-                      <h3 className="font-semibold text-slate-300 text-sm mb-3 flex items-center gap-2">
-                        <BarChart3 size={14} className="text-emerald-400" />
-                        AUAS por Ano de Desmatamento (PRODES)
-                      </h3>
-                      <div className="space-y-2">
+                    <section className="bg-gradient-to-br from-[#0e1612]/60 to-transparent border border-white/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] rounded-2xl p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '300ms' }}>
+                      <div className="flex items-center gap-3 mb-5 border-b border-white/5 pb-4">
+                        <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          <BarChart3 size={18} />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-slate-200 text-sm sm:text-base">Distribuição Anual AUAS</h3>
+                          <p className="text-xs text-slate-500 mt-0.5">Baseado em dados do PRODES (pós-2008)</p>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
                         {auasResult.auasPolygons
                           .sort((a, b) => a.year - b.year)
-                          .map((p) => (
-                            <div key={p.year} className="flex items-center gap-3">
-                              <span className="text-xs text-slate-400 w-12 shrink-0">{p.year}</span>
-                              <div className="flex-1 h-5 bg-white/5 rounded-md overflow-hidden">
+                          .map((p, idx) => (
+                            <div key={p.year} className="flex items-center gap-4 group/bar">
+                              <span className="text-xs font-medium text-slate-400 w-12 shrink-0 group-hover/bar:text-slate-300 transition-colors">{p.year}</span>
+                              <div className="flex-1 h-6 sm:h-7 bg-white/5 rounded-lg overflow-hidden relative shadow-inner">
                                 <div
-                                  className="h-full bg-emerald-600/60 rounded-md transition-all"
-                                  style={{ width: `${Math.min(100, (p.areaHa / auasResult.auasAreaHa) * 100)}%` }}
-                                />
+                                  className="absolute top-0 left-0 h-full rounded-lg bg-gradient-to-r from-emerald-500/80 to-teal-400/80 transition-all duration-1000 ease-out flex items-center shadow-[0_0_10px_rgba(16,185,129,0.3)]"
+                                  style={{
+                                    width: `${Math.max(2, Math.min(100, (p.areaHa / auasResult.auasAreaHa) * 100))}%`,
+                                    transformOrigin: 'left',
+                                    animation: `scaleX 1s ease-out ${350 + idx * 50}ms both`
+                                  }}
+                                >
+                                  <div className="absolute inset-0 bg-white/10 opacity-0 group-hover/bar:opacity-100 transition-opacity" />
+                                </div>
                               </div>
-                              <span className="text-xs text-emerald-300 w-20 text-right shrink-0">{p.areaHa.toFixed(2)} ha</span>
+                              <span className="text-xs font-semibold text-emerald-300 w-20 text-right shrink-0 group-hover/bar:scale-105 transition-transform">{p.areaHa.toFixed(2)} ha</span>
                             </div>
                           ))}
                       </div>
@@ -8377,7 +8660,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   )}
 
                   {/* Botões de ação */}
-                  <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex flex-col sm:flex-row gap-4 pt-2 animate-fade-in-up" style={{ animationDelay: '350ms' }}>
                     {auasResult.downloadUrl && (
                       <a
                         href={
@@ -8390,18 +8673,18 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             : auasResult.downloadUrl
                         }
                         download
-                        className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-medium text-sm transition-all shadow-lg shadow-amber-900/30"
+                        className="flex-1 flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-semibold text-sm transition-all shadow-lg shadow-amber-900/30 hover:shadow-xl hover:shadow-amber-900/40 hover:-translate-y-0.5 group/dwn"
                       >
-                        <Download size={16} />
-                        Baixar Shapefiles
+                        <Download size={18} className="group-hover/dwn:-translate-y-0.5 transition-transform" />
+                        Baixar Shapefiles Resultantes
                       </a>
                     )}
                     <button
                       onClick={() => resetAuasDraft()}
-                      className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 text-sm transition-all"
+                      className="flex-shrink-0 flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 font-medium text-sm transition-all group/new hover:text-white"
                     >
-                      <Plus size={16} />
-                      Novo CAR
+                      <Plus size={18} className="group-hover/new:rotate-90 transition-transform duration-300" />
+                      Novo Processo
                     </button>
                   </div>
                 </>
@@ -8531,7 +8814,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             <span className="text-xs text-slate-300 font-medium">{Number(billingPricing?.usdBrlRate || 0).toFixed(4)} <span className="text-slate-500">[{billingPricing?.usdBrlSource || 'n/d'}]</span></span>
                           </div>
                         </div>
-                      )}
+                      )
+                      }
                     </div>
                   </div>
 
@@ -8745,6 +9029,165 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </div>
               </section>
 
+              {/* ── Preferências e Utilitários ── */}
+              <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6 space-y-5">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                    <Settings size={20} />
+                  </div>
+                  <h3 className="font-semibold text-lg text-slate-200">Preferências e Utilitários</h3>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label className="flex flex-col gap-2 rounded-xl bg-white/[0.03] border border-white/[0.06] p-4">
+                    <span className="text-xs uppercase tracking-wide text-slate-500">Tema</span>
+                    <select
+                      value={settings.theme}
+                      onChange={(e) => { void updateSettings({ theme: e.target.value }); }}
+                      className="bg-[#0a110e] border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500/50"
+                    >
+                      {SETTINGS_THEME_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-2 rounded-xl bg-white/[0.03] border border-white/[0.06] p-4">
+                    <span className="text-xs uppercase tracking-wide text-slate-500">Tamanho da Fonte</span>
+                    <select
+                      value={settings.fontSize}
+                      onChange={(e) => { void updateSettings({ fontSize: e.target.value }); }}
+                      className="bg-[#0a110e] border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500/50"
+                    >
+                      {SETTINGS_FONT_SIZE_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={onProbeBackendHealth}
+                    disabled={settingsActionLoading === 'probe_backend'}
+                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-emerald-500/30 transition-colors disabled:opacity-60"
+                  >
+                    <span className="text-sm text-slate-300">
+                      {settingsActionLoading === 'probe_backend' ? 'Verificando backend...' : 'Verificar Conectividade'}
+                    </span>
+                    {settingsActionLoading === 'probe_backend' ? (
+                      <Loader2 size={16} className="text-slate-500 animate-spin" />
+                    ) : (
+                      <Activity size={16} className="text-slate-500" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onReloadBillingData}
+                    disabled={settingsActionLoading === 'reload_billing'}
+                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-emerald-500/30 transition-colors disabled:opacity-60"
+                  >
+                    <span className="text-sm text-slate-300">
+                      {settingsActionLoading === 'reload_billing' ? 'Atualizando dados...' : 'Atualizar Dados Financeiros'}
+                    </span>
+                    {settingsActionLoading === 'reload_billing' ? (
+                      <Loader2 size={16} className="text-slate-500 animate-spin" />
+                    ) : (
+                      <Wallet size={16} className="text-slate-500" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onExportSettingsJson}
+                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/20 transition-colors"
+                  >
+                    <span className="text-sm text-slate-300">Exportar Preferências (JSON)</span>
+                    <FileDown size={16} className="text-slate-500" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => settingsImportInputRef.current?.click()}
+                    disabled={settingsActionLoading === 'import_settings'}
+                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/20 transition-colors disabled:opacity-60"
+                  >
+                    <span className="text-sm text-slate-300">
+                      {settingsActionLoading === 'import_settings' ? 'Importando preferências...' : 'Importar Preferências (JSON)'}
+                    </span>
+                    {settingsActionLoading === 'import_settings' ? (
+                      <Loader2 size={16} className="text-slate-500 animate-spin" />
+                    ) : (
+                      <Upload size={16} className="text-slate-500" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onResetSettingsDefaults}
+                    disabled={settingsActionLoading === 'reset_defaults'}
+                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-amber-500/30 transition-colors disabled:opacity-60"
+                  >
+                    <span className="text-sm text-slate-300">
+                      {settingsActionLoading === 'reset_defaults' ? 'Restaurando padrão...' : 'Restaurar Preferências Padrão'}
+                    </span>
+                    {settingsActionLoading === 'reset_defaults' ? (
+                      <Loader2 size={16} className="text-slate-500 animate-spin" />
+                    ) : (
+                      <ArrowDownRight size={16} className="text-slate-500" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onExportLedgerCsv}
+                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/20 transition-colors"
+                  >
+                    <span className="text-sm text-slate-300">Exportar Extrato (CSV)</span>
+                    <Download size={16} className="text-slate-500" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClearLocalCaches}
+                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-rose-500/30 transition-colors"
+                  >
+                    <span className="text-sm text-slate-300">Limpar Cache Local</span>
+                    <Trash2 size={16} className="text-slate-500" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onCopyAccountUid}
+                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/20 transition-colors"
+                  >
+                    <span className="text-sm text-slate-300">Copiar UID da Conta</span>
+                    <Copy size={16} className="text-slate-500" />
+                  </button>
+                </div>
+
+                {settingsHealthCheck && (
+                  <div
+                    className={`rounded-xl border px-4 py-3 text-xs ${settingsHealthCheck.ok
+                      ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+                      : 'border-rose-500/20 bg-rose-500/10 text-rose-300'
+                      }`}
+                  >
+                    <span className="font-semibold">{settingsHealthCheck.ok ? 'Backend OK:' : 'Backend com alerta:'}</span>{' '}
+                    {settingsHealthCheck.summary}
+                    <span className="ml-2 text-[10px] opacity-80">
+                      ({new Date(settingsHealthCheck.checkedAtIso).toLocaleString('pt-BR')})
+                    </span>
+                  </div>
+                )}
+
+                <input
+                  ref={settingsImportInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={(e) => { void onImportSettingsJson(e); }}
+                />
+              </section>
+
               {/* ── Segurança ── */}
               <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6 space-y-4">
                 <div className="flex items-center gap-3 mb-2">
@@ -8788,536 +9231,540 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           </div>
         )}
 
-        {mapDialogOpen && (
-          <div className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4">
-            <div className="w-full h-full sm:max-w-6xl sm:h-[82vh] sm:rounded-2xl border-0 sm:border border-white/10 bg-[#0b120f] shadow-2xl overflow-hidden flex flex-col">
-              <div className="h-12 sm:h-14 px-3 sm:px-4 border-b border-white/10 flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-2">
-                  <MapIcon size={16} className="text-emerald-300" />
-                  <span className="text-sm text-white font-medium">Selecionar Área no Mapa</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setMapDialogOpen(false)}
-                  className="h-8 w-8 rounded-md text-slate-400 hover:text-white hover:bg-white/10 flex items-center justify-center"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-              <div className="flex flex-col lg:grid lg:grid-cols-[280px_1fr] min-h-0 flex-1 overflow-hidden">
-                <div className="border-b lg:border-b-0 lg:border-r border-white/10 overflow-auto custom-scrollbar flex flex-col max-h-[40vh] lg:max-h-none">
-                  {/* ── Section: Camada Base (Imagery) ── */}
-                  <div className="border-b border-white/10">
-                    <button
-                      type="button"
-                      onClick={() => setMapSectionOpen((s) => ({ ...s, imagery: !s.imagery }))}
-                      className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Layers size={14} className="text-emerald-400" />
-                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Imagens de Satélite</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {selectedMapLayer && (
-                          <span className="text-[10px] text-emerald-400/80 bg-emerald-500/10 px-1.5 py-0.5 rounded">
-                            {mapImageLayers.find((l) => l.name === selectedMapLayer)?.inferredYear || '1'}
-                          </span>
-                        )}
-                        <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.imagery ? '' : '-rotate-90'}`} />
-                      </div>
-                    </button>
-                    {mapSectionOpen.imagery && (
-                      <div className="px-3 pb-3 space-y-1">
-                        {groupedImageLayerEntries.map(([groupName, layers]) => {
-                          if (!layers.length) return null;
-                          const groupKey = `img_${groupName}`;
-                          const isGroupOpen = mapSectionOpen[groupKey] ?? layers.some((l) => l.name === selectedMapLayer);
-                          const activeInGroup = layers.some((l) => l.name === selectedMapLayer);
-                          return (
-                            <div key={groupName}>
-                              <button
-                                type="button"
-                                onClick={() => setMapSectionOpen((p) => ({ ...p, [groupKey]: !isGroupOpen }))}
-                                className={`w-full flex items-center justify-between px-1 pt-2 pb-1 group ${activeInGroup ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
-                              >
-                                <span className="text-[10px] uppercase tracking-wider font-medium">{groupName.split(' / ').pop()}</span>
-                                <div className="flex items-center gap-1">
-                                  <span className="text-[9px] opacity-60">{layers.length}</span>
-                                  <ChevronDown size={10} className={`transition-transform ${isGroupOpen ? '' : '-rotate-90'}`} />
-                                </div>
-                              </button>
-                              {isGroupOpen && (
-                                <div className="space-y-0.5">
-                                  {layers.map((layer) => {
-                                    const isActive = selectedMapLayer === layer.name;
-                                    return (
-                                      <button
-                                        key={layer.name}
-                                        type="button"
-                                        onClick={() => {
-                                          setSelectedMapLayer(layer.name);
-                                          autoExpandGroupForLayer(layer.name);
-                                          refreshMapPreview(layer.name, mapBbox);
-                                        }}
-                                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition-all ${isActive
-                                          ? 'bg-emerald-500/15 text-emerald-200 border border-emerald-500/30'
-                                          : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
-                                          }`}
-                                      >
-                                        <div className={`w-2.5 h-2.5 rounded-full border-2 flex-shrink-0 transition-colors ${isActive ? 'border-emerald-400 bg-emerald-400' : 'border-slate-600'
-                                          }`} />
-                                        <span className="truncate flex-1">{layer.title}</span>
-                                        {layer.inferredYear && (
-                                          <span className={`text-[10px] flex-shrink-0 ${isActive ? 'text-emerald-300' : 'text-slate-600'}`}>{layer.inferredYear}</span>
-                                        )}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+        {
+          mapDialogOpen && (
+            <div className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4">
+              <div className="w-full h-full sm:max-w-6xl sm:h-[82vh] sm:rounded-2xl border-0 sm:border border-white/10 bg-[#0b120f] shadow-2xl overflow-hidden flex flex-col">
+                <div className="h-12 sm:h-14 px-3 sm:px-4 border-b border-white/10 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-2">
+                    <MapIcon size={16} className="text-emerald-300" />
+                    <span className="text-sm text-white font-medium">Selecionar Área no Mapa</span>
                   </div>
-
-                  {/* ── Section: SIMCAR Digital Overlays ── */}
-                  {simcarDigitalLayers.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setMapDialogOpen(false)}
+                    className="h-8 w-8 rounded-md text-slate-400 hover:text-white hover:bg-white/10 flex items-center justify-center"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="flex flex-col lg:grid lg:grid-cols-[280px_1fr] min-h-0 flex-1 overflow-hidden">
+                  <div className="border-b lg:border-b-0 lg:border-r border-white/10 overflow-auto custom-scrollbar flex flex-col max-h-[40vh] lg:max-h-none">
+                    {/* ── Section: Camada Base (Imagery) ── */}
                     <div className="border-b border-white/10">
                       <button
                         type="button"
-                        onClick={() => setMapSectionOpen((s) => ({ ...s, simcar: !s.simcar }))}
+                        onClick={() => setMapSectionOpen((s) => ({ ...s, imagery: !s.imagery }))}
                         className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
                       >
                         <div className="flex items-center gap-2">
-                          <Shield size={14} className="text-amber-400" />
-                          <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Overlays SIMCAR</span>
+                          <Layers size={14} className="text-emerald-400" />
+                          <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Imagens de Satélite</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          {selectedSimcarOverlays.length > 0 && (
-                            <span className="text-[10px] text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded font-medium">
-                              {selectedSimcarOverlays.length}
+                          {selectedMapLayer && (
+                            <span className="text-[10px] text-emerald-400/80 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                              {mapImageLayers.find((l) => l.name === selectedMapLayer)?.inferredYear || '1'}
                             </span>
                           )}
-                          <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.simcar ? '' : '-rotate-90'}`} />
+                          <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.imagery ? '' : '-rotate-90'}`} />
                         </div>
                       </button>
-                      {mapSectionOpen.simcar && (
-                        <div className="px-3 pb-3 space-y-2">
-                          {/* Search input */}
-                          <div className="relative">
-                            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
-                            <input
-                              type="text"
-                              value={simcarSearchFilter}
-                              onChange={(e) => setSimcarSearchFilter(e.target.value)}
-                              placeholder="Buscar camada..."
-                              className="w-full bg-[#050b08] border border-white/10 rounded-md text-xs text-slate-300 py-1.5 pl-7 pr-2 outline-none focus:border-emerald-500/50 placeholder:text-slate-600"
-                            />
-                          </div>
-                          {/* Select all / Clear all */}
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const filtered = simcarDigitalLayers
-                                  .filter((l) => !simcarSearchFilter || l.title.toLowerCase().includes(simcarSearchFilter.toLowerCase()))
-                                  .map((l) => l.name);
-                                const merged = [...new Set([...selectedSimcarOverlays, ...filtered])];
-                                setSelectedSimcarOverlays(merged);
-                                refreshMapPreview(undefined, undefined, merged);
-                              }}
-                              className="text-[10px] text-slate-500 hover:text-emerald-300 transition-colors"
-                            >
-                              Selecionar todos
-                            </button>
-                            <span className="text-slate-700">|</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedSimcarOverlays([]);
-                                refreshMapPreview(undefined, undefined, []);
-                              }}
-                              className="text-[10px] text-slate-500 hover:text-red-300 transition-colors"
-                            >
-                              Limpar todos
-                            </button>
-                          </div>
-                          {/* Layer list */}
-                          <div className="max-h-52 overflow-auto custom-scrollbar space-y-0.5">
-                            {simcarDigitalLayers
-                              .filter((l) => !simcarSearchFilter || l.title.toLowerCase().includes(simcarSearchFilter.toLowerCase()))
-                              .map((layer) => {
-                                const isChecked = selectedSimcarOverlays.includes(layer.name);
-                                return (
-                                  <label key={layer.name} className={`flex items-center gap-2 cursor-pointer text-xs py-1.5 px-2 rounded-md transition-all ${isChecked ? 'bg-amber-500/10 text-amber-200' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-                                    }`}>
-                                    <input
-                                      type="checkbox"
-                                      checked={isChecked}
-                                      onChange={(e) => {
-                                        const next = e.target.checked
-                                          ? [...selectedSimcarOverlays, layer.name]
-                                          : selectedSimcarOverlays.filter((n) => n !== layer.name);
-                                        setSelectedSimcarOverlays(next);
-                                        refreshMapPreview(undefined, undefined, next);
-                                      }}
-                                      className="accent-amber-500 w-3.5 h-3.5 flex-shrink-0"
-                                    />
-                                    <span className="truncate">{layer.title}</span>
-                                  </label>
-                                );
-                              })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ── Section: WFS Intersection ── */}
-                  <div className="border-b border-white/10">
-                    <div className="px-4 py-3 flex items-center justify-between">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                        Interseção WFS (ha)
-                      </span>
-                      {intersectionLoading ? (
-                        <span className="text-[10px] text-emerald-300">calculando...</span>
-                      ) : null}
-                    </div>
-                    <div className="px-3 pb-3 space-y-2">
-                      {mapPolygon.length < 3 ? (
-                        <p className="text-[11px] text-slate-500">
-                          Importe um poligono (.kml/.zip) para calcular intersecao por camada.
-                        </p>
-                      ) : (
-                        <>
-                          {polygonAreaHa !== null && (
-                            <p className="text-[11px] text-slate-400">
-                              Area do poligono: <span className="text-slate-200 font-medium">{polygonAreaHa.toFixed(4)} ha</span>
-                            </p>
-                          )}
-                          {intersectionComputedAtIso && (
-                            <p className="text-[10px] text-slate-500">
-                              Calculo: {new Date(intersectionComputedAtIso).toLocaleString()} | Camadas OK: {intersectionSummaryStats.okCount}
-                            </p>
-                          )}
-                          {selectedSimcarOverlays.length === 0 ? (
-                            <p className="text-[11px] text-slate-500">
-                              Selecione ao menos um overlay SIMCAR para calcular. A area total ja foi calculada.
-                            </p>
-                          ) : intersectionError ? (
-                            <p className="text-[11px] text-rose-300">{intersectionError}</p>
-                          ) : (
-                            <>
-                              <p className="text-[11px] text-slate-400">
-                                Soma das intersecoes: <span className="text-slate-200 font-medium">{intersectionSummaryStats.totalHa.toFixed(4)} ha</span> |
-                                Cobertura total (cap): <span className="text-slate-200 font-medium">{intersectionSummaryStats.totalCoverage.toFixed(4)}%</span>
-                              </p>
-                              <div className="max-h-48 overflow-auto custom-scrollbar rounded-lg border border-white/10">
-                                <table className="w-full text-[11px]">
-                                  <thead className="bg-white/5 text-slate-400">
-                                    <tr>
-                                      <th className="text-left px-2 py-1.5 font-medium">Camada</th>
-                                      <th className="text-right px-2 py-1.5 font-medium">Intersecao (ha)</th>
-                                      <th className="text-right px-2 py-1.5 font-medium">% poligono</th>
-                                      <th className="text-left px-2 py-1.5 font-medium">Status</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {intersectionRowsSorted.map((row) => {
-                                      const layerTitle =
-                                        simcarDigitalLayers.find((l) => l.name === row.layerName)?.title ||
-                                        row.layerName;
-                                      const firstWarning = row.warnings[0] || '';
+                      {mapSectionOpen.imagery && (
+                        <div className="px-3 pb-3 space-y-1">
+                          {groupedImageLayerEntries.map(([groupName, layers]) => {
+                            if (!layers.length) return null;
+                            const groupKey = `img_${groupName}`;
+                            const isGroupOpen = mapSectionOpen[groupKey] ?? layers.some((l) => l.name === selectedMapLayer);
+                            const activeInGroup = layers.some((l) => l.name === selectedMapLayer);
+                            return (
+                              <div key={groupName}>
+                                <button
+                                  type="button"
+                                  onClick={() => setMapSectionOpen((p) => ({ ...p, [groupKey]: !isGroupOpen }))}
+                                  className={`w-full flex items-center justify-between px-1 pt-2 pb-1 group ${activeInGroup ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
+                                >
+                                  <span className="text-[10px] uppercase tracking-wider font-medium">{groupName.split(' / ').pop()}</span>
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[9px] opacity-60">{layers.length}</span>
+                                    <ChevronDown size={10} className={`transition-transform ${isGroupOpen ? '' : '-rotate-90'}`} />
+                                  </div>
+                                </button>
+                                {isGroupOpen && (
+                                  <div className="space-y-0.5">
+                                    {layers.map((layer) => {
+                                      const isActive = selectedMapLayer === layer.name;
                                       return (
-                                        <tr key={row.layerName} className="border-t border-white/5 text-slate-300">
-                                          <td className="px-2 py-1.5">
-                                            <div className="truncate" title={`${layerTitle} (${row.layerName})`}>
-                                              {layerTitle}
-                                            </div>
-                                          </td>
-                                          <td className="px-2 py-1.5 text-right tabular-nums">
-                                            {row.intersectionHa.toFixed(4)}
-                                          </td>
-                                          <td className="px-2 py-1.5 text-right tabular-nums">
-                                            {row.coveragePercentOfPolygon.toFixed(4)}%
-                                          </td>
-                                          <td className={`px-2 py-1.5 ${intersectionStatusClass(row.status)}`}>
-                                            <div>{intersectionStatusLabel(row.status)}</div>
-                                            {firstWarning ? (
-                                              <div className="text-[10px] text-amber-300 truncate" title={row.warnings.join('\n')}>
-                                                {firstWarning}
-                                              </div>
-                                            ) : null}
-                                          </td>
-                                        </tr>
+                                        <button
+                                          key={layer.name}
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedMapLayer(layer.name);
+                                            autoExpandGroupForLayer(layer.name);
+                                            refreshMapPreview(layer.name, mapBbox);
+                                          }}
+                                          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition-all ${isActive
+                                            ? 'bg-emerald-500/15 text-emerald-200 border border-emerald-500/30'
+                                            : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+                                            }`}
+                                        >
+                                          <div className={`w-2.5 h-2.5 rounded-full border-2 flex-shrink-0 transition-colors ${isActive ? 'border-emerald-400 bg-emerald-400' : 'border-slate-600'
+                                            }`} />
+                                          <span className="truncate flex-1">{layer.title}</span>
+                                          {layer.inferredYear && (
+                                            <span className={`text-[10px] flex-shrink-0 ${isActive ? 'text-emerald-300' : 'text-slate-600'}`}>{layer.inferredYear}</span>
+                                          )}
+                                        </button>
                                       );
                                     })}
-                                    {!intersectionLoading && intersectionRowsSorted.length === 0 && (
-                                      <tr>
-                                        <td colSpan={4} className="px-2 py-2 text-slate-500">
-                                          Nenhum resultado para exibir.
-                                        </td>
-                                      </tr>
-                                    )}
-                                  </tbody>
-                                </table>
+                                  </div>
+                                )}
                               </div>
-                            </>
-                          )}
-                        </>
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
-                  </div>
 
-                  {/* ── Section: Advanced / Tools ── */}
-                  <div className="border-b border-white/10">
-                    <button
-                      type="button"
-                      onClick={() => setMapSectionOpen((s) => ({ ...s, advanced: !s.advanced }))}
-                      className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Settings size={14} className="text-slate-400" />
-                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Avançado</span>
-                      </div>
-                      <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.advanced ? '' : '-rotate-90'}`} />
-                    </button>
-                    {mapSectionOpen.advanced && (
-                      <div className="px-3 pb-3 space-y-3">
-                        <label className="inline-flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs cursor-pointer">
-                          <FileText size={14} className="text-emerald-300" />
-                          Importar área (.kml/.zip)
-                          <input
-                            type="file"
-                            accept=".kml,.zip,application/vnd.google-earth.kml+xml,application/zip"
-                            className="hidden"
-                            onChange={(e) => {
-                              onPickAreaFile(e.target.files?.[0] || null);
-                              e.currentTarget.value = '';
-                            }}
-                          />
-                        </label>
-                        <div className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-2">
-                          <p className="text-[10px] uppercase tracking-wider text-slate-500">BBox (fallback manual)</p>
-                          <div className="grid grid-cols-2 gap-2">
-                            <input type="number" step="0.000001" value={mapBbox[0]} onChange={(e) => setMapBbox([Number(e.target.value), mapBbox[1], mapBbox[2], mapBbox[3]])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="minX" />
-                            <input type="number" step="0.000001" value={mapBbox[1]} onChange={(e) => setMapBbox([mapBbox[0], Number(e.target.value), mapBbox[2], mapBbox[3]])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="minY" />
-                            <input type="number" step="0.000001" value={mapBbox[2]} onChange={(e) => setMapBbox([mapBbox[0], mapBbox[1], Number(e.target.value), mapBbox[3]])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="maxX" />
-                            <input type="number" step="0.000001" value={mapBbox[3]} onChange={(e) => setMapBbox([mapBbox[0], mapBbox[1], mapBbox[2], Number(e.target.value)])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="maxY" />
+                    {/* ── Section: SIMCAR Digital Overlays ── */}
+                    {simcarDigitalLayers.length > 0 && (
+                      <div className="border-b border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => setMapSectionOpen((s) => ({ ...s, simcar: !s.simcar }))}
+                          className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Shield size={14} className="text-amber-400" />
+                            <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Overlays SIMCAR</span>
                           </div>
-                          <p className="text-[10px] text-slate-500">Coordenadas em EPSG:4326 (longitude/latitude).</p>
-                        </div>
+                          <div className="flex items-center gap-2">
+                            {selectedSimcarOverlays.length > 0 && (
+                              <span className="text-[10px] text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded font-medium">
+                                {selectedSimcarOverlays.length}
+                              </span>
+                            )}
+                            <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.simcar ? '' : '-rotate-90'}`} />
+                          </div>
+                        </button>
+                        {mapSectionOpen.simcar && (
+                          <div className="px-3 pb-3 space-y-2">
+                            {/* Search input */}
+                            <div className="relative">
+                              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+                              <input
+                                type="text"
+                                value={simcarSearchFilter}
+                                onChange={(e) => setSimcarSearchFilter(e.target.value)}
+                                placeholder="Buscar camada..."
+                                className="w-full bg-[#050b08] border border-white/10 rounded-md text-xs text-slate-300 py-1.5 pl-7 pr-2 outline-none focus:border-emerald-500/50 placeholder:text-slate-600"
+                              />
+                            </div>
+                            {/* Select all / Clear all */}
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const filtered = simcarDigitalLayers
+                                    .filter((l) => !simcarSearchFilter || l.title.toLowerCase().includes(simcarSearchFilter.toLowerCase()))
+                                    .map((l) => l.name);
+                                  const merged = [...new Set([...selectedSimcarOverlays, ...filtered])];
+                                  setSelectedSimcarOverlays(merged);
+                                  refreshMapPreview(undefined, undefined, merged);
+                                }}
+                                className="text-[10px] text-slate-500 hover:text-emerald-300 transition-colors"
+                              >
+                                Selecionar todos
+                              </button>
+                              <span className="text-slate-700">|</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedSimcarOverlays([]);
+                                  refreshMapPreview(undefined, undefined, []);
+                                }}
+                                className="text-[10px] text-slate-500 hover:text-red-300 transition-colors"
+                              >
+                                Limpar todos
+                              </button>
+                            </div>
+                            {/* Layer list */}
+                            <div className="max-h-52 overflow-auto custom-scrollbar space-y-0.5">
+                              {simcarDigitalLayers
+                                .filter((l) => !simcarSearchFilter || l.title.toLowerCase().includes(simcarSearchFilter.toLowerCase()))
+                                .map((layer) => {
+                                  const isChecked = selectedSimcarOverlays.includes(layer.name);
+                                  return (
+                                    <label key={layer.name} className={`flex items-center gap-2 cursor-pointer text-xs py-1.5 px-2 rounded-md transition-all ${isChecked ? 'bg-amber-500/10 text-amber-200' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+                                      }`}>
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={(e) => {
+                                          const next = e.target.checked
+                                            ? [...selectedSimcarOverlays, layer.name]
+                                            : selectedSimcarOverlays.filter((n) => n !== layer.name);
+                                          setSelectedSimcarOverlays(next);
+                                          refreshMapPreview(undefined, undefined, next);
+                                        }}
+                                        className="accent-amber-500 w-3.5 h-3.5 flex-shrink-0"
+                                      />
+                                      <span className="truncate">{layer.title}</span>
+                                    </label>
+                                  );
+                                })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
-                  </div>
 
-                  {/* ── Hint ── */}
-                  <div className="px-4 py-3">
-                    <p className="text-[11px] text-slate-500 leading-relaxed">
-                      🖱️ Arraste para mover, roda para zoom. Prévia e snapshot carregados via WMS SEMA.
-                    </p>
-                  </div>
+                    {/* ── Section: WFS Intersection ── */}
+                    <div className="border-b border-white/10">
+                      <div className="px-4 py-3 flex items-center justify-between">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                          Interseção WFS (ha)
+                        </span>
+                        {intersectionLoading ? (
+                          <span className="text-[10px] text-emerald-300">calculando...</span>
+                        ) : null}
+                      </div>
+                      <div className="px-3 pb-3 space-y-2">
+                        {mapPolygon.length < 3 ? (
+                          <p className="text-[11px] text-slate-500">
+                            Importe um poligono (.kml/.zip) para calcular intersecao por camada.
+                          </p>
+                        ) : (
+                          <>
+                            {polygonAreaHa !== null && (
+                              <p className="text-[11px] text-slate-400">
+                                Area do poligono: <span className="text-slate-200 font-medium">{polygonAreaHa.toFixed(4)} ha</span>
+                              </p>
+                            )}
+                            {intersectionComputedAtIso && (
+                              <p className="text-[10px] text-slate-500">
+                                Calculo: {new Date(intersectionComputedAtIso).toLocaleString()} | Camadas OK: {intersectionSummaryStats.okCount}
+                              </p>
+                            )}
+                            {selectedSimcarOverlays.length === 0 ? (
+                              <p className="text-[11px] text-slate-500">
+                                Selecione ao menos um overlay SIMCAR para calcular. A area total ja foi calculada.
+                              </p>
+                            ) : intersectionError ? (
+                              <p className="text-[11px] text-rose-300">{intersectionError}</p>
+                            ) : (
+                              <>
+                                <p className="text-[11px] text-slate-400">
+                                  Soma das intersecoes: <span className="text-slate-200 font-medium">{intersectionSummaryStats.totalHa.toFixed(4)} ha</span> |
+                                  Cobertura total (cap): <span className="text-slate-200 font-medium">{intersectionSummaryStats.totalCoverage.toFixed(4)}%</span>
+                                </p>
+                                <div className="max-h-48 overflow-auto custom-scrollbar rounded-lg border border-white/10">
+                                  <table className="w-full text-[11px]">
+                                    <thead className="bg-white/5 text-slate-400">
+                                      <tr>
+                                        <th className="text-left px-2 py-1.5 font-medium">Camada</th>
+                                        <th className="text-right px-2 py-1.5 font-medium">Intersecao (ha)</th>
+                                        <th className="text-right px-2 py-1.5 font-medium">% poligono</th>
+                                        <th className="text-left px-2 py-1.5 font-medium">Status</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {intersectionRowsSorted.map((row) => {
+                                        const layerTitle =
+                                          simcarDigitalLayers.find((l) => l.name === row.layerName)?.title ||
+                                          row.layerName;
+                                        const firstWarning = row.warnings[0] || '';
+                                        return (
+                                          <tr key={row.layerName} className="border-t border-white/5 text-slate-300">
+                                            <td className="px-2 py-1.5">
+                                              <div className="truncate" title={`${layerTitle} (${row.layerName})`}>
+                                                {layerTitle}
+                                              </div>
+                                            </td>
+                                            <td className="px-2 py-1.5 text-right tabular-nums">
+                                              {row.intersectionHa.toFixed(4)}
+                                            </td>
+                                            <td className="px-2 py-1.5 text-right tabular-nums">
+                                              {row.coveragePercentOfPolygon.toFixed(4)}%
+                                            </td>
+                                            <td className={`px-2 py-1.5 ${intersectionStatusClass(row.status)}`}>
+                                              <div>{intersectionStatusLabel(row.status)}</div>
+                                              {firstWarning ? (
+                                                <div className="text-[10px] text-amber-300 truncate" title={row.warnings.join('\n')}>
+                                                  {firstWarning}
+                                                </div>
+                                              ) : null}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                      {!intersectionLoading && intersectionRowsSorted.length === 0 && (
+                                        <tr>
+                                          <td colSpan={4} className="px-2 py-2 text-slate-500">
+                                            Nenhum resultado para exibir.
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
 
-                  {/* ── Action Buttons ── */}
-                  <div className="mt-auto px-3 pb-3 space-y-2">
-                    <button
-                      type="button"
-                      onClick={() => refreshMapPreview()}
-                      disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
-                      className={`w-full py-2 rounded-lg text-xs font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer
-                        ? 'bg-white/5 text-slate-600 cursor-not-allowed'
-                        : 'bg-white/10 text-slate-300 hover:bg-white/15'
-                        }`}
-                    >
-                      {mapPreviewLoading ? 'Atualizando prévia...' : 'Atualizar Prévia'}
-                    </button>
-                    <div className="flex gap-2">
+                    {/* ── Section: Advanced / Tools ── */}
+                    <div className="border-b border-white/10">
                       <button
                         type="button"
-                        onClick={() => {
-                          if (!mapOriginalPolygonBbox) return;
-                          setMapBbox(mapOriginalPolygonBbox);
-                          setMapRectZoomMode(false);
-                          setMapRectSelection(null);
-                          mapRectStateRef.current = null;
-                          refreshMapPreview(undefined, mapOriginalPolygonBbox);
-                        }}
-                        disabled={mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox}
-                        className={`flex-1 py-2 rounded-lg text-xs font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox
+                        onClick={() => setMapSectionOpen((s) => ({ ...s, advanced: !s.advanced }))}
+                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Settings size={14} className="text-slate-400" />
+                          <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Avançado</span>
+                        </div>
+                        <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.advanced ? '' : '-rotate-90'}`} />
+                      </button>
+                      {mapSectionOpen.advanced && (
+                        <div className="px-3 pb-3 space-y-3">
+                          <label className="inline-flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs cursor-pointer">
+                            <FileText size={14} className="text-emerald-300" />
+                            Importar área (.kml/.zip)
+                            <input
+                              type="file"
+                              accept=".kml,.zip,application/vnd.google-earth.kml+xml,application/zip"
+                              className="hidden"
+                              onChange={(e) => {
+                                onPickAreaFile(e.target.files?.[0] || null);
+                                e.currentTarget.value = '';
+                              }}
+                            />
+                          </label>
+                          <div className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-2">
+                            <p className="text-[10px] uppercase tracking-wider text-slate-500">BBox (fallback manual)</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <input type="number" step="0.000001" value={mapBbox[0]} onChange={(e) => setMapBbox([Number(e.target.value), mapBbox[1], mapBbox[2], mapBbox[3]])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="minX" />
+                              <input type="number" step="0.000001" value={mapBbox[1]} onChange={(e) => setMapBbox([mapBbox[0], Number(e.target.value), mapBbox[2], mapBbox[3]])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="minY" />
+                              <input type="number" step="0.000001" value={mapBbox[2]} onChange={(e) => setMapBbox([mapBbox[0], mapBbox[1], Number(e.target.value), mapBbox[3]])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="maxX" />
+                              <input type="number" step="0.000001" value={mapBbox[3]} onChange={(e) => setMapBbox([mapBbox[0], mapBbox[1], mapBbox[2], Number(e.target.value)])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="maxY" />
+                            </div>
+                            <p className="text-[10px] text-slate-500">Coordenadas em EPSG:4326 (longitude/latitude).</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ── Hint ── */}
+                    <div className="px-4 py-3">
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        🖱️ Arraste para mover, roda para zoom. Prévia e snapshot carregados via WMS SEMA.
+                      </p>
+                    </div>
+
+                    {/* ── Action Buttons ── */}
+                    <div className="mt-auto px-3 pb-3 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => refreshMapPreview()}
+                        disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
+                        className={`w-full py-2 rounded-lg text-xs font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer
                           ? 'bg-white/5 text-slate-600 cursor-not-allowed'
                           : 'bg-white/10 text-slate-300 hover:bg-white/15'
                           }`}
                       >
-                        Zoom Original
+                        {mapPreviewLoading ? 'Atualizando prévia...' : 'Atualizar Prévia'}
                       </button>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!mapOriginalPolygonBbox) return;
+                            setMapBbox(mapOriginalPolygonBbox);
+                            setMapRectZoomMode(false);
+                            setMapRectSelection(null);
+                            mapRectStateRef.current = null;
+                            refreshMapPreview(undefined, mapOriginalPolygonBbox);
+                          }}
+                          disabled={mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox}
+                          className={`flex-1 py-2 rounded-lg text-xs font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox
+                            ? 'bg-white/5 text-slate-600 cursor-not-allowed'
+                            : 'bg-white/10 text-slate-300 hover:bg-white/15'
+                            }`}
+                        >
+                          Zoom Original
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMapRectZoomMode((prev) => !prev);
+                            setMapRectSelection(null);
+                            mapRectStateRef.current = null;
+                          }}
+                          disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
+                          className={`flex-1 py-2 rounded-lg text-xs font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer
+                            ? 'bg-white/5 text-slate-600 cursor-not-allowed'
+                            : mapRectZoomMode
+                              ? 'bg-amber-500/25 text-amber-200 border border-amber-400/30'
+                              : 'bg-white/10 text-slate-300 hover:bg-white/15'
+                            }`}
+                        >
+                          {mapRectZoomMode ? 'Cancelar Zoom' : 'Zoom Retângulo'}
+                        </button>
+                      </div>
                       <button
                         type="button"
-                        onClick={() => {
-                          setMapRectZoomMode((prev) => !prev);
-                          setMapRectSelection(null);
-                          mapRectStateRef.current = null;
-                        }}
-                        disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
-                        className={`flex-1 py-2 rounded-lg text-xs font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer
+                        onClick={captureVisibleMapArea}
+                        disabled={mapLoading || mapCapturing || !selectedMapLayer}
+                        className={`w-full py-2.5 rounded-lg text-sm font-semibold transition ${mapLoading || mapCapturing || !selectedMapLayer
                           ? 'bg-white/5 text-slate-600 cursor-not-allowed'
-                          : mapRectZoomMode
-                            ? 'bg-amber-500/25 text-amber-200 border border-amber-400/30'
-                            : 'bg-white/10 text-slate-300 hover:bg-white/15'
+                          : 'bg-emerald-500 text-white hover:bg-emerald-400 shadow-lg shadow-emerald-500/20'
                           }`}
                       >
-                        {mapRectZoomMode ? 'Cancelar Zoom' : 'Zoom Retângulo'}
+                        {mapCapturing ? 'Capturando...' : '📸 Capturar Área Visível'}
                       </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={captureVisibleMapArea}
-                      disabled={mapLoading || mapCapturing || !selectedMapLayer}
-                      className={`w-full py-2.5 rounded-lg text-sm font-semibold transition ${mapLoading || mapCapturing || !selectedMapLayer
-                        ? 'bg-white/5 text-slate-600 cursor-not-allowed'
-                        : 'bg-emerald-500 text-white hover:bg-emerald-400 shadow-lg shadow-emerald-500/20'
-                        }`}
-                    >
-                      {mapCapturing ? 'Capturando...' : '📸 Capturar Área Visível'}
-                    </button>
+                  </div>
+                  <div className="relative min-h-[200px] flex-1">
+                    {mapLoading && !mapPreviewDataUrl ? (
+                      <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm">
+                        <div className="flex flex-col items-center gap-3">
+                          <div className="w-8 h-8 border-2 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin" />
+                          <span>Carregando camadas do mapa...</span>
+                        </div>
+                      </div>
+                    ) : mapPreviewDataUrl || mapPreviewLoading ? (
+                      <div
+                        ref={mapPreviewViewportRef}
+                        onWheel={applyMapZoomFromWheel}
+                        onMouseDown={startMapDrag}
+                        className={`h-full w-full bg-black/25 flex items-center justify-center p-2 select-none ${mapRectZoomMode ? 'cursor-crosshair' : mapDragging ? 'cursor-grabbing' : 'cursor-grab'
+                          }`}
+                      >
+                        <div className="relative max-h-full max-w-full">
+                          {mapPreviewDataUrl && mapDragging && (
+                            <img
+                              src={mapPreviewDataUrl}
+                              alt=""
+                              aria-hidden="true"
+                              className="absolute inset-0 max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain opacity-30 blur-[1px] pointer-events-none"
+                              draggable={false}
+                            />
+                          )}
+                          {mapPreviewDataUrl ? (
+                            <img
+                              ref={mapPreviewImageRef}
+                              src={mapPreviewDataUrl}
+                              alt="Prévia WMS da área selecionada"
+                              className="max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain pointer-events-none transition-opacity duration-300"
+                              style={{
+                                ...(mapDragging
+                                  ? { transform: `translate(${mapDragOffset.x}px, ${mapDragOffset.y}px)` }
+                                  : {}),
+                                opacity: mapPreviewLoading ? 0.5 : 1,
+                              }}
+                              draggable={false}
+                            />
+                          ) : (
+                            <div className="max-h-[calc(82vh-130px)] max-w-full px-4 py-3 rounded-lg bg-black/35 text-xs text-slate-400">
+                              Carregando prévia do mapa...
+                            </div>
+                          )}
+                          {mapPolygonPoints && (
+                            <svg
+                              viewBox="0 0 100 100"
+                              preserveAspectRatio="none"
+                              className="absolute inset-0 h-full w-full pointer-events-none transition-opacity duration-300"
+                              style={{
+                                ...(mapDragging
+                                  ? { transform: `translate(${mapDragOffset.x}px, ${mapDragOffset.y}px)` }
+                                  : {}),
+                                opacity: mapPreviewLoading ? 0.4 : 1,
+                              }}
+                            >
+                              <polygon
+                                points={mapPolygonPoints}
+                                fill="none"
+                                stroke="rgba(239, 68, 68, 0.98)"
+                                strokeWidth="0.6"
+                              />
+                            </svg>
+                          )}
+                        </div>
+                        {mapPreviewLoading && (
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+                            <div className="flex flex-col items-center gap-2 bg-black/50 backdrop-blur-sm px-5 py-3 rounded-xl">
+                              <div className="w-6 h-6 border-2 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin" />
+                              <span className="text-xs text-slate-300">Carregando prévia...</span>
+                            </div>
+                          </div>
+                        )}
+                        {mapRectSelectionStyle && (
+                          <div
+                            className="pointer-events-none absolute border-2 border-amber-300 bg-amber-300/15"
+                            style={{
+                              left: `${mapRectSelectionStyle.left}px`,
+                              top: `${mapRectSelectionStyle.top}px`,
+                              width: `${mapRectSelectionStyle.width}px`,
+                              height: `${mapRectSelectionStyle.height}px`,
+                            }}
+                          />
+                        )}
+                      </div>
+                    ) : (
+                      <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm px-6 text-center">
+                        Selecione uma camada e clique em "Atualizar Prévia WMS".
+                      </div>
+                    )}
                   </div>
                 </div>
-                <div className="relative min-h-[200px] flex-1">
-                  {mapLoading && !mapPreviewDataUrl ? (
-                    <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm">
-                      <div className="flex flex-col items-center gap-3">
-                        <div className="w-8 h-8 border-2 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin" />
-                        <span>Carregando camadas do mapa...</span>
-                      </div>
-                    </div>
-                  ) : mapPreviewDataUrl || mapPreviewLoading ? (
-                    <div
-                      ref={mapPreviewViewportRef}
-                      onWheel={applyMapZoomFromWheel}
-                      onMouseDown={startMapDrag}
-                      className={`h-full w-full bg-black/25 flex items-center justify-center p-2 select-none ${mapRectZoomMode ? 'cursor-crosshair' : mapDragging ? 'cursor-grabbing' : 'cursor-grab'
-                        }`}
-                    >
-                      <div className="relative max-h-full max-w-full">
-                        {mapPreviewDataUrl && mapDragging && (
-                          <img
-                            src={mapPreviewDataUrl}
-                            alt=""
-                            aria-hidden="true"
-                            className="absolute inset-0 max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain opacity-30 blur-[1px] pointer-events-none"
-                            draggable={false}
-                          />
-                        )}
-                        {mapPreviewDataUrl ? (
-                          <img
-                            ref={mapPreviewImageRef}
-                            src={mapPreviewDataUrl}
-                            alt="Prévia WMS da área selecionada"
-                            className="max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain pointer-events-none transition-opacity duration-300"
-                            style={{
-                              ...(mapDragging
-                                ? { transform: `translate(${mapDragOffset.x}px, ${mapDragOffset.y}px)` }
-                                : {}),
-                              opacity: mapPreviewLoading ? 0.5 : 1,
-                            }}
-                            draggable={false}
-                          />
-                        ) : (
-                          <div className="max-h-[calc(82vh-130px)] max-w-full px-4 py-3 rounded-lg bg-black/35 text-xs text-slate-400">
-                            Carregando prévia do mapa...
-                          </div>
-                        )}
-                        {mapPolygonPoints && (
-                          <svg
-                            viewBox="0 0 100 100"
-                            preserveAspectRatio="none"
-                            className="absolute inset-0 h-full w-full pointer-events-none transition-opacity duration-300"
-                            style={{
-                              ...(mapDragging
-                                ? { transform: `translate(${mapDragOffset.x}px, ${mapDragOffset.y}px)` }
-                                : {}),
-                              opacity: mapPreviewLoading ? 0.4 : 1,
-                            }}
-                          >
-                            <polygon
-                              points={mapPolygonPoints}
-                              fill="none"
-                              stroke="rgba(239, 68, 68, 0.98)"
-                              strokeWidth="0.6"
-                            />
-                          </svg>
-                        )}
-                      </div>
-                      {mapPreviewLoading && (
-                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-                          <div className="flex flex-col items-center gap-2 bg-black/50 backdrop-blur-sm px-5 py-3 rounded-xl">
-                            <div className="w-6 h-6 border-2 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin" />
-                            <span className="text-xs text-slate-300">Carregando prévia...</span>
-                          </div>
-                        </div>
-                      )}
-                      {mapRectSelectionStyle && (
-                        <div
-                          className="pointer-events-none absolute border-2 border-amber-300 bg-amber-300/15"
-                          style={{
-                            left: `${mapRectSelectionStyle.left}px`,
-                            top: `${mapRectSelectionStyle.top}px`,
-                            width: `${mapRectSelectionStyle.width}px`,
-                            height: `${mapRectSelectionStyle.height}px`,
-                          }}
-                        />
-                      )}
-                    </div>
-                  ) : (
-                    <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm px-6 text-center">
-                      Selecione uma camada e clique em "Atualizar Prévia WMS".
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
-          </div>
-        )}
+          )
+        }
 
-        {billingTopupOpen && (
-          <div className="fixed inset-0 z-[145] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#0b120f] p-4 sm:p-5 space-y-4 shadow-2xl">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-slate-200">Adicionar Créditos</h3>
+        {
+          billingTopupOpen && (
+            <div className="fixed inset-0 z-[145] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+              <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#0b120f] p-4 sm:p-5 space-y-4 shadow-2xl">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-slate-200">Adicionar Créditos</h3>
+                  <button
+                    type="button"
+                    onClick={() => setBillingTopupOpen(false)}
+                    className="h-8 w-8 rounded-md text-slate-400 hover:text-white hover:bg-white/10"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Informe o valor em BRL e confirme em <strong className="text-slate-300">Paguei</strong> para crédito instantâneo.
+                </p>
+                <div className="space-y-2">
+                  <label className="text-xs text-slate-400">Valor (R$)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={billingTopupAmount}
+                    onChange={(e) => setBillingTopupAmount(e.target.value)}
+                    className="w-full bg-[#050b08] border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500/50"
+                  />
+                </div>
                 <button
                   type="button"
-                  onClick={() => setBillingTopupOpen(false)}
-                  className="h-8 w-8 rounded-md text-slate-400 hover:text-white hover:bg-white/10"
+                  onClick={onManualTopup}
+                  disabled={billingTopupLoading}
+                  className="w-full py-2.5 rounded-lg text-sm font-semibold bg-emerald-500 text-white hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                 >
-                  <X size={16} />
+                  {billingTopupLoading ? 'Processando...' : 'Paguei'}
                 </button>
               </div>
-              <p className="text-xs text-slate-500">
-                Informe o valor em BRL e confirme em <strong className="text-slate-300">Paguei</strong> para crédito instantâneo.
-              </p>
-              <div className="space-y-2">
-                <label className="text-xs text-slate-400">Valor (R$)</label>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={billingTopupAmount}
-                  onChange={(e) => setBillingTopupAmount(e.target.value)}
-                  className="w-full bg-[#050b08] border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500/50"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={onManualTopup}
-                disabled={billingTopupLoading}
-                className="w-full py-2.5 rounded-lg text-sm font-semibold bg-emerald-500 text-white hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-              >
-                {billingTopupLoading ? 'Processando...' : 'Paguei'}
-              </button>
             </div>
-          </div>
-        )}
+          )
+        }
 
         <style>{`
           .custom-scrollbar {
@@ -9531,8 +9978,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             }
           }
         `}</style>
-      </main>
-    </div>
+      </main >
+    </div >
   );
 }
 
