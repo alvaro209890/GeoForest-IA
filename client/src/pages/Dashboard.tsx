@@ -7903,6 +7903,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     disabled={!auasFile}
                     onClick={async () => {
                       if (!auasFile) return;
+                      const walletBalance = Number(billingMe?.wallet?.balanceBrl);
+                      if (Number.isFinite(walletBalance) && walletBalance <= 0) {
+                        handleInsufficientCredits('Voce esta sem creditos. Recarregue para continuar.');
+                        return;
+                      }
                       setAuasError(null);
                       setAuasProcessing(true);
                       setAuasProgress({ step: 'upload', percent: 5, message: 'Enviando shapefile...' });
@@ -7922,6 +7927,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         });
                         if (!resp.ok || !resp.body) {
                           const err = await readApiError(resp);
+                          if (resp.status === 402 || String(err?.code || '').toUpperCase() === 'INSUFFICIENT_CREDITS') {
+                            handleInsufficientCredits(err.error || 'Saldo insuficiente para processar Novo CAR.');
+                          }
                           throw new Error(err.error || `HTTP ${resp.status}`);
                         }
                         const reader2 = resp.body.getReader();
@@ -7968,7 +7976,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               }
                               continue;
                             }
+                            if (evt.type === 'billing' && evt.billing) {
+                              applyBillingToWallet(evt.billing as BillingResult);
+                              continue;
+                            }
                             if (evt.type === 'error') {
+                              if (String(evt.code || '').toUpperCase() === 'INSUFFICIENT_CREDITS') {
+                                handleInsufficientCredits(String(evt.message || 'Saldo insuficiente para processar Novo CAR.'));
+                              }
                               throw new Error(evt.message || 'Erro na análise AUAS');
                             }
                             if (evt.type === 'result') {
