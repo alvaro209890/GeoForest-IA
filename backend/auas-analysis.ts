@@ -55,6 +55,16 @@ import {
     type DbfFieldDef,
     type ShpRecord,
 } from "./shapefile-writer";
+import {
+    BillingError,
+    createRequestId,
+    estimateReserveForModels,
+    getBillingUsageSessionRecords,
+    refundReserve,
+    reserveCredits,
+    runWithBillingUsageSession,
+    settleReservedCredits,
+} from "./billing";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -92,6 +102,15 @@ const WFS_TIMEOUT = 30_000; // 30 s
 const CACHE_TTL = 30 * 60 * 1000; // 30 min
 const CACHE_MAX = 20;
 const CLOUDINARY_CLOUD = "da19dwpgk";
+const AUAS_BILLING_ENDPOINT = "/api/auas/analyze";
+const AUAS_BILLING_MODELS = [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "qwen/qwen3-32b",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+] as const;
 
 function cloudinarySign(params: Record<string, string>): string {
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
@@ -244,6 +263,23 @@ function buildAuasAberturaAttrib(
         return { [field.name]: dateLiteral };
     }
     return {};
+}
+
+function buildEstimatedUsageForFallback(args: {
+    endpoint: string;
+    model?: string;
+    provider: "groq" | "gemini";
+    inputTokens: number;
+    outputTokens: number;
+}) {
+    return {
+        provider: args.provider,
+        model: args.model || "gemini-2.5-pro",
+        endpoint: args.endpoint,
+        inputTokens: Math.max(1, Math.round(args.inputTokens || 1)),
+        outputTokens: Math.max(1, Math.round(args.outputTokens || 1)),
+        estimated: true,
+    };
 }
 
 /* ─── WFS helpers ────────────────────────────────────────────────── */
@@ -565,7 +601,7 @@ async function runAuasAnalysis(
     res: Response,
     propertyZip: Buffer,
     options?: { inputFilename?: string },
-): Promise<void> {
+): Promise<boolean> {
     // 1. Parse shapefile da propriedade
     progress(res, 5, "parse", "Lendo shapefile da propriedade...");
     let userResult: ReturnType<typeof parseUserShapefile>;
@@ -573,7 +609,7 @@ async function runAuasAnalysis(
         userResult = parseUserShapefile(propertyZip);
     } catch (err: any) {
         sendSSE(res, { type: "error", message: err.message || "Erro ao processar shapefile." });
-        return;
+        return false;
     }
     const { polygon: propertyFeature, geometry: propertyGeom, areaHa: propertyAreaHa } = userResult;
     const wkt = polygonToWkt(propertyGeom);
@@ -862,6 +898,7 @@ async function runAuasAnalysis(
             } : {}),
         },
     });
+    return true;
 }
 
 /* ─── Registro de rotas ──────────────────────────────────────────── */
@@ -870,12 +907,17 @@ export function registerAuasRoutes(app: Express) {
 
     /** POST /api/auas/analyze — SSE stream */
     app.post("/api/auas/analyze", async (req: Request, res: Response) => {
+        let billingUid = "";
+        let billingRequestId = "";
+        let billingReserved = 0;
+        let usageInputs: Array<any> = [];
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
                 res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
                 return;
             }
+            billingUid = uid;
 
             const body = req.body as { propertyZip?: string; filename?: string };
             if (!body.propertyZip || typeof body.propertyZip !== "string") {
@@ -895,19 +937,101 @@ export function registerAuasRoutes(app: Express) {
                 return;
             }
 
+            billingRequestId = createRequestId("novo_car");
+            billingReserved = await estimateReserveForModels({
+                models: [...AUAS_BILLING_MODELS],
+                estimatedInputTokens: 90_000,
+                estimatedOutputTokens: 8_000,
+                imageCount: 12,
+                imageWidthPx: 1024,
+                imageHeightPx: 768,
+                safetyMultiplier: 1.35,
+            });
+            await reserveCredits({
+                uid,
+                amountBrl: billingReserved,
+                requestId: billingRequestId,
+                endpoint: AUAS_BILLING_ENDPOINT,
+            });
+
             // Inicia SSE
             res.setHeader("Content-Type", "text/event-stream");
             res.setHeader("Cache-Control", "no-cache");
             res.setHeader("Connection", "keep-alive");
             res.flushHeaders?.();
 
-            await runAuasAnalysis(res, zipBuffer, {
-                inputFilename: body.filename,
+            let completed = false;
+            await runWithBillingUsageSession(async () => {
+                try {
+                    completed = await runAuasAnalysis(res, zipBuffer, {
+                        inputFilename: body.filename,
+                    });
+                } finally {
+                    usageInputs = getBillingUsageSessionRecords();
+                }
             });
+
+            if (usageInputs.length > 0 || completed) {
+                const usageForSettle = usageInputs.length > 0
+                    ? usageInputs
+                    : [
+                        buildEstimatedUsageForFallback({
+                            endpoint: AUAS_BILLING_ENDPOINT,
+                            provider: "gemini",
+                            model: "gemini-2.5-pro",
+                            inputTokens: 90_000,
+                            outputTokens: 8_000,
+                        }),
+                    ];
+                const billing = await settleReservedCredits({
+                    uid,
+                    requestId: billingRequestId,
+                    endpoint: AUAS_BILLING_ENDPOINT,
+                    reservedBrl: billingReserved,
+                    usageInputs: usageForSettle,
+                });
+                billingReserved = 0;
+                sendSSE(res, { type: "billing", billing });
+            } else if (billingReserved > 0) {
+                await refundReserve({
+                    uid,
+                    requestId: billingRequestId,
+                    amountBrl: billingReserved,
+                    endpoint: AUAS_BILLING_ENDPOINT,
+                    reason: "no_ai_usage",
+                });
+                billingReserved = 0;
+            }
         } catch (err: any) {
             console.error("[AUAS] Unhandled error:", err);
+            if (billingUid && billingReserved > 0 && billingRequestId) {
+                try {
+                    await refundReserve({
+                        uid: billingUid,
+                        requestId: billingRequestId,
+                        amountBrl: billingReserved,
+                        endpoint: AUAS_BILLING_ENDPOINT,
+                        reason: "exception",
+                    });
+                    billingReserved = 0;
+                } catch (refundErr) {
+                    console.error("[AUAS] Billing refund error:", refundErr);
+                }
+            }
+            if (err instanceof BillingError) {
+                if (!res.headersSent) {
+                    res.status(err.statusCode).json({ error: err.message, code: err.code });
+                } else {
+                    sendSSE(res, { type: "error", message: err.message, code: err.code });
+                }
+                return;
+            }
             if (!res.writableEnded) {
-                sendSSE(res, { type: "error", message: err.message || "Erro interno na análise AUAS." });
+                if (res.headersSent) {
+                    sendSSE(res, { type: "error", message: err.message || "Erro interno na análise AUAS." });
+                } else {
+                    res.status(500).json({ error: err.message || "Erro interno na análise AUAS." });
+                }
             }
         } finally {
             if (!res.writableEnded) res.end();
