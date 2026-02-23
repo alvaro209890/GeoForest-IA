@@ -273,6 +273,7 @@ async function persistAuasJobInFirestore(args: {
         kind: "novo_car",
         title: `Novo CAR ${jobId.slice(0, 8)}`,
         filename: `Novo CAR ${jobId.slice(0, 8)}`,
+        status: "completed",
         timestamp: nowIso,
         inputFilename: args.inputFilename || null,
         ...args.result,
@@ -292,6 +293,40 @@ async function persistAuasJobInFirestore(args: {
                 ? ((snap.get("createdAt") as Timestamp | undefined) || now)
                 : now;
             tx.set(docRef, stripUndefinedDeep({ ...payloadBase, createdAt }), { merge: true });
+        });
+    });
+}
+
+async function persistAuasProcessingState(args: {
+    uid: string;
+    jobId: string;
+    filename?: string;
+    status: "processing" | "completed" | "cancelled" | "failed";
+    error?: string;
+}): Promise<void> {
+    const uid = String(args.uid || "").trim();
+    const jobId = String(args.jobId || "").trim();
+    if (!uid || !jobId) return;
+    const docRef = adminDb.doc(`users/${uid}/auas_jobs/${jobId}`);
+    const filename = String(args.filename || `Novo CAR ${jobId.slice(0, 8)}`).trim();
+    const payload = stripUndefinedDeep({
+        id: jobId,
+        jobId,
+        kind: "novo_car",
+        title: filename,
+        filename,
+        status: args.status,
+        error: args.error || null,
+        timestamp: new Date().toISOString(),
+        updatedAt: Timestamp.now(),
+    });
+    await withRetry("firestore_persist_auas_processing_state", AUAS_FIRESTORE_PERSIST_RETRY_ATTEMPTS, async () => {
+        await adminDb.runTransaction(async (tx) => {
+            const snap = await tx.get(docRef);
+            const createdAt = snap.exists
+                ? ((snap.get("createdAt") as Timestamp | undefined) || Timestamp.now())
+                : Timestamp.now();
+            tx.set(docRef, stripUndefinedDeep({ ...payload, createdAt }), { merge: true });
         });
     });
 }
@@ -772,7 +807,7 @@ function buildLayerBuffers(
 async function runAuasAnalysis(
     res: Response,
     propertyZip: Buffer,
-    options?: { inputFilename?: string; uid?: string },
+    options?: { inputFilename?: string; uid?: string; jobId?: string },
 ): Promise<{ completed: boolean; cloudinaryStoredBytes: number }> {
     throwIfAuasCancelRequested(res);
     // 1. Parse shapefile da propriedade
@@ -910,7 +945,7 @@ async function runAuasAnalysis(
     const arlAreaHa = avnAreaHa;
 
     // 9. Análise de IA — mesmo fluxo da aba de recorte com CAR já vetorizado
-    const jobId = crypto.randomUUID();
+    const jobId = String(options?.jobId || "").trim() || crypto.randomUUID();
     const zipFilename = `auas_${jobId.slice(0, 8)}.zip`;
     const auasLayerSummaries: LayerSummary[] = [
         { name: "AREA_CONSOLIDADA", source: "wfs", features: acUnion ? 1 : 0, areaHa: acAreaHa },
@@ -1144,6 +1179,7 @@ export function registerAuasRoutes(app: Express) {
         let usageInputs: Array<any> = [];
         let chargedBrl = 0;
         let processingJobId = "";
+        let body: { propertyZip?: string; filename?: string } = {};
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
@@ -1152,7 +1188,7 @@ export function registerAuasRoutes(app: Express) {
             }
             billingUid = uid;
 
-            const body = req.body as { propertyZip?: string; filename?: string };
+            body = req.body as { propertyZip?: string; filename?: string };
             if (!body.propertyZip || typeof body.propertyZip !== "string") {
                 res.status(400).json({ error: "Campo propertyZip (base64) é obrigatório." });
                 return;
@@ -1220,6 +1256,12 @@ export function registerAuasRoutes(app: Express) {
                 markDisconnected(processingJobId);
             });
             sendSSE(res, { type: "job_started", jobId: processingJobId });
+            await persistAuasProcessingState({
+                uid,
+                jobId: processingJobId,
+                filename: body.filename || `Novo CAR ${processingJobId.slice(0, 8)}`,
+                status: "processing",
+            });
 
             let analysisResult: { completed: boolean; cloudinaryStoredBytes: number } = {
                 completed: false,
@@ -1230,6 +1272,7 @@ export function registerAuasRoutes(app: Express) {
                     analysisResult = await runAuasAnalysis(res, zipBuffer, {
                         inputFilename: body.filename,
                         uid,
+                        jobId: processingJobId,
                     });
                 } finally {
                     usageInputs = getBillingUsageSessionRecords();
@@ -1310,6 +1353,15 @@ export function registerAuasRoutes(app: Express) {
                 },
                 error: analysisResult.completed ? undefined : "analysis_not_completed",
             });
+            if (!analysisResult.completed) {
+                await persistAuasProcessingState({
+                    uid,
+                    jobId: processingJobId,
+                    filename: body.filename || `Novo CAR ${processingJobId.slice(0, 8)}`,
+                    status: "failed",
+                    error: "analysis_not_completed",
+                });
+            }
         } catch (err: any) {
             if (err instanceof AuasCancelError) {
                 if (billingUid && operationReserved > 0 && operationRequestId) {
@@ -1367,6 +1419,13 @@ export function registerAuasRoutes(app: Express) {
                     },
                     error: "cancel_requested",
                 });
+                await persistAuasProcessingState({
+                    uid: billingUid,
+                    jobId: processingJobId,
+                    filename: body?.filename || `Novo CAR ${processingJobId.slice(0, 8)}`,
+                    status: "cancelled",
+                    error: "cancel_requested",
+                });
                 return;
             }
             console.error("[AUAS] Unhandled error:", err);
@@ -1404,6 +1463,13 @@ export function registerAuasRoutes(app: Express) {
                     status: "failed",
                     error: err.message,
                 });
+                await persistAuasProcessingState({
+                    uid: billingUid,
+                    jobId: processingJobId,
+                    filename: body?.filename || `Novo CAR ${processingJobId.slice(0, 8)}`,
+                    status: "failed",
+                    error: err.message,
+                });
                 if (!res.headersSent) {
                     res.status(err.statusCode).json({ error: err.message, code: err.code });
                 } else {
@@ -1413,6 +1479,13 @@ export function registerAuasRoutes(app: Express) {
             }
             finishJob({
                 jobId: processingJobId,
+                status: "failed",
+                error: err?.message || "unexpected_error",
+            });
+            await persistAuasProcessingState({
+                uid: billingUid,
+                jobId: processingJobId,
+                filename: body?.filename || `Novo CAR ${processingJobId.slice(0, 8)}`,
                 status: "failed",
                 error: err?.message || "unexpected_error",
             });
