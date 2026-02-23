@@ -205,7 +205,8 @@ function getSatelliteMetadata(key: string): SatelliteMetadata {
 
 /**
  * Analyze an image buffer to detect potential cloud cover or occlusion.
- * Uses pixel statistics: clouds are bright (high luminance) and low-contrast.
+ * Uses pixel statistics with spatial analysis: clouds are bright (high luminance),
+ * low-contrast, and spatially homogeneous. Also detects cloud shadows.
  * Returns a score 0-1 where >0.5 indicates likely cloud/occlusion.
  */
 async function detectCloudCover(imageBuffer: Buffer): Promise<{
@@ -221,20 +222,25 @@ async function detectCloudCover(imageBuffer: Buffer): Promise<{
             .raw()
             .toBuffer({ resolveWithObject: true });
 
-        const totalPixels = info.width * info.height;
+        const w = info.width;
+        const h = info.height;
+        const totalPixels = w * h;
         const channels = info.channels;
         let brightCount = 0;
         let darkCount = 0;
         let luminanceSum = 0;
         let luminanceSqSum = 0;
 
+        // Build luminance grid for spatial analysis
+        const lumGrid: number[] = new Array(totalPixels);
+
         for (let i = 0; i < totalPixels; i++) {
             const offset = i * channels;
             const r = data[offset];
             const g = data[offset + 1];
             const b = data[offset + 2];
-            // Luminance using standard weights
             const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+            lumGrid[i] = lum;
             luminanceSum += lum;
             luminanceSqSum += lum * lum;
 
@@ -246,26 +252,75 @@ async function detectCloudCover(imageBuffer: Buffer): Promise<{
         const variance = (luminanceSqSum / totalPixels) - (meanLum * meanLum);
         const stdDev = Math.sqrt(Math.max(0, variance));
 
-        // Bright pixel ratio (clouds are uniformly bright)
+        // Bright pixel ratio — lowered threshold from 0.3 to 0.25 for earlier detection
         const brightPixelRatio = brightCount / totalPixels;
         // Contrast score (low contrast = more likely clouds)
         const contrastScore = Math.min(1, stdDev / 60);
         // Dark pixel ratio (shadows/no-data)
         const darkPixelRatio = darkCount / totalPixels;
 
+        // Spatial homogeneity: compute local variance in 5×5 windows.
+        // Clouds tend to have low local variance in contiguous blocks.
+        let homogeneousBlockCount = 0;
+        let totalBlocks = 0;
+        const winSize = 5;
+        for (let y = 0; y <= h - winSize; y += winSize) {
+            for (let x = 0; x <= w - winSize; x += winSize) {
+                let wSum = 0;
+                let wSqSum = 0;
+                const wPixels = winSize * winSize;
+                for (let dy = 0; dy < winSize; dy++) {
+                    for (let dx = 0; dx < winSize; dx++) {
+                        const l = lumGrid[(y + dy) * w + (x + dx)];
+                        wSum += l;
+                        wSqSum += l * l;
+                    }
+                }
+                const wMean = wSum / wPixels;
+                const wVar = (wSqSum / wPixels) - (wMean * wMean);
+                // Bright block with very low variance → likely cloud
+                if (wMean > 190 && wVar < 100) homogeneousBlockCount++;
+                totalBlocks++;
+            }
+        }
+        const homogeneousRatio = totalBlocks > 0 ? homogeneousBlockCount / totalBlocks : 0;
+
+        // Shadow detection: bright pixels adjacent to very dark pixels may indicate cloud shadows
+        let shadowAdjacencyCount = 0;
+        for (let y = 1; y < h - 1; y++) {
+            for (let x = 1; x < w - 1; x++) {
+                const idx = y * w + x;
+                if (lumGrid[idx] > 200) {
+                    // Check 4-connected neighbors for very dark pixels (shadow)
+                    const hasAdjacentDark =
+                        lumGrid[idx - 1] < 40 || lumGrid[idx + 1] < 40 ||
+                        lumGrid[idx - w] < 40 || lumGrid[idx + w] < 40;
+                    if (hasAdjacentDark) shadowAdjacencyCount++;
+                }
+            }
+        }
+        const shadowRatio = shadowAdjacencyCount / Math.max(1, totalPixels);
+
         // Cloud score: high if lots of bright pixels AND low contrast
-        // Also consider mean luminance (clouds push average up)
         let cloudScore = 0;
-        if (brightPixelRatio > 0.3) {
-            cloudScore += brightPixelRatio * 0.4;
+        if (brightPixelRatio > 0.25) {
+            cloudScore += brightPixelRatio * 0.35;
         }
         if (contrastScore < 0.3) {
-            cloudScore += (1 - contrastScore) * 0.3;
+            cloudScore += (1 - contrastScore) * 0.25;
         }
         if (meanLum > 180) {
-            cloudScore += ((meanLum - 180) / 75) * 0.2;
+            cloudScore += ((meanLum - 180) / 75) * 0.15;
         }
-        // Penalize if too much dark area (shadows, not clouds)
+        // Spatial homogeneity bonus — clouds form contiguous bright blocks
+        if (homogeneousRatio > 0.15) {
+            cloudScore += homogeneousRatio * 0.15;
+        }
+        // Shadow adjacency bonus — bright-dark transitions indicate cloud edges
+        if (shadowRatio > 0.005) {
+            cloudScore += Math.min(0.10, shadowRatio * 10);
+        }
+        // Penalize if too much dark area (shadows dominating, not clouds)
         if (darkPixelRatio > 0.4) {
             cloudScore *= 0.5;
         }
@@ -2076,13 +2131,15 @@ function getCloudinaryAiUrl(url: string): string {
 
 /**
  * Returns a Cloudinary URL optimized for Gemini vision analysis.
- * Uses a higher resolution (max 1024×768) and better JPEG quality (82) than the
+ * Uses a higher resolution (max 1280×960) and better JPEG quality (88) than the
  * Groq path, taking advantage of Gemini's larger context window and superior image
  * understanding to produce more precise land-use / vegetation analyses.
+ * The increased resolution preserves texture details critical for distinguishing
+ * native vegetation (Cerrado/Forest) from degraded pasture.
  */
 function getCloudinaryGeminiUrl(url: string): string {
     if (!url.includes("/image/upload/")) return url;
-    return url.replace("/image/upload/", "/image/upload/w_1024,h_768,c_limit,q_82,f_jpg,fl_strip_profile/");
+    return url.replace("/image/upload/", "/image/upload/w_1280,h_960,c_limit,q_88,f_jpg,fl_strip_profile/");
 }
 
 /** Delete a resource from Cloudinary by its secure_url. */
@@ -3456,17 +3513,19 @@ function buildPropertyContext(
     options?: { compact?: boolean; maxRows?: number },
 ): string {
     const compact = Boolean(options?.compact);
-    const maxRows = Math.max(4, options?.maxRows ?? (compact ? 8 : 28));
+    const maxRows = Math.max(4, options?.maxRows ?? (compact ? 10 : 28));
     const acSummary = layerSummaries.find((l) => l.name === "AREA_CONSOLIDADA");
     const avnSummary = layerSummaries.find((l) => l.name === "AVN");
     const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
     const atpSummary = layerSummaries.find((l) => l.name === "ATP");
+    const arlSummary = layerSummaries.find((l) => l.name === "ARL");
+    const arlremSummary = layerSummaries.find((l) => l.name === "ARLREM");
 
     const nonZeroRows = layerSummaries
         .filter((l) => l.features > 0)
         .sort((a, b) => (b.areaHa ?? 0) - (a.areaHa ?? 0));
 
-    const alwaysKeep = new Set(["ATP", "AREA_CONSOLIDADA", "AVN", "AUAS"]);
+    const alwaysKeep = new Set(["ATP", "AREA_CONSOLIDADA", "AVN", "AUAS", "ARL", "ARLREM"]);
     const chosenRows = compact
         ? [
             ...nonZeroRows.filter((l) => alwaysKeep.has(l.name)),
@@ -3482,6 +3541,11 @@ function buildPropertyContext(
             return `| ${l.name} | ${l.features} | ${l.areaHa?.toFixed(2) ?? '-'} ha | ${pct}% |`;
         });
 
+    // ARL/ARLREM legal compliance context
+    const arlTotalHa = (arlSummary?.areaHa ?? 0) + (arlremSummary?.areaHa ?? 0);
+    const arlPct = areaHa > 0 ? (arlTotalHa / areaHa * 100).toFixed(1) : "?";
+    const hasArl = arlTotalHa > 0;
+
     return [
         "## Contexto do Imóvel Rural",
         "",
@@ -3491,6 +3555,7 @@ function buildPropertyContext(
         `| Área Consolidada (AC) | ${acSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((acSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) — ${acSummary?.features ?? 0} feições |`,
         `| Vegetação Nativa (AVN) | ${avnSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((avnSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) — ${avnSummary?.features ?? 0} feições |`,
         `| AUAS (uso alternativo) | ${auasSummary?.areaHa?.toFixed(2) ?? '0'} ha (${areaHa > 0 ? ((auasSummary?.areaHa ?? 0) / areaHa * 100).toFixed(1) : '?'}%) - ${auasSummary?.features ?? 0} feições |`,
+        hasArl ? `| Reserva Legal (ARL+ARLREM) | ${arlTotalHa.toFixed(2)} ha (${arlPct}% do imóvel) — ARL: ${arlSummary?.areaHa?.toFixed(2) ?? '0'} ha, ARLREM: ${arlremSummary?.areaHa?.toFixed(2) ?? '0'} ha |` : "",
         atpSummary ? `| ATP (polígono declarado) | ${atpSummary.areaHa?.toFixed(2) ?? '-'} ha |` : "",
         "",
         compact ? "### Quantitativos-chave (SIMCAR Digital)" : "### Quantitativos completos (SIMCAR Digital)",

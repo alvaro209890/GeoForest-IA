@@ -56,7 +56,7 @@ import {
   DollarSign,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
-import { fetchSignInMethodsForEmail, onAuthStateChanged, sendPasswordResetEmail } from 'firebase/auth';
+import { fetchSignInMethodsForEmail, onAuthStateChanged, sendPasswordResetEmail, signOut } from 'firebase/auth';
 import {
   collection,
   doc,
@@ -2187,9 +2187,13 @@ export default function Dashboard() {
 
         const userDocRef = doc(db, 'users', currentUser.uid);
         const userDocSnap = await getDoc(userDocRef);
-        if (userDocSnap.exists()) {
-          setUserProfile(userDocSnap.data() as UserProfile);
+        if (!userDocSnap.exists()) {
+          await signOut(auth);
+          toast.error('Conta sem cadastro no sistema. Entre em contato com o suporte.');
+          setLocation('/');
+          return;
         }
+        setUserProfile(userDocSnap.data() as UserProfile);
 
         const collRef = collection(db, 'users', currentUser.uid, 'conversations');
         setConversationsRef({ collection: collRef });
