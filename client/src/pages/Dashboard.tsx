@@ -1183,6 +1183,7 @@ export default function Dashboard() {
   const [simcarClipSummary, setSimcarClipSummary] = useState<any>(null);
   const [simcarClipError, setSimcarClipError] = useState<string | null>(null);
   const simcarClipAbortRef = useRef<AbortController | null>(null);
+  const simcarClipProcessJobIdRef = useRef<string | null>(null);
   const simcarClipProgressFlushTimerRef = useRef<number | null>(null);
   const simcarClipProgressPendingRef = useRef<{ current: number; total: number; layer: string; status: string } | null>(
     null
@@ -1207,6 +1208,7 @@ export default function Dashboard() {
   const simcarLiveAnswerPanelRef = useRef<HTMLDivElement | null>(null);
   const simcarAgentLogEndRef = useRef<HTMLDivElement | null>(null);
   const simcarAnalysisAbortRef = useRef<AbortController | null>(null);
+  const simcarAnalysisProcessJobIdRef = useRef<string | null>(null);
   const [simcarAnalysisStartTime, setSimcarAnalysisStartTime] = useState<number | null>(null);
   const [simcarElapsed, setSimcarElapsed] = useState(0);
 
@@ -1217,6 +1219,7 @@ export default function Dashboard() {
   const [simcarAuasMessages, setSimcarAuasMessages] = useState<SimcarAnalysisMessage[]>([]);
   const [simcarAuasAgentLog, setSimcarAuasAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
   const simcarAuasAbortRef = useRef<AbortController | null>(null);
+  const simcarAuasProcessJobIdRef = useRef<string | null>(null);
   const [simcarResultImagePanelsOpen, setSimcarResultImagePanelsOpen] = useState<{ acAvn: boolean; auas: boolean }>({
     acAvn: false,
     auas: false,
@@ -1234,11 +1237,13 @@ export default function Dashboard() {
   const [auasElapsed, setAuasElapsed] = useState(0);
   const [auasError, setAuasError] = useState<string | null>(null);
   const auasAbortRef = useRef<AbortController | null>(null);
+  const auasProcessJobIdRef = useRef<string | null>(null);
   const auasFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const resetAuasDraft = useCallback(() => {
     auasAbortRef.current?.abort();
     auasAbortRef.current = null;
+    auasProcessJobIdRef.current = null;
     setAuasFile(null);
     setAuasProcessing(false);
     setAuasJobId(null);
@@ -1395,6 +1400,8 @@ export default function Dashboard() {
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
   const chatAbortRef = useRef<AbortController | null>(null);
+  const chatProcessJobIdRef = useRef<string | null>(null);
+  const runningProcessingJobsCountRef = useRef(0);
   const [chatError, setChatError] = useState<string | null>(null);
   const [lastPromptText, setLastPromptText] = useState('');
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -1535,6 +1542,9 @@ export default function Dashboard() {
     simcarClipAbortRef.current = null;
     simcarAnalysisAbortRef.current = null;
     simcarAuasAbortRef.current = null;
+    simcarClipProcessJobIdRef.current = null;
+    simcarAnalysisProcessJobIdRef.current = null;
+    simcarAuasProcessJobIdRef.current = null;
     setSimcarClipMode(nextMode);
     setSimcarClipFile(null);
     setSimcarClipProcessing(false);
@@ -1610,6 +1620,24 @@ export default function Dashboard() {
       return { error: text };
     }
   }, []);
+
+  const requestProcessCancel = useCallback(
+    async (jobId: string | null | undefined) => {
+      const normalizedJobId = String(jobId || '').trim();
+      if (!normalizedJobId) return false;
+      try {
+        const response = await apiFetch('/api/process/cancel', {
+          method: 'POST',
+          body: JSON.stringify({ jobId: normalizedJobId }),
+        });
+        if (!response.ok) return false;
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [apiFetch]
+  );
 
   const handleInsufficientCredits = useCallback((message?: string) => {
     const notice = message || 'Voce esta sem creditos. Adicione creditos para continuar.';
@@ -2393,6 +2421,53 @@ export default function Dashboard() {
   }, [normalizeAuasResultPayload, setLocation]);
 
   useEffect(() => {
+    const uid = String(userProfile?.uid || '').trim();
+    if (!uid) {
+      runningProcessingJobsCountRef.current = 0;
+      toast.dismiss('processing-running-jobs');
+      return;
+    }
+
+    let active = true;
+    const poll = async () => {
+      try {
+        const jobsRef = collection(db, 'users', uid, 'processing_jobs');
+        const jobsSnap = await getDocs(query(jobsRef, orderBy('updatedAtMs', 'desc')));
+        if (!active) return;
+        const runningCount = jobsSnap.docs.filter((docSnap) => {
+          const status = String((docSnap.data() as any)?.status || '').trim().toLowerCase();
+          return status === 'running' || status === 'cancel_requested';
+        }).length;
+        const previousCount = runningProcessingJobsCountRef.current;
+        runningProcessingJobsCountRef.current = runningCount;
+
+        if (runningCount > 0) {
+          toast.info(
+            `${runningCount} processamento(s) em andamento no servidor.`,
+            { id: 'processing-running-jobs' }
+          );
+          return;
+        }
+        toast.dismiss('processing-running-jobs');
+        if (previousCount > 0 && runningCount === 0) {
+          toast.success('Processamentos em andamento foram finalizados.');
+        }
+      } catch {
+        // ignore polling failures
+      }
+    };
+
+    void poll();
+    const interval = window.setInterval(() => {
+      void poll();
+    }, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [userProfile?.uid]);
+
+  useEffect(() => {
     if (loading || !auth.currentUser) return;
     void loadBillingMe();
     void loadBillingPricing();
@@ -2829,14 +2904,19 @@ export default function Dashboard() {
     };
   }, [stopTypingAnimation]);
 
-  const onStopChatGeneration = useCallback(() => {
+  const onStopChatGeneration = useCallback(async () => {
+    const processJobId = chatProcessJobIdRef.current;
+    if (processJobId) {
+      await requestProcessCancel(processJobId);
+      chatProcessJobIdRef.current = null;
+    }
     chatAbortRef.current?.abort();
     chatAbortRef.current = null;
     setSending(false);
     resetChatGenerationUi();
-    setChatError('Resposta interrompida. Envie novamente quando quiser.');
-    toast.info('Geração interrompida.');
-  }, [resetChatGenerationUi]);
+    setChatError('Cancelamento solicitado. Cobrança proporcional aplicada.');
+    toast.info('Cancelamento solicitado.');
+  }, [requestProcessCancel, resetChatGenerationUi]);
 
   const onRetryLastPrompt = useCallback(() => {
     if (!lastPromptText.trim()) return;
@@ -4631,6 +4711,7 @@ export default function Dashboard() {
       try {
         const controller = new AbortController();
         simcarAnalysisAbortRef.current = controller;
+        simcarAnalysisProcessJobIdRef.current = null;
         const response = await apiFetch('/api/simcar/clip/analyze', {
           method: 'POST',
           body: JSON.stringify({
@@ -4668,7 +4749,10 @@ export default function Dashboard() {
               if (!line.startsWith('data: ')) continue;
               try {
                 const event = JSON.parse(line.slice(6));
-                if (event.type === 'progress') {
+                if (event.type === 'job_started') {
+                  const streamJobId = typeof event.jobId === 'string' ? event.jobId.trim() : '';
+                  if (streamJobId) simcarAnalysisProcessJobIdRef.current = streamJobId;
+                } else if (event.type === 'progress') {
                   const msg = normalizeBackendText(String(event.message || ''));
                   setSimcarAnalysisProgress({ step: event.step, percent: event.percent, message: msg });
                   if (!imageOnly && !silentOutput) {
@@ -4850,6 +4934,7 @@ export default function Dashboard() {
         return { ...result, ok: false, error: message };
       } finally {
         simcarAnalysisAbortRef.current = null;
+        simcarAnalysisProcessJobIdRef.current = null;
         setSimcarAnalysisProcessing(false);
         setSimcarAnalysisProgress(null);
       }
@@ -4912,6 +4997,7 @@ export default function Dashboard() {
       try {
         const controller = new AbortController();
         simcarAuasAbortRef.current = controller;
+        simcarAuasProcessJobIdRef.current = null;
         const response = await apiFetch('/api/simcar/clip/analyze-auas', {
           method: 'POST',
           body: JSON.stringify({
@@ -4949,7 +5035,10 @@ export default function Dashboard() {
               if (!line.startsWith('data: ')) continue;
               try {
                 const event = JSON.parse(line.slice(6));
-                if (event.type === 'progress') {
+                if (event.type === 'job_started') {
+                  const streamJobId = typeof event.jobId === 'string' ? event.jobId.trim() : '';
+                  if (streamJobId) simcarAuasProcessJobIdRef.current = streamJobId;
+                } else if (event.type === 'progress') {
                   const msg = normalizeBackendText(String(event.message || ''));
                   setSimcarAuasProgress({ step: event.step, percent: event.percent, message: msg });
                   setSimcarAuasAgentLog((prev) => {
@@ -5094,6 +5183,7 @@ export default function Dashboard() {
         return { ...result, ok: false, error: message };
       } finally {
         simcarAuasAbortRef.current = null;
+        simcarAuasProcessJobIdRef.current = null;
         setSimcarAuasProcessing(false);
         setSimcarAuasProgress(null);
       }
@@ -5671,6 +5761,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
     try {
       chatController = new AbortController();
       chatAbortRef.current = chatController;
+      chatProcessJobIdRef.current = null;
       const res = await apiFetch('/api/chat-stream', {
         method: 'POST',
         signal: chatController.signal,
@@ -5769,6 +5860,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             continue;
           }
 
+          if (chunk?.type === 'job_started' && typeof chunk?.jobId === 'string') {
+            const streamJobId = String(chunk.jobId || '').trim();
+            if (streamJobId) chatProcessJobIdRef.current = streamJobId;
+            continue;
+          }
+
           if (typeof chunk.model === 'string' && chunk.model) {
             usedModel = chunk.model;
           }
@@ -5795,6 +5892,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           if (!trimmed) continue;
           try {
             const chunk = JSON.parse(trimmed);
+            if (chunk?.type === 'job_started' && typeof chunk?.jobId === 'string') {
+              const streamJobId = String(chunk.jobId || '').trim();
+              if (streamJobId) chatProcessJobIdRef.current = streamJobId;
+              continue;
+            }
             if (typeof chunk.model === 'string' && chunk.model) usedModel = chunk.model;
             if (chunk?.billing) {
               finalBilling = chunk.billing as BillingResult;
@@ -5854,6 +5956,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       if (chatAbortRef.current === chatController) {
         chatAbortRef.current = null;
       }
+      chatProcessJobIdRef.current = null;
       setSending(false);
     }
   };
@@ -7175,6 +7278,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       const selectedLayers = selectedSimcarClipLayerNames;
                       const controller = new AbortController();
                       simcarClipAbortRef.current = controller;
+                      simcarClipProcessJobIdRef.current = null;
 
                       const response = await apiFetch('/api/simcar/clip', {
                         method: 'POST',
@@ -7208,7 +7312,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             if (!line.startsWith('data: ')) continue;
                             try {
                               const event = JSON.parse(line.slice(6));
-                              if (event.type === 'progress') {
+                              if (event.type === 'job_started') {
+                                const streamJobId = typeof event.jobId === 'string' ? event.jobId.trim() : '';
+                                if (streamJobId) simcarClipProcessJobIdRef.current = streamJobId;
+                              } else if (event.type === 'progress') {
                                 queueSimcarClipProgress({
                                   current: event.current,
                                   total: event.total,
@@ -7305,6 +7412,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       clearSimcarClipProgressQueue();
                       setSimcarClipProcessing(false);
                       simcarClipAbortRef.current = null;
+                      simcarClipProcessJobIdRef.current = null;
                     }
                   }}
                   className={`w-full py-3 rounded-xl font-medium text-sm transition-all duration-300 flex items-center justify-center gap-2 ${(
@@ -7332,10 +7440,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 {/* Cancel Button */}
                 {simcarClipProcessing && (
                   <button
-                    onClick={() => {
+                    onClick={async () => {
+                      await requestProcessCancel(simcarClipProcessJobIdRef.current);
+                      simcarClipProcessJobIdRef.current = null;
                       simcarClipAbortRef.current?.abort();
                       clearSimcarClipProgressQueue();
                       setSimcarClipProcessing(false);
+                      toast.info('Cancelamento solicitado. Cobrança proporcional aplicada.');
                     }}
                     className="w-full mt-2 py-2 rounded-xl border border-red-500/20 text-red-400 text-sm hover:bg-red-500/10 transition-colors"
                   >
@@ -8210,6 +8321,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       setAuasProgress({ step: 'upload', percent: 5, message: 'Enviando shapefile...' });
                       setAuasAgentLog([{ label: 'Iniciando processamento Novo CAR...', done: false, kind: 'step' }]);
                       auasAbortRef.current = new AbortController();
+                      auasProcessJobIdRef.current = null;
                       try {
                         const reader = new FileReader();
                         const zipB64: string = await new Promise((resolve, reject) => {
@@ -8244,6 +8356,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             try {
                               evt = JSON.parse(line.slice(5));
                             } catch {
+                              continue;
+                            }
+                            if (evt.type === 'job_started') {
+                              const streamJobId = typeof evt.jobId === 'string' ? evt.jobId.trim() : '';
+                              if (streamJobId) auasProcessJobIdRef.current = streamJobId;
                               continue;
                             }
                             if (evt.type === 'progress') {
@@ -8381,6 +8498,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         }
                         setAuasProcessing(false);
                         setAuasProgress(null);
+                      } finally {
+                        auasAbortRef.current = null;
+                        auasProcessJobIdRef.current = null;
                       }
                     }}
                     className="mt-4 w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium transition-all shadow-lg shadow-amber-900/30"
@@ -8522,10 +8642,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         </div>
 
                         <button
-                          onClick={() => {
+                          onClick={async () => {
+                            await requestProcessCancel(auasProcessJobIdRef.current);
+                            auasProcessJobIdRef.current = null;
                             auasAbortRef.current?.abort();
                             setAuasProcessing(false);
                             setAuasProgress(null);
+                            toast.info('Cancelamento solicitado. Cobrança proporcional aplicada.');
                           }}
                           className="mt-3 text-xs text-slate-500 hover:text-red-400 transition-colors"
                         >
@@ -9027,165 +9150,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
 
                 </div>
-              </section>
-
-              {/* ── Preferências e Utilitários ── */}
-              <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-6 space-y-5">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
-                    <Settings size={20} />
-                  </div>
-                  <h3 className="font-semibold text-lg text-slate-200">Preferências e Utilitários</h3>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <label className="flex flex-col gap-2 rounded-xl bg-white/[0.03] border border-white/[0.06] p-4">
-                    <span className="text-xs uppercase tracking-wide text-slate-500">Tema</span>
-                    <select
-                      value={settings.theme}
-                      onChange={(e) => { void updateSettings({ theme: e.target.value }); }}
-                      className="bg-[#0a110e] border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500/50"
-                    >
-                      {SETTINGS_THEME_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="flex flex-col gap-2 rounded-xl bg-white/[0.03] border border-white/[0.06] p-4">
-                    <span className="text-xs uppercase tracking-wide text-slate-500">Tamanho da Fonte</span>
-                    <select
-                      value={settings.fontSize}
-                      onChange={(e) => { void updateSettings({ fontSize: e.target.value }); }}
-                      className="bg-[#0a110e] border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500/50"
-                    >
-                      {SETTINGS_FONT_SIZE_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={onProbeBackendHealth}
-                    disabled={settingsActionLoading === 'probe_backend'}
-                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-emerald-500/30 transition-colors disabled:opacity-60"
-                  >
-                    <span className="text-sm text-slate-300">
-                      {settingsActionLoading === 'probe_backend' ? 'Verificando backend...' : 'Verificar Conectividade'}
-                    </span>
-                    {settingsActionLoading === 'probe_backend' ? (
-                      <Loader2 size={16} className="text-slate-500 animate-spin" />
-                    ) : (
-                      <Activity size={16} className="text-slate-500" />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onReloadBillingData}
-                    disabled={settingsActionLoading === 'reload_billing'}
-                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-emerald-500/30 transition-colors disabled:opacity-60"
-                  >
-                    <span className="text-sm text-slate-300">
-                      {settingsActionLoading === 'reload_billing' ? 'Atualizando dados...' : 'Atualizar Dados Financeiros'}
-                    </span>
-                    {settingsActionLoading === 'reload_billing' ? (
-                      <Loader2 size={16} className="text-slate-500 animate-spin" />
-                    ) : (
-                      <Wallet size={16} className="text-slate-500" />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onExportSettingsJson}
-                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/20 transition-colors"
-                  >
-                    <span className="text-sm text-slate-300">Exportar Preferências (JSON)</span>
-                    <FileDown size={16} className="text-slate-500" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => settingsImportInputRef.current?.click()}
-                    disabled={settingsActionLoading === 'import_settings'}
-                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/20 transition-colors disabled:opacity-60"
-                  >
-                    <span className="text-sm text-slate-300">
-                      {settingsActionLoading === 'import_settings' ? 'Importando preferências...' : 'Importar Preferências (JSON)'}
-                    </span>
-                    {settingsActionLoading === 'import_settings' ? (
-                      <Loader2 size={16} className="text-slate-500 animate-spin" />
-                    ) : (
-                      <Upload size={16} className="text-slate-500" />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onResetSettingsDefaults}
-                    disabled={settingsActionLoading === 'reset_defaults'}
-                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-amber-500/30 transition-colors disabled:opacity-60"
-                  >
-                    <span className="text-sm text-slate-300">
-                      {settingsActionLoading === 'reset_defaults' ? 'Restaurando padrão...' : 'Restaurar Preferências Padrão'}
-                    </span>
-                    {settingsActionLoading === 'reset_defaults' ? (
-                      <Loader2 size={16} className="text-slate-500 animate-spin" />
-                    ) : (
-                      <ArrowDownRight size={16} className="text-slate-500" />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onExportLedgerCsv}
-                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/20 transition-colors"
-                  >
-                    <span className="text-sm text-slate-300">Exportar Extrato (CSV)</span>
-                    <Download size={16} className="text-slate-500" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onClearLocalCaches}
-                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-rose-500/30 transition-colors"
-                  >
-                    <span className="text-sm text-slate-300">Limpar Cache Local</span>
-                    <Trash2 size={16} className="text-slate-500" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onCopyAccountUid}
-                    className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/20 transition-colors"
-                  >
-                    <span className="text-sm text-slate-300">Copiar UID da Conta</span>
-                    <Copy size={16} className="text-slate-500" />
-                  </button>
-                </div>
-
-                {settingsHealthCheck && (
-                  <div
-                    className={`rounded-xl border px-4 py-3 text-xs ${settingsHealthCheck.ok
-                      ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
-                      : 'border-rose-500/20 bg-rose-500/10 text-rose-300'
-                      }`}
-                  >
-                    <span className="font-semibold">{settingsHealthCheck.ok ? 'Backend OK:' : 'Backend com alerta:'}</span>{' '}
-                    {settingsHealthCheck.summary}
-                    <span className="ml-2 text-[10px] opacity-80">
-                      ({new Date(settingsHealthCheck.checkedAtIso).toLocaleString('pt-BR')})
-                    </span>
-                  </div>
-                )}
-
-                <input
-                  ref={settingsImportInputRef}
-                  type="file"
-                  accept="application/json,.json"
-                  className="hidden"
-                  onChange={(e) => { void onImportSettingsJson(e); }}
-                />
               </section>
 
               {/* ── Segurança ── */}
