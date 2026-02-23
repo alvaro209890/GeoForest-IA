@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Auth Page - Fullscreen, non-scrollable, no top bar artifacts
  */
 
@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { Mail, Lock, User, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import TermsOfUseDialog from '@/components/TermsOfUseDialog';
 import { toast } from 'sonner';
 import { handleSignUp, handleLogin, handleGoogleSignIn } from '@/lib/auth';
 import { useLocation } from 'wouter';
@@ -84,7 +85,7 @@ export default function Auth() {
       return false;
     }
     if (!signupEmail.trim() || !validateEmail(signupEmail)) {
-      toast.error('Por favor, insira um e-mail válido');
+      toast.error('Por favor, insira um e-mail vÃ¡lido');
       return false;
     }
     if (signupPassword.length < 6) {
@@ -92,7 +93,7 @@ export default function Auth() {
       return false;
     }
     if (signupPassword !== signupConfirmPassword) {
-      toast.error('As senhas não correspondem');
+      toast.error('As senhas nÃ£o correspondem');
       return false;
     }
     return true;
@@ -100,7 +101,7 @@ export default function Auth() {
 
   const validateLogin = () => {
     if (!loginEmail.trim() || !validateEmail(loginEmail)) {
-      toast.error('Por favor, insira um e-mail válido');
+      toast.error('Por favor, insira um e-mail vÃ¡lido');
       return false;
     }
     if (!loginPassword.trim()) {
@@ -200,26 +201,34 @@ export default function Auth() {
         <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-8">
           <div className="hidden lg:flex flex-col justify-center">
             <div className="inline-flex items-center gap-3 mb-6">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center">
-                <span className="text-2xl">🌲</span>
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center p-1">
+                <img
+                  src="/geoforest_app_logo.png"
+                  alt="GeoForest IA"
+                  className="w-full h-full object-contain rounded-xl"
+                />
               </div>
               <div>
                 <h1 className="text-4xl font-bold text-white">GeoForest IA</h1>
-                <p className="text-green-200 text-sm">Inteligência Artificial para Engenharia Florestal</p>
+                <p className="text-green-200 text-sm">InteligÃªncia Artificial para Engenharia Florestal</p>
               </div>
             </div>
             <p className="text-green-100/80 text-lg leading-relaxed max-w-md">
-              Plataforma inteligente para apoio técnico e análise ambiental com foco em dados florestais.
+              Plataforma inteligente para apoio tÃ©cnico e anÃ¡lise ambiental com foco em dados florestais.
             </p>
           </div>
 
           <div className="flex flex-col justify-center">
             <div className="lg:hidden text-center mb-4 sm:mb-6 flex flex-col items-center gap-2 sm:gap-3">
-              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center">
-                <span className="text-xl sm:text-2xl">🌲</span>
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center p-1">
+                <img
+                  src="/geoforest_app_logo.png"
+                  alt="GeoForest IA"
+                  className="w-full h-full object-contain rounded-xl"
+                />
               </div>
               <h1 className="text-2xl sm:text-3xl font-bold text-white">GeoForest IA</h1>
-              <p className="text-green-200 text-xs sm:text-sm">IA aplicada à Engenharia Florestal</p>
+              <p className="text-green-200 text-xs sm:text-sm">IA aplicada Ã  Engenharia Florestal</p>
             </div>
 
             <div className="rounded-2xl sm:rounded-3xl border border-white/15 bg-white/8 backdrop-blur-xl shadow-2xl p-4 sm:p-6 md:p-8">
@@ -268,7 +277,7 @@ export default function Auth() {
                       <Lock className="absolute left-3 top-3 w-4 h-4 text-green-300" />
                       <Input
                         type={showPassword ? 'text' : 'password'}
-                        placeholder="••••••••"
+                        placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                         value={loginPassword}
                         onChange={(e) => setLoginPassword(e.target.value)}
                         className="pl-9 pr-10 bg-white/10 border-white/15 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
@@ -357,7 +366,7 @@ export default function Auth() {
                       <Lock className="absolute left-3 top-3 w-4 h-4 text-green-300" />
                       <Input
                         type={showPassword ? 'text' : 'password'}
-                        placeholder="••••••••"
+                        placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                         value={signupPassword}
                         onChange={(e) => setSignupPassword(e.target.value)}
                         className="pl-9 pr-10 bg-white/10 border-white/15 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
@@ -378,7 +387,7 @@ export default function Auth() {
                       <Lock className="absolute left-3 top-3 w-4 h-4 text-green-300" />
                       <Input
                         type={showPassword ? 'text' : 'password'}
-                        placeholder="••••••••"
+                        placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                         value={signupConfirmPassword}
                         onChange={(e) => setSignupConfirmPassword(e.target.value)}
                         className="pl-9 pr-10 bg-white/10 border-white/15 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
@@ -428,6 +437,15 @@ export default function Auth() {
                     </svg>
                     Continuar com Google
                   </Button>
+
+                  <div className="pt-1 text-center space-y-2">
+                    <TermsOfUseDialog
+                      triggerClassName="inline-flex items-center gap-2 rounded-lg border border-green-400/30 bg-green-500/10 px-3 py-1.5 text-xs text-green-100 hover:bg-green-500/20 transition-colors"
+                    />
+                    <p className="text-[11px] text-white/55">
+                      Ao cadastrar, voce declara que leu e concorda com os Termos de Uso.
+                    </p>
+                  </div>
                 </form>
               )}
             </div>
@@ -437,3 +455,4 @@ export default function Auth() {
     </div>
   );
 }
+
