@@ -321,23 +321,34 @@ function mergeUsageInputs(usageInputs: UsageRecordInput[], defaultEndpoint: stri
 
 async function fetchUsdBrlRateFromBcb(): Promise<number> {
   const today = new Date();
-  const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+  const lookbackDays = Math.max(2, Number.parseInt(process.env.BCB_RATE_LOOKBACK_DAYS || "10", 10) || 10);
+  const startDate = new Date(today.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
   const asBcbDate = (d: Date) =>
     `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}-${d.getFullYear()}`;
+  const parseRate = (value: unknown): number | null => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "string") return null;
+    const normalized = value.trim().replace(",", ".");
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
 
   const url =
     "https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/" +
     `CotacaoMoedaPeriodo(moeda=@moeda,dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)?` +
-    `@moeda='USD'&@dataInicial='${asBcbDate(yesterday)}'&@dataFinalCotacao='${asBcbDate(today)}'&$top=1&$orderby=dataHoraCotacao%20desc&$format=json`;
+    `@moeda='USD'&@dataInicial='${asBcbDate(startDate)}'&@dataFinalCotacao='${asBcbDate(today)}'&$top=5&$orderby=dataHoraCotacao%20desc&$format=json`;
 
   const response = await fetch(url, { method: "GET" });
   if (!response.ok) throw new Error(`BCB HTTP ${response.status}`);
   const data = (await response.json()) as any;
-  const cotacaoVenda = Number(data?.value?.[0]?.cotacaoVenda);
-  if (!Number.isFinite(cotacaoVenda) || cotacaoVenda <= 0) {
-    throw new Error("cotacaoVenda inválida no retorno do BCB");
+  const rows = Array.isArray(data?.value) ? data.value : [];
+  for (const row of rows) {
+    const cotacaoVenda = parseRate(row?.cotacaoVenda);
+    if (cotacaoVenda && cotacaoVenda > 0) return cotacaoVenda;
+    const cotacaoCompra = parseRate(row?.cotacaoCompra);
+    if (cotacaoCompra && cotacaoCompra > 0) return cotacaoCompra;
   }
-  return cotacaoVenda;
+  throw new Error("cotacaoVenda inválida no retorno do BCB");
 }
 
 export async function getUsdBrlRate(): Promise<{ rate: number; source: string }> {
