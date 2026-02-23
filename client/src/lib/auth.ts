@@ -222,3 +222,15 @@ export function getCurrentUser(): User | null {
 export function isAuthenticated(): boolean {
   return auth.currentUser !== null;
 }
+
+/**
+ * Obtém o ID token do usuário atual (ou null se não autenticado).
+ *
+ * @param forceRefresh - força renovação do token no Firebase
+ * @returns token JWT ou null
+ */
+export async function getIdToken(forceRefresh = false): Promise<string | null> {
+  const user = auth.currentUser;
+  if (!user) return null;
+  return user.getIdToken(forceRefresh);
+}
