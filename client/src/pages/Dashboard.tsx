@@ -490,6 +490,9 @@ type AuasTabResult = {
   cloudWarnings?: Array<{ satellite: string; cloudScore: number }>;
   analysisMeta?: SimcarAcAvnAnalysisMeta;
   analysisRulesVersion?: string;
+  auasOpeningYear?: number;
+  auasOpeningDate?: string;
+  auasOpeningSource?: 'PRODES' | 'AI_FALLBACK';
 };
 
 type AuasHistoryItem = AuasTabResult & {
@@ -1216,6 +1219,9 @@ export default function Dashboard() {
   const [auasProgress, setAuasProgress] = useState<{ step: string; percent: number; message: string } | null>(null);
   const [auasResult, setAuasResult] = useState<AuasTabResult | null>(null);
   const [auasHistory, setAuasHistory] = useState<AuasHistoryItem[]>([]);
+  const [auasAgentLog, setAuasAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
+  const auasAgentLogEndRef = useRef<HTMLDivElement | null>(null);
+  const [auasElapsed, setAuasElapsed] = useState(0);
   const [auasError, setAuasError] = useState<string | null>(null);
   const auasAbortRef = useRef<AbortController | null>(null);
   const auasFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1228,6 +1234,8 @@ export default function Dashboard() {
     setAuasJobId(null);
     setAuasProgress(null);
     setAuasResult(null);
+    setAuasAgentLog([]);
+    setAuasElapsed(0);
     setAuasError(null);
     if (auasFileInputRef.current) auasFileInputRef.current.value = '';
   }, []);
@@ -1247,6 +1255,18 @@ export default function Dashboard() {
   useEffect(() => {
     simcarAgentLogEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [simcarAgentLog]);
+
+  useEffect(() => {
+    if (auasProcessing) {
+      setAuasElapsed(0);
+      const iv = setInterval(() => setAuasElapsed((prev) => prev + 1), 1000);
+      return () => clearInterval(iv);
+    }
+  }, [auasProcessing]);
+
+  useEffect(() => {
+    auasAgentLogEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [auasAgentLog]);
 
   // ─── SIMCAR Agent Log: group steps into phases ───
   type AgentPhase = { id: string; label: string; icon: 'satellite' | 'upload' | 'brain' | 'zap'; steps: typeof simcarAgentLog; allDone: boolean };
@@ -1282,6 +1302,40 @@ export default function Dashboard() {
         allDone: map.get(id)!.every((s) => s.done),
       }));
   }, [simcarAgentLog]);
+
+  const auasGroupedPhases = useMemo((): AgentPhase[] => {
+    const classify = (label: string): AgentPhase['icon'] => {
+      const l = label.toLowerCase();
+      if (/baixando|imagem|renderizando|gerando|geração|indisponível/i.test(l)) return 'satellite';
+      if (/upload|cloudinary|salvando/i.test(l)) return 'upload';
+      if (/ia\s|preparando.*ia|sintetizando|analis|fallback|análise/i.test(l)) return 'brain';
+      return 'zap';
+    };
+    const phaseOrder: AgentPhase['icon'][] = ['zap', 'satellite', 'upload', 'brain'];
+    const phaseLabels: Record<AgentPhase['icon'], string> = {
+      zap: 'Inicialização',
+      satellite: 'Geração de Imagens',
+      upload: 'Upload ao Servidor',
+      brain: 'Análise por IA',
+    };
+    const map = new Map<AgentPhase['icon'], typeof auasAgentLog>();
+    for (const step of auasAgentLog) {
+      if (step.kind !== 'step') continue;
+      const key = classify(step.label);
+      const arr = map.get(key) || [];
+      arr.push(step);
+      map.set(key, arr);
+    }
+    return phaseOrder
+      .map((icon) => {
+        const steps = map.get(icon) || [];
+        if (!steps.length) return null;
+        const id = `auas-${icon}`;
+        const allDone = steps.every((s) => s.done);
+        return { id, label: phaseLabels[icon], icon, steps, allDone };
+      })
+      .filter((p): p is AgentPhase => !!p);
+  }, [auasAgentLog]);
 
   // ─── SIMCAR Clip History (for sidebar cards) ───
   const [simcarClipHistory, setSimcarClipHistory] = useState<SimcarClipHistoryItem[]>([]);
@@ -1816,6 +1870,18 @@ export default function Dashboard() {
         }))
         .filter((item: { year: number; areaHa: number }) => item.year > 0 && item.areaHa >= 0)
       : [];
+    const openingYear = (() => {
+      const parsed = Number(raw?.auasOpeningYear);
+      return Number.isFinite(parsed) && parsed > 1900 ? Math.floor(parsed) : undefined;
+    })();
+    const openingSourceRaw = String(raw?.auasOpeningSource || '').trim().toUpperCase();
+    const openingSource =
+      openingSourceRaw === 'PRODES'
+        ? 'PRODES'
+        : openingSourceRaw === 'AI_FALLBACK'
+          ? 'AI_FALLBACK'
+          : undefined;
+    const openingDate = String(raw?.auasOpeningDate || '').trim() || undefined;
     return {
       propertyAreaHa: toNumber(raw?.propertyAreaHa),
       acAreaHa: toNumber(raw?.acAreaHa),
@@ -1842,6 +1908,9 @@ export default function Dashboard() {
         : undefined,
       analysisMeta: isPlainObject(raw?.analysisMeta) ? (raw.analysisMeta as SimcarAcAvnAnalysisMeta) : undefined,
       analysisRulesVersion: raw?.analysisRulesVersion ? String(raw.analysisRulesVersion) : undefined,
+      auasOpeningYear: openingYear,
+      auasOpeningDate: openingDate,
+      auasOpeningSource: openingSource,
     };
   }, []);
 
@@ -2234,6 +2303,9 @@ export default function Dashboard() {
               cloudWarnings: data?.cloudWarnings,
               analysisMeta: data?.analysisMeta,
               analysisRulesVersion: data?.analysisRulesVersion,
+              auasOpeningYear: data?.auasOpeningYear,
+              auasOpeningDate: data?.auasOpeningDate,
+              auasOpeningSource: data?.auasOpeningSource,
             });
             auasEntries.push({
               id: String(data?.id || docSnap.id),
@@ -7581,6 +7653,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       setAuasError(null);
                       setAuasProcessing(true);
                       setAuasProgress({ step: 'upload', percent: 5, message: 'Enviando shapefile...' });
+                      setAuasAgentLog([{ label: 'Iniciando processamento Novo CAR...', done: false, kind: 'step' }]);
                       auasAbortRef.current = new AbortController();
                       try {
                         const reader = new FileReader();
@@ -7616,7 +7689,30 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               continue;
                             }
                             if (evt.type === 'progress') {
-                              setAuasProgress({ step: evt.step || '', percent: evt.percent || 0, message: evt.message || '' });
+                              const msg = normalizeBackendText(String(evt.message || 'Processando...'));
+                              const nextPercent = Math.max(0, Math.min(100, Math.round(Number(evt.percent || 0))));
+                              setAuasProgress((prev) => {
+                                const current = Math.max(0, Math.min(100, Math.round(Number(prev?.percent || 0))));
+                                return {
+                                  step: evt.step || '',
+                                  percent: Math.max(current, nextPercent),
+                                  message: msg,
+                                };
+                              });
+                              setAuasAgentLog((prev) => {
+                                const updated = prev.map((s) => (s.done ? s : { ...s, done: true }));
+                                return [...updated, { label: msg, done: false, kind: 'step' as const }];
+                              });
+                              continue;
+                            }
+                            if (evt.type === 'model_thinking') {
+                              const source = evt.source ? `[${evt.source}]` : '';
+                              const thought = String(evt.thinkingText || '').trim();
+                              if (thought) {
+                                const snippet = thought.replace(/\s+/g, ' ').slice(0, 120);
+                                const label = source ? `${source}: ${snippet}...` : `${snippet}...`;
+                                setAuasAgentLog((prev) => [...prev, { label, done: true, kind: 'thinking' as const }]);
+                              }
                               continue;
                             }
                             if (evt.type === 'error') {
@@ -7631,6 +7727,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               setAuasJobId(nextJobId || null);
                               setAuasProcessing(false);
                               setAuasProgress(null);
+                              setAuasAgentLog((prev) => prev.map((item) => ({ ...item, done: true })));
 
                               if (nextJobId) {
                                 const entry: AuasHistoryItem = {
@@ -7662,6 +7759,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                   `Área do imóvel: ${entry.propertyAreaHa.toFixed(2)} ha.`,
                                   `AC: ${entry.acAreaHa.toFixed(2)} ha | AUAS: ${entry.auasAreaHa.toFixed(2)} ha | AVN/ARL: ${entry.avnAreaHa.toFixed(2)} ha.`,
                                   entry.riverBufferHa > 0 ? `Buffer de rios removido: ${entry.riverBufferHa.toFixed(4)} ha.` : '',
+                                  entry.auasOpeningDate
+                                    ? `ABERTURA automática do shape AUAS: ${entry.auasOpeningDate} (${entry.auasOpeningSource === 'PRODES' ? 'fonte PRODES' : 'fallback IA'}).`
+                                    : 'ABERTURA do shape AUAS não preenchida (ano não detectado).',
                                   cloudinaryFiles.length > 0 ? `Arquivos no Cloudinary:\n${cloudinaryFiles.join('\n')}` : '',
                                   entry.downloadUrl ? `Download do resultado: ${entry.downloadUrl}` : '',
                                 ].filter(Boolean);
@@ -7695,6 +7795,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       } catch (err: any) {
                         if (err?.name !== 'AbortError') {
                           setAuasError(err.message || 'Erro ao processar análise AUAS.');
+                          setAuasAgentLog((prev) => [
+                            ...prev.map((item) => ({ ...item, done: true })),
+                            { label: `Erro: ${err.message || 'falha no processamento'}`, done: true, kind: 'step' as const },
+                          ]);
                         }
                         setAuasProcessing(false);
                         setAuasProgress(null);
@@ -7710,33 +7814,147 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
               {/* ─── Em processamento ─── */}
               {auasProcessing && (
-                <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-8">
-                  <div className="flex flex-col items-center gap-5 text-center">
-                    <div className="relative">
-                      <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center">
-                        <Loader2 size={32} className="text-amber-400 animate-spin" />
-                      </div>
-                    </div>
-                    <div>
-                      <p className="font-semibold text-slate-200 mb-1">{auasProgress?.message || 'Processando...'}</p>
-                      <p className="text-xs text-slate-500">{auasProgress?.step}</p>
-                    </div>
-                    <div className="w-full max-w-xs">
-                      <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all duration-500"
-                          style={{ width: `${auasProgress?.percent || 0}%` }}
-                        />
-                      </div>
-                      <p className="text-[10px] text-slate-600 mt-1.5">{auasProgress?.percent || 0}% concluído</p>
-                    </div>
-                    <button
-                      onClick={() => { auasAbortRef.current?.abort(); setAuasProcessing(false); setAuasProgress(null); }}
-                      className="text-xs text-slate-500 hover:text-red-400 transition-colors"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
+                <section className="relative rounded-2xl border border-amber-500/30 bg-[#111612]/95 backdrop-blur-md px-5 py-4 shadow-2xl shadow-amber-900/20">
+                  <div className="absolute -top-[7px] left-7 h-3.5 w-3.5 rotate-45 border-l border-t border-amber-500/30 bg-[#111612]" />
+                  {(() => {
+                    const pct = Math.max(0, Math.min(100, Math.round(Number(auasProgress?.percent || 0))));
+                    const activeStep = auasAgentLog.filter((s) => s.kind === 'step' && !s.done).at(-1);
+                    const thinkingSteps = auasAgentLog.filter((s) => s.kind === 'thinking');
+                    const elMin = Math.floor(auasElapsed / 60);
+                    const elSec = auasElapsed % 60;
+                    const phaseIcons: Record<string, React.ReactNode> = {
+                      satellite: <Satellite size={12} />,
+                      upload: <Upload size={12} />,
+                      brain: <Brain size={12} />,
+                      zap: <Zap size={12} />,
+                    };
+                    const phaseColors: Record<string, { text: string; border: string }> = {
+                      zap: { text: 'text-amber-400', border: 'border-amber-500/20' },
+                      satellite: { text: 'text-cyan-400', border: 'border-cyan-500/20' },
+                      upload: { text: 'text-emerald-400', border: 'border-emerald-500/20' },
+                      brain: { text: 'text-purple-400', border: 'border-purple-500/20' },
+                    };
+                    return (
+                      <>
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="relative flex-shrink-0">
+                            <div className="p-2 rounded-xl bg-amber-500/15 text-amber-400">
+                              <Brain size={16} />
+                            </div>
+                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-400 animate-ping opacity-75" />
+                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-400" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold text-slate-200">GeoForest IA — Novo CAR em execução...</p>
+                            <p className="text-[10px] text-slate-400 truncate">
+                              {activeStep?.label || auasProgress?.message || 'Preparando...'}
+                            </p>
+                          </div>
+                          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                            <span className="text-xs font-bold text-amber-400 tabular-nums">{pct}%</span>
+                            <span className="text-[9px] text-slate-500 tabular-nums flex items-center gap-1">
+                              <Clock size={9} />
+                              {elMin > 0 ? `${elMin}m ${String(elSec).padStart(2, '0')}s` : `${elSec}s`}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="mb-3 bg-black/40 h-1.5 rounded-full overflow-hidden relative">
+                          <div
+                            className="h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden bg-gradient-to-r from-amber-500 to-orange-400"
+                            style={{ width: `${pct}%` }}
+                          >
+                            <div
+                              className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent animate-[shimmer_1.5s_infinite]"
+                              style={{ backgroundSize: '200% 100%' }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                          {auasGroupedPhases.map((phase) => {
+                            const colors = phaseColors[phase.icon] || phaseColors.zap;
+                            const doneSteps = phase.steps.filter((s) => s.done);
+                            const showCollapsed = phase.allDone && doneSteps.length > 2;
+                            return (
+                              <div key={phase.id} className={`rounded-lg border ${phase.allDone ? 'border-white/5 bg-white/[0.02]' : `${colors.border} bg-white/[0.03]`} overflow-hidden`}>
+                                <div className={`flex items-center gap-2 px-3 py-1.5 ${phase.allDone ? 'opacity-50' : ''}`}>
+                                  <span className={`${colors.text} flex-shrink-0`}>{phaseIcons[phase.icon]}</span>
+                                  <span className={`text-[10px] font-semibold ${phase.allDone ? 'text-slate-500' : 'text-slate-300'}`}>
+                                    {phase.label}
+                                  </span>
+                                  {phase.allDone ? (
+                                    <CheckCircle2 size={10} className="ml-auto text-emerald-500/70 flex-shrink-0" />
+                                  ) : (
+                                    <span className="ml-auto text-[9px] text-slate-500 tabular-nums">
+                                      {doneSteps.length}/{phase.steps.length}
+                                    </span>
+                                  )}
+                                </div>
+                                {!showCollapsed && (
+                                  <div className="px-3 pb-2 space-y-1">
+                                    {phase.steps.map((step, i) => (
+                                      <div
+                                        key={i}
+                                        className={`flex items-start gap-2 text-[11px] transition-all duration-300 ${step.done ? 'opacity-35' : 'opacity-100 pl-1 border-l-2 border-amber-400/50'}`}
+                                      >
+                                        {step.done ? (
+                                          <CheckCircle2 size={10} className="mt-0.5 flex-shrink-0 text-emerald-400/70" />
+                                        ) : (
+                                          <Loader2 size={10} className="mt-0.5 flex-shrink-0 animate-spin text-amber-400" />
+                                        )}
+                                        <span className={`leading-snug ${step.done ? 'text-slate-500' : 'text-slate-200 font-medium'}`}>
+                                          {step.label}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {showCollapsed && (
+                                  <div className="px-3 pb-1.5">
+                                    <span className="text-[10px] text-slate-600">{doneSteps.length} etapas concluídas</span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          {thinkingSteps.length > 0 && (
+                            <div className="rounded-lg border border-indigo-500/15 bg-indigo-500/[0.03] overflow-hidden">
+                              <div className="flex items-center gap-2 px-3 py-1.5 opacity-60">
+                                <span className="text-indigo-400 flex-shrink-0"><Cpu size={12} /></span>
+                                <span className="text-[10px] font-semibold text-indigo-300/80">Raciocínio da IA</span>
+                                <span className="ml-auto text-[9px] text-slate-500 tabular-nums">{thinkingSteps.length}</span>
+                              </div>
+                              <div className="px-3 pb-2 space-y-0.5">
+                                {thinkingSteps.slice(-2).map((step, i) => (
+                                  <p key={i} className="text-[10px] italic text-indigo-300/50 leading-snug truncate">
+                                    💭 {step.label}
+                                  </p>
+                                ))}
+                                {thinkingSteps.length > 2 && (
+                                  <p className="text-[9px] text-indigo-400/30">+{thinkingSteps.length - 2} anteriores</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          <div ref={auasAgentLogEndRef} />
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            auasAbortRef.current?.abort();
+                            setAuasProcessing(false);
+                            setAuasProgress(null);
+                          }}
+                          className="mt-3 text-xs text-slate-500 hover:text-red-400 transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                      </>
+                    );
+                  })()}
                 </section>
               )}
 
@@ -7758,6 +7976,22 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </div>
                     ))}
                   </div>
+
+                  <section className="bg-[#0e1612]/60 border border-white/5 rounded-2xl p-5">
+                    {auasResult.auasOpeningDate ? (
+                      <p className="text-sm text-slate-300">
+                        <strong className="text-amber-300">ABERTURA</strong> preenchida automaticamente no shape AUAS:{' '}
+                        <strong className="text-white">{auasResult.auasOpeningDate}</strong>{' '}
+                        <span className="text-xs text-slate-500">
+                          ({auasResult.auasOpeningSource === 'PRODES' ? 'fonte PRODES' : 'fallback IA'})
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="text-sm text-slate-400">
+                        ABERTURA não preenchida automaticamente por ausência de ano detectável.
+                      </p>
+                    )}
+                  </section>
 
                   {/* Buffer de rios */}
                   {auasResult.riverBufferHa > 0 && (

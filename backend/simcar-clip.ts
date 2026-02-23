@@ -4804,6 +4804,9 @@ function buildAuasFinalSynthesisPrompt(
         hasAuasLayer
             ? "AUAS vetorizada PRESENTE — valide se o limite do shape AUAS é consistente com a progressão temporal observada."
             : "AUAS vetorizada AUSENTE — se houver evidência de supressão pós-2008, declarar AUAS não vetorizada.",
+        hasAuasLayer
+            ? "Proibido afirmar ausencia de AUAS vetorizada, AUAS nao vetorizada ou AUAS nao declarada neste caso."
+            : "Quando a AUAS estiver ausente, declarar explicitamente a ausencia apenas se o ZIP realmente nao contiver a camada AUAS.",
         "",
         "## Critérios de Classificação do Veredito Final",
         "- **AUAS_VALIDA**: o shape AUAS mapeia corretamente área com uso alternativo do solo consolidado até 22/07/2008 OU passivo ambiental pós-2008 adequadamente registrado como tal.",
@@ -4868,6 +4871,45 @@ function normalizeAuasPassivoNarrative(text: string): string {
             /(invalida\s+a\s+declara[cç][aã]o\s+da\s+[áa]rea\s+de\s+uso\s+alternativo\s+do\s+solo)/gi,
             "identifica passivo ambiental na área AUAS",
         );
+    }
+
+    return normalized.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function enforceAuasDeclaredVectorizationConsistency(
+    text: string,
+    hasAuasLayer: boolean,
+): string {
+    let normalized = String(text || "").trim();
+    if (!normalized || !hasAuasLayer) return normalized;
+
+    const contradictionSentencePatterns: RegExp[] = [
+        /[^\n.]*\b(n[aã]o\s+foi\s+apresentad[oa]\s+(um\s+)?pol[ií]gono\s+de\s+auas\s+vetorizad[oa]|n[aã]o\s+h[aá]\s+shape\s+auas|auas\s+vetorizad[ao]?\s*:\s*ausente|auas\s+n[aã]o\s+vetorizad[ao]|auas\s+n[aã]o\s+declarad[ao])\b[^\n.]*(?:[.]|$)/gi,
+    ];
+
+    let removedAny = false;
+    for (const pattern of contradictionSentencePatterns) {
+        normalized = normalized.replace(pattern, () => {
+            removedAny = true;
+            return "";
+        });
+    }
+
+    // Defensive phrase-level cleanup for short fragments that may survive sentence removal.
+    normalized = normalized
+        .replace(/\bAUAS\s+n[aã]o\s+vetorizad[ao]\b/gi, "AUAS declarada")
+        .replace(/\bAUAS\s+n[aã]o\s+declarad[ao]\b/gi, "AUAS declarada")
+        .replace(/\bAUAS\s+vetorizada\s*:\s*AUSENTE\b/gi, "AUAS vetorizada: presente");
+
+    const hasConsistencyNote = /shape\s+AUAS\s+vetorizad[oa]\s+no\s+ZIP/i.test(normalized);
+    if (removedAny && !hasConsistencyNote) {
+        normalized = [
+            normalized,
+            "",
+            "Observacao tecnica obrigatoria: ha shape AUAS vetorizado no ZIP. Se houver supressao pos-2008, isso representa passivo ambiental dentro da AUAS declarada, e nao ausencia de declaracao da AUAS.",
+        ]
+            .filter(Boolean)
+            .join("\n");
     }
 
     return normalized.replace(/\n{3,}/g, "\n\n").trim();
@@ -4953,6 +4995,12 @@ function buildIntegratedAcAvnAuasPrompt(
             "Se houver evidência de supressão pós-2008, declarar que há AUAS não vetorizada (passivo ambiental).",
             "",
         );
+    } else {
+        parts.push(
+            "Contexto adicional: o ZIP possui shape AUAS vetorizado.",
+            "Nao afirmar AUAS ausente, AUAS nao vetorizada ou AUAS nao declarada neste caso.",
+            "",
+        );
     }
 
     parts.push(
@@ -4969,6 +5017,7 @@ function buildIntegratedAcAvnAuasPrompt(
         "- Quando citar ano provável de desmate, escrever em frase corrida.",
         "- Se AUAS indicar supressão pós-2008, descrever como passivo ambiental identificado na área AUAS (não como invalidação automática da AUAS).",
         "- Quando AUAS vetorizada estiver ausente e houver supressão pós-2008, afirmar explicitamente que há AUAS não vetorizada.",
+        "- Quando AUAS vetorizada estiver presente, nunca afirmar AUAS ausente/não vetorizada/não declarada.",
         "- Só usar linguagem de 'AUAS inválida' quando houver incoerência técnica de vetorização/delimitação, não apenas por existir passivo pós-marco.",
         "- Limite de tamanho: 260 a 420 palavras.",
         "- Sem tabelas e sem bloco <think>.",
@@ -5287,6 +5336,7 @@ async function processAuasAnalysis(
         satellitesMissing: missingSatelliteKeys,
     };
     analysisText = normalizeAuasPassivoNarrative(analysisText);
+    analysisText = enforceAuasDeclaredVectorizationConsistency(analysisText, hasAuasLayer);
     analysisText = enforceAuasMissingVectorizationGuidance(
         analysisText,
         hasAuasLayer,

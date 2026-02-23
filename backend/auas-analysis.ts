@@ -67,14 +67,23 @@ const MODELO_ZIP_PATH = path.resolve(__dirname, "..", "Arquivo Modelo.zip");
 // Pode ser sobrescrito via env PRODES_WFS_URL
 const DEFAULT_PRODES_WFS_URL =
     process.env.PRODES_WFS_URL ||
-    "https://terrabrasilis.dpi.inpe.br/geoserver/prodes-amz-nb/ows";
-const PRODES_LAYER = process.env.PRODES_LAYER || "prodes-amz-nb:yearly_deforestation";
+    "https://terrabrasilis.dpi.inpe.br/geoserver/ows";
+const PRODES_LAYER = process.env.PRODES_LAYER || "prodes-legal-amz:yearly_deforestation";
 const PRODES_YEAR_FIELD = process.env.PRODES_YEAR_FIELD || "year";
+const PRODES_GEOM_FIELD = process.env.PRODES_GEOM_FIELD || "geom";
 
 // SFB — Serviço Florestal Brasileiro (hidrografia)
 // Pode ser sobrescrito via env SFB_WFS_URL
 const SFB_WFS_URL = process.env.SFB_WFS_URL || "";
 const SFB_RIVER_LAYER = process.env.SFB_RIVER_LAYER || "";
+const SFB_GEOM_FIELD = process.env.SFB_GEOM_FIELD || "SHAPE";
+const SFB_CLASS_FIELD = process.env.SFB_CLASS_FIELD || "CLASSE";
+const DEFAULT_SEMA_AUTHKEY = "541085de-9a2e-454e-bdba-eb3d57a2f492";
+const SFB_WFS_AUTHKEY =
+    process.env.SFB_WFS_AUTHKEY ||
+    process.env.WFS_AUTHKEY ||
+    process.env.SEMA_WMS_AUTHKEY ||
+    DEFAULT_SEMA_AUTHKEY;
 
 // Buffer de rios: 2 m para cada lado (total 4 m de largura)
 const RIVER_BUFFER_METERS = 2;
@@ -168,28 +177,198 @@ function progress(res: Response, percent: number, step: string, message: string)
     sendSSE(res, { type: "progress", percent, step, message });
 }
 
+type AuasOpeningSource = "PRODES" | "AI_FALLBACK";
+
+type AuasOpeningResolution = {
+    year: number | null;
+    source?: AuasOpeningSource;
+};
+
+function normalizeCandidateYear(raw: unknown): number | null {
+    const year = Number(raw);
+    if (!Number.isFinite(year)) return null;
+    const normalized = Math.floor(year);
+    if (normalized < 1900 || normalized > 2100) return null;
+    return normalized;
+}
+
+function extractYearsFromText(text: string): number[] {
+    const out = new Set<number>();
+    const re = /\b(19\d{2}|20\d{2})\b/g;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(String(text || ""))) !== null) {
+        const parsed = normalizeCandidateYear(match[1]);
+        if (parsed) out.add(parsed);
+    }
+    return [...out.values()].sort((a, b) => a - b);
+}
+
+function resolveAuasOpeningYear(
+    auasPerYear: Map<number, number>,
+    aiText?: string,
+): AuasOpeningResolution {
+    const yearsFromProdes = [...auasPerYear.keys()]
+        .map((year) => normalizeCandidateYear(year))
+        .filter((year): year is number => year !== null);
+    if (yearsFromProdes.length > 0) {
+        return {
+            year: Math.max(...yearsFromProdes),
+            source: "PRODES",
+        };
+    }
+
+    const yearsFromAi = extractYearsFromText(aiText || "");
+    if (yearsFromAi.length > 0) {
+        return {
+            year: yearsFromAi[yearsFromAi.length - 1],
+            source: "AI_FALLBACK",
+        };
+    }
+
+    return { year: null };
+}
+
+function buildAuasAberturaAttrib(
+    fieldDefs: DbfFieldDef[],
+    openingYear: number | null,
+): Record<string, string | number | null> {
+    if (!openingYear) return {};
+    const field = fieldDefs.find((item) => item.name.toUpperCase() === "ABERTURA");
+    if (!field) return {};
+
+    const dateLiteral = `01/01/${openingYear}`;
+    if (field.type === "D") {
+        return { [field.name]: `${openingYear}0101` };
+    }
+    if (field.type === "C") {
+        return { [field.name]: dateLiteral };
+    }
+    return {};
+}
+
 /* ─── WFS helpers ────────────────────────────────────────────────── */
 
-/** Busca feições de um WFS GeoJSON usando bbox da propriedade. */
+type FetchWfsGeoJsonOptions = {
+    cql?: string;
+    extraParams?: Record<string, string>;
+    typeNameCandidates?: string[];
+};
+
+function uniqueNonEmpty(items: Array<string | null | undefined>): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of items) {
+        const value = String(raw || "").trim();
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        out.push(value);
+    }
+    return out;
+}
+
+function buildTypeNameCandidates(typeName: string): string[] {
+    const base = String(typeName || "").trim();
+    if (!base.includes(":")) return uniqueNonEmpty([base]);
+    const [namespace, layer] = base.split(":", 2);
+    return uniqueNonEmpty([
+        base,
+        `${namespace.toLowerCase()}:${layer}`,
+        `${namespace.toUpperCase()}:${layer}`,
+        layer,
+    ]);
+}
+
 async function fetchWfsGeoJson(
     baseUrl: string,
     typeName: string,
-    bboxWkt: string,
-    cql?: string,
+    options: FetchWfsGeoJsonOptions = {},
 ): Promise<FeatureCollection> {
-    const url = new URL(baseUrl);
-    url.searchParams.set("service", "WFS");
-    url.searchParams.set("version", "2.0.0");
-    url.searchParams.set("request", "GetFeature");
-    url.searchParams.set("typeNames", typeName);
-    url.searchParams.set("outputFormat", "application/json");
-    url.searchParams.set("count", "50000");
-    if (cql) url.searchParams.set("CQL_FILTER", cql);
-    const data = await fetchJsonWithTimeout<FeatureCollection>(url.toString(), WFS_TIMEOUT);
-    if (!data || !Array.isArray(data.features)) {
-        return { type: "FeatureCollection", features: [] };
+    const typeNames = uniqueNonEmpty(options.typeNameCandidates?.length
+        ? options.typeNameCandidates
+        : buildTypeNameCandidates(typeName));
+    if (!typeNames.length) return { type: "FeatureCollection", features: [] };
+
+    let lastError: unknown;
+    for (const candidate of typeNames) {
+        try {
+            const url = new URL(baseUrl);
+            url.searchParams.set("service", "WFS");
+            url.searchParams.set("version", "2.0.0");
+            url.searchParams.set("request", "GetFeature");
+            url.searchParams.set("typeNames", candidate);
+            url.searchParams.set("outputFormat", "application/json");
+            url.searchParams.set("count", "50000");
+            if (options.cql) url.searchParams.set("CQL_FILTER", options.cql);
+            for (const [key, value] of Object.entries(options.extraParams || {})) {
+                if (!value) continue;
+                url.searchParams.set(key, value);
+            }
+            const data = await fetchJsonWithTimeout<FeatureCollection>(url.toString(), WFS_TIMEOUT);
+            if (!data || !Array.isArray(data.features)) {
+                return { type: "FeatureCollection", features: [] };
+            }
+            return data;
+        } catch (err) {
+            lastError = err;
+        }
     }
-    return data;
+
+    throw lastError || new Error("Falha ao consultar WFS.");
+}
+
+async function fetchProdesGeoJson(wkt: string): Promise<FeatureCollection> {
+    const geomFields = uniqueNonEmpty([PRODES_GEOM_FIELD, "geom", "GEOMETRY", "the_geom"]);
+    let lastError: unknown;
+    for (const geomField of geomFields) {
+        try {
+            return await fetchWfsGeoJson(DEFAULT_PRODES_WFS_URL, PRODES_LAYER, {
+                cql: `INTERSECTS(${geomField},${wkt})`,
+            });
+        } catch (err) {
+            lastError = err;
+        }
+    }
+    throw lastError || new Error("Falha ao consultar PRODES.");
+}
+
+async function fetchSfbRiversGeoJson(wkt: string): Promise<FeatureCollection> {
+    const geomFields = uniqueNonEmpty([SFB_GEOM_FIELD, "SHAPE", "geom", "GEOMETRY", "the_geom"]);
+    const classFields = uniqueNonEmpty([SFB_CLASS_FIELD, "CLASSE"]);
+    const cqlCandidates: Array<{ cql: string; requiresClass: boolean }> = [];
+    const seen = new Set<string>();
+    for (const geomField of geomFields) {
+        for (const field of classFields) {
+            const cql = `INTERSECTS(${geomField},${wkt}) AND ${field} = 1`;
+            const key = `class|${cql}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                cqlCandidates.push({ cql, requiresClass: true });
+            }
+        }
+        const noClassCql = `INTERSECTS(${geomField},${wkt})`;
+        const noClassKey = `noclass|${noClassCql}`;
+        if (!seen.has(noClassKey)) {
+            seen.add(noClassKey);
+            cqlCandidates.push({ cql: noClassCql, requiresClass: false });
+        }
+    }
+
+    let lastError: unknown;
+    for (const candidate of cqlCandidates) {
+        try {
+            const data = await fetchWfsGeoJson(SFB_WFS_URL, SFB_RIVER_LAYER, {
+                cql: candidate.cql,
+                extraParams: SFB_WFS_AUTHKEY ? { authkey: SFB_WFS_AUTHKEY } : undefined,
+            });
+            if (Array.isArray(data.features) && data.features.length === 0 && candidate.requiresClass) {
+                continue;
+            }
+            return data;
+        } catch (err) {
+            lastError = err;
+        }
+    }
+    throw lastError || new Error("Falha ao consultar hidrografia SFB.");
 }
 
 /* ─── Geometria helpers ──────────────────────────────────────────── */
@@ -358,10 +537,9 @@ async function runAuasAnalysis(
 
     // 3. Buscar desmatamento PRODES dentro do imóvel
     progress(res, 20, "prodes", "Consultando PRODES (desmatamento)...");
-    const prodesCql = `INTERSECTS(geom,${wkt})`;
     let prodesFeatures: FeatureCollection = { type: "FeatureCollection", features: [] };
     try {
-        prodesFeatures = await fetchWfsGeoJson(DEFAULT_PRODES_WFS_URL, PRODES_LAYER, wkt, prodesCql);
+        prodesFeatures = await fetchProdesGeoJson(wkt);
     } catch (err: any) {
         console.warn("[AUAS] PRODES WFS error:", err.message);
         // Continuar sem dados PRODES — AC e AUAS ficarão zerados
@@ -399,10 +577,8 @@ async function runAuasAnalysis(
 
     if (SFB_WFS_URL && SFB_RIVER_LAYER) {
         try {
-            // CLASSE = 1 → "Ate 10m": apenas rios pequenos recebem o buffer de 4 m (2 m cada lado).
-            // Rios maiores (CLASSE >= 2) possuem largura superior ao buffer e são ignorados.
-            const riverCql = `INTERSECTS(geom,${wkt}) AND CLASSE = 1`;
-            const riverGeoJson = await fetchWfsGeoJson(SFB_WFS_URL, SFB_RIVER_LAYER, wkt, riverCql);
+            // Preferir rios de menor classe (<= 10 m), com fallback automático para schemas/campos diferentes.
+            const riverGeoJson = await fetchSfbRiversGeoJson(wkt);
             progress(res, 62, "rivers", `SFB: ${riverGeoJson.features.length} rios encontrados. Aplicando buffer...`);
 
             const riverBuffers: Feature<Polygon | MultiPolygon>[] = [];
@@ -468,92 +644,9 @@ async function runAuasAnalysis(
     // ARL = AVN
     const arlAreaHa = avnAreaHa;
 
-    progress(res, 80, "shapefiles", "Gerando shapefiles de saída...");
-
-    // 9. Gerar ZIP com shapefiles usando o template do Arquivo Modelo
-    const layers: Array<{ name: string; feature: Feature<Polygon | MultiPolygon> | null }> = [
-        { name: "AREA_CONSOLIDADA", feature: acUnion },
-        { name: "AUAS", feature: auasUnion },
-        { name: "AVN", feature: avnFeature },
-        { name: "ARL", feature: avnFeature }, // ARL = AVN
-    ];
-
+    // 9. Análise de IA — mesmo fluxo da aba de recorte com CAR já vetorizado
     const jobId = crypto.randomUUID();
     const zipFilename = `auas_${jobId.slice(0, 8)}.zip`;
-
-    const archive = archiver("zip", { zlib: { level: 6 } });
-    const zipChunks: Buffer[] = [];
-    archive.on("data", (chunk: Buffer) => zipChunks.push(chunk));
-
-    for (const { name, feature } of layers) {
-        if (!feature) continue;
-        const bufs = buildLayerBuffers(name, feature, templateEntries);
-        for (const { ext, data } of bufs) {
-            if (!Buffer.isBuffer(data) || data.length === 0) {
-                console.warn(
-                    `[AUAS] arquivo inválido ignorado ao montar ZIP: layer=${name} ext=${ext} type=${typeof data}`,
-                );
-                continue;
-            }
-            archive.append(data, { name: `${name}.${ext}` });
-        }
-    }
-
-    await archive.finalize();
-    const zipBuffer = Buffer.concat(zipChunks);
-
-    let inputZipUrl: string | undefined;
-    let outputZipUrl: string | undefined;
-    let contextUrl: string | undefined;
-    try {
-        progress(res, 88, "cloudinary", "Salvando arquivos do Novo CAR no Cloudinary...");
-        const tag = jobId.slice(0, 8);
-        const [inUrl, outUrl] = await Promise.all([
-            uploadZipBufferToCloudinary(propertyZip, `auas_input_${tag}`),
-            uploadZipBufferToCloudinary(zipBuffer, `auas_output_${tag}`),
-        ]);
-        inputZipUrl = inUrl;
-        outputZipUrl = outUrl;
-        const contextPayload = {
-            version: 1,
-            source: "novo_car_tab",
-            jobId,
-            savedAtIso: new Date().toISOString(),
-            inputFilename: options?.inputFilename || `imovel_${tag}.zip`,
-            outputFilename: zipFilename,
-            metrics: {
-                propertyAreaHa,
-                acAreaHa,
-                auasAreaHa,
-                avnAreaHa,
-                arlAreaHa,
-                riverBufferHa,
-            },
-        };
-        const contextBuffer = Buffer.from(JSON.stringify(contextPayload), "utf8");
-        contextUrl = await uploadRawBufferToCloudinary(
-            contextBuffer,
-            `auas_context_${tag}.json`,
-            "application/json",
-        );
-    } catch (err: any) {
-        console.warn("[AUAS] Cloudinary persist failed:", err?.message || err);
-    }
-
-    // Guardar em cache para download
-    pruneAuasCache();
-    auasJobCache.set(jobId, {
-        buffer: zipBuffer,
-        filename: zipFilename,
-        inputZipUrl,
-        outputZipUrl,
-        contextUrl,
-        expiresAt: Date.now() + CACHE_TTL,
-    });
-
-    progress(res, 95, "done", "Vetorização concluída. Iniciando análise de IA...");
-
-    // 10. Análise de IA — mesmo fluxo da aba de recorte com CAR já vetorizado
     const auasLayerSummaries: LayerSummary[] = [
         { name: "AREA_CONSOLIDADA", source: "wfs", features: acUnion ? 1 : 0, areaHa: acAreaHa },
         { name: "AUAS",             source: "wfs", features: auasUnion ? 1 : 0, areaHa: auasAreaHa },
@@ -588,6 +681,102 @@ async function runAuasAnalysis(
         console.warn("[AUAS] AI analysis failed (continuing without it):", err.message);
     }
 
+    const openingResolution = resolveAuasOpeningYear(auasPerYear, aiResult?.analysisText || "");
+    if (!openingResolution.year) {
+        console.warn("[AUAS] ABERTURA sem ano detectado.");
+    }
+    const auasOpeningDate = openingResolution.year ? `01/01/${openingResolution.year}` : undefined;
+    const auasFieldDefs = readTemplateSchema(templateEntries, "AUAS");
+    const auasAberturaAttrib = buildAuasAberturaAttrib(auasFieldDefs, openingResolution.year);
+
+    progress(res, 92, "shapefiles", "Gerando shapefiles de saída...");
+
+    // 10. Gerar ZIP com shapefiles usando o template do Arquivo Modelo
+    const layers: Array<{ name: string; feature: Feature<Polygon | MultiPolygon> | null }> = [
+        { name: "AREA_CONSOLIDADA", feature: acUnion },
+        { name: "AUAS", feature: auasUnion },
+        { name: "AVN", feature: avnFeature },
+        { name: "ARL", feature: avnFeature }, // ARL = AVN
+    ];
+
+    const archive = archiver("zip", { zlib: { level: 6 } });
+    const zipChunks: Buffer[] = [];
+    archive.on("data", (chunk: Buffer) => zipChunks.push(chunk));
+
+    for (const { name, feature } of layers) {
+        if (!feature) continue;
+        const extraAttribs =
+            name === "AUAS" && Object.keys(auasAberturaAttrib).length > 0
+                ? auasAberturaAttrib
+                : {};
+        const bufs = buildLayerBuffers(name, feature, templateEntries, extraAttribs);
+        for (const { ext, data } of bufs) {
+            if (!Buffer.isBuffer(data) || data.length === 0) {
+                console.warn(
+                    `[AUAS] arquivo inválido ignorado ao montar ZIP: layer=${name} ext=${ext} type=${typeof data}`,
+                );
+                continue;
+            }
+            archive.append(data, { name: `${name}.${ext}` });
+        }
+    }
+
+    await archive.finalize();
+    const zipBuffer = Buffer.concat(zipChunks);
+
+    let inputZipUrl: string | undefined;
+    let outputZipUrl: string | undefined;
+    let contextUrl: string | undefined;
+    try {
+        progress(res, 96, "cloudinary", "Salvando arquivos do Novo CAR no Cloudinary...");
+        const tag = jobId.slice(0, 8);
+        const [inUrl, outUrl] = await Promise.all([
+            uploadZipBufferToCloudinary(propertyZip, `auas_input_${tag}`),
+            uploadZipBufferToCloudinary(zipBuffer, `auas_output_${tag}`),
+        ]);
+        inputZipUrl = inUrl;
+        outputZipUrl = outUrl;
+        const contextPayload = {
+            version: 1,
+            source: "novo_car_tab",
+            jobId,
+            savedAtIso: new Date().toISOString(),
+            inputFilename: options?.inputFilename || `imovel_${tag}.zip`,
+            outputFilename: zipFilename,
+            metrics: {
+                propertyAreaHa,
+                acAreaHa,
+                auasAreaHa,
+                avnAreaHa,
+                arlAreaHa,
+                riverBufferHa,
+                auasOpeningYear: openingResolution.year,
+                auasOpeningSource: openingResolution.source || null,
+            },
+        };
+        const contextBuffer = Buffer.from(JSON.stringify(contextPayload), "utf8");
+        contextUrl = await uploadRawBufferToCloudinary(
+            contextBuffer,
+            `auas_context_${tag}.json`,
+            "application/json",
+        );
+    } catch (err: any) {
+        console.warn("[AUAS] Cloudinary persist failed:", err?.message || err);
+    }
+
+    // Guardar em cache para download
+    pruneAuasCache();
+    auasJobCache.set(jobId, {
+        buffer: zipBuffer,
+        filename: zipFilename,
+        inputZipUrl,
+        outputZipUrl,
+        contextUrl,
+        expiresAt: Date.now() + CACHE_TTL,
+    });
+
+    progress(res, 99, "done", "Processamento concluído. Preparando resultado final...");
+
     // 11. Retornar resultado
     const auasPolygons = Array.from(auasPerYear.entries()).map(([year, ha]) => ({ year, areaHa: ha }));
 
@@ -606,6 +795,9 @@ async function runAuasAnalysis(
             inputZipUrl,
             outputZipUrl,
             contextUrl,
+            auasOpeningYear: openingResolution.year || undefined,
+            auasOpeningDate,
+            auasOpeningSource: openingResolution.source,
             ...(aiResult && !aiResult.imageOnly ? {
                 analysis: aiResult.analysisText,
                 images: aiResult.cloudinaryUrls,
