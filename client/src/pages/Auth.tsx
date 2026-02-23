@@ -277,7 +277,7 @@ export default function Auth() {
                       <Lock className="absolute left-3 top-3 w-4 h-4 text-green-300" />
                       <Input
                         type={showPassword ? 'text' : 'password'}
-                        placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                        placeholder="********"
                         value={loginPassword}
                         onChange={(e) => setLoginPassword(e.target.value)}
                         className="pl-9 pr-10 bg-white/10 border-white/15 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
@@ -366,7 +366,7 @@ export default function Auth() {
                       <Lock className="absolute left-3 top-3 w-4 h-4 text-green-300" />
                       <Input
                         type={showPassword ? 'text' : 'password'}
-                        placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                        placeholder="********"
                         value={signupPassword}
                         onChange={(e) => setSignupPassword(e.target.value)}
                         className="pl-9 pr-10 bg-white/10 border-white/15 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
@@ -387,7 +387,7 @@ export default function Auth() {
                       <Lock className="absolute left-3 top-3 w-4 h-4 text-green-300" />
                       <Input
                         type={showPassword ? 'text' : 'password'}
-                        placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                        placeholder="********"
                         value={signupConfirmPassword}
                         onChange={(e) => setSignupConfirmPassword(e.target.value)}
                         className="pl-9 pr-10 bg-white/10 border-white/15 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
