@@ -466,6 +466,7 @@ type SimcarClipHistoryItem = {
   outputZipUrl?: string;
   contextUrl?: string;
   sourceMode?: 'auto-clip' | 'vectorized-analysis';
+  processingStage?: 'importing' | 'acavn' | 'auas' | 'done' | 'error';
   analysisImages?: Array<{ url: string; caption: string }>;
   analysisMessages?: SimcarAnalysisMessage[];
   analysisMeta?: SimcarAcAvnAnalysisMeta;
@@ -1981,6 +1982,92 @@ export default function Dashboard() {
     };
   }, []);
 
+  const mapAuasDocToHistoryItem = useCallback(
+    (docId: string, data: any): AuasHistoryItem => {
+      const normalizedResult = normalizeAuasResultPayload({
+        propertyAreaHa: data?.propertyAreaHa,
+        acAreaHa: data?.acAreaHa,
+        auasAreaHa: data?.auasAreaHa,
+        avnAreaHa: data?.avnAreaHa,
+        arlAreaHa: data?.arlAreaHa,
+        riverBufferHa: data?.riverBufferHa,
+        auasPolygons: data?.auasPolygons,
+        downloadUrl: data?.downloadUrl,
+        inputZipUrl: data?.inputZipUrl ?? data?.files?.inputZipUrl,
+        outputZipUrl: data?.outputZipUrl ?? data?.files?.outputZipUrl,
+        contextUrl: data?.contextUrl ?? data?.files?.contextUrl,
+        analysis: data?.analysis,
+        images: data?.images,
+        satellitesUsed: data?.satellitesUsed,
+        satellitesMissing: data?.satellitesMissing,
+        cloudWarnings: data?.cloudWarnings,
+        analysisMeta: data?.analysisMeta,
+        analysisRulesVersion: data?.analysisRulesVersion,
+        auasOpeningYear: data?.auasOpeningYear,
+        auasOpeningDate: data?.auasOpeningDate,
+        auasOpeningSource: data?.auasOpeningSource,
+        status: data?.status,
+        error: data?.error,
+      });
+      return {
+        id: String(data?.id || docId),
+        jobId: String(data?.jobId || docId),
+        timestamp: toIsoDateFromUnknown(data?.timestamp || data?.updatedAt || data?.createdAt),
+        filename: String(data?.filename || 'Novo CAR'),
+        inputFilename: data?.inputFilename ? String(data.inputFilename) : undefined,
+        conversationId: data?.conversationId ? String(data.conversationId) : undefined,
+        ...normalizedResult,
+      };
+    },
+    [normalizeAuasResultPayload]
+  );
+
+  const resumeAuasProcessingUi = useCallback((entry: AuasHistoryItem) => {
+    setAuasJobId(entry.jobId);
+    setAuasError(entry.error || null);
+    setAuasProcessing(true);
+    setAuasResult(null);
+    setAuasProgress((prev) => {
+      const prevPercent = Math.max(5, Math.round(Number(prev?.percent || 12)));
+      return {
+        step: 'processing',
+        percent: Math.min(95, prevPercent),
+        message: 'Processamento em andamento no servidor. Você pode sair do site e voltar depois.',
+      };
+    });
+    setAuasAgentLog((prev) => {
+      if (prev.length > 0) return prev;
+      return [{ label: 'Processamento retomado a partir do servidor...', done: false, kind: 'step' }];
+    });
+  }, []);
+
+  const selectAuasHistoryEntry = useCallback(
+    (entry: AuasHistoryItem) => {
+      setAuasJobId(entry.jobId);
+      setAuasError(entry.error || null);
+
+      if (entry.status === 'processing') {
+        resumeAuasProcessingUi(entry);
+        return;
+      }
+
+      setAuasProcessing(false);
+      setAuasProgress(null);
+      setAuasAgentLog([]);
+
+      if (entry.status === 'failed' || entry.status === 'cancelled') {
+        setAuasResult(null);
+        if (!entry.error) {
+          setAuasError(entry.status === 'cancelled' ? 'Processamento cancelado.' : 'Processamento falhou.');
+        }
+        return;
+      }
+
+      setAuasResult(normalizeAuasResultPayload(entry));
+    },
+    [normalizeAuasResultPayload, resumeAuasProcessingUi]
+  );
+
   const persistAuasHistoryEntry = useCallback(
     async (entry: AuasHistoryItem) => {
       if (!auasJobsRef || !entry?.jobId) return;
@@ -2194,6 +2281,212 @@ export default function Dashboard() {
     [persistSimcarClipHistoryEntry]
   );
 
+  const inferSimcarStageFromEndpoint = useCallback(
+    (
+      endpoint: string,
+      sourceMode?: SimcarClipHistoryItem['sourceMode'],
+    ): { stage?: SimcarClipHistoryItem['processingStage']; message?: string } => {
+      const normalizedEndpoint = String(endpoint || '').trim().toLowerCase();
+      const isVectorized = sourceMode === 'vectorized-analysis';
+      if (normalizedEndpoint === '/api/simcar/clip') {
+        return {
+          stage: 'importing',
+          message: 'Recorte base em processamento no servidor...',
+        };
+      }
+      if (normalizedEndpoint === '/api/simcar/clip/analyze') {
+        return {
+          stage: isVectorized ? 'acavn' : undefined,
+          message: 'Análise AC/AVN em processamento no servidor...',
+        };
+      }
+      if (normalizedEndpoint === '/api/simcar/clip/analyze-auas') {
+        return {
+          stage: isVectorized ? 'auas' : undefined,
+          message: 'Análise AUAS em processamento no servidor...',
+        };
+      }
+      if (normalizedEndpoint === '/api/simcar/clip/analyze/chat') {
+        return {
+          stage: undefined,
+          message: 'Chat de análise em processamento...',
+        };
+      }
+      return {};
+    },
+    []
+  );
+
+  const selectSimcarClipEntry = useCallback(
+    (
+      clip: SimcarClipHistoryItem,
+      runtime?: { serverStatus?: string; serverEndpoint?: string }
+    ) => {
+      const isVectorized = clip.sourceMode === 'vectorized-analysis';
+      const hasVectorizedFinalReport =
+        Array.isArray(clip.auasAnalysisMessages) && clip.auasAnalysisMessages.length > 0;
+      const runtimeStageInfo = runtime?.serverEndpoint
+        ? inferSimcarStageFromEndpoint(runtime.serverEndpoint, clip.sourceMode)
+        : {};
+      const runtimeStatus = String(runtime?.serverStatus || '').trim().toLowerCase();
+      const serverRunning = runtimeStatus === 'running' || runtimeStatus === 'cancel_requested';
+      const inferredStage: NonNullable<SimcarClipHistoryItem['processingStage']> =
+        clip.processingStage === 'done' || clip.processingStage === 'error' || clip.processingStage === 'auas' || clip.processingStage === 'acavn' || clip.processingStage === 'importing'
+          ? clip.processingStage
+          : isVectorized
+            ? hasVectorizedFinalReport
+              ? 'done'
+              : 'acavn'
+            : 'importing';
+      const effectiveStage: NonNullable<SimcarClipHistoryItem['processingStage']> =
+        runtimeStageInfo.stage && (runtimeStageInfo.stage === 'importing' || runtimeStageInfo.stage === 'acavn' || runtimeStageInfo.stage === 'auas' || runtimeStageInfo.stage === 'done' || runtimeStageInfo.stage === 'error')
+          ? runtimeStageInfo.stage
+          : inferredStage;
+      const shouldResumeProcessing =
+        clip.status === 'processing' ||
+        (isVectorized && clip.status === 'completed' && !hasVectorizedFinalReport);
+
+      setSimcarClipDownloadUrl(clip.outputZipUrl || clip.downloadUrl);
+      setSimcarClipJobId(clip.jobId);
+      if (clip.sourceMode === 'auto-clip' || clip.sourceMode === 'vectorized-analysis') {
+        setSimcarClipMode(clip.sourceMode);
+      }
+      setSimcarClipSummary({
+        totalFeaturesClipped: clip.totalFeatures,
+        propertyAreaHa: clip.propertyAreaHa,
+        layers: [],
+        processingTimeMs: 0,
+        crs: 'EPSG:4674',
+      });
+
+      setSimcarAnalysisImages(clip.analysisImages || []);
+      const restoredMessages = clip.analysisMessages || [];
+      setSimcarAnalysisMessages(restoredMessages);
+      setSimcarThinkingText(
+        restoredMessages
+          .filter((msg) => msg.role === 'ai')
+          .map((msg) => {
+            const direct = String(msg.thinkingText || '').trim();
+            if (direct) return direct;
+            const text = String(msg.text || '');
+            const matches = Array.from(text.matchAll(/<think>([\s\S]*?)<\/think>/gi))
+              .map((item) => String(item?.[1] || '').trim())
+              .filter(Boolean);
+            return matches.join('\n\n');
+          })
+          .filter(Boolean)
+          .join('\n\n---\n\n')
+      );
+      setSimcarThinkingHidden(false);
+      setSimcarLiveThinkingText('');
+      setSimcarLiveAnswerText('');
+      setSimcarAuasImages(clip.auasAnalysisImages || []);
+      setSimcarAuasMessages(clip.auasAnalysisMessages || []);
+      setSimcarResultImagePanelsOpen({ acAvn: false, auas: false });
+      setSimcarClipError(clip.error || null);
+
+      if (shouldResumeProcessing) {
+        if (isVectorized) {
+          setSimcarVectorizedRunning(serverRunning);
+          setSimcarClipProcessing(false);
+          const nextStage = effectiveStage === 'done' ? 'acavn' : effectiveStage;
+          setSimcarVectorizedStatus({
+            stage: nextStage,
+            message: serverRunning
+              ? (
+                nextStage === 'importing'
+                  ? 'Importando ZIP vetorizado no servidor...'
+                  : nextStage === 'acavn'
+                    ? 'Análise AC/AVN em andamento no servidor...'
+                    : 'Análise AUAS em andamento no servidor...'
+              )
+              : (
+                runtimeStageInfo.message
+                || (nextStage === 'auas'
+                  ? 'Etapa AUAS pendente para concluir o laudo vetorizado.'
+                  : 'Fluxo vetorizado pausado. Retome para continuar.')
+              ),
+          });
+          if (nextStage === 'acavn' && serverRunning) {
+            setSimcarAnalysisProcessing(true);
+            setSimcarAuasProcessing(false);
+            setSimcarAnalysisProgress((prev) => ({
+              step: 'analyzing',
+              percent: Math.max(12, Math.round(Number(prev?.percent || 35))),
+              message: 'Análise AC/AVN em andamento no servidor...',
+            }));
+            setSimcarAuasProgress(null);
+          } else if (nextStage === 'auas' && serverRunning) {
+            setSimcarAnalysisProcessing(false);
+            setSimcarAuasProcessing(true);
+            setSimcarAnalysisProgress(null);
+            setSimcarAuasProgress((prev) => ({
+              step: 'analyzing',
+              percent: Math.max(60, Math.round(Number(prev?.percent || 72))),
+              message: 'Análise AUAS em andamento no servidor...',
+            }));
+          } else {
+            setSimcarAnalysisProcessing(false);
+            setSimcarAuasProcessing(false);
+            setSimcarAnalysisProgress(null);
+            setSimcarAuasProgress(null);
+          }
+        } else {
+          setSimcarClipProcessing(serverRunning || !runtimeStatus);
+          setSimcarVectorizedRunning(false);
+          setSimcarVectorizedStatus(null);
+          setSimcarAnalysisProcessing(false);
+          setSimcarAuasProcessing(false);
+          setSimcarAnalysisProgress(null);
+          setSimcarAuasProgress(null);
+          setSimcarClipProgress((prev) =>
+            prev || {
+              current: 1,
+              total: Math.max(1, Number(clip.totalLayers || 1)),
+              layer: 'Processando',
+              status: 'fetching',
+            }
+          );
+        }
+        return;
+      }
+
+      setSimcarAuasProcessing(false);
+      setSimcarClipProcessing(false);
+      setSimcarAnalysisProcessing(false);
+      setSimcarAnalysisProgress(null);
+      setSimcarAuasProgress(null);
+      setSimcarClipProgress(null);
+
+      if (isVectorized && hasVectorizedFinalReport) {
+        setSimcarVectorizedRunning(false);
+        setSimcarVectorizedStatus({
+          stage: 'done',
+          message: 'Análise completa finalizada com sucesso.',
+        });
+        setSimcarUnifiedProgressDisplay(100);
+      } else if (clip.status === 'failed' || clip.status === 'cancelled') {
+        setSimcarVectorizedRunning(false);
+        setSimcarVectorizedStatus(
+          isVectorized
+            ? {
+              stage: 'error',
+              message:
+                clip.error ||
+                (clip.status === 'cancelled'
+                  ? 'Processamento vetorizado cancelado.'
+                  : 'Processamento vetorizado falhou.'),
+            }
+            : null
+        );
+      } else {
+        setSimcarVectorizedRunning(false);
+        setSimcarVectorizedStatus(null);
+      }
+    },
+    [inferSimcarStageFromEndpoint]
+  );
+
   const patchPersistedSimcarClip = useCallback(
     async (jobId: string, patch: Partial<SimcarClipHistoryItem>) => {
       if (!simcarClipsRef || !jobId) return;
@@ -2401,6 +2694,14 @@ export default function Dashboard() {
                   : data?.sourceMode === 'auto-clip'
                     ? 'auto-clip'
                     : undefined,
+              processingStage:
+                data?.processingStage === 'importing' ||
+                  data?.processingStage === 'acavn' ||
+                  data?.processingStage === 'auas' ||
+                  data?.processingStage === 'done' ||
+                  data?.processingStage === 'error'
+                  ? data.processingStage
+                  : undefined,
               analysisImages: Array.isArray(data?.analysisImages) ? data.analysisImages : [],
               analysisMessages: Array.isArray(data?.analysisMessages) ? data.analysisMessages : [],
               analysisMeta: isPlainObject(data?.analysisMeta)
@@ -2409,14 +2710,28 @@ export default function Dashboard() {
               auasAnalysisImages: Array.isArray(data?.auasAnalysisImages) ? data.auasAnalysisImages : [],
               auasAnalysisMessages: Array.isArray(data?.auasAnalysisMessages) ? data.auasAnalysisMessages : [],
               auasMeta: isPlainObject(data?.auasMeta) ? (data.auasMeta as SimcarAuasMeta) : undefined,
-              status:
-                data?.status === 'processing' || data?.status === 'completed' || data?.status === 'failed' || data?.status === 'cancelled'
-                  ? data.status
-                  : undefined,
+              status: (() => {
+                const parsed =
+                  data?.status === 'processing' || data?.status === 'completed' || data?.status === 'failed' || data?.status === 'cancelled'
+                    ? data.status
+                    : undefined;
+                if (
+                  parsed === 'completed' &&
+                  data?.sourceMode === 'vectorized-analysis' &&
+                  (!Array.isArray(data?.auasAnalysisMessages) || data.auasAnalysisMessages.length === 0)
+                ) {
+                  return 'processing';
+                }
+                return parsed;
+              })(),
               error: data?.error ? String(data.error) : undefined,
             });
           });
           setSimcarClipHistory(clips);
+          if (clips.length > 0) {
+            const processingFirst = clips.find((clip) => clip.status === 'processing');
+            selectSimcarClipEntry(processingFirst || clips[0]);
+          }
         } catch (error) {
           console.warn('Falha ao carregar histórico SIMCAR salvo:', error);
         }
@@ -2426,46 +2741,12 @@ export default function Dashboard() {
           const auasEntries: AuasHistoryItem[] = [];
           auasSnap.forEach((docSnap) => {
             const data = docSnap.data() as any;
-            const normalizedResult = normalizeAuasResultPayload({
-              propertyAreaHa: data?.propertyAreaHa,
-              acAreaHa: data?.acAreaHa,
-              auasAreaHa: data?.auasAreaHa,
-              avnAreaHa: data?.avnAreaHa,
-              arlAreaHa: data?.arlAreaHa,
-              riverBufferHa: data?.riverBufferHa,
-              auasPolygons: data?.auasPolygons,
-              downloadUrl: data?.downloadUrl,
-              inputZipUrl: data?.inputZipUrl ?? data?.files?.inputZipUrl,
-              outputZipUrl: data?.outputZipUrl ?? data?.files?.outputZipUrl,
-              contextUrl: data?.contextUrl ?? data?.files?.contextUrl,
-              analysis: data?.analysis,
-              images: data?.images,
-              satellitesUsed: data?.satellitesUsed,
-              satellitesMissing: data?.satellitesMissing,
-              cloudWarnings: data?.cloudWarnings,
-              analysisMeta: data?.analysisMeta,
-              analysisRulesVersion: data?.analysisRulesVersion,
-              auasOpeningYear: data?.auasOpeningYear,
-              auasOpeningDate: data?.auasOpeningDate,
-              auasOpeningSource: data?.auasOpeningSource,
-              status: data?.status,
-              error: data?.error,
-            });
-            auasEntries.push({
-              id: String(data?.id || docSnap.id),
-              jobId: String(data?.jobId || docSnap.id),
-              timestamp: toIsoDateFromUnknown(data?.timestamp || data?.updatedAt || data?.createdAt),
-              filename: String(data?.filename || 'Novo CAR'),
-              inputFilename: data?.inputFilename ? String(data.inputFilename) : undefined,
-              conversationId: data?.conversationId ? String(data.conversationId) : undefined,
-              ...normalizedResult,
-            });
+            auasEntries.push(mapAuasDocToHistoryItem(docSnap.id, data));
           });
           setAuasHistory(auasEntries);
           if (auasEntries.length > 0) {
             const latest = auasEntries[0];
-            setAuasJobId(latest.jobId);
-            setAuasResult(normalizeAuasResultPayload(latest));
+            selectAuasHistoryEntry(latest);
           }
         } catch (error) {
           console.warn('Falha ao carregar histórico Novo CAR salvo:', error);
@@ -2487,7 +2768,7 @@ export default function Dashboard() {
     });
 
     return () => unsubscribe();
-  }, [normalizeAuasResultPayload, setLocation]);
+  }, [mapAuasDocToHistoryItem, selectAuasHistoryEntry, selectSimcarClipEntry, setLocation]);
 
   useEffect(() => {
     const uid = String(userProfile?.uid || '').trim();
@@ -2535,6 +2816,209 @@ export default function Dashboard() {
       window.clearInterval(interval);
     };
   }, [userProfile?.uid]);
+
+  useEffect(() => {
+    const uid = String(userProfile?.uid || '').trim();
+    const activeClip = activeSimcarClip;
+    const activeClipJobId = String(activeClip?.jobId || '').trim();
+    if (!uid || !activeClip || !activeClipJobId) return;
+
+    let alive = true;
+    const pollClipServerState = async () => {
+      try {
+        const jobsRef = collection(db, 'users', uid, 'processing_jobs');
+        const jobsSnap = await getDocs(query(jobsRef, orderBy('updatedAtMs', 'desc')));
+        if (!alive) return;
+
+        const related = jobsSnap.docs
+          .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as any) }))
+          .filter((data) => {
+            const endpoint = String(data?.endpoint || '').trim().toLowerCase();
+            const clipJobId = String(data?.metadata?.clipJobId || '').trim();
+            return clipJobId === activeClipJobId && endpoint.startsWith('/api/simcar/clip');
+          })
+          .sort((a, b) => Number(b?.updatedAtMs || 0) - Number(a?.updatedAtMs || 0));
+        if (related.length === 0) return;
+
+        const latest = related[0];
+        const latestStatus = String(latest?.status || '').trim().toLowerCase();
+        const endpoint = String(latest?.endpoint || '').trim();
+        const stageInfo = inferSimcarStageFromEndpoint(endpoint, activeClip.sourceMode);
+        const hasFinalVectorizedReport =
+          activeClip.sourceMode === 'vectorized-analysis' &&
+          Array.isArray(activeClip.auasAnalysisMessages) &&
+          activeClip.auasAnalysisMessages.length > 0;
+
+        const patch: Partial<SimcarClipHistoryItem> = {};
+        if (latestStatus === 'running' || latestStatus === 'cancel_requested') {
+          patch.status = 'processing';
+          if (stageInfo.stage) patch.processingStage = stageInfo.stage;
+          patch.error = undefined;
+        } else if (latestStatus === 'failed' || latestStatus === 'cancelled') {
+          patch.status = latestStatus === 'failed' ? 'failed' : 'cancelled';
+          if (activeClip.sourceMode === 'vectorized-analysis') patch.processingStage = 'error';
+          patch.error = String(latest?.error || '').trim() || activeClip.error;
+        } else if (latestStatus === 'completed') {
+          const normalizedEndpoint = endpoint.toLowerCase();
+          if (normalizedEndpoint === '/api/simcar/clip/analyze-auas') {
+            patch.status = hasFinalVectorizedReport ? 'completed' : activeClip.status || 'processing';
+            if (activeClip.sourceMode === 'vectorized-analysis' && hasFinalVectorizedReport) {
+              patch.processingStage = 'done';
+            }
+            patch.error = undefined;
+          } else if (normalizedEndpoint === '/api/simcar/clip/analyze') {
+            if (activeClip.sourceMode === 'vectorized-analysis' && !hasFinalVectorizedReport) {
+              patch.status = 'processing';
+              patch.processingStage = 'acavn';
+              patch.error = undefined;
+            }
+          } else if (normalizedEndpoint === '/api/simcar/clip') {
+            patch.status = activeClip.sourceMode === 'vectorized-analysis' ? activeClip.status : 'completed';
+            patch.error = undefined;
+          }
+        }
+
+        if (Object.keys(patch).length === 0) return;
+        const changed =
+          (patch.status && patch.status !== activeClip.status) ||
+          (patch.processingStage && patch.processingStage !== activeClip.processingStage) ||
+          (typeof patch.error !== 'undefined' && patch.error !== activeClip.error);
+        if (!changed) return;
+
+        const nextClip = { ...activeClip, ...patch };
+        setSimcarClipHistory((prev) =>
+          prev.map((clip) => (clip.jobId === activeClipJobId ? { ...clip, ...patch } : clip))
+        );
+        void persistSimcarClipHistoryEntry(nextClip).catch(() => undefined);
+        selectSimcarClipEntry(nextClip, {
+          serverStatus: latestStatus,
+          serverEndpoint: endpoint,
+        });
+      } catch {
+        // best-effort polling
+      }
+    };
+
+    void pollClipServerState();
+    const intervalId = window.setInterval(() => {
+      void pollClipServerState();
+    }, 8000);
+    return () => {
+      alive = false;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    activeSimcarClip,
+    inferSimcarStageFromEndpoint,
+    persistSimcarClipHistoryEntry,
+    selectSimcarClipEntry,
+    userProfile?.uid,
+  ]);
+
+  const activeAuasEntry = useMemo(
+    () => (auasJobId ? auasHistory.find((item) => item.jobId === auasJobId) || null : auasHistory[0] || null),
+    [auasHistory, auasJobId]
+  );
+
+  useEffect(() => {
+    const uid = String(userProfile?.uid || '').trim();
+    const activeJobId = String(activeAuasEntry?.jobId || '').trim();
+    const activeStatus = activeAuasEntry?.status;
+    if (!uid || !activeJobId || activeStatus !== 'processing') return;
+
+    let alive = true;
+    const pollAuasJob = async () => {
+      try {
+        const jobRef = doc(db, 'users', uid, 'auas_jobs', activeJobId);
+        const snap = await getDoc(jobRef);
+        if (!alive || !snap.exists()) return;
+        const nextEntry = mapAuasDocToHistoryItem(snap.id, snap.data() as any);
+
+        setAuasHistory((prev) => {
+          let found = false;
+          const updated = prev.map((item) => {
+            if (item.jobId !== nextEntry.jobId) return item;
+            found = true;
+            return {
+              ...item,
+              ...nextEntry,
+            };
+          });
+          return found ? updated : [nextEntry, ...updated];
+        });
+
+        if (nextEntry.status === 'processing') {
+          setAuasProcessing(true);
+          setAuasResult(null);
+          setAuasError(nextEntry.error || null);
+          if (auasAbortRef.current) return;
+          setAuasProgress((prev) => {
+            const current = Math.max(5, Math.round(Number(prev?.percent || 10)));
+            const bumped = Math.min(95, current + (current < 85 ? 3 : 1));
+            return {
+              step: 'processing',
+              percent: bumped,
+              message: 'Processamento em andamento no servidor. Você pode sair do site e voltar depois.',
+            };
+          });
+          setAuasAgentLog((prev) => {
+            if (prev.length === 0) {
+              return [{ label: 'Processamento em andamento no servidor...', done: false, kind: 'step' }];
+            }
+            const hasServerStep = prev.some((step) => step.label.toLowerCase().includes('servidor'));
+            if (hasServerStep) return prev;
+            return [...prev, { label: 'Processamento continua no servidor após recarregar.', done: false, kind: 'step' }];
+          });
+          return;
+        }
+
+        if (nextEntry.status === 'completed') {
+          setAuasProcessing(false);
+          setAuasProgress(null);
+          setAuasError(null);
+          setAuasResult(normalizeAuasResultPayload(nextEntry));
+          setAuasAgentLog((prev) => {
+            const donePrev = prev.map((step) => ({ ...step, done: true }));
+            const hasFinal = donePrev.some((step) => step.label.toLowerCase().includes('conclu'));
+            if (hasFinal) return donePrev;
+            return [...donePrev, { label: 'Processamento concluído e card sincronizado.', done: true, kind: 'step' }];
+          });
+          return;
+        }
+
+        if (nextEntry.status === 'failed' || nextEntry.status === 'cancelled') {
+          setAuasProcessing(false);
+          setAuasProgress(null);
+          setAuasResult(null);
+          setAuasError(
+            nextEntry.error ||
+            (nextEntry.status === 'cancelled' ? 'Processamento cancelado.' : 'Processamento falhou no servidor.')
+          );
+          setAuasAgentLog((prev) => {
+            const donePrev = prev.map((step) => ({ ...step, done: true }));
+            const failLabel =
+              nextEntry.status === 'cancelled'
+                ? 'Processamento cancelado pelo usuário.'
+                : 'Processamento falhou no servidor.';
+            const exists = donePrev.some((step) => step.label === failLabel);
+            if (exists) return donePrev;
+            return [...donePrev, { label: failLabel, done: true, kind: 'step' }];
+          });
+        }
+      } catch {
+        // best-effort polling
+      }
+    };
+
+    void pollAuasJob();
+    const intervalId = window.setInterval(() => {
+      void pollAuasJob();
+    }, 8000);
+    return () => {
+      alive = false;
+      window.clearInterval(intervalId);
+    };
+  }, [activeAuasEntry?.jobId, activeAuasEntry?.status, mapAuasDocToHistoryItem, normalizeAuasResultPayload, userProfile?.uid]);
 
   useEffect(() => {
     if (loading || !auth.currentUser) return;
@@ -5286,6 +5770,15 @@ export default function Dashboard() {
     setSimcarAuasImages([]);
     setSimcarAuasMessages([]);
     setSimcarResultImagePanelsOpen({ acAvn: false, auas: false });
+    let pipelineJobId = '';
+
+    const patchVectorizedHistoryState = (jobId: string, patch: Partial<SimcarClipHistoryItem>) => {
+      if (!jobId) return;
+      setSimcarClipHistory((prev) =>
+        prev.map((clip) => (clip.jobId === jobId ? { ...clip, ...patch } : clip))
+      );
+      void patchPersistedSimcarClip(jobId, patch).catch(() => undefined);
+    };
 
     try {
       const base64 = await readFileAsBase64Payload(simcarClipFile);
@@ -5314,6 +5807,7 @@ export default function Dashboard() {
       if (!jobId) {
         throw new Error('Importação concluída sem jobId válido.');
       }
+      pipelineJobId = jobId;
       const resolvedDownloadUrl =
         typeof payload?.downloadUrl === 'string' && payload.downloadUrl.startsWith('/api/')
           ? apiUrl(payload.downloadUrl)
@@ -5338,7 +5832,8 @@ export default function Dashboard() {
         outputZipUrl: payload?.outputZipUrl ? String(payload.outputZipUrl) : undefined,
         contextUrl: payload?.contextUrl ? String(payload.contextUrl) : undefined,
         sourceMode: 'vectorized-analysis',
-        status: 'completed',
+        status: 'processing',
+        processingStage: 'importing',
       };
 
       setSimcarClipJobId(jobId);
@@ -5347,6 +5842,11 @@ export default function Dashboard() {
       setSimcarClipHistory((prev) => [newClip, ...prev.filter((c) => c.jobId !== jobId)]);
       await persistSimcarClipHistoryEntry(newClip);
 
+      patchVectorizedHistoryState(jobId, {
+        status: 'processing',
+        processingStage: 'acavn',
+        error: undefined,
+      });
       const cloudinaryFiles = [
         newClip.outputZipUrl ? `- ZIP vetorizado: ${newClip.outputZipUrl}` : '',
         newClip.contextUrl ? `- Contexto JSON: ${newClip.contextUrl}` : '',
@@ -5390,9 +5890,19 @@ export default function Dashboard() {
         const errText = acAvnResult.error || 'Falha na etapa AC/AVN.';
         setSimcarClipError(errText);
         setSimcarVectorizedStatus({ stage: 'error', message: errText });
+        patchVectorizedHistoryState(jobId, {
+          status: 'failed',
+          processingStage: 'error',
+          error: errText,
+        });
         return;
       }
 
+      patchVectorizedHistoryState(jobId, {
+        status: 'processing',
+        processingStage: 'auas',
+        error: undefined,
+      });
       setSimcarVectorizedStatus({ stage: 'auas', message: 'Consolidando laudo unico (AUAS + AC/AVN)...' });
       const previousAnalysisText = acAvnResult.aiMessage?.text
         || '';
@@ -5410,6 +5920,11 @@ export default function Dashboard() {
         const errText = auasResult.error || 'Falha na etapa AUAS.';
         setSimcarClipError(errText);
         setSimcarVectorizedStatus({ stage: 'error', message: errText });
+        patchVectorizedHistoryState(jobId, {
+          status: 'failed',
+          processingStage: 'error',
+          error: errText,
+        });
         return;
       }
 
@@ -5440,6 +5955,9 @@ export default function Dashboard() {
           c.jobId === jobId
             ? {
               ...c,
+              status: 'completed',
+              processingStage: 'done',
+              error: undefined,
               analysisMeta: acAvnResult.analysisMeta,
               auasAnalysisImages: auasImages,
               auasAnalysisMessages: [finalAiMessage],
@@ -5449,6 +5967,9 @@ export default function Dashboard() {
         )
       );
       void patchPersistedSimcarClip(jobId, {
+        status: 'completed',
+        processingStage: 'done',
+        error: undefined,
         analysisMeta: acAvnResult.analysisMeta,
         auasAnalysisImages: auasImages,
         auasAnalysisMessages: [finalAiMessage],
@@ -5487,6 +6008,13 @@ export default function Dashboard() {
       const message = String(err?.message || 'Erro inesperado na análise completa vetorizada.');
       setSimcarClipError(message);
       setSimcarVectorizedStatus({ stage: 'error', message });
+      if (pipelineJobId) {
+        patchVectorizedHistoryState(pipelineJobId, {
+          status: 'failed',
+          processingStage: 'error',
+          error: message,
+        });
+      }
     } finally {
       setSimcarVectorizedRunning(false);
     }
@@ -5502,6 +6030,7 @@ export default function Dashboard() {
     simcarAnalysisMessages,
     simcarClipFile,
     simcarFixedSatelliteKeys,
+    patchPersistedSimcarClip,
   ]);
 
   const patchMessageMeta = async (messageId: string, patch: Partial<NonNullable<ChatMessage['meta']>>, lastUserText: string) => {
@@ -6549,11 +7078,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   key={entry.id}
                   className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${auasJobId === entry.jobId ? 'bg-amber-500/10 border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.05)]' : 'bg-[#0a110e]/60 hover:bg-[#131b17] hover:border-amber-500/20'}`}
                   onClick={() => {
-                    setAuasResult(normalizeAuasResultPayload(entry));
-                    setAuasJobId(entry.jobId);
-                    setAuasProcessing(false);
-                    setAuasProgress(null);
-                    setAuasError(null);
+                    selectAuasHistoryEntry(entry);
                   }}
                 >
                   <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${auasJobId === entry.jobId ? 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-md shadow-amber-900/40' : 'bg-white/5 text-slate-400 group-hover:text-amber-400 group-hover:bg-amber-500/10'}`}>
@@ -6647,37 +7172,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   key={clip.id}
                   className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors group cursor-pointer mb-1"
                   onClick={() => {
-                    // Load clip results + persisted analysis data
-                    setSimcarClipDownloadUrl(clip.outputZipUrl || clip.downloadUrl);
-                    setSimcarClipJobId(clip.jobId);
-                    if (clip.sourceMode === 'auto-clip' || clip.sourceMode === 'vectorized-analysis') {
-                      setSimcarClipMode(clip.sourceMode);
-                    }
-                    setSimcarClipSummary({
-                      totalFeaturesClipped: clip.totalFeatures,
-                      propertyAreaHa: clip.propertyAreaHa,
-                      layers: [],
-                      processingTimeMs: 0,
-                      crs: 'EPSG:4674',
-                    });
-                    // Restore analysis data if available
-                    setSimcarAnalysisImages(clip.analysisImages || []);
-                    const restoredMessages = clip.analysisMessages || [];
-                    setSimcarAnalysisMessages(restoredMessages);
-                    setSimcarThinkingText(extractSimcarThinkingText(restoredMessages));
-                    setSimcarThinkingHidden(false);
-                    setSimcarLiveThinkingText('');
-                    setSimcarLiveAnswerText('');
-                    // Restore AUAS analysis data if available
-                    setSimcarAuasImages(clip.auasAnalysisImages || []);
-                    setSimcarAuasMessages(clip.auasAnalysisMessages || []);
-                    setSimcarResultImagePanelsOpen({ acAvn: false, auas: false });
-                    setSimcarAuasProcessing(false);
-                    setSimcarClipProcessing(false);
-                    setSimcarAnalysisProcessing(false);
-                    setSimcarVectorizedRunning(false);
-                    setSimcarVectorizedStatus(null);
-                    setSimcarClipError(null);
+                    selectSimcarClipEntry(clip);
                   }}
                 >
                   <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
@@ -7237,6 +7732,15 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </>
                   )}
                 </div>
+
+                {!simcarClipFile && simcarClipMode === 'vectorized-analysis' && activeSimcarClip?.jobId === simcarClipJobId && (
+                  <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3">
+                    <p className="text-xs text-amber-200 font-medium">ZIP já carregado no servidor</p>
+                    <p className="text-[11px] text-slate-300 mt-1 break-words">
+                      {activeSimcarClip.filename || `Recorte ${activeSimcarClip.jobId.slice(0, 8)}`}
+                    </p>
+                  </div>
+                )}
 
                 {simcarClipMode === 'vectorized-analysis' && (
                   <div className="mb-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3">
