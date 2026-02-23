@@ -76,7 +76,8 @@ import {
     settleCloudinaryStorageReserve,
     settleReservedCredits,
 } from "./billing";
-import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
+import { adminAuth, adminDb, isFirebaseConfigError } from "./firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import {
     finishJob,
     isCancelRequested,
@@ -1255,7 +1256,26 @@ async function processClip(
     propertyZip: Buffer,
     requestedLayers: string[] | null,
     airIdentificacao?: string,
-): Promise<{ ok: boolean; cloudinaryStoredBytes: number }> {
+    forcedJobId?: string,
+): Promise<{
+    ok: boolean;
+    cloudinaryStoredBytes: number;
+    jobId?: string;
+    filename?: string;
+    downloadUrl?: string;
+    inputZipUrl?: string;
+    outputZipUrl?: string;
+    contextUrl?: string;
+    summary?: {
+        propertyAreaHa: number;
+        crs: string;
+        layersProcessed: number;
+        layersWithData: number;
+        totalFeaturesClipped: number;
+        processingTimeMs: number;
+        layers: LayerSummary[];
+    };
+}> {
     const startTime = Date.now();
     const layerNames = requestedLayers && requestedLayers.length > 0
         ? requestedLayers.filter((l) => (TEMPLATE_LAYERS as readonly string[]).includes(l))
@@ -1507,7 +1527,7 @@ async function processClip(
     }
 
     // 7. Cache the result (including geometry for AI analysis)
-    const jobId = crypto.randomUUID();
+    const jobId = String(forcedJobId || "").trim() || crypto.randomUUID();
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const filename = `SIMCAR_Recorte_${timestamp}.zip`;
 
@@ -1581,24 +1601,36 @@ async function processClip(
     const processingTimeMs = Date.now() - startTime;
     const layersWithData = layerSummaries.filter((l) => l.features > 0).length;
 
+    const summaryPayload = {
+        propertyAreaHa: areaHa,
+        crs: "EPSG:4674",
+        layersProcessed: layerNames.length,
+        layersWithData,
+        totalFeaturesClipped,
+        processingTimeMs,
+        layers: layerSummaries,
+    };
+    const downloadUrl = `/api/simcar/clip/download/${jobId}`;
     sendSSE(res, {
         type: "complete",
         jobId,
-        downloadUrl: `/api/simcar/clip/download/${jobId}`,
+        downloadUrl,
         inputZipUrl,
         outputZipUrl,
         contextUrl: contextJsonUrl,
-        summary: {
-            propertyAreaHa: areaHa,
-            crs: "EPSG:4674",
-            layersProcessed: layerNames.length,
-            layersWithData,
-            totalFeaturesClipped,
-            processingTimeMs,
-            layers: layerSummaries,
-        },
+        summary: summaryPayload,
     });
-    return { ok: true, cloudinaryStoredBytes };
+    return {
+        ok: true,
+        cloudinaryStoredBytes,
+        jobId,
+        filename,
+        downloadUrl,
+        inputZipUrl,
+        outputZipUrl,
+        contextUrl: contextJsonUrl,
+        summary: summaryPayload,
+    };
 }
 
 /* ─── AI Analysis Pipeline ───────────────────────────────────── */
@@ -6258,6 +6290,99 @@ async function attachOptionalAuth(req: Request, _res: Response, next: any) {
     next();
 }
 
+function stripUndefinedDeep<T>(value: T): T {
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => stripUndefinedDeep(item))
+            .filter((item) => item !== undefined) as unknown as T;
+    }
+    if (value && typeof value === "object") {
+        const out: Record<string, unknown> = {};
+        for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+            if (raw === undefined) continue;
+            const cleaned = stripUndefinedDeep(raw);
+            if (cleaned === undefined) continue;
+            out[key] = cleaned;
+        }
+        return out as T;
+    }
+    return value;
+}
+
+async function persistSimcarClipProcessingState(args: {
+    uid: string;
+    jobId: string;
+    filename?: string;
+    sourceMode?: "auto-clip" | "vectorized-analysis";
+    status: "processing" | "completed" | "cancelled" | "failed";
+    result?: {
+        downloadUrl?: string;
+        inputZipUrl?: string;
+        outputZipUrl?: string;
+        contextUrl?: string;
+        summary?: {
+            propertyAreaHa: number;
+            crs: string;
+            layersProcessed: number;
+            layersWithData: number;
+            totalFeaturesClipped: number;
+            processingTimeMs: number;
+            layers: LayerSummary[];
+        };
+        filename?: string;
+    };
+    error?: string;
+}): Promise<void> {
+    const uid = String(args.uid || "").trim();
+    const jobId = String(args.jobId || "").trim();
+    if (!uid || !jobId) return;
+    const sourceMode = args.sourceMode || "auto-clip";
+    const docRef = adminDb.doc(`users/${uid}/simcar_clips/${jobId}`);
+    const summary = args.result?.summary;
+    const safeFilename = String(args.filename || args.result?.filename || `Recorte ${jobId.slice(0, 8)}`).trim();
+    const payload = stripUndefinedDeep({
+        id: jobId,
+        jobId,
+        kind: "simcar_recorte",
+        sourceMode,
+        status: args.status,
+        title: safeFilename,
+        filename: safeFilename,
+        downloadUrl: args.result?.downloadUrl || null,
+        inputZipUrl: args.result?.inputZipUrl || null,
+        outputZipUrl: args.result?.outputZipUrl || null,
+        contextUrl: args.result?.contextUrl || null,
+        files: {
+            inputZipUrl: args.result?.inputZipUrl || null,
+            outputZipUrl: args.result?.outputZipUrl || null,
+            contextUrl: args.result?.contextUrl || null,
+        },
+        totalFeatures: Number(summary?.totalFeaturesClipped || 0),
+        propertyAreaHa: Number(summary?.propertyAreaHa || 0),
+        layersWithData: Number(summary?.layersWithData || 0),
+        totalLayers: Number(summary?.layersProcessed || 0),
+        processingTimeMs: Number(summary?.processingTimeMs || 0),
+        error: args.error || null,
+        timestamp: new Date().toISOString(),
+        updatedAt: FieldValue.serverTimestamp(),
+    });
+    try {
+        await adminDb.runTransaction(async (tx) => {
+            const snap = await tx.get(docRef);
+            tx.set(
+                docRef,
+                {
+                    ...payload,
+                    createdAt: snap.exists ? snap.get("createdAt") || FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
+                },
+                { merge: true },
+            );
+        });
+    } catch (error) {
+        console.warn("[SIMCAR CLIP] failed to persist processing state:", error);
+    }
+}
+
 export function registerSimcarClipRoutes(app: Express) {
     const sendSseHeaders = (res: Response) => {
         res.setHeader("Content-Type", "text/event-stream");
@@ -6318,12 +6443,19 @@ export function registerSimcarClipRoutes(app: Express) {
     // SSE endpoint for clip processing
     app.post("/api/simcar/clip", attachOptionalAuth, async (req: Request, res: Response) => {
         let billingUid = "";
+        let billingEnabled = false;
         let operationRequestId = "";
         let operationReserved = 0;
         let storageRequestId = "";
         let storageReserved = 0;
         let processingJobId = "";
         let totalChargedBrl = 0;
+        let body: {
+            propertyZip?: string;
+            filename?: string;
+            layerNames?: string[];
+            airIdentificacao?: string;
+        } = {};
         // SSE headers
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
@@ -6333,12 +6465,12 @@ export function registerSimcarClipRoutes(app: Express) {
 
         try {
             const uid = String(req.authUid || "");
-            const billingEnabled = Boolean(uid);
+            billingEnabled = Boolean(uid);
             billingUid = uid;
             if (!billingEnabled) {
                 console.warn("[SIMCAR CLIP] Sem token válido; processando sem cobrança.");
             }
-            const body = req.body as {
+            body = req.body as {
                 propertyZip?: string;
                 filename?: string;
                 layerNames?: string[];
@@ -6377,6 +6509,15 @@ export function registerSimcarClipRoutes(app: Express) {
                 markDisconnected(processingJobId);
             });
             sendSSE(res, { type: "job_started", jobId: processingJobId });
+            if (billingEnabled) {
+                await persistSimcarClipProcessingState({
+                    uid,
+                    jobId: processingJobId,
+                    filename: body.filename,
+                    sourceMode: "auto-clip",
+                    status: "processing",
+                });
+            }
 
             console.log(
                 `[SIMCAR CLIP] Processing: ${body.filename || "unknown"}, ` +
@@ -6417,7 +6558,13 @@ export function registerSimcarClipRoutes(app: Express) {
                 }
             }
 
-            const clipResult = await processClip(res, zipBuffer, body.layerNames || null, body.airIdentificacao || undefined);
+            const clipResult = await processClip(
+                res,
+                zipBuffer,
+                body.layerNames || null,
+                body.airIdentificacao || undefined,
+                processingJobId || undefined,
+            );
             if (billingEnabled && clipResult.ok && operationReserved > 0) {
                 const fallbackUsage = buildEstimatedUsageForFallback({
                     endpoint: "/api/simcar/clip",
@@ -6488,6 +6635,17 @@ export function registerSimcarClipRoutes(app: Express) {
                 },
                 error: clipResult.ok ? undefined : "clip_failed_or_invalid",
             });
+            if (billingEnabled) {
+                await persistSimcarClipProcessingState({
+                    uid,
+                    jobId: processingJobId,
+                    filename: body.filename,
+                    sourceMode: "auto-clip",
+                    status: clipResult.ok ? "completed" : "failed",
+                    result: clipResult,
+                    error: clipResult.ok ? undefined : "clip_failed_or_invalid",
+                });
+            }
         } catch (err: any) {
             if (err instanceof ClientAbortError) {
                 if (billingUid && operationReserved > 0 && operationRequestId) {
@@ -6539,6 +6697,16 @@ export function registerSimcarClipRoutes(app: Express) {
                     },
                     error: "cancel_requested",
                 });
+                if (billingEnabled) {
+                    await persistSimcarClipProcessingState({
+                        uid: billingUid,
+                        jobId: processingJobId,
+                        filename: body?.filename,
+                        sourceMode: "auto-clip",
+                        status: "cancelled",
+                        error: "cancel_requested",
+                    });
+                }
                 return;
             }
             if (billingUid && operationReserved > 0 && operationRequestId) {
@@ -6573,6 +6741,16 @@ export function registerSimcarClipRoutes(app: Express) {
                     status: "failed",
                     error: err.message,
                 });
+                if (billingEnabled) {
+                    await persistSimcarClipProcessingState({
+                        uid: billingUid,
+                        jobId: processingJobId,
+                        filename: body?.filename,
+                        sourceMode: "auto-clip",
+                        status: "failed",
+                        error: err.message,
+                    });
+                }
                 sendSSE(res, { type: "error", message: err.message, code: err.code });
                 return;
             }
@@ -6582,6 +6760,16 @@ export function registerSimcarClipRoutes(app: Express) {
                 status: "failed",
                 error: err?.message || "clip_unexpected_error",
             });
+            if (billingEnabled) {
+                await persistSimcarClipProcessingState({
+                    uid: billingUid,
+                    jobId: processingJobId,
+                    filename: body?.filename,
+                    sourceMode: "auto-clip",
+                    status: "failed",
+                    error: err?.message || "clip_unexpected_error",
+                });
+            }
             sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
         } finally {
             if (!res.writableEnded) res.end();
@@ -6593,6 +6781,8 @@ export function registerSimcarClipRoutes(app: Express) {
         let billingUid = "";
         let storageRequestId = "";
         let storageReserved = 0;
+        let processingJobId = "";
+        let baseFilename = "";
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
@@ -6622,9 +6812,26 @@ export function registerSimcarClipRoutes(app: Express) {
             const baseName = String(body.filename || `simcar_vectorizado_${Date.now()}.zip`).trim();
             const safeFilename = baseName.toLowerCase().endsWith(".zip") ? baseName : `${baseName}.zip`;
             const jobId = crypto.randomUUID();
+            processingJobId = jobId;
+            baseFilename = safeFilename;
+            await persistSimcarClipProcessingState({
+                uid,
+                jobId,
+                filename: safeFilename,
+                sourceMode: "vectorized-analysis",
+                status: "processing",
+            });
 
             const parsed = parseCachedContextFromOutputZip(zipBuffer, safeFilename);
             if (!parsed || !parsed.bbox || !parsed.polygon || !parsed.layerSummaries) {
+                await persistSimcarClipProcessingState({
+                    uid,
+                    jobId,
+                    filename: safeFilename,
+                    sourceMode: "vectorized-analysis",
+                    status: "failed",
+                    error: "vectorized_zip_invalid",
+                });
                 res.status(400).json({
                     error:
                         "ZIP vetorizado inválido. É obrigatório conter camadas com geometria e ATP/AIR para reconstrução da propriedade.",
@@ -6714,21 +6921,37 @@ export function registerSimcarClipRoutes(app: Express) {
             const layerSummaries = parsed.layerSummaries || [];
             const totalFeaturesClipped = layerSummaries.reduce((sum, layer) => sum + Number(layer.features || 0), 0);
             const layersWithData = layerSummaries.filter((layer) => Number(layer.features || 0) > 0).length;
+            const summaryPayload = {
+                propertyAreaHa: Number(parsed.areaHa || 0),
+                crs: "EPSG:4674",
+                layersProcessed: layerSummaries.length,
+                layersWithData,
+                totalFeaturesClipped,
+                processingTimeMs: 0,
+                layers: layerSummaries,
+            };
+            await persistSimcarClipProcessingState({
+                uid,
+                jobId,
+                filename: safeFilename,
+                sourceMode: "vectorized-analysis",
+                status: "completed",
+                result: {
+                    filename: safeFilename,
+                    downloadUrl: `/api/simcar/clip/download/${jobId}`,
+                    inputZipUrl: undefined,
+                    outputZipUrl,
+                    contextUrl: contextJsonUrl,
+                    summary: summaryPayload,
+                },
+            });
 
             res.json({
                 jobId,
                 downloadUrl: `/api/simcar/clip/download/${jobId}`,
                 outputZipUrl,
                 contextUrl: contextJsonUrl,
-                summary: {
-                    propertyAreaHa: Number(parsed.areaHa || 0),
-                    crs: "EPSG:4674",
-                    layersProcessed: layerSummaries.length,
-                    layersWithData,
-                    totalFeaturesClipped,
-                    layers: layerSummaries,
-                    processingTimeMs: 0,
-                },
+                summary: summaryPayload,
                 billing: billing || undefined,
             });
         } catch (err: any) {
@@ -6746,10 +6969,30 @@ export function registerSimcarClipRoutes(app: Express) {
                 }
             }
             if (err instanceof BillingError) {
+                if (billingUid && processingJobId) {
+                    await persistSimcarClipProcessingState({
+                        uid: billingUid,
+                        jobId: processingJobId,
+                        filename: baseFilename || undefined,
+                        sourceMode: "vectorized-analysis",
+                        status: "failed",
+                        error: err.message,
+                    });
+                }
                 res.status(err.statusCode).json({ error: err.message, code: err.code });
                 return;
             }
             console.error("[SIMCAR VECTOR IMPORT] Error:", err);
+            if (billingUid && processingJobId) {
+                await persistSimcarClipProcessingState({
+                    uid: billingUid,
+                    jobId: processingJobId,
+                    filename: baseFilename || undefined,
+                    sourceMode: "vectorized-analysis",
+                    status: "failed",
+                    error: err?.message || "vectorized_import_error",
+                });
+            }
             res.status(500).json({ error: err?.message || "Erro interno ao importar ZIP vetorizado." });
         }
     });
