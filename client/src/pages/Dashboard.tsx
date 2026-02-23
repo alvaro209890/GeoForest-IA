@@ -6307,7 +6307,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               Configurações
             </span>
           </button>
-          <div className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group">
+          <button
+            type="button"
+            onClick={onLogout}
+            disabled={loggingOut}
+            className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group disabled:opacity-60 disabled:cursor-not-allowed"
+          >
             <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center ring-2 ring-transparent group-hover:ring-emerald-500/30 transition-all">
               <span className="font-bold text-white text-sm">
                 {(userProfile?.fullName || 'U')
@@ -6321,8 +6326,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <p className="text-sm font-medium text-white truncate">{userProfile?.fullName || 'Usuário'}</p>
               <p className="text-xs text-emerald-400/70">{userProfile?.email || 'Plano Pro'}</p>
             </div>
-            <LogOut size={18} className="text-slate-500 group-hover:text-red-400 transition-colors block lg:hidden xl:block" />
-          </div>
+            {loggingOut ? (
+              <Loader2 size={18} className="text-slate-400 animate-spin block lg:hidden xl:block" />
+            ) : (
+              <LogOut size={18} className="text-slate-500 group-hover:text-red-400 transition-colors block lg:hidden xl:block" />
+            )}
+          </button>
         </div>
       </aside>
 
