@@ -9,6 +9,9 @@ import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { handleSignUp, handleLogin, handleGoogleSignIn } from '@/lib/auth';
 import { useLocation } from 'wouter';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase';
 
 type AuthMode = 'login' | 'signup';
 
@@ -50,6 +53,28 @@ export default function Auth() {
       document.documentElement.style.width = prevHtmlWidth;
     };
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (!currentUser) return;
+      try {
+        const userDocRef = doc(db, 'users', currentUser.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        if (!userDocSnap.exists()) {
+          await signOut(auth);
+          toast.error('Conta sem cadastro no sistema. Entre em contato com o suporte.');
+          return;
+        }
+        setLocation('/dashboard');
+      } catch (error) {
+        await signOut(auth);
+        console.error('[auth-check] falha ao validar perfil no Firestore', error);
+        toast.error('Nao foi possivel validar sua conta agora. Tente novamente.');
+      }
+    });
+
+    return () => unsubscribe();
+  }, [setLocation]);
 
   const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
