@@ -3583,6 +3583,9 @@ function buildSingleSatellitePrompt(
     const auasContext = hasAuas && acAvnAuasContext ? acAvnAuasContext : null;
     const year = Number(sat?.year || 0);
     const isPreMarco = year <= 2008;
+    const arlSummary = layerSummaries.find((l) => l.name === "ARL");
+    const arlremSummary = layerSummaries.find((l) => l.name === "ARLREM");
+    const hasArl = ((arlSummary?.areaHa ?? 0) + (arlremSummary?.areaHa ?? 0)) > 0;
 
     return [
         "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
@@ -3590,12 +3593,13 @@ function buildSingleSatellitePrompt(
         "",
         "---",
         "",
-        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
         "",
         "---",
         "",
         `## Imagens: ${sat.label} — ${sensor}`,
         `**Referência temporal:** esta cena é ${isPreMarco ? "pré-marco ou marco temporal (≤ 2008)" : "pós-marco temporal (> 2008)"} — referência legal: 22/07/2008 (Art. 68, Lei 12.651/2012).`,
+        `**Peso da evidência deste sensor:** resolução ${meta.spatialResolution}${meta.spatialResolution.includes("2.5") ? " (alta — suficiente para confirmação isolada)" : meta.spatialResolution.includes("10") ? " (média — verificar com outra fonte se possível)" : " (baixa — requer confirmação cruzada com sensor de maior resolução)"}.`,
         "",
         `- **Bandas espectrais**: ${meta.spectralBands}`,
         `- **Revisita**: a cada ${meta.revisitDays} dias`,
@@ -3624,8 +3628,9 @@ function buildSingleSatellitePrompt(
         "- 🟪 **Roxo semi-transparente**: ÁREA CONSOLIDADA (AC) — uso antrópico declarado",
         "- 🟨 **Amarelo semi-transparente**: VEGETAÇÃO NATIVA (AVN) — vegetação nativa declarada",
         ...(hasAuas ? ["- ⬜ **Branco semi-transparente**: AUAS — uso alternativo do solo"] : []),
+        ...(hasArl ? ["- 🟩 **Verde tracejado**: RESERVA LEGAL (ARL/ARLREM)"] : []),
         "",
-        `- Imagem 1: Visão Geral — base ${sat.label} + propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}`,
+        `- Imagem 1: Visão Geral — base ${sat.label} + propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}${hasArl ? " + ARL" : ""}`,
         `- Imagem 2: Área Consolidada — base ${sat.label} + propriedade + somente AC`,
         `- Imagem 3: AVN — base ${sat.label} + propriedade + somente AVN`,
         "",
@@ -3635,22 +3640,34 @@ function buildSingleSatellitePrompt(
         "- As áreas em roxo correspondem a uso antrópico visível (pastagem limpa, agricultura, solo exposto, benfeitorias)?",
         "- Padrão de textura antrópica: pastagem → tonalidade uniforme; agricultura → linhas regulares; solo exposto → tons claros sem estrutura.",
         "- Algum trecho de AC apresenta textura de vegetação nativa (dossel rugoso, gradiente verde-escuro, estrutura de Cerrado/Floresta)?",
-        "- Indicar localização aproximada dos trechos discordantes: 'porção norte', 'borda leste', 'setor central', etc.",
+        "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada e manchas arbustivas intercaladas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso antrópico.",
+        "- Para cada zona da AC, estimar percentual de concordância/discordância com a classificação CAR.",
+        "- Indicar localização aproximada dos trechos discordantes: 'porção norte', 'borda leste', 'setor central', etc., e estimar área em hectares quando viável.",
         "",
         "## Análise da Vegetação Nativa (AVN — polígono amarelo)",
         "- As áreas em amarelo apresentam textura de vegetação nativa contínua (floresta, cerrado, mata ciliar)?",
         "- Distinguir tipologias: Floresta → dossel denso e contínuo; Cerrado → mosaico arbustivo-herbáceo; Campo nativo → tonalidade mais clara com textura variada.",
         "- Algum trecho de AVN parece antropizado (pastagem, desmatamento, queimada recente, cicatriz de fogo)?",
         "- Avaliar integridade e conectividade: fragmentação, clareiras, bordas antropizadas.",
+        "- **Bordas de transição AC/AVN:** examinar a faixa de transição entre AC e AVN. Se a borda for gradual (buffer de incerteza), reportar como zona de transição com largura estimada, não como discordância categórica.",
         ...(hasAuas
             ? [
                 "- Verificar se existe vegetação nativa aparente fora do AVN, porém dentro do shape AUAS (contorno branco).",
             ]
             : []),
         "",
+        ...(hasArl
+            ? [
+                "## Análise da Reserva Legal (ARL — polígono verde)",
+                "- A vegetação dentro da ARL apresenta integridade? (dossel contínuo, sem clareiras, sem sinais de degradação)",
+                "- Há uso antrópico dentro da ARL declarada? (pastagem, lavoura, solo exposto, estrada interna)",
+                "- Se houver uso antrópico dentro da ARL, estimar porcentagem afetada e localização.",
+                "",
+            ]
+            : []),
         "## Concordâncias e Discordâncias",
         "- **✅ CONCORDA**: áreas onde a classificação CAR coincide com o uso visível.",
-        "- **❌ DISCORDA**: áreas onde a classificação não condiz. Indicar classificação mais apropriada e localização aproximada.",
+        "- **❌ DISCORDA**: áreas onde a classificação não condiz. Indicar: (a) classificação mais apropriada, (b) localização relativa (porção N/NE/S etc.), (c) área estimada em hectares.",
         "- **⚠️ INCONCLUSIVO**: quando resolução, nuvem ou sazonalidade impedem conclusão segura.",
         "",
         "## Nível de Confiança",
@@ -3677,6 +3694,9 @@ function buildAnalysisPrompt(
     const hasAuas = Boolean(rawAuasContext?.hasAuasLayer);
     const auasContext = hasAuas && rawAuasContext ? rawAuasContext : null;
     const validLayers = getOrderedSatelliteKeys(selectedLayers || []);
+    const arlSummary = layerSummaries.find((l) => l.name === "ARL");
+    const arlremSummary = layerSummaries.find((l) => l.name === "ARLREM");
+    const hasArl = ((arlSummary?.areaHa ?? 0) + (arlremSummary?.areaHa ?? 0)) > 0;
     const satDescriptions = validLayers.map((k, i) => {
         const sat = SATELLITE_LAYERS[k];
         const meta = getSatelliteMetadata(k);
@@ -3685,7 +3705,8 @@ function buildAnalysisPrompt(
             `### ${sat.label} — ${meta.sensor} (${meta.spatialResolution})`,
             `- Bandas: ${meta.spectralBands}`,
             `- Revisita: ${meta.revisitDays} dias | Uso ideal: ${meta.bestUseCase}`,
-            `- Imagem ${imgBase}: visão geral (propriedade + AC + AVN${hasAuas ? " + AUAS" : ""})`,
+            `- Peso da evidência: ${meta.spatialResolution.includes("2.5") ? "ALTO (confirmação isolada suficiente)" : meta.spatialResolution.includes("10") ? "MÉDIO (verificar com outra fonte)" : "BAIXO (requer confirmação cruzada)"}`,
+            `- Imagem ${imgBase}: visão geral (propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}${hasArl ? " + ARL" : ""})`,
             `- Imagem ${imgBase + 1}: foco AC (polígono roxo)`,
             `- Imagem ${imgBase + 2}: foco AVN (polígono amarelo)`,
         ].join("\n");
@@ -3695,7 +3716,7 @@ function buildAnalysisPrompt(
         "Você é a **GeoForest IA**, perita em interpretação de imagens de satélite para validação de CAR em imóveis rurais de Mato Grosso.",
         "Analise **somente** o que está dentro do polígono da propriedade (contorno vermelho).",
         "",
-        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 12 }),
         "",
         ...(hasAuas
             ? [
@@ -3715,6 +3736,7 @@ function buildAnalysisPrompt(
         "- Critério de evidência clara: SPOT 2008 confirmando sozinho É suficiente (2.5m de resolução). Para Landsat, exige concordância de ao menos 2 cenas independentes.",
         "- Padrão de textura antrópica: tonalidade uniforme sem gradiente de dossel, estrutura regular de lavoura ou pasto limpo, cicatrizes de fogo.",
         "- Padrão de vegetação nativa: textura rugosa de copas, gradiente de cor verde-escuro, estrutura irregular de dossel (Floresta), ou manchas herbáceas intercaladas com arbustos (Cerrado).",
+        "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada, manchas arbustivas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso antrópico.",
         "- Se a área em questão apresentar textura ambígua (campo nativo, palhada, solo seco), classifique como INCONCLUSIVO.",
         "",
         "### Vegetação Nativa (AVN — polígono amarelo)",
@@ -3722,6 +3744,7 @@ function buildAnalysisPrompt(
         "- AVN_DENTRO_SHAPE_ANTROPIZADO = **SIM** apenas quando houver área CLARAMENTE antropizada DENTRO do polígono AVN.",
         "- Avalie integridade do dossel, continuidade da cobertura e sinais de fragmentação.",
         "- Atenção especial em bordas: áreas de borda podem apresentar transição gradual — só classifique como antropizado se a textura antrópica for dominante no trecho.",
+        "- **Bordas de transição AC/AVN:** se a transição for gradual, reportar como zona de incerteza; não classificar automaticamente como discordância.",
         ...(hasAuas
             ? [
                 "",
@@ -3734,11 +3757,27 @@ function buildAnalysisPrompt(
                 "- Como AUAS não está disponível no recorte, use AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS = INCONCLUSIVO.",
             ]),
         "",
+        ...(hasArl
+            ? [
+                "### Reserva Legal (ARL — polígono verde)",
+                "- Avaliar integridade da vegetação dentro da ARL. Há uso antrópico (pastagem, lavoura, solo exposto) dentro da ARL?",
+                "- Se houver uso antrópico na ARL, estimar porcentagem e localizar espacialmente.",
+                "- Este dado é informativo e não altera os vereditos AC/AVN, mas deve constar na Conclusão Técnica.",
+                "",
+            ]
+            : []),
         "### Critérios de Confiança",
         "- **ALTA**: evidência direta e inequívoca em ao menos 2 imagens de qualidade, sem nuvem ou sombra relevante.",
         "- **MEDIA**: evidência presente mas com limitação de resolução, sazonalidade (palhada, campo seco), ou discordância entre cenas.",
         "- **BAIXA**: cobertura de nuvens >30%, resolução insuficiente para distinção, ou única fonte disponível com imagem degradada.",
         "- Se nuvem, sombra, queimada recente ou ausência de imagem impedir certeza, use INCONCLUSIVO.",
+        "",
+        "### Derivação do Veredito Global",
+        "**O veredito global DEVE ser derivado dos vereditos individuais por satélite.** Regras:",
+        "- Se 2+ satélites concordam SIM, o global **deve** ser SIM (salvo se satélite com peso ALTO discordar).",
+        "- Se 2+ satélites concordam NAO, o global **deve** ser NAO.",
+        "- Se há discordância entre satélites (SIM vs. NAO), o global **deve** ser INCONCLUSIVO.",
+        "- Quando SPOT (2.5m) discorda de Landsat (30m), dar preferência ao SPOT na justificativa.",
         "",
         "## Imagens Disponíveis",
         satDescriptions,
@@ -3765,7 +3804,7 @@ function buildAnalysisPrompt(
         "",
         "**Validação de Coerência AC/AVN** — indicar se o veredito global é coerente com os vereditos individuais. Se houver conflito, declarar explicitamente e usar INCONCLUSIVO no item conflitante.",
         "",
-        "**Evidências por Imagem** — descrever os achados por satélite com localização geográfica aproximada (ex.: 'porção nordeste', 'borda sul'). Citar textura, tonalidade e padrão observado.",
+        "**Evidências por Imagem** — descrever os achados por satélite com localização geográfica aproximada (ex.: 'porção nordeste', 'borda sul'). Citar textura, tonalidade e padrão observado. Estimar área em hectares quando possível.",
         "",
         "**Comunicação da conclusão:**",
         "- Linguagem clara, direta e sem jargão desnecessário.",
@@ -3915,34 +3954,90 @@ function validateAcAvnCoherence(
         .map((sat) => sat.avnDentroShapeAntropizado)
         .filter((v): v is Exclude<AcAvnVerdict, null> => Boolean(v));
 
+    // Helper: check if satellite is high-resolution (SPOT 2.5m)
+    const isHighRes = (sat: AcAvnSatelliteVerdict) =>
+        sat.label.toLowerCase().includes("spot") || sat.key.toLowerCase().includes("spot");
+
+    // === AC coherence rules ===
     const acHasSim = usedAc.includes("SIM");
     const acHasNao = usedAc.includes("NAO");
+    const acSimCount = usedAc.filter(v => v === "SIM").length;
+    const acNaoCount = usedAc.filter(v => v === "NAO").length;
+
+    // Check if SPOT has high-resolution data that should take precedence
+    const spotAcVerdict = used.find(s => isHighRes(s))?.acForaShape;
+    const hasSpotData = spotAcVerdict && spotAcVerdict !== "INCONCLUSIVO";
+
     if (acHasSim && acHasNao) {
-        notes.push("Conflito entre satélites para AC_FORA_SHAPE (há SIM e NAO).");
-        acVerdict = "INCONCLUSIVO";
-    }
-    if (acVerdict === "NAO" && acHasSim) {
-        notes.push("Veredito global AC_FORA_SHAPE=NAO conflita com satélite indicando SIM.");
-        acVerdict = "INCONCLUSIVO";
-    }
-    if (acVerdict === "SIM" && acHasNao) {
-        notes.push("Veredito global AC_FORA_SHAPE=SIM conflita com satélite indicando NAO.");
-        acVerdict = "INCONCLUSIVO";
+        // Conflict between satellites
+        if (hasSpotData) {
+            // Prefer SPOT's verdict (2.5m resolution)
+            notes.push(`Conflito AC_FORA_SHAPE entre satélites — SPOT (2.5m) indica ${spotAcVerdict}, prevale por maior resolução.`);
+            acVerdict = spotAcVerdict as Exclude<AcAvnVerdict, null>;
+        } else {
+            notes.push("Conflito entre satélites para AC_FORA_SHAPE (há SIM e NAO).");
+            acVerdict = "INCONCLUSIVO";
+        }
+    } else if (acVerdict !== "INCONCLUSIVO") {
+        // Majority rule: if most satellites agree, verify global is coherent
+        if (acSimCount >= 2 && acVerdict !== "SIM") {
+            notes.push(`Maioria dos satélites (${acSimCount}/${usedAc.length}) indica AC_FORA_SHAPE=SIM, mas global era ${acVerdict}. Corrigido para SIM.`);
+            acVerdict = "SIM";
+        } else if (acNaoCount >= 2 && acVerdict !== "NAO") {
+            notes.push(`Maioria dos satélites (${acNaoCount}/${usedAc.length}) indica AC_FORA_SHAPE=NAO, mas global era ${acVerdict}. Corrigido para NAO.`);
+            acVerdict = "NAO";
+        } else if (acVerdict === "NAO" && acHasSim) {
+            notes.push("Veredito global AC_FORA_SHAPE=NAO conflita com satélite indicando SIM.");
+            acVerdict = "INCONCLUSIVO";
+        } else if (acVerdict === "SIM" && acHasNao) {
+            notes.push("Veredito global AC_FORA_SHAPE=SIM conflita com satélite indicando NAO.");
+            acVerdict = "INCONCLUSIVO";
+        }
     }
 
+    // === AVN coherence rules ===
     const avnHasSim = usedAvn.includes("SIM");
     const avnHasNao = usedAvn.includes("NAO");
+    const avnSimCount = usedAvn.filter(v => v === "SIM").length;
+    const avnNaoCount = usedAvn.filter(v => v === "NAO").length;
+
+    const spotAvnVerdict = used.find(s => isHighRes(s))?.avnDentroShapeAntropizado;
+    const hasSpotAvnData = spotAvnVerdict && spotAvnVerdict !== "INCONCLUSIVO";
+
     if (avnHasSim && avnHasNao) {
-        notes.push("Conflito entre satélites para AVN_DENTRO_SHAPE_ANTROPIZADO (há SIM e NAO).");
-        avnVerdict = "INCONCLUSIVO";
+        if (hasSpotAvnData) {
+            notes.push(`Conflito AVN entre satélites — SPOT (2.5m) indica ${spotAvnVerdict}, prevale por maior resolução.`);
+            avnVerdict = spotAvnVerdict as Exclude<AcAvnVerdict, null>;
+        } else {
+            notes.push("Conflito entre satélites para AVN_DENTRO_SHAPE_ANTROPIZADO (há SIM e NAO).");
+            avnVerdict = "INCONCLUSIVO";
+        }
+    } else if (avnVerdict !== "INCONCLUSIVO") {
+        if (avnSimCount >= 2 && avnVerdict !== "SIM") {
+            notes.push(`Maioria dos satélites (${avnSimCount}/${usedAvn.length}) indica AVN_DENTRO_SHAPE_ANTROPIZADO=SIM, mas global era ${avnVerdict}. Corrigido para SIM.`);
+            avnVerdict = "SIM";
+        } else if (avnNaoCount >= 2 && avnVerdict !== "NAO") {
+            notes.push(`Maioria dos satélites (${avnNaoCount}/${usedAvn.length}) indica AVN_DENTRO_SHAPE_ANTROPIZADO=NAO, mas global era ${avnVerdict}. Corrigido para NAO.`);
+            avnVerdict = "NAO";
+        } else if (avnVerdict === "NAO" && avnHasSim) {
+            notes.push("Veredito global AVN_DENTRO_SHAPE_ANTROPIZADO=NAO conflita com satélite indicando SIM.");
+            avnVerdict = "INCONCLUSIVO";
+        } else if (avnVerdict === "SIM" && avnHasNao) {
+            notes.push("Veredito global AVN_DENTRO_SHAPE_ANTROPIZADO=SIM conflita com satélite indicando NAO.");
+            avnVerdict = "INCONCLUSIVO";
+        }
     }
-    if (avnVerdict === "NAO" && avnHasSim) {
-        notes.push("Veredito global AVN_DENTRO_SHAPE_ANTROPIZADO=NAO conflita com satélite indicando SIM.");
-        avnVerdict = "INCONCLUSIVO";
-    }
-    if (avnVerdict === "SIM" && avnHasNao) {
-        notes.push("Veredito global AVN_DENTRO_SHAPE_ANTROPIZADO=SIM conflita com satélite indicando NAO.");
-        avnVerdict = "INCONCLUSIVO";
+
+    // === Temporal consistency check ===
+    // If older satellites (pre-2008) say NAO but newer ones say SIM, flag it
+    const preMarcoSats = used.filter(s => s.year <= 2008);
+    const postMarcoSats = used.filter(s => s.year > 2008);
+    if (preMarcoSats.length > 0 && postMarcoSats.length > 0) {
+        const preMarcoAc = preMarcoSats.some(s => s.acForaShape === "SIM");
+        const postMarcoAc = postMarcoSats.every(s => s.acForaShape === "NAO" || !s.acForaShape);
+        if (preMarcoAc && postMarcoAc) {
+            notes.push("Satélite(s) pré-marco indicam AC_FORA_SHAPE=SIM, mas pós-marco não confirmam — possível regeneração ou mudança de uso.");
+        }
     }
 
     return { acVerdict, avnVerdict, notes };
@@ -4339,7 +4434,7 @@ function buildSynthesisPrompt(
         "",
         "---",
         "",
-        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
         "",
         "---",
         "",
@@ -4367,6 +4462,7 @@ function buildSynthesisPrompt(
         "- A Área Consolidada (AC) já estava consolidada no ano mais antigo?",
         "- Há AC com sinal de vegetação nativa no passado?",
         "- Há AVN com sinal de uso antrópico em algum ano?",
+        "- **Reserva Legal:** se ARL estiver presente, há evidência de uso antrópico dentro da ARL em algum ano?",
         "",
         "### 4. Marco Temporal (Art. 68, Lei 12.651/2012)",
         "- Referência: **22/07/2008**.",
@@ -4374,13 +4470,17 @@ function buildSynthesisPrompt(
         "",
         "### 5. Concordâncias e Discordâncias Consolidadas",
         "- **✅ CONCORDA**: quando os anos confirmam a classificação do CAR.",
-        "- **❌ DISCORDA**: quando algum ano contradiz o CAR (cite ano e evidência).",
+        "- **❌ DISCORDA**: quando algum ano contradiz o CAR (cite ano, evidência, e área estimada em ha).",
         "- **⚠️ INCONCLUSIVO**: quando a limitação do sensor impede conclusão robusta.",
         "",
-        "### 6. Nível de Confiança",
+        "### 6. Vereditos por Satélite",
+        "Uma linha por satélite no formato EXATO:",
+        "- <NOME_SATELITE> (AAAA) | AC_FORA_SHAPE=SIM|NAO|INCONCLUSIVO | AVN_DENTRO_SHAPE_ANTROPIZADO=SIM|NAO|INCONCLUSIVO | CONFIANCA=ALTA|MEDIA|BAIXA|INCONCLUSIVO",
+        "",
+        "### 7. Nível de Confiança",
         "Classifique: **[ALTA]**, **[MÉDIA]** ou **[BAIXA]** e justifique.",
         "",
-        "### 7. Conclusão Integrada + Recomendações",
+        "### 8. Conclusão Integrada + Recomendações",
         "- Síntese final da linha do tempo citando todos os anos.",
         "- Recomendações práticas: vistoria, imagens extras, retificação do CAR.",
         "",
@@ -4576,6 +4676,12 @@ function buildAuasSingleSatPrompt(
                 ? `Compare diretamente com a imagem de referência de 2008 (${baselineReferenceLabel}) para detectar mudanças de cobertura após o marco temporal.`
                 : "Compare com 2008 como referência de linha base para detectar supressão após o marco temporal.")
             : "";
+    const sensorWeight = meta.spatialResolution.includes("2.5")
+        ? "ALTO (confirmação isolada suficiente)"
+        : meta.spatialResolution.includes("10")
+            ? "MÉDIO (verificar com outra fonte se possível)"
+            : "BAIXO (requer confirmação cruzada)";
+
     return [
         "Você é analista técnica de AUAS para validação de CAR em imóvel rural de Mato Grosso.",
         hasAuasLayer
@@ -4585,6 +4691,7 @@ function buildAuasSingleSatPrompt(
         "",
         `**Metadados:** sensor=${meta.sensor}; resolução=${meta.spatialResolution}; revisita=${meta.revisitDays} dias; bandas=${meta.spectralBands}.`,
         `**Limitação operacional:** ${meta.bestUseCase}`,
+        `**Peso da evidência:** ${sensorWeight}`,
         "",
         ...(cloudWarning
             ? [
@@ -4592,7 +4699,7 @@ function buildAuasSingleSatPrompt(
                 "",
             ]
             : []),
-        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
         "",
         `**Referência legal:** marco temporal em 22/07/2008. Esta cena é ${isPreMarco ? "pré-marco ou marco (≤ 2008)" : "pós-marco (> 2008)"}.`,
         hasAuasLayer
@@ -4606,9 +4713,10 @@ function buildAuasSingleSatPrompt(
         "- Solo exposto sazonal (palhada, pastagem seca) ≠ desmatamento: confirme persistência temporal antes de classificar.",
         "- Padrão de vegetação nativa: dossel rugoso/contínuo (Floresta) ou mosaico arbustivo-herbáceo (Cerrado). Tonalidade verde-escuro irregular.",
         "- Padrão antrópico: tonalidade uniforme (pastagem), linhas regulares (agricultura), tons claros (solo exposto).",
-        "- Em áreas com Cerrado, confirme que o padrão não é campo nativo antes de classificar como suprimido.",
+        "- **Campo nativo × pastagem degradada:** em Cerrado, campo nativo apresenta tonalidade clara com textura variada e manchas arbustivas intercaladas. Pastagem degradada tem tonalidade uniforme sem arbustos. Campo nativo NÃO é supressão.",
+        "- **Bordas de transição:** quando a transição entre vegetação nativa e uso antrópico for gradual, reportar como zona de incerteza com largura estimada.",
         "",
-        "**Resposta em até 300 palavras, sem tabela, sem emoji e sem bloco <think>.**",
+        "**Resposta em até 400 palavras, sem tabela, sem emoji e sem bloco <think>.**",
         "Estrutura obrigatória:",
         "## Cena Avaliada",
         hasAuasLayer ? "## Cobertura Dentro da AUAS" : "## Cobertura na Propriedade",
@@ -4616,7 +4724,7 @@ function buildAuasSingleSatPrompt(
         "## Comparação com Marco Temporal (2008)",
         "## Veredito do Ano",
         "",
-        "No veredito, usar apenas um rótulo com justificativa de 1-2 frases:",
+        "No veredito, usar apenas um rótulo com justificativa de 2-3 frases:",
         "- CONSOLIDADO — supressão claramente anterior a 22/07/2008",
         "- VEGETACAO_NATIVA_PRESENTE — vegetação nativa dominante, sem evidência de supressão",
         "- DESMATAMENTO_RECENTE — supressão após 22/07/2008 com evidência visual confirmada",
@@ -4804,9 +4912,9 @@ function buildAuasFinalSynthesisPrompt(
     const parts: string[] = [
         "Você é a **GeoForest IA**, responsável por produzir um laudo AUAS técnico e juridicamente preciso.",
         "Sintetize as análises por satélite em um relatório coerente, com foco na progressão temporal da cobertura.",
-        "Não usar tabela. Não usar emoji. Não incluir bloco <think>. Tamanho: entre 400 e 600 palavras.",
+        "Não usar tabela. Não usar emoji. Não incluir bloco <think>. Tamanho: entre 500 e 800 palavras.",
         "",
-        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 8 }),
+        buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
         "",
         "## Dados da AUAS",
         hasAuasLayer
@@ -4897,7 +5005,7 @@ function buildAuasFinalSynthesisPrompt(
         "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA | INCONCLUSIVO",
         "- Se há supressão confirmada pós-2008 dentro da AUAS, adicionar: PASSIVO_AMBIENTAL = IDENTIFICADO",
         "",
-        "Em 'Não Conformidades': citar intervalo de anos, localização aproximada e área estimada quando identificada supressão irregular.",
+        "Em 'Não Conformidades': citar intervalo de anos, localização aproximada (porção N/NE/S etc.) e área estimada em hectares quando identificada supressão irregular.",
         "Em 'Progressão Temporal': descrever cobertura em 2008 (referência), mudanças em períodos intermediários e situação atual.",
         "Em 'Próximas Ações': máximo 4 ações, priorizadas e específicas para o caso.",
     );
@@ -5527,13 +5635,20 @@ async function generateSatelliteImages(
         }
 
         // 3 composites per satellite
-        // 1: Overview (AC + AVN + AUAS + property)
-        const overviewSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
-            { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.20)", strokeWidth: 2 },
-            { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.20)", strokeWidth: 2 },
-            { name: "AUAS", stroke: "#FFFFFF", fill: "rgba(255, 255, 255, 0.10)", strokeWidth: 1.8 },
-        ]);
-        images.push({ dataUrl: await compositeOverlay(basePng, overviewSvg), caption: `${sat.label} - Visao Geral (propriedade + AC + AVN + AUAS)` });
+        // 1: Overview (AC + AVN + AUAS + ARL + property)
+        const overviewLayers: Array<{ name: string; stroke: string; fill: string; strokeWidth: number }> = [
+            { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.22)", strokeWidth: 2.5 },
+            { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.22)", strokeWidth: 2.5 },
+            { name: "AUAS", stroke: "#FFFFFF", fill: "rgba(255, 255, 255, 0.10)", strokeWidth: 2 },
+        ];
+        // Add ARL/ARLREM overlay if present
+        if (layerGeos.has("ARL") || layerGeos.has("ARLREM")) {
+            overviewLayers.push({ name: "ARL", stroke: "#22C55E", fill: "rgba(34, 197, 94, 0.12)", strokeWidth: 2 });
+            overviewLayers.push({ name: "ARLREM", stroke: "#16A34A", fill: "rgba(22, 163, 74, 0.10)", strokeWidth: 1.8 });
+        }
+        const overviewSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, overviewLayers);
+        const hasArl = layerGeos.has("ARL") || layerGeos.has("ARLREM");
+        images.push({ dataUrl: await compositeOverlay(basePng, overviewSvg), caption: `${sat.label} - Visao Geral (propriedade + AC + AVN + AUAS${hasArl ? " + ARL" : ""})` });
         step++;
 
         sendSSE(res, {
@@ -5542,16 +5657,16 @@ async function generateSatelliteImages(
             message: `${sat.label}: renderizando Area Consolidada...`,
         });
 
-        // 2: AC only
+        // 2: AC only (increased stroke width for clarity)
         const acSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
-            { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.25)", strokeWidth: 2.5 },
+            { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.28)", strokeWidth: 3 },
         ]);
         images.push({ dataUrl: await compositeOverlay(basePng, acSvg), caption: `${sat.label} - Area Consolidada` });
         step++;
 
-        // 3: AVN only
+        // 3: AVN only (increased stroke width for clarity)
         const avnSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
-            { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.25)", strokeWidth: 2.5 },
+            { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.28)", strokeWidth: 3 },
         ]);
         images.push({ dataUrl: await compositeOverlay(basePng, avnSvg), caption: `${sat.label} - AVN` });
         step++;

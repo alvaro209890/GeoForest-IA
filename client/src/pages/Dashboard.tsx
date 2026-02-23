@@ -45,6 +45,7 @@ import {
   Clock,
   MousePointerClick,
   CheckCircle2,
+  Copy,
   Wallet,
   TrendingDown,
   TrendingUp,
@@ -1105,6 +1106,7 @@ export default function Dashboard() {
   const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'auas'>('chat');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const [, setLocation] = useLocation();
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
@@ -1384,6 +1386,10 @@ export default function Dashboard() {
   const mapWheelDebounceRef = useRef<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
+  const chatAbortRef = useRef<AbortController | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [lastPromptText, setLastPromptText] = useState('');
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([DEFAULT_ASSISTANT_MESSAGE]);
   const messagesRef = useRef<ChatMessage[]>([DEFAULT_ASSISTANT_MESSAGE]);
@@ -2680,6 +2686,46 @@ export default function Dashboard() {
     setPendingMapImageUrl(null);
     setPendingMapContext(undefined);
   };
+
+  useEffect(() => {
+    return () => {
+      chatAbortRef.current?.abort();
+      chatAbortRef.current = null;
+    };
+  }, []);
+
+  const onStopChatGeneration = useCallback(() => {
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    setSending(false);
+    setUploading(false);
+    setAiThinking(false);
+    setTypingMessageId(null);
+    setTypingText('');
+    setLiveThinkingText('');
+    setLiveThinkingTarget('');
+    setChatError('Resposta interrompida. Envie novamente quando quiser.');
+    toast.info('Geração interrompida.');
+  }, []);
+
+  const onRetryLastPrompt = useCallback(() => {
+    if (!lastPromptText.trim()) return;
+    setInput(lastPromptText);
+    setChatError(null);
+    window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
+  }, [lastPromptText]);
+
+  const copyMessageToClipboard = useCallback(async (messageId: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text || '');
+      setCopiedMessageId(messageId);
+      window.setTimeout(() => {
+        setCopiedMessageId((prev) => (prev === messageId ? null : prev));
+      }, 1800);
+    } catch {
+      toast.error('Nao foi possivel copiar a mensagem.');
+    }
+  }, []);
 
   const onPickAttachment = (files: File[]) => {
     if (!files.length) {
@@ -5005,6 +5051,7 @@ export default function Dashboard() {
     const selectedImageFiles = [...queuedImageFiles, ...(imageFile ? [imageFile] : [])];
     const selectedPdfFiles = [...queuedPdfFiles, ...(pdfFile ? [pdfFile] : [])];
     const selectedMapImageUrl = pendingMapImageUrl;
+    setChatError(null);
     const totalAttachments = selectedImageFiles.length + selectedPdfFiles.length + (selectedMapImageUrl ? 1 : 0);
     let localImagePreviewForChat: string | null = selectedMapImageUrl || null;
 
@@ -5085,6 +5132,7 @@ export default function Dashboard() {
 ` +
         'O documento está em processamento. Faça análise preliminar e refine com o texto extraído quando disponível.';
     }
+    setLastPromptText(userText || (totalAttachments > 0 ? 'Analise os anexos enviados.' : ''));
 
     const userMessage: ChatMessage = {
       id: nanoid(),
@@ -5284,9 +5332,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       }),
     ];
 
+    let chatController: AbortController | null = null;
     try {
+      chatController = new AbortController();
+      chatAbortRef.current = chatController;
       const res = await apiFetch('/api/chat-stream', {
         method: 'POST',
+        signal: chatController.signal,
         body: JSON.stringify({
           messages: apiMessages,
           model: selectedModel,
@@ -5303,6 +5355,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         if (res.status === 404) {
           const fallback = await apiFetch('/api/chat', {
             method: 'POST',
+            signal: chatController.signal,
             body: JSON.stringify({
               messages: apiMessages,
               model: selectedModel,
@@ -5446,13 +5499,21 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       messagesRef.current = updatedMessages;
       await updateConversationMeta(updatedMessages, userText || 'Nova conversa');
     } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        setChatError((prev) => prev || 'Resposta interrompida. Você pode reenviar.');
+        return;
+      }
       toast.error(error.message || 'Erro ao conversar com a IA');
+      setChatError(error.message || 'Falha ao conversar com a IA.');
       setAiThinking(false);
       setTypingMessageId(null);
       setTypingText('');
       setLiveThinkingText('');
       setLiveThinkingTarget('');
     } finally {
+      if (chatAbortRef.current === chatController) {
+        chatAbortRef.current = null;
+      }
       setSending(false);
     }
   };
@@ -5605,6 +5666,18 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </span>
                   </div>
                 )}
+                {msg.role === 'ai' && (
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => copyMessageToClipboard(msg.id, displayText)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-300 hover:border-emerald-500/40 hover:text-emerald-200"
+                    >
+                      <Copy size={12} />
+                      {copiedMessageId === msg.id ? 'Copiado' : 'Copiar'}
+                    </button>
+                  </div>
+                )}
                 <span
                   className={`text-[10px] absolute bottom-2 right-4 opacity-50 ${msg.role === 'user' ? 'text-emerald-100' : 'text-slate-500'
                     }`}
@@ -5653,7 +5726,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       messages,
       splitThinkContent,
       downloadAttachment,
+      copyMessageToClipboard,
       expandedThinking,
+      copiedMessageId,
       typingMessageId,
       aiThinking,
       liveThinkingText,
@@ -6179,10 +6254,37 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
 
             <div className="p-2 sm:p-4 pb-4 sm:pb-6 w-full flex-shrink-0 relative z-30">
+              {chatError && (
+                <div className="max-w-3xl mx-auto mb-2">
+                  <div className="flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                    <AlertTriangle size={14} className="mt-0.5 text-amber-300 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="leading-relaxed">{chatError}</p>
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={onRetryLastPrompt}
+                          className="rounded-md border border-amber-300/35 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-100 hover:bg-amber-400/20"
+                        >
+                          Repetir ultima pergunta
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setChatError(null)}
+                          className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-[11px] text-slate-200 hover:bg-white/10"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="max-w-3xl mx-auto relative group z-30">
                 <div className="absolute inset-0 bg-emerald-500/5 rounded-2xl blur-sm group-focus-within:bg-emerald-500/10 transition-all duration-500" />
                 <div className="relative bg-[#0e1612]/90 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/50 overflow-visible focus-within:border-emerald-500/40 focus-within:ring-1 focus-within:ring-emerald-500/20 transition-all duration-300">
                   <textarea
+                    ref={chatTextareaRef}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSend())}
@@ -6323,16 +6425,26 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </div>
                     </div>
                     <div className="flex items-center gap-2 sm:gap-3 ml-auto">
+                      {(sending || aiThinking) && (
+                        <button
+                          type="button"
+                          onClick={onStopChatGeneration}
+                          className="flex items-center gap-1.5 sm:gap-2 px-3 py-2 rounded-lg text-xs font-medium border border-rose-400/30 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20"
+                        >
+                          <Square size={12} />
+                          <span className="hidden sm:inline">Parar</span>
+                        </button>
+                      )}
                       <div className="h-4 w-[1px] bg-white/10 hidden sm:block"></div>
                       <button
                         onClick={handleSend}
-                        disabled={!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl && queuedFiles.length === 0}
+                        disabled={sending || uploading || (!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl && queuedFiles.length === 0)}
                         className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${input.trim() || imageFile || pdfFile || pendingMapImageUrl || queuedFiles.length > 0
                           ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/25 hover:bg-emerald-400'
                           : 'bg-white/5 text-slate-500 cursor-not-allowed'
                           }`}
                       >
-                        <span className="hidden sm:inline">{sending || uploading ? 'Enviando...' : 'Enviar'}</span>
+                        <span className="hidden sm:inline">{sending ? 'Gerando...' : uploading ? 'Enviando...' : 'Enviar'}</span>
                         <Send size={14} className={input.trim() ? 'fill-current' : ''} />
                       </button>
                     </div>
