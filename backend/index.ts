@@ -24,6 +24,7 @@ import {
   reserveCredits,
   settleCloudinaryStorageReserve,
   settleReservedCredits,
+  chargeMapSnapshot,
 } from "./billing";
 import {
   extractZipEntries,
@@ -1046,7 +1047,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/map/snapshot", async (req, res) => {
+  app.post("/api/map/snapshot", requireAuth, async (req, res) => {
     try {
       const {
         layerName,
@@ -1187,6 +1188,17 @@ async function startServer() {
         },
       };
       storeMapSnapshot(snapshotCacheKey, payload);
+
+      // Cobrar pelo processamento de mapa em background para não travar a UI
+      if (req.authUid) {
+        chargeMapSnapshot({
+          uid: req.authUid,
+          requestId: createRequestId("mapsnap"),
+          endpoint: "/api/map/snapshot",
+          feeBrl: 0.05
+        }).catch(err => console.warn("[BILLING] Erro ao cobrar snapshot de mapa do usuário", req.authUid, err));
+      }
+
       res.setHeader("Cache-Control", "public, max-age=60");
       res.setHeader("x-map-cache", "miss");
       res.json(payload);

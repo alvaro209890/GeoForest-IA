@@ -65,19 +65,19 @@ const MODELO_ZIP_PATH = path.resolve(__dirname, "..", "Arquivo Modelo.zip");
 
 // PRODES Terrabrasilis — Legal Amazon (bioma padrão para MT)
 // Pode ser sobrescrito via env PRODES_WFS_URL
-const DEFAULT_PRODES_WFS_URL =
-    process.env.PRODES_WFS_URL ||
-    "https://terrabrasilis.dpi.inpe.br/geoserver/ows";
-const PRODES_LAYER = process.env.PRODES_LAYER || "prodes-legal-amz:yearly_deforestation";
-const PRODES_YEAR_FIELD = process.env.PRODES_YEAR_FIELD || "year";
-const PRODES_GEOM_FIELD = process.env.PRODES_GEOM_FIELD || "geom";
+const DEFAULT_PRODES_WFS_URL = String(
+    process.env.PRODES_WFS_URL || "https://terrabrasilis.dpi.inpe.br/geoserver/ows",
+).trim();
+const PRODES_LAYER = String(process.env.PRODES_LAYER || "prodes-legal-amz:yearly_deforestation").trim();
+const PRODES_YEAR_FIELD = String(process.env.PRODES_YEAR_FIELD || "year").trim();
+const PRODES_GEOM_FIELD = String(process.env.PRODES_GEOM_FIELD || "geom").trim();
 
 // SFB — Serviço Florestal Brasileiro (hidrografia)
 // Pode ser sobrescrito via env SFB_WFS_URL
-const SFB_WFS_URL = process.env.SFB_WFS_URL || "";
-const SFB_RIVER_LAYER = process.env.SFB_RIVER_LAYER || "";
-const SFB_GEOM_FIELD = process.env.SFB_GEOM_FIELD || "SHAPE";
-const SFB_CLASS_FIELD = process.env.SFB_CLASS_FIELD || "CLASSE";
+const SFB_WFS_URL = String(process.env.SFB_WFS_URL || "").trim();
+const SFB_RIVER_LAYER = String(process.env.SFB_RIVER_LAYER || "").trim();
+const SFB_GEOM_FIELD = String(process.env.SFB_GEOM_FIELD || "SHAPE").trim();
+const SFB_CLASS_FIELD = String(process.env.SFB_CLASS_FIELD || "CLASSE").trim();
 const DEFAULT_SEMA_AUTHKEY = "541085de-9a2e-454e-bdba-eb3d57a2f492";
 const SFB_WFS_AUTHKEY =
     process.env.SFB_WFS_AUTHKEY ||
@@ -278,38 +278,84 @@ function buildTypeNameCandidates(typeName: string): string[] {
     ]);
 }
 
+function buildWfsBaseUrlCandidates(baseUrl: string): string[] {
+    const raw = String(baseUrl || "").trim();
+    if (!raw) return [];
+
+    try {
+        const parsed = new URL(raw);
+        const path = parsed.pathname.replace(/\/+$/g, "");
+        const out = [parsed.toString()];
+
+        const withPath = (nextPath: string) => {
+            const candidate = new URL(parsed.toString());
+            candidate.pathname = nextPath;
+            return candidate.toString();
+        };
+
+        if (/\/ows$/i.test(path)) {
+            out.push(withPath(path.replace(/\/ows$/i, "/wfs")));
+        } else if (/\/wfs$/i.test(path)) {
+            out.push(withPath(path.replace(/\/wfs$/i, "/ows")));
+        } else {
+            out.push(withPath(`${path}/ows`));
+            out.push(withPath(`${path}/wfs`));
+        }
+
+        return uniqueNonEmpty(out);
+    } catch {
+        const trimmed = raw.replace(/\/+$/g, "");
+        return uniqueNonEmpty([raw, `${trimmed}/ows`, `${trimmed}/wfs`]);
+    }
+}
+
 async function fetchWfsGeoJson(
     baseUrl: string,
     typeName: string,
     options: FetchWfsGeoJsonOptions = {},
 ): Promise<FeatureCollection> {
+    const baseUrls = buildWfsBaseUrlCandidates(baseUrl);
+    if (!baseUrls.length) {
+        throw new Error("URL base do WFS não informada.");
+    }
+
     const typeNames = uniqueNonEmpty(options.typeNameCandidates?.length
         ? options.typeNameCandidates
         : buildTypeNameCandidates(typeName));
     if (!typeNames.length) return { type: "FeatureCollection", features: [] };
 
+    const versions = [
+        { version: "2.0.0", typeParam: "typeNames", limitParam: "count" },
+        { version: "1.1.0", typeParam: "typeName", limitParam: "maxFeatures" },
+        { version: "1.0.0", typeParam: "typeName", limitParam: "maxFeatures" },
+    ] as const;
+
     let lastError: unknown;
-    for (const candidate of typeNames) {
-        try {
-            const url = new URL(baseUrl);
-            url.searchParams.set("service", "WFS");
-            url.searchParams.set("version", "2.0.0");
-            url.searchParams.set("request", "GetFeature");
-            url.searchParams.set("typeNames", candidate);
-            url.searchParams.set("outputFormat", "application/json");
-            url.searchParams.set("count", "50000");
-            if (options.cql) url.searchParams.set("CQL_FILTER", options.cql);
-            for (const [key, value] of Object.entries(options.extraParams || {})) {
-                if (!value) continue;
-                url.searchParams.set(key, value);
+    for (const baseCandidate of baseUrls) {
+        for (const cfg of versions) {
+            for (const candidate of typeNames) {
+                try {
+                    const url = new URL(baseCandidate);
+                    url.searchParams.set("service", "WFS");
+                    url.searchParams.set("version", cfg.version);
+                    url.searchParams.set("request", "GetFeature");
+                    url.searchParams.set(cfg.typeParam, candidate);
+                    url.searchParams.set("outputFormat", "application/json");
+                    url.searchParams.set(cfg.limitParam, "50000");
+                    if (options.cql) url.searchParams.set("CQL_FILTER", options.cql);
+                    for (const [key, value] of Object.entries(options.extraParams || {})) {
+                        if (!value) continue;
+                        url.searchParams.set(key, value);
+                    }
+                    const data = await fetchJsonWithTimeout<FeatureCollection>(url.toString(), WFS_TIMEOUT);
+                    if (!data || !Array.isArray(data.features)) {
+                        return { type: "FeatureCollection", features: [] };
+                    }
+                    return data;
+                } catch (err) {
+                    lastError = err;
+                }
             }
-            const data = await fetchJsonWithTimeout<FeatureCollection>(url.toString(), WFS_TIMEOUT);
-            if (!data || !Array.isArray(data.features)) {
-                return { type: "FeatureCollection", features: [] };
-            }
-            return data;
-        } catch (err) {
-            lastError = err;
         }
     }
 
@@ -317,12 +363,19 @@ async function fetchWfsGeoJson(
 }
 
 async function fetchProdesGeoJson(wkt: string): Promise<FeatureCollection> {
+    const layerCandidates = uniqueNonEmpty([
+        PRODES_LAYER,
+        "prodes-legal-amz:yearly_deforestation",
+        "yearly_deforestation",
+    ]);
+    const typeNameCandidates = uniqueNonEmpty(layerCandidates.flatMap((item) => buildTypeNameCandidates(item)));
     const geomFields = uniqueNonEmpty([PRODES_GEOM_FIELD, "geom", "GEOMETRY", "the_geom"]);
     let lastError: unknown;
     for (const geomField of geomFields) {
         try {
             return await fetchWfsGeoJson(DEFAULT_PRODES_WFS_URL, PRODES_LAYER, {
                 cql: `INTERSECTS(${geomField},${wkt})`,
+                typeNameCandidates,
             });
         } catch (err) {
             lastError = err;

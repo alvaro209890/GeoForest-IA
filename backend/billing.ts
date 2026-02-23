@@ -41,16 +41,16 @@ type ModelPricing = {
 
 const usageStorage = new AsyncLocalStorage<BillingSessionStore>();
 
-const BILLING_MARGIN = Number.parseFloat(process.env.BILLING_MARGIN || "1.50") || 1.5;
+const BILLING_MARGIN = Number.parseFloat(process.env.BILLING_MARGIN || "2.50") || 2.5;
 const MIN_CHARGE_BRL = Number.parseFloat(process.env.BILLING_MIN_CHARGE_BRL || "0.01") || 0.01;
 const BILLING_ASSISTANT_CHAT_MULTIPLIER =
-  Number.parseFloat(process.env.BILLING_ASSISTANT_CHAT_MULTIPLIER || "1.25") || 1.25;
+  Number.parseFloat(process.env.BILLING_ASSISTANT_CHAT_MULTIPLIER || "2.0") || 2.0;
 const USD_BRL_FALLBACK = Number.parseFloat(process.env.USD_BRL_FALLBACK || "5.2257") || 5.2257;
 const RATE_CACHE_MS = 8 * 60 * 60 * 1000;
 const CLOUDINARY_PLUS_MONTHLY_USD = Number.parseFloat(process.env.CLOUDINARY_PLUS_MONTHLY_USD || "99") || 99;
 const CLOUDINARY_PLUS_MONTHLY_CREDITS = Number.parseFloat(process.env.CLOUDINARY_PLUS_MONTHLY_CREDITS || "225") || 225;
 const CLOUDINARY_STORAGE_USD_PER_GB_MONTH = Number.parseFloat(process.env.CLOUDINARY_STORAGE_USD_PER_GB_MONTH || "") ||
-  (CLOUDINARY_PLUS_MONTHLY_USD / Math.max(1, CLOUDINARY_PLUS_MONTHLY_CREDITS));
+  ((CLOUDINARY_PLUS_MONTHLY_USD / Math.max(1, CLOUDINARY_PLUS_MONTHLY_CREDITS)) * 3);
 const CLOUDINARY_STORAGE_BILLING_DAYS = Number.parseFloat(process.env.CLOUDINARY_STORAGE_BILLING_DAYS || "30") || 30;
 const MIN_STORAGE_CHARGE_BRL = Number.parseFloat(process.env.BILLING_MIN_STORAGE_CHARGE_BRL || "0.001") || 0.001;
 const MAX_RESERVE_BRL = Number.parseFloat(process.env.BILLING_MAX_RESERVE_BRL || "10") || 10;
@@ -840,6 +840,82 @@ export async function settleCloudinaryStorageReserve(args: {
   };
 }
 
+export async function chargeMapSnapshot(args: {
+  uid: string;
+  requestId: string;
+  endpoint: string;
+  feeBrl?: number;
+}): Promise<{ chargedBrl: number; balanceAfterBrl: number }> {
+  const amountToCharge = roundCurrency(Math.max(MIN_CHARGE_BRL, args.feeBrl || 0.05));
+  await ensureWallet(args.uid);
+
+  const model = "processamento_georreferenciado";
+  const provider = "infraestrutura";
+
+  const result = await adminDb.runTransaction(async (tx) => {
+    const walletSnap = await tx.get(walletRef(args.uid));
+    const currentBalance = Number(walletSnap.data()?.balanceBrl || 0);
+
+    // Permitir a visualização mesmo se ficar com saldo levemente negativo para não quebrar a UX,
+    // ou pode falhar - neste caso vamos apenas falhar se o saldo for super negativo (-5 BRL).
+    if (currentBalance <= -5) {
+      throw new BillingError(402, "INSUFFICIENT_CREDITS", "Saldo muito negativo para processar mapa.");
+    }
+    const balanceAfter = roundCurrency(currentBalance - amountToCharge);
+
+    tx.set(
+      walletRef(args.uid),
+      {
+        balanceBrl: balanceAfter,
+        totalSpentBrl: FieldValue.increment(amountToCharge),
+        version: Number(walletSnap.data()?.version || 0) + 1,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    const summaryLedgerRef = ledgerCollection(args.uid).doc(`map_${args.requestId}`);
+    tx.set(summaryLedgerRef, {
+      type: "usage_debit",
+      amountBrl: -amountToCharge,
+      balanceAfterBrl: balanceAfter,
+      requestId: args.requestId,
+      endpoint: args.endpoint,
+      provider,
+      model,
+      usage: [{
+        provider,
+        model,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costBrl: amountToCharge,
+        endpoint: args.endpoint,
+        estimated: false,
+      }],
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    const dateId = getDateId();
+    const usageRef = usageDailyCollection(args.uid).doc(dateId);
+    const key = safeModelKey(model);
+    tx.set(usageRef, {
+      date: dateId,
+      updatedAt: FieldValue.serverTimestamp(),
+      totalCostBrl: FieldValue.increment(amountToCharge),
+      totalRequests: FieldValue.increment(1),
+      [`models.${key}.model`]: model,
+      [`models.${key}.provider`]: provider,
+      [`models.${key}.costBrl`]: FieldValue.increment(amountToCharge),
+      [`models.${key}.requests`]: FieldValue.increment(1),
+    }, { merge: true });
+
+    return { balanceAfterBrl: balanceAfter };
+  });
+
+  return { chargedBrl: amountToCharge, balanceAfterBrl: result.balanceAfterBrl };
+}
+
 export async function createManualTopup(args: {
   uid: string;
   amountBrl: number;
@@ -945,9 +1021,10 @@ export async function getBillingMe(uid: string) {
     if (!usageData) continue;
     const models = (usageData as any)?.models || {};
     for (const value of Object.values(models) as any[]) {
+      const isInfra = value?.provider === "cloudinary" || value?.provider === "sema_wms";
       addAggregate({
-        model: value?.model,
-        provider: value?.provider,
+        model: isInfra ? "processamento_georreferenciado" : value?.model,
+        provider: isInfra ? "infraestrutura" : value?.provider,
         inputTokens: value?.inputTokens,
         outputTokens: value?.outputTokens,
         costBrl: value?.costBrl,
@@ -967,9 +1044,12 @@ export async function getBillingMe(uid: string) {
         const data = doc.data() as any;
         const usages = Array.isArray(data?.usage) ? data.usage : [];
         for (const usage of usages) {
+          const providerRaw = usage?.provider || data?.provider;
+          const modelRaw = usage?.model || data?.model;
+          const isInfra = providerRaw === "cloudinary" || providerRaw === "sema_wms";
           addAggregate({
-            model: usage?.model || data?.model,
-            provider: usage?.provider || data?.provider,
+            model: isInfra ? "processamento_georreferenciado" : modelRaw,
+            provider: isInfra ? "infraestrutura" : providerRaw,
             inputTokens: usage?.inputTokens,
             outputTokens: usage?.outputTokens,
             costBrl: usage?.costBrl,
@@ -1011,7 +1091,28 @@ export async function getBillingLedger(uid: string, limit = 50) {
     .limit(safeLimit)
     .get();
 
-  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  return snap.docs.map((doc) => {
+    const data = doc.data() as any;
+
+    // Ocultar detalhes de infraestrutura no extrato do usuário
+    const isInfra = data.provider === "cloudinary" || data.provider === "sema_wms" || (data.model || "").includes("cloudinary");
+    if (isInfra) {
+      data.provider = "infraestrutura";
+      data.model = "processamento_georreferenciado";
+    }
+
+    if (Array.isArray(data.usage)) {
+      data.usage = data.usage.map((u: any) => {
+        const isUsageInfra = u.provider === "cloudinary" || u.provider === "sema_wms" || (u.model || "").includes("cloudinary");
+        if (isUsageInfra) {
+          return { ...u, provider: "infraestrutura", model: "processamento_georreferenciado" };
+        }
+        return u;
+      });
+    }
+
+    return { id: doc.id, ...data };
+  });
 }
 
 export async function estimateReserveForModels(args: {

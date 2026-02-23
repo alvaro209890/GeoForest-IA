@@ -172,6 +172,25 @@ export default defineConfig(({ mode }) => {
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("node_modules/firebase") || id.includes("node_modules/@firebase")) {
+            return "vendor-firebase";
+          }
+          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom")) {
+            return "vendor-react";
+          }
+          if (id.includes("node_modules/lucide-react") || id.includes("node_modules/@radix-ui")) {
+            return "vendor-ui";
+          }
+          if (id.includes("node_modules/@turf") || id.includes("node_modules/proj4")) {
+            return "vendor-geo";
+          }
+        },
+      },
+    },
   },
   server: {
     port: 3000,
