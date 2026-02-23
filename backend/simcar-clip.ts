@@ -1594,14 +1594,22 @@ async function processClip(
 const SEMA_WMS_BASE = process.env.SEMA_WMS_BASE_URL || "https://geo.sema.mt.gov.br/geoserver/ows";
 const SEMA_WMS_AUTHKEY = process.env.SEMA_WMS_AUTHKEY || "541085de-9a2e-454e-bdba-eb3d57a2f492";
 const SPOT_LAYER = "Mosaicos:MOSAICO_SPOT_SEPLAN";
+const WMS_FETCH_RETRY_ATTEMPTS = Math.max(1, Number(process.env.WMS_FETCH_RETRY_ATTEMPTS || 2));
+const WMS_RETRY_BASE_DELAY_MS = 1200;
 
 /** Helper to generate Landsat 5/8 and Sentinel-2 layer entries. */
 function buildSatLayer(sensor: string, year: number, wmsPrefix: string, labelPrefix: string, aliases?: string[]): { wmsLayer: string; wmsAliases?: string[]; label: string; year: number } {
     const envKey = `WMS_${sensor}_${year}`;
+    const envAliasKey = `${envKey}_ALIASES`;
     const defaultLayer = `Mosaicos:${wmsPrefix}_${year}`;
+    const envAliases = String(process.env[envAliasKey] || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    const aliasList = Array.from(new Set([defaultLayer, ...(aliases || []), ...envAliases]));
     return {
         wmsLayer: process.env[envKey] || defaultLayer,
-        wmsAliases: aliases || [`Mosaicos:${wmsPrefix}_${year}`, `Mosaicos:MOSAICO_${wmsPrefix}${year}`],
+        wmsAliases: aliasList,
         label: `${labelPrefix} (${year})`,
         year,
     };
@@ -1902,7 +1910,7 @@ const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
 
 /** Fetch a WMS image and return as a PNG Buffer. Validates the response is actually an image. */
-async function fetchWmsImageBuffer(
+async function fetchWmsImageBufferOnce(
     layers: string[],
     bbox: [number, number, number, number],
     width = 1200,
@@ -1943,6 +1951,71 @@ async function fetchWmsImageBuffer(
     }
 
     return buf;
+}
+
+function sleepMs(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableWmsError(error: unknown): boolean {
+    const msg = String((error as any)?.message || error || "").toLowerCase();
+    return (
+        msg.includes("fetch failed") ||
+        msg.includes("timeout") ||
+        msg.includes("aborted") ||
+        msg.includes("socket") ||
+        msg.includes("econnreset") ||
+        msg.includes("econnrefused") ||
+        msg.includes("etimedout") ||
+        msg.includes("und_err_")
+    );
+}
+
+function buildWmsResolutionFallbacks(width: number, height: number): Array<[number, number]> {
+    const factors = [1, 0.85, 0.7, 0.55];
+    const seen = new Set<string>();
+    const out: Array<[number, number]> = [];
+    for (const factor of factors) {
+        const w = Math.max(800, Math.round(width * factor));
+        const h = Math.max(600, Math.round(height * factor));
+        const key = `${w}x${h}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push([w, h]);
+    }
+    if (!seen.has("800x600")) out.push([800, 600]);
+    return out;
+}
+
+/** Fetch WMS with retry and resolution fallback. Always returns at target width/height. */
+async function fetchWmsImageBuffer(
+    layers: string[],
+    bbox: [number, number, number, number],
+    width = 1200,
+    height = 900,
+): Promise<Buffer> {
+    const resolutions = buildWmsResolutionFallbacks(width, height);
+    let lastError: unknown = null;
+
+    for (const [tryW, tryH] of resolutions) {
+        for (let attempt = 1; attempt <= WMS_FETCH_RETRY_ATTEMPTS; attempt++) {
+            try {
+                const buf = await fetchWmsImageBufferOnce(layers, bbox, tryW, tryH);
+                if (tryW === width && tryH === height) return buf;
+                return await sharp(buf).resize(width, height, { fit: "fill" }).png().toBuffer();
+            } catch (err) {
+                lastError = err;
+                const retryable = isRetryableWmsError(err);
+                if (retryable && attempt < WMS_FETCH_RETRY_ATTEMPTS) {
+                    await sleepMs(WMS_RETRY_BASE_DELAY_MS * attempt);
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+
+    throw lastError || new Error("Falha ao buscar imagem WMS.");
 }
 
 /** Convert GeoJSON coordinates to SVG path data. */

@@ -78,6 +78,10 @@ const MODELO_ZIP_PATH = path.resolve(__dirname, "..", "Arquivo Modelo.zip");
 const DEFAULT_PRODES_WFS_URL = String(
     process.env.PRODES_WFS_URL || "https://terrabrasilis.dpi.inpe.br/geoserver/ows",
 ).trim();
+const PRODES_WFS_URL_FALLBACKS = [
+    "https://terrabrasilis.dpi.inpe.br/geoserver/ows",
+    "https://terrabrasilis.dpi.inpe.br/geoserver/prodes-legal-amz/ows",
+] as const;
 const PRODES_LAYER = String(process.env.PRODES_LAYER || "prodes-legal-amz:yearly_deforestation").trim();
 const PRODES_YEAR_FIELD = String(process.env.PRODES_YEAR_FIELD || "year").trim();
 const PRODES_GEOM_FIELD = String(process.env.PRODES_GEOM_FIELD || "geom").trim();
@@ -404,17 +408,24 @@ async function fetchProdesGeoJson(wkt: string): Promise<FeatureCollection> {
         "prodes-legal-amz:yearly_deforestation",
         "yearly_deforestation",
     ]);
+    const baseUrlCandidates = uniqueNonEmpty([
+        DEFAULT_PRODES_WFS_URL,
+        ...PRODES_WFS_URL_FALLBACKS,
+    ]);
     const typeNameCandidates = uniqueNonEmpty(layerCandidates.flatMap((item) => buildTypeNameCandidates(item)));
     const geomFields = uniqueNonEmpty([PRODES_GEOM_FIELD, "geom", "GEOMETRY", "the_geom"]);
     let lastError: unknown;
-    for (const geomField of geomFields) {
-        try {
-            return await fetchWfsGeoJson(DEFAULT_PRODES_WFS_URL, PRODES_LAYER, {
-                cql: `INTERSECTS(${geomField},${wkt})`,
-                typeNameCandidates,
-            });
-        } catch (err) {
-            lastError = err;
+    for (const baseUrl of baseUrlCandidates) {
+        for (const geomField of geomFields) {
+            try {
+                return await fetchWfsGeoJson(baseUrl, PRODES_LAYER, {
+                    cql: `INTERSECTS(${geomField},${wkt})`,
+                    typeNameCandidates,
+                });
+            } catch (err: any) {
+                const msg = String(err?.message || err || "erro desconhecido");
+                lastError = new Error(`PRODES base=${baseUrl} geom=${geomField}: ${msg}`);
+            }
         }
     }
     throw lastError || new Error("Falha ao consultar PRODES.");
