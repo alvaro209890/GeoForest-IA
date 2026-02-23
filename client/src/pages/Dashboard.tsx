@@ -324,6 +324,7 @@ type Conversation = {
   lastAttachmentType?: 'image' | 'pdf';
   kind?: string;
   simcarJobId?: string;
+  auasJobId?: string;
 };
 
 const DEFAULT_ASSISTANT_MESSAGE: ChatMessage = {
@@ -468,6 +469,36 @@ type SimcarClipHistoryItem = {
   auasAnalysisImages?: Array<{ url: string; caption: string }>;
   auasAnalysisMessages?: SimcarAnalysisMessage[];
   auasMeta?: SimcarAuasMeta;
+};
+
+type AuasTabResult = {
+  acAreaHa: number;
+  auasAreaHa: number;
+  avnAreaHa: number;
+  arlAreaHa: number;
+  propertyAreaHa: number;
+  riverBufferHa: number;
+  auasPolygons: Array<{ year: number; areaHa: number }>;
+  downloadUrl?: string;
+  inputZipUrl?: string;
+  outputZipUrl?: string;
+  contextUrl?: string;
+  analysis?: string;
+  images?: Array<{ url: string; caption: string }>;
+  satellitesUsed?: string[];
+  satellitesMissing?: string[];
+  cloudWarnings?: Array<{ satellite: string; cloudScore: number }>;
+  analysisMeta?: SimcarAcAvnAnalysisMeta;
+  analysisRulesVersion?: string;
+};
+
+type AuasHistoryItem = AuasTabResult & {
+  id: string;
+  timestamp: string;
+  filename: string;
+  jobId: string;
+  inputFilename?: string;
+  conversationId?: string;
 };
 
 const DEFAULT_SETTINGS: UserSettings = {
@@ -1183,16 +1214,8 @@ export default function Dashboard() {
   const [auasProcessing, setAuasProcessing] = useState(false);
   const [auasJobId, setAuasJobId] = useState<string | null>(null);
   const [auasProgress, setAuasProgress] = useState<{ step: string; percent: number; message: string } | null>(null);
-  const [auasResult, setAuasResult] = useState<{
-    acAreaHa: number;
-    auasAreaHa: number;
-    avnAreaHa: number;
-    arlAreaHa: number;
-    propertyAreaHa: number;
-    riverBufferHa: number;
-    auasPolygons: Array<{ year: number; areaHa: number }>;
-    downloadUrl?: string;
-  } | null>(null);
+  const [auasResult, setAuasResult] = useState<AuasTabResult | null>(null);
+  const [auasHistory, setAuasHistory] = useState<AuasHistoryItem[]>([]);
   const [auasError, setAuasError] = useState<string | null>(null);
   const auasAbortRef = useRef<AbortController | null>(null);
   const auasFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1337,6 +1360,7 @@ export default function Dashboard() {
     collection: ReturnType<typeof collection>;
   } | null>(null);
   const [simcarClipsRef, setSimcarClipsRef] = useState<ReturnType<typeof collection> | null>(null);
+  const [auasJobsRef, setAuasJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
   const [settingsRef, setSettingsRef] = useState<DocumentReference | null>(null);
   const selectedSimcarClipLayerNames = useMemo(
@@ -1763,6 +1787,179 @@ export default function Dashboard() {
     return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
   };
 
+  const normalizeAuasResultPayload = useCallback((raw: any): AuasTabResult => {
+    const toNumber = (value: any) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    const outputZipUrl = String(raw?.outputZipUrl || '').trim() || undefined;
+    const inputZipUrl = String(raw?.inputZipUrl || '').trim() || undefined;
+    const contextUrl = String(raw?.contextUrl || '').trim() || undefined;
+    const rawDownloadUrl = String(raw?.downloadUrl || '').trim();
+    const resolvedDownloadUrl = outputZipUrl
+      || (rawDownloadUrl
+        ? (rawDownloadUrl.startsWith('/api/') ? apiUrl(rawDownloadUrl) : rawDownloadUrl)
+        : undefined);
+    const images = Array.isArray(raw?.images)
+      ? raw.images
+        .map((img: any) => ({
+          url: String(img?.url || '').trim(),
+          caption: String(img?.caption || '').trim(),
+        }))
+        .filter((img: { url: string }) => Boolean(img.url))
+      : [];
+    const auasPolygons = Array.isArray(raw?.auasPolygons)
+      ? raw.auasPolygons
+        .map((item: any) => ({
+          year: Math.round(toNumber(item?.year)),
+          areaHa: toNumber(item?.areaHa),
+        }))
+        .filter((item: { year: number; areaHa: number }) => item.year > 0 && item.areaHa >= 0)
+      : [];
+    return {
+      propertyAreaHa: toNumber(raw?.propertyAreaHa),
+      acAreaHa: toNumber(raw?.acAreaHa),
+      auasAreaHa: toNumber(raw?.auasAreaHa),
+      avnAreaHa: toNumber(raw?.avnAreaHa),
+      arlAreaHa: toNumber(raw?.arlAreaHa),
+      riverBufferHa: toNumber(raw?.riverBufferHa),
+      auasPolygons,
+      downloadUrl: resolvedDownloadUrl,
+      inputZipUrl,
+      outputZipUrl,
+      contextUrl,
+      analysis: raw?.analysis ? String(raw.analysis) : undefined,
+      images,
+      satellitesUsed: Array.isArray(raw?.satellitesUsed) ? raw.satellitesUsed.map((v: any) => String(v)) : undefined,
+      satellitesMissing: Array.isArray(raw?.satellitesMissing) ? raw.satellitesMissing.map((v: any) => String(v)) : undefined,
+      cloudWarnings: Array.isArray(raw?.cloudWarnings)
+        ? raw.cloudWarnings
+          .map((item: any) => ({
+            satellite: String(item?.satellite || ''),
+            cloudScore: toNumber(item?.cloudScore),
+          }))
+          .filter((item: { satellite: string }) => Boolean(item.satellite))
+        : undefined,
+      analysisMeta: isPlainObject(raw?.analysisMeta) ? (raw.analysisMeta as SimcarAcAvnAnalysisMeta) : undefined,
+      analysisRulesVersion: raw?.analysisRulesVersion ? String(raw.analysisRulesVersion) : undefined,
+    };
+  }, []);
+
+  const persistAuasHistoryEntry = useCallback(
+    async (entry: AuasHistoryItem) => {
+      if (!auasJobsRef) return;
+      const auasDocRef = doc(auasJobsRef, entry.jobId);
+      const cleanEntry = stripUndefinedDeep(entry);
+      const payload = stripUndefinedDeep({
+        ...cleanEntry,
+        kind: 'novo_car',
+        title: cleanEntry.filename,
+        files: {
+          inputZipUrl: cleanEntry.inputZipUrl,
+          outputZipUrl: cleanEntry.outputZipUrl,
+          contextUrl: cleanEntry.contextUrl,
+        },
+        analysisImageCount: cleanEntry.images?.length ?? 0,
+      });
+      await setDoc(
+        auasDocRef,
+        {
+          ...payload,
+          updatedAt: serverTimestamp(),
+          createdAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    },
+    [auasJobsRef]
+  );
+
+  const appendAuasEntriesToConversation = useCallback(
+    async (
+      job: AuasHistoryItem,
+      entries: SimcarConversationEntry[],
+      options?: { title?: string },
+    ) => {
+      if (!conversationsRef || !job?.jobId) return null;
+
+      const validEntries = entries
+        .map((entry) => ({
+          ...entry,
+          text: String(entry?.text || '').trim(),
+        }))
+        .filter((entry) => entry.text.length > 0);
+      if (validEntries.length === 0) return job.conversationId || null;
+
+      const conversationId = job.conversationId || nanoid();
+      const convDocRef = doc(conversationsRef.collection, conversationId);
+      const snap = await getDoc(convDocRef);
+      const existingMessages = snap.exists()
+        ? ((snap.data() as any)?.messages as ChatMessage[] | undefined)
+        : undefined;
+      const baseMessages = Array.isArray(existingMessages) && existingMessages.length > 0
+        ? existingMessages
+        : [DEFAULT_ASSISTANT_MESSAGE];
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const additions: ChatMessage[] = validEntries.map((entry) => {
+        const cleanedMeta = entry.meta
+          ? Object.fromEntries(Object.entries(entry.meta).filter(([, value]) => value !== undefined))
+          : undefined;
+        return {
+          id: nanoid(),
+          role: entry.role,
+          text: entry.text,
+          time: now,
+          ...(cleanedMeta && Object.keys(cleanedMeta).length > 0 ? { meta: cleanedMeta as ChatMessage['meta'] } : {}),
+        };
+      });
+
+      const mergedMessages = [...baseMessages, ...additions];
+      const existingTitle = snap.exists() ? String((snap.data() as any)?.title || '').trim() : '';
+      const fallbackTitle = options?.title?.trim() || job.filename || `Novo CAR ${job.jobId.slice(0, 8)}`;
+      const nextTitle = existingTitle || fallbackTitle;
+      const lastPreview = additions[additions.length - 1]?.text?.slice(0, 120) || '';
+
+      const conversationPayload: Record<string, any> = {
+        title: nextTitle,
+        kind: 'novo_car',
+        auasJobId: job.jobId,
+        messages: sanitizeMessagesForFirestore(mergedMessages),
+        updatedAt: serverTimestamp(),
+        lastMessagePreview: lastPreview,
+        lastAttachmentType: null,
+      };
+      if (!snap.exists()) {
+        conversationPayload.createdAt = serverTimestamp();
+      }
+      await setDoc(convDocRef, conversationPayload, { merge: true });
+
+      setConversations((prev) => {
+        const next: Conversation = {
+          id: conversationId,
+          title: nextTitle,
+          lastMessagePreview: lastPreview,
+          auasJobId: job.jobId,
+          kind: 'novo_car',
+        };
+        return [next, ...prev.filter((item) => item.id !== conversationId)];
+      });
+
+      if (!job.conversationId && auasJobsRef) {
+        await setDoc(
+          doc(auasJobsRef, job.jobId),
+          { conversationId, updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+        setAuasHistory((prev) =>
+          prev.map((item) => (item.jobId === job.jobId ? { ...item, conversationId } : item))
+        );
+      }
+
+      return conversationId;
+    },
+    [auasJobsRef, conversationsRef]
+  );
+
   const persistSimcarClipHistoryEntry = useCallback(
     async (clip: SimcarClipHistoryItem) => {
       if (!simcarClipsRef) return;
@@ -1911,6 +2108,10 @@ export default function Dashboard() {
       try {
         if (!currentUser) {
           setSimcarClipsRef(null);
+          setAuasJobsRef(null);
+          setAuasHistory([]);
+          setAuasJobId(null);
+          setAuasResult(null);
           setLocation('/');
           return;
         }
@@ -1925,6 +2126,8 @@ export default function Dashboard() {
         setConversationsRef({ collection: collRef });
         const simcarRef = collection(db, 'users', currentUser.uid, 'simcar_clips');
         setSimcarClipsRef(simcarRef);
+        const auasRef = collection(db, 'users', currentUser.uid, 'auas_jobs');
+        setAuasJobsRef(auasRef);
 
         const nextSettingsRef = doc(db, 'users', currentUser.uid, 'settings', 'preferences');
         setSettingsRef(nextSettingsRef);
@@ -1948,6 +2151,7 @@ export default function Dashboard() {
             lastAttachmentType: (data as any).lastAttachmentType,
             kind: typeof data?.kind === 'string' ? data.kind : undefined,
             simcarJobId: typeof data?.simcarJobId === 'string' ? data.simcarJobId : undefined,
+            auasJobId: typeof data?.auasJobId === 'string' ? data.auasJobId : undefined,
           });
         });
 
@@ -2006,11 +2210,56 @@ export default function Dashboard() {
           console.warn('Falha ao carregar histórico SIMCAR salvo:', error);
         }
 
+        try {
+          const auasSnap = await getDocs(query(auasRef, orderBy('updatedAt', 'desc')));
+          const auasEntries: AuasHistoryItem[] = [];
+          auasSnap.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            const normalizedResult = normalizeAuasResultPayload({
+              propertyAreaHa: data?.propertyAreaHa,
+              acAreaHa: data?.acAreaHa,
+              auasAreaHa: data?.auasAreaHa,
+              avnAreaHa: data?.avnAreaHa,
+              arlAreaHa: data?.arlAreaHa,
+              riverBufferHa: data?.riverBufferHa,
+              auasPolygons: data?.auasPolygons,
+              downloadUrl: data?.downloadUrl,
+              inputZipUrl: data?.inputZipUrl ?? data?.files?.inputZipUrl,
+              outputZipUrl: data?.outputZipUrl ?? data?.files?.outputZipUrl,
+              contextUrl: data?.contextUrl ?? data?.files?.contextUrl,
+              analysis: data?.analysis,
+              images: data?.images,
+              satellitesUsed: data?.satellitesUsed,
+              satellitesMissing: data?.satellitesMissing,
+              cloudWarnings: data?.cloudWarnings,
+              analysisMeta: data?.analysisMeta,
+              analysisRulesVersion: data?.analysisRulesVersion,
+            });
+            auasEntries.push({
+              id: String(data?.id || docSnap.id),
+              jobId: String(data?.jobId || docSnap.id),
+              timestamp: toIsoDateFromUnknown(data?.timestamp || data?.updatedAt || data?.createdAt),
+              filename: String(data?.filename || 'Novo CAR'),
+              inputFilename: data?.inputFilename ? String(data.inputFilename) : undefined,
+              conversationId: data?.conversationId ? String(data.conversationId) : undefined,
+              ...normalizedResult,
+            });
+          });
+          setAuasHistory(auasEntries);
+          if (auasEntries.length > 0) {
+            const latest = auasEntries[0];
+            setAuasJobId(latest.jobId);
+            setAuasResult(normalizeAuasResultPayload(latest));
+          }
+        } catch (error) {
+          console.warn('Falha ao carregar histórico Novo CAR salvo:', error);
+        }
+
         if (list.length === 0) {
           await createConversation(collRef);
         } else {
           setConversations(list);
-          const preferred = list.find((item) => item.kind !== 'simcar_recorte') || list[0];
+          const preferred = list.find((item) => item.kind !== 'simcar_recorte' && item.kind !== 'novo_car') || list[0];
           await loadConversation(collRef, preferred.id);
         }
       } catch (error) {
@@ -2022,7 +2271,7 @@ export default function Dashboard() {
     });
 
     return () => unsubscribe();
-  }, [setLocation]);
+  }, [normalizeAuasResultPayload, setLocation]);
 
   useEffect(() => {
     if (loading || !auth.currentUser) return;
@@ -7334,21 +7583,19 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       setAuasProgress({ step: 'upload', percent: 5, message: 'Enviando shapefile...' });
                       auasAbortRef.current = new AbortController();
                       try {
-                        const idToken = await (await import('../lib/auth')).getIdToken();
                         const reader = new FileReader();
                         const zipB64: string = await new Promise((resolve, reject) => {
                           reader.onload = () => resolve((reader.result as string).split(',')[1]);
                           reader.onerror = reject;
                           reader.readAsDataURL(auasFile);
                         });
-                        const resp = await fetch(apiUrl('/api/auas/analyze'), {
+                        const resp = await apiFetch('/api/auas/analyze', {
                           method: 'POST',
-                          headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
                           body: JSON.stringify({ propertyZip: zipB64, filename: auasFile.name }),
                           signal: auasAbortRef.current.signal,
                         });
                         if (!resp.ok || !resp.body) {
-                          const err = await resp.json().catch(() => ({ error: 'Erro desconhecido' }));
+                          const err = await readApiError(resp);
                           throw new Error(err.error || `HTTP ${resp.status}`);
                         }
                         const reader2 = resp.body.getReader();
@@ -7362,19 +7609,87 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           buf = lines.pop() ?? '';
                           for (const line of lines) {
                             if (!line.startsWith('data:')) continue;
+                            let evt: any;
                             try {
-                              const evt = JSON.parse(line.slice(5));
-                              if (evt.type === 'progress') {
-                                setAuasProgress({ step: evt.step || '', percent: evt.percent || 0, message: evt.message || '' });
-                              } else if (evt.type === 'result') {
-                                setAuasResult(evt.data);
-                                setAuasJobId(evt.jobId || null);
-                                setAuasProcessing(false);
-                                setAuasProgress(null);
-                              } else if (evt.type === 'error') {
-                                throw new Error(evt.message || 'Erro na análise AUAS');
+                              evt = JSON.parse(line.slice(5));
+                            } catch {
+                              continue;
+                            }
+                            if (evt.type === 'progress') {
+                              setAuasProgress({ step: evt.step || '', percent: evt.percent || 0, message: evt.message || '' });
+                              continue;
+                            }
+                            if (evt.type === 'error') {
+                              throw new Error(evt.message || 'Erro na análise AUAS');
+                            }
+                            if (evt.type === 'result') {
+                              const nextJobId = typeof evt.jobId === 'string' && evt.jobId.trim()
+                                ? evt.jobId.trim()
+                                : evt?.data?.downloadUrl?.match?.(/\/auas\/download\/([^/?]+)/)?.[1] || null;
+                              const normalizedResult = normalizeAuasResultPayload(evt.data);
+                              setAuasResult(normalizedResult);
+                              setAuasJobId(nextJobId || null);
+                              setAuasProcessing(false);
+                              setAuasProgress(null);
+
+                              if (nextJobId) {
+                                const entry: AuasHistoryItem = {
+                                  id: nextJobId,
+                                  timestamp: new Date().toISOString(),
+                                  filename: `Novo CAR ${new Date().toLocaleString('pt-BR', {
+                                    day: '2-digit',
+                                    month: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}`,
+                                  jobId: nextJobId,
+                                  inputFilename: auasFile.name,
+                                  ...normalizedResult,
+                                };
+                                setAuasHistory((prev) => {
+                                  const filtered = prev.filter((item) => item.jobId !== nextJobId);
+                                  return [entry, ...filtered];
+                                });
+                                void persistAuasHistoryEntry(entry);
+
+                                const cloudinaryFiles = [
+                                  entry.inputZipUrl ? `- ZIP original: ${entry.inputZipUrl}` : '',
+                                  entry.outputZipUrl ? `- ZIP Novo CAR: ${entry.outputZipUrl}` : '',
+                                  entry.contextUrl ? `- Contexto JSON: ${entry.contextUrl}` : '',
+                                ].filter(Boolean);
+                                const summaryLines = [
+                                  `Novo CAR concluído (job ${nextJobId}).`,
+                                  `Área do imóvel: ${entry.propertyAreaHa.toFixed(2)} ha.`,
+                                  `AC: ${entry.acAreaHa.toFixed(2)} ha | AUAS: ${entry.auasAreaHa.toFixed(2)} ha | AVN/ARL: ${entry.avnAreaHa.toFixed(2)} ha.`,
+                                  entry.riverBufferHa > 0 ? `Buffer de rios removido: ${entry.riverBufferHa.toFixed(4)} ha.` : '',
+                                  cloudinaryFiles.length > 0 ? `Arquivos no Cloudinary:\n${cloudinaryFiles.join('\n')}` : '',
+                                  entry.downloadUrl ? `Download do resultado: ${entry.downloadUrl}` : '',
+                                ].filter(Boolean);
+                                if (entry.analysis) {
+                                  const excerpt = entry.analysis.length > 1800
+                                    ? `${entry.analysis.slice(0, 1800)}...`
+                                    : entry.analysis;
+                                  summaryLines.push(`Síntese IA:\n${excerpt}`);
+                                }
+                                void appendAuasEntriesToConversation(
+                                  entry,
+                                  [
+                                    {
+                                      role: 'user',
+                                      text: [
+                                        'Solicitei um processamento de Novo CAR (AUAS).',
+                                        `Arquivo: ${auasFile.name}.`,
+                                      ].join('\n'),
+                                    },
+                                    {
+                                      role: 'ai',
+                                      text: summaryLines.join('\n\n'),
+                                    },
+                                  ],
+                                  { title: entry.filename }
+                                );
                               }
-                            } catch { /* ignore parse errors */ }
+                            }
                           }
                         }
                       } catch (err: any) {
@@ -7491,7 +7806,15 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className="flex flex-col sm:flex-row gap-3">
                     {auasResult.downloadUrl && (
                       <a
-                        href={auasResult.downloadUrl}
+                        href={
+                          auasResult.downloadUrl.startsWith('https://res.cloudinary.com/')
+                            ? toFileProxyUrl(
+                              auasResult.downloadUrl,
+                              `novo_car_${(auasJobId || 'resultado').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`,
+                              'download'
+                            )
+                            : auasResult.downloadUrl
+                        }
                         download
                         className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-medium text-sm transition-all shadow-lg shadow-amber-900/30"
                       >
