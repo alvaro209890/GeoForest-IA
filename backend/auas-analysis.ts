@@ -55,7 +55,6 @@ import {
     type DbfFieldDef,
     type ShpRecord,
 } from "./shapefile-writer";
-import { adminAuth } from "./firebase-admin";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -83,11 +82,64 @@ const RIVER_BUFFER_METERS = 2;
 const WFS_TIMEOUT = 30_000; // 30 s
 const CACHE_TTL = 30 * 60 * 1000; // 30 min
 const CACHE_MAX = 20;
+const CLOUDINARY_CLOUD = "da19dwpgk";
+
+function cloudinarySign(params: Record<string, string>): string {
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    if (!apiSecret) throw new Error("Cloudinary não configurado.");
+    const base = Object.keys(params)
+        .sort()
+        .map((key) => `${key}=${params[key]}`)
+        .join("&");
+    return crypto.createHash("sha1").update(base + apiSecret).digest("hex");
+}
+
+async function uploadRawBufferToCloudinary(
+    buffer: Buffer,
+    filename: string,
+    mimeType: string,
+): Promise<string> {
+    const apiKey = process.env.CLOUDINARY_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    const folder = process.env.CLOUDINARY_FOLDER;
+    if (!apiKey || !apiSecret) throw new Error("Cloudinary não configurado.");
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    const publicId = `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_");
+    const params: Record<string, string> = { timestamp: String(timestamp), public_id: publicId };
+    if (folder) params.folder = folder;
+    const signature = cloudinarySign(params);
+
+    const dataUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
+    const form = new FormData();
+    form.append("file", dataUrl);
+    form.append("api_key", apiKey);
+    form.append("timestamp", String(timestamp));
+    form.append("signature", signature);
+    form.append("resource_type", "raw");
+    if (folder) form.append("folder", folder);
+    form.append("public_id", publicId);
+
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/raw/upload`;
+    const response = await fetch(uploadUrl, { method: "POST", body: form });
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Cloudinary raw error ${response.status}: ${text.slice(0, 200)}`);
+    }
+    return ((await response.json()) as { secure_url: string }).secure_url;
+}
+
+async function uploadZipBufferToCloudinary(buffer: Buffer, filename: string): Promise<string> {
+    return uploadRawBufferToCloudinary(buffer, filename, "application/zip");
+}
 
 /* ─── Cache de jobs ──────────────────────────────────────────────── */
 type AuasJob = {
     buffer?: Buffer;
     filename: string;
+    inputZipUrl?: string;
+    outputZipUrl?: string;
+    contextUrl?: string;
     expiresAt: number;
 };
 const auasJobCache = new Map<string, AuasJob>();
@@ -262,13 +314,13 @@ function buildLayerBuffers(
     Object.assign(attribs, extraAttribs);
 
     const record: ShpRecord = { rings, attributes: attribs };
-    const { shpBuffer, shxBuffer } = buildShpAndShx([record]);
-    const dbfBuffer = buildDbfBuffer([record], fieldDefs);
+    const { shp, shx } = buildShpAndShx([record]);
+    const dbfBuffer = buildDbfBuffer([attribs], fieldDefs);
     const prjBuf = prjForLayer(templateEntries, layerName);
 
     const out: Array<{ ext: string; data: Buffer }> = [
-        { ext: "shp", data: shpBuffer },
-        { ext: "shx", data: shxBuffer },
+        { ext: "shp", data: shp },
+        { ext: "shx", data: shx },
         { ext: "dbf", data: dbfBuffer },
     ];
     if (prjBuf) out.push({ ext: "prj", data: prjBuf });
@@ -280,6 +332,7 @@ function buildLayerBuffers(
 async function runAuasAnalysis(
     res: Response,
     propertyZip: Buffer,
+    options?: { inputFilename?: string },
 ): Promise<void> {
     // 1. Parse shapefile da propriedade
     progress(res, 5, "parse", "Lendo shapefile da propriedade...");
@@ -436,6 +489,12 @@ async function runAuasAnalysis(
         if (!feature) continue;
         const bufs = buildLayerBuffers(name, feature, templateEntries);
         for (const { ext, data } of bufs) {
+            if (!Buffer.isBuffer(data) || data.length === 0) {
+                console.warn(
+                    `[AUAS] arquivo inválido ignorado ao montar ZIP: layer=${name} ext=${ext} type=${typeof data}`,
+                );
+                continue;
+            }
             archive.append(data, { name: `${name}.${ext}` });
         }
     }
@@ -443,11 +502,52 @@ async function runAuasAnalysis(
     await archive.finalize();
     const zipBuffer = Buffer.concat(zipChunks);
 
+    let inputZipUrl: string | undefined;
+    let outputZipUrl: string | undefined;
+    let contextUrl: string | undefined;
+    try {
+        progress(res, 88, "cloudinary", "Salvando arquivos do Novo CAR no Cloudinary...");
+        const tag = jobId.slice(0, 8);
+        const [inUrl, outUrl] = await Promise.all([
+            uploadZipBufferToCloudinary(propertyZip, `auas_input_${tag}`),
+            uploadZipBufferToCloudinary(zipBuffer, `auas_output_${tag}`),
+        ]);
+        inputZipUrl = inUrl;
+        outputZipUrl = outUrl;
+        const contextPayload = {
+            version: 1,
+            source: "novo_car_tab",
+            jobId,
+            savedAtIso: new Date().toISOString(),
+            inputFilename: options?.inputFilename || `imovel_${tag}.zip`,
+            outputFilename: zipFilename,
+            metrics: {
+                propertyAreaHa,
+                acAreaHa,
+                auasAreaHa,
+                avnAreaHa,
+                arlAreaHa,
+                riverBufferHa,
+            },
+        };
+        const contextBuffer = Buffer.from(JSON.stringify(contextPayload), "utf8");
+        contextUrl = await uploadRawBufferToCloudinary(
+            contextBuffer,
+            `auas_context_${tag}.json`,
+            "application/json",
+        );
+    } catch (err: any) {
+        console.warn("[AUAS] Cloudinary persist failed:", err?.message || err);
+    }
+
     // Guardar em cache para download
     pruneAuasCache();
     auasJobCache.set(jobId, {
         buffer: zipBuffer,
         filename: zipFilename,
+        inputZipUrl,
+        outputZipUrl,
+        contextUrl,
         expiresAt: Date.now() + CACHE_TTL,
     });
 
@@ -502,7 +602,10 @@ async function runAuasAnalysis(
             arlAreaHa,
             riverBufferHa,
             auasPolygons,
-            downloadUrl: `/api/auas/download/${jobId}`,
+            downloadUrl: outputZipUrl || `/api/auas/download/${jobId}`,
+            inputZipUrl,
+            outputZipUrl,
+            contextUrl,
             ...(aiResult && !aiResult.imageOnly ? {
                 analysis: aiResult.analysisText,
                 images: aiResult.cloudinaryUrls,
@@ -553,7 +656,9 @@ export function registerAuasRoutes(app: Express) {
             res.setHeader("Connection", "keep-alive");
             res.flushHeaders?.();
 
-            await runAuasAnalysis(res, zipBuffer);
+            await runAuasAnalysis(res, zipBuffer, {
+                inputFilename: body.filename,
+            });
         } catch (err: any) {
             console.error("[AUAS] Unhandled error:", err);
             if (!res.writableEnded) {
@@ -569,6 +674,10 @@ export function registerAuasRoutes(app: Express) {
         const { jobId } = req.params as { jobId: string };
         const job = auasJobCache.get(jobId);
         if (!job?.buffer) {
+            if (job?.outputZipUrl) {
+                res.redirect(job.outputZipUrl);
+                return;
+            }
             res.status(404).json({ error: "Arquivo não encontrado ou expirado." });
             return;
         }

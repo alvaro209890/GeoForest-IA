@@ -350,7 +350,7 @@ export async function getUsdBrlRate(): Promise<{ rate: number; source: string }>
     const rate = await fetchUsdBrlRateFromBcb();
     rateCache = { value: rate, fetchedAt: now, source: "BCB_PTAX" };
     try {
-      await adminDb.doc("system/billing_config/current").set(
+      await adminDb.doc("system/billing_config").set(
         {
           usdBrlRate: rate,
           usdBrlSource: "BCB_PTAX",
@@ -369,7 +369,7 @@ export async function getUsdBrlRate(): Promise<{ rate: number; source: string }>
   }
 
   try {
-    const configSnap = await adminDb.doc("system/billing_config/current").get();
+    const configSnap = await adminDb.doc("system/billing_config").get();
     const storedRate = Number(configSnap.data()?.usdBrlRate);
     if (Number.isFinite(storedRate) && storedRate > 0) {
       rateCache = { value: storedRate, fetchedAt: now, source: "FIRESTORE_CACHE" };
