@@ -2368,6 +2368,18 @@ function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
     return { mimeType: match[1], base64: match[2] };
 }
 
+function estimateBytesFromDataUrl(dataUrl: string): number {
+    try {
+        const { base64 } = parseDataUrl(dataUrl);
+        const payload = String(base64 || "").replace(/\s/g, "");
+        if (!payload) return 0;
+        const padding = payload.match(/=+$/)?.[0]?.length || 0;
+        return Math.max(0, Math.floor((payload.length * 3) / 4) - padding);
+    } catch {
+        return 0;
+    }
+}
+
 function isTruncationFinishReason(reason: unknown): boolean {
     const normalized = String(reason || "").trim().toLowerCase();
     return (
@@ -3920,6 +3932,7 @@ export type AcAvnAnalysisMeta = {
 export type AcAvnAnalysisResult = {
     analysisText: string;
     cloudinaryUrls: Array<{ url: string; caption: string }>;
+    cloudinaryStoredBytes: number;
     usedSatelliteKeys: string[];
     missingSatelliteKeys: string[];
     cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
@@ -5956,6 +5969,7 @@ export async function runAcAvnSatelliteAnalysis(
     // Step 2: Upload to Cloudinary (full quality for user viewing)
     sendSSE(res, { type: "progress", step: "uploading_images", percent: 50, message: "Salvando imagens no Cloudinary..." });
     const cloudinaryUrls: Array<{ url: string; caption: string }> = [];
+    let cloudinaryStoredBytes = 0;
     try {
         for (let i = 0; i < imagesToAnalyze!.length; i++) {
             throwIfClientDisconnected(res);
@@ -5963,6 +5977,7 @@ export async function runAcAvnSatelliteAnalysis(
             const filename = `simcar_analysis_${tag}_img${i + 1}`;
             const url = await uploadToCloudinary(img.dataUrl, filename);
             cloudinaryUrls.push({ url, caption: img.caption });
+            cloudinaryStoredBytes += estimateBytesFromDataUrl(img.dataUrl);
             console.log(`[SIMCAR ANALYSIS] Uploaded image ${i + 1}: ${url}`);
             sendSSE(res, {
                 type: "progress", step: "uploading_images",
@@ -5979,6 +5994,7 @@ export async function runAcAvnSatelliteAnalysis(
         return {
             analysisText: "",
             cloudinaryUrls,
+            cloudinaryStoredBytes,
             usedSatelliteKeys,
             missingSatelliteKeys,
             cloudWarnings,
@@ -6118,6 +6134,7 @@ export async function runAcAvnSatelliteAnalysis(
     return {
         analysisText: normalizedAcAvn.text,
         cloudinaryUrls,
+        cloudinaryStoredBytes,
         usedSatelliteKeys,
         missingSatelliteKeys,
         cloudWarnings,

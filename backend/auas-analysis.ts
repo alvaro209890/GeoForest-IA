@@ -23,6 +23,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import archiver from "archiver";
+import { Timestamp } from "firebase-admin/firestore";
 import {
     area as turfArea,
     bbox as turfBbox,
@@ -58,13 +59,16 @@ import {
 import {
     BillingError,
     createRequestId,
+    estimateCloudinaryStorageReserve,
     estimateReserveForModels,
     getBillingUsageSessionRecords,
     refundReserve,
     reserveCredits,
     runWithBillingUsageSession,
+    settleCloudinaryStorageReserve,
     settleReservedCredits,
 } from "./billing";
+import { adminDb } from "./firebase-admin";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -107,6 +111,7 @@ const CACHE_TTL = 30 * 60 * 1000; // 30 min
 const CACHE_MAX = 20;
 const CLOUDINARY_CLOUD = "da19dwpgk";
 const AUAS_BILLING_ENDPOINT = "/api/auas/analyze";
+const AUAS_STORAGE_ENDPOINT = "/api/auas/analyze";
 const AUAS_BILLING_MODELS = [
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
@@ -115,6 +120,11 @@ const AUAS_BILLING_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.5-pro",
 ] as const;
+const AUAS_ESTIMATED_AI_IMAGE_COUNT = 12;
+const AUAS_ESTIMATED_BYTES_PER_AI_IMAGE = 900_000;
+const AUAS_CLOUDINARY_UPLOAD_RETRY_ATTEMPTS = 3;
+const AUAS_FIRESTORE_PERSIST_RETRY_ATTEMPTS = 3;
+const AUAS_RETRY_BASE_DELAY_MS = 500;
 
 function cloudinarySign(params: Record<string, string>): string {
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
@@ -163,6 +173,120 @@ async function uploadRawBufferToCloudinary(
 
 async function uploadZipBufferToCloudinary(buffer: Buffer, filename: string): Promise<string> {
     return uploadRawBufferToCloudinary(buffer, filename, "application/zip");
+}
+
+function sleepMs(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
+async function withRetry<T>(
+    label: string,
+    attempts: number,
+    fn: (attempt: number) => Promise<T>,
+): Promise<T> {
+    const maxAttempts = Math.max(1, Math.floor(attempts || 1));
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await fn(attempt);
+        } catch (error) {
+            lastError = error;
+            if (attempt >= maxAttempts) break;
+            const backoffMs = AUAS_RETRY_BASE_DELAY_MS * attempt;
+            console.warn(
+                `[AUAS] ${label} falhou na tentativa ${attempt}/${maxAttempts}. Nova tentativa em ${backoffMs}ms.`,
+                (error as any)?.message || error,
+            );
+            await sleepMs(backoffMs);
+        }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError || `Falha em ${label}`));
+}
+
+function stripUndefinedDeep<T>(value: T): T {
+    if (Array.isArray(value)) {
+        const cleaned = value
+            .map((item) => stripUndefinedDeep(item))
+            .filter((item) => item !== undefined);
+        return cleaned as unknown as T;
+    }
+    if (value && typeof value === "object") {
+        const out: Record<string, unknown> = {};
+        for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+            if (raw === undefined) continue;
+            const cleaned = stripUndefinedDeep(raw);
+            if (cleaned === undefined) continue;
+            out[key] = cleaned;
+        }
+        return out as T;
+    }
+    return value;
+}
+
+type AuasResultData = {
+    propertyAreaHa: number;
+    acAreaHa: number;
+    auasAreaHa: number;
+    avnAreaHa: number;
+    arlAreaHa: number;
+    riverBufferHa: number;
+    auasPolygons: Array<{ year: number; areaHa: number }>;
+    downloadUrl: string;
+    inputZipUrl?: string;
+    outputZipUrl?: string;
+    contextUrl?: string;
+    auasOpeningYear?: number;
+    auasOpeningDate?: string;
+    auasOpeningSource?: AuasOpeningSource;
+    analysis?: string;
+    images?: Array<{ url: string; caption: string }>;
+    satellitesUsed?: string[];
+    satellitesMissing?: string[];
+    cloudWarnings?: Array<{ satellite: string; cloudScore: number }>;
+    analysisMeta?: unknown;
+    analysisRulesVersion?: string;
+};
+
+async function persistAuasJobInFirestore(args: {
+    uid: string;
+    jobId: string;
+    inputFilename?: string;
+    result: AuasResultData;
+}): Promise<void> {
+    const uid = String(args.uid || "").trim();
+    const jobId = String(args.jobId || "").trim();
+    if (!uid || !jobId) throw new Error("Nao foi possivel persistir Novo CAR no Firestore (uid/jobId ausente).");
+
+    const docRef = adminDb.doc(`users/${uid}/auas_jobs/${jobId}`);
+    const now = Timestamp.now();
+    const nowIso = new Date().toISOString();
+    const payloadBase = stripUndefinedDeep<Record<string, unknown>>({
+        id: jobId,
+        jobId,
+        kind: "novo_car",
+        title: `Novo CAR ${jobId.slice(0, 8)}`,
+        filename: `Novo CAR ${jobId.slice(0, 8)}`,
+        timestamp: nowIso,
+        inputFilename: args.inputFilename || null,
+        ...args.result,
+        files: {
+            inputZipUrl: args.result.inputZipUrl || null,
+            outputZipUrl: args.result.outputZipUrl || null,
+            contextUrl: args.result.contextUrl || null,
+        },
+        analysisImageCount: Array.isArray(args.result.images) ? args.result.images.length : 0,
+        updatedAt: now,
+    });
+
+    await withRetry("firestore_persist_auas_job", AUAS_FIRESTORE_PERSIST_RETRY_ATTEMPTS, async () => {
+        await adminDb.runTransaction(async (tx) => {
+            const snap = await tx.get(docRef);
+            const createdAt = snap.exists
+                ? ((snap.get("createdAt") as Timestamp | undefined) || now)
+                : now;
+            tx.set(docRef, stripUndefinedDeep({ ...payloadBase, createdAt }), { merge: true });
+        });
+    });
 }
 
 /* ─── Cache de jobs ──────────────────────────────────────────────── */
@@ -611,8 +735,8 @@ function buildLayerBuffers(
 async function runAuasAnalysis(
     res: Response,
     propertyZip: Buffer,
-    options?: { inputFilename?: string },
-): Promise<boolean> {
+    options?: { inputFilename?: string; uid?: string },
+): Promise<{ completed: boolean; cloudinaryStoredBytes: number }> {
     // 1. Parse shapefile da propriedade
     progress(res, 5, "parse", "Lendo shapefile da propriedade...");
     let userResult: ReturnType<typeof parseUserShapefile>;
@@ -620,7 +744,7 @@ async function runAuasAnalysis(
         userResult = parseUserShapefile(propertyZip);
     } catch (err: any) {
         sendSSE(res, { type: "error", message: err.message || "Erro ao processar shapefile." });
-        return false;
+        return { completed: false, cloudinaryStoredBytes: 0 };
     }
     const { polygon: propertyFeature, geometry: propertyGeom, areaHa: propertyAreaHa } = userResult;
     const wkt = polygonToWkt(propertyGeom);
@@ -827,41 +951,82 @@ async function runAuasAnalysis(
     let inputZipUrl: string | undefined;
     let outputZipUrl: string | undefined;
     let contextUrl: string | undefined;
-    try {
-        progress(res, 96, "cloudinary", "Salvando arquivos do Novo CAR no Cloudinary...");
-        const tag = jobId.slice(0, 8);
-        const [inUrl, outUrl] = await Promise.all([
-            uploadZipBufferToCloudinary(propertyZip, `auas_input_${tag}`),
-            uploadZipBufferToCloudinary(zipBuffer, `auas_output_${tag}`),
-        ]);
-        inputZipUrl = inUrl;
-        outputZipUrl = outUrl;
-        const contextPayload = {
-            version: 1,
-            source: "novo_car_tab",
-            jobId,
-            savedAtIso: new Date().toISOString(),
-            inputFilename: options?.inputFilename || `imovel_${tag}.zip`,
-            outputFilename: zipFilename,
-            metrics: {
-                propertyAreaHa,
-                acAreaHa,
-                auasAreaHa,
-                avnAreaHa,
-                arlAreaHa,
-                riverBufferHa,
-                auasOpeningYear: openingResolution.year,
-                auasOpeningSource: openingResolution.source || null,
-            },
-        };
-        const contextBuffer = Buffer.from(JSON.stringify(contextPayload), "utf8");
-        contextUrl = await uploadRawBufferToCloudinary(
-            contextBuffer,
-            `auas_context_${tag}.json`,
-            "application/json",
+    let cloudinaryStoredBytes = 0;
+    progress(res, 96, "cloudinary", "Salvando arquivos do Novo CAR no Cloudinary...");
+    const tag = jobId.slice(0, 8);
+    const contextPayload = {
+        version: 1,
+        source: "novo_car_tab",
+        jobId,
+        savedAtIso: new Date().toISOString(),
+        inputFilename: options?.inputFilename || `imovel_${tag}.zip`,
+        outputFilename: zipFilename,
+        metrics: {
+            propertyAreaHa,
+            acAreaHa,
+            auasAreaHa,
+            avnAreaHa,
+            arlAreaHa,
+            riverBufferHa,
+            auasOpeningYear: openingResolution.year,
+            auasOpeningSource: openingResolution.source || null,
+        },
+    };
+    const contextBuffer = Buffer.from(JSON.stringify(contextPayload), "utf8");
+    const uploadTasks: Array<{
+        label: "input_zip" | "output_zip" | "context_json";
+        bytes: number;
+        run: () => Promise<string>;
+        assign: (url: string) => void;
+    }> = [
+        {
+            label: "input_zip",
+            bytes: propertyZip.length,
+            run: () => uploadZipBufferToCloudinary(propertyZip, `auas_input_${tag}`),
+            assign: (url) => { inputZipUrl = url; },
+        },
+        {
+            label: "output_zip",
+            bytes: zipBuffer.length,
+            run: () => uploadZipBufferToCloudinary(zipBuffer, `auas_output_${tag}`),
+            assign: (url) => { outputZipUrl = url; },
+        },
+        {
+            label: "context_json",
+            bytes: contextBuffer.length,
+            run: () => uploadRawBufferToCloudinary(
+                contextBuffer,
+                `auas_context_${tag}.json`,
+                "application/json",
+            ),
+            assign: (url) => { contextUrl = url; },
+        },
+    ];
+
+    for (const task of uploadTasks) {
+        const url = await withRetry(
+            `cloudinary_${task.label}`,
+            AUAS_CLOUDINARY_UPLOAD_RETRY_ATTEMPTS,
+            async () => task.run(),
         );
-    } catch (err: any) {
-        console.warn("[AUAS] Cloudinary persist failed:", err?.message || err);
+        task.assign(url);
+        cloudinaryStoredBytes += Math.max(0, Number(task.bytes) || 0);
+    }
+
+    if (!inputZipUrl || !outputZipUrl || !contextUrl) {
+        throw new Error("Falha ao persistir todos os arquivos obrigatorios do Novo CAR no Cloudinary.");
+    }
+
+    const aiImageBytes = Math.max(0, Number(aiResult?.cloudinaryStoredBytes || 0));
+    if (aiImageBytes > 0) {
+        cloudinaryStoredBytes += aiImageBytes;
+    }
+
+    if (aiResult && !aiResult.imageOnly) {
+        const aiImagesSaved = Array.isArray(aiResult.cloudinaryUrls) ? aiResult.cloudinaryUrls.length : 0;
+        if (aiImagesSaved === 0) {
+            throw new Error("Falha ao salvar as imagens da analise no Cloudinary.");
+        }
     }
 
     // Guardar em cache para download
@@ -875,41 +1040,51 @@ async function runAuasAnalysis(
         expiresAt: Date.now() + CACHE_TTL,
     });
 
-    progress(res, 99, "done", "Processamento concluído. Preparando resultado final...");
-
-    // 11. Retornar resultado
     const auasPolygons = Array.from(auasPerYear.entries()).map(([year, ha]) => ({ year, areaHa: ha }));
+    const resultData: AuasResultData = {
+        propertyAreaHa,
+        acAreaHa,
+        auasAreaHa,
+        avnAreaHa,
+        arlAreaHa,
+        riverBufferHa,
+        auasPolygons,
+        downloadUrl: outputZipUrl,
+        inputZipUrl,
+        outputZipUrl,
+        contextUrl,
+        auasOpeningYear: openingResolution.year || undefined,
+        auasOpeningDate,
+        auasOpeningSource: openingResolution.source,
+        ...(aiResult && !aiResult.imageOnly ? {
+            analysis: aiResult.analysisText,
+            images: aiResult.cloudinaryUrls,
+            satellitesUsed: aiResult.usedSatelliteKeys,
+            satellitesMissing: aiResult.missingSatelliteKeys,
+            cloudWarnings: aiResult.cloudWarnings.length > 0 ? aiResult.cloudWarnings : undefined,
+            analysisMeta: aiResult.analysisMeta,
+            analysisRulesVersion: "acavn-fixed-v4",
+        } : {}),
+    };
+
+    if (options?.uid) {
+        progress(res, 98, "firebase", "Salvando historico do Novo CAR no Firebase...");
+        await persistAuasJobInFirestore({
+            uid: options.uid,
+            jobId,
+            inputFilename: options.inputFilename,
+            result: resultData,
+        });
+    }
+
+    progress(res, 99, "done", "Processamento concluido. Preparando resultado final...");
 
     sendSSE(res, {
         type: "result",
         jobId,
-        data: {
-            propertyAreaHa,
-            acAreaHa,
-            auasAreaHa,
-            avnAreaHa,
-            arlAreaHa,
-            riverBufferHa,
-            auasPolygons,
-            downloadUrl: outputZipUrl || `/api/auas/download/${jobId}`,
-            inputZipUrl,
-            outputZipUrl,
-            contextUrl,
-            auasOpeningYear: openingResolution.year || undefined,
-            auasOpeningDate,
-            auasOpeningSource: openingResolution.source,
-            ...(aiResult && !aiResult.imageOnly ? {
-                analysis: aiResult.analysisText,
-                images: aiResult.cloudinaryUrls,
-                satellitesUsed: aiResult.usedSatelliteKeys,
-                satellitesMissing: aiResult.missingSatelliteKeys,
-                cloudWarnings: aiResult.cloudWarnings.length > 0 ? aiResult.cloudWarnings : undefined,
-                analysisMeta: aiResult.analysisMeta,
-                analysisRulesVersion: "acavn-fixed-v4",
-            } : {}),
-        },
+        data: resultData,
     });
-    return true;
+    return { completed: true, cloudinaryStoredBytes };
 }
 
 /* ─── Registro de rotas ──────────────────────────────────────────── */
@@ -919,8 +1094,10 @@ export function registerAuasRoutes(app: Express) {
     /** POST /api/auas/analyze — SSE stream */
     app.post("/api/auas/analyze", async (req: Request, res: Response) => {
         let billingUid = "";
-        let billingRequestId = "";
-        let billingReserved = 0;
+        let operationRequestId = "";
+        let operationReserved = 0;
+        let storageRequestId = "";
+        let storageReserved = 0;
         let usageInputs: Array<any> = [];
         try {
             const uid = String(req.authUid || "");
@@ -948,8 +1125,8 @@ export function registerAuasRoutes(app: Express) {
                 return;
             }
 
-            billingRequestId = createRequestId("novo_car");
-            billingReserved = await estimateReserveForModels({
+            operationRequestId = createRequestId("novo_car");
+            operationReserved = await estimateReserveForModels({
                 models: [...AUAS_BILLING_MODELS],
                 estimatedInputTokens: 90_000,
                 estimatedOutputTokens: 8_000,
@@ -960,10 +1137,27 @@ export function registerAuasRoutes(app: Express) {
             });
             await reserveCredits({
                 uid,
-                amountBrl: billingReserved,
-                requestId: billingRequestId,
+                amountBrl: operationReserved,
+                requestId: operationRequestId,
                 endpoint: AUAS_BILLING_ENDPOINT,
             });
+            storageRequestId = createRequestId("novo_car_storage");
+            const estimatedStorageBytes = Math.max(
+                zipBuffer.length * 3,
+                zipBuffer.length + 320_000,
+            ) + (AUAS_ESTIMATED_AI_IMAGE_COUNT * AUAS_ESTIMATED_BYTES_PER_AI_IMAGE);
+            storageReserved = await estimateCloudinaryStorageReserve({
+                bytesStored: estimatedStorageBytes,
+                safetyMultiplier: 1.2,
+            });
+            if (storageReserved > 0) {
+                await reserveCredits({
+                    uid,
+                    amountBrl: storageReserved,
+                    requestId: storageRequestId,
+                    endpoint: AUAS_STORAGE_ENDPOINT,
+                });
+            }
 
             // Inicia SSE
             res.setHeader("Content-Type", "text/event-stream");
@@ -971,18 +1165,22 @@ export function registerAuasRoutes(app: Express) {
             res.setHeader("Connection", "keep-alive");
             res.flushHeaders?.();
 
-            let completed = false;
+            let analysisResult: { completed: boolean; cloudinaryStoredBytes: number } = {
+                completed: false,
+                cloudinaryStoredBytes: 0,
+            };
             await runWithBillingUsageSession(async () => {
                 try {
-                    completed = await runAuasAnalysis(res, zipBuffer, {
+                    analysisResult = await runAuasAnalysis(res, zipBuffer, {
                         inputFilename: body.filename,
+                        uid,
                     });
                 } finally {
                     usageInputs = getBillingUsageSessionRecords();
                 }
             });
 
-            if (usageInputs.length > 0 || completed) {
+            if (usageInputs.length > 0 || analysisResult.completed) {
                 const usageForSettle = usageInputs.length > 0
                     ? usageInputs
                     : [
@@ -996,37 +1194,84 @@ export function registerAuasRoutes(app: Express) {
                     ];
                 const billing = await settleReservedCredits({
                     uid,
-                    requestId: billingRequestId,
+                    requestId: operationRequestId,
                     endpoint: AUAS_BILLING_ENDPOINT,
-                    reservedBrl: billingReserved,
+                    reservedBrl: operationReserved,
                     usageInputs: usageForSettle,
                 });
-                billingReserved = 0;
+                operationReserved = 0;
                 sendSSE(res, { type: "billing", billing });
-            } else if (billingReserved > 0) {
+            } else if (operationReserved > 0) {
                 await refundReserve({
                     uid,
-                    requestId: billingRequestId,
-                    amountBrl: billingReserved,
+                    requestId: operationRequestId,
+                    amountBrl: operationReserved,
                     endpoint: AUAS_BILLING_ENDPOINT,
                     reason: "no_ai_usage",
                 });
-                billingReserved = 0;
+                operationReserved = 0;
+            }
+
+            if (analysisResult.completed && storageReserved > 0) {
+                if (analysisResult.cloudinaryStoredBytes > 0) {
+                    const storageBilling = await settleCloudinaryStorageReserve({
+                        uid,
+                        requestId: storageRequestId,
+                        endpoint: AUAS_STORAGE_ENDPOINT,
+                        reservedBrl: storageReserved,
+                        bytesStored: analysisResult.cloudinaryStoredBytes,
+                        assetKind: "novo_car_bundle",
+                    });
+                    storageReserved = 0;
+                    sendSSE(res, { type: "billing", billing: storageBilling });
+                } else {
+                    await refundReserve({
+                        uid,
+                        requestId: storageRequestId,
+                        amountBrl: storageReserved,
+                        endpoint: AUAS_STORAGE_ENDPOINT,
+                        reason: "cloudinary_storage_not_persisted",
+                    });
+                    storageReserved = 0;
+                }
+            } else if (storageReserved > 0) {
+                await refundReserve({
+                    uid,
+                    requestId: storageRequestId,
+                    amountBrl: storageReserved,
+                    endpoint: AUAS_STORAGE_ENDPOINT,
+                    reason: "auas_failed_or_invalid",
+                });
+                storageReserved = 0;
             }
         } catch (err: any) {
             console.error("[AUAS] Unhandled error:", err);
-            if (billingUid && billingReserved > 0 && billingRequestId) {
+            if (billingUid && operationReserved > 0 && operationRequestId) {
                 try {
                     await refundReserve({
                         uid: billingUid,
-                        requestId: billingRequestId,
-                        amountBrl: billingReserved,
+                        requestId: operationRequestId,
+                        amountBrl: operationReserved,
                         endpoint: AUAS_BILLING_ENDPOINT,
                         reason: "exception",
                     });
-                    billingReserved = 0;
+                    operationReserved = 0;
                 } catch (refundErr) {
-                    console.error("[AUAS] Billing refund error:", refundErr);
+                    console.error("[AUAS] operation refund error:", refundErr);
+                }
+            }
+            if (billingUid && storageReserved > 0 && storageRequestId) {
+                try {
+                    await refundReserve({
+                        uid: billingUid,
+                        requestId: storageRequestId,
+                        amountBrl: storageReserved,
+                        endpoint: AUAS_STORAGE_ENDPOINT,
+                        reason: "exception",
+                    });
+                    storageReserved = 0;
+                } catch (refundErr) {
+                    console.error("[AUAS] storage refund error:", refundErr);
                 }
             }
             if (err instanceof BillingError) {
@@ -1067,3 +1312,4 @@ export function registerAuasRoutes(app: Express) {
         res.send(job.buffer);
     });
 }
+
