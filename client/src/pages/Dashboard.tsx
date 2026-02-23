@@ -1,7 +1,6 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Feature, Geometry, MultiPolygon, Polygon } from 'geojson';
 import {
-  Leaf,
   Plus,
   Search,
   Send,
@@ -74,6 +73,7 @@ import { auth, db } from '@/lib/firebase';
 import { handleLogout, UserProfile } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import TermsOfUseDialog from '@/components/TermsOfUseDialog';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 
@@ -1106,6 +1106,7 @@ export default function Dashboard() {
   const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'auas'>('chat');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const [, setLocation] = useLocation();
@@ -1398,6 +1399,9 @@ export default function Dashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [typingMessageId, setTypingMessageId] = useState<string | null>(null);
   const [typingText, setTypingText] = useState('');
+  const typingTargetRef = useRef('');
+  const typingDisplayedRef = useRef('');
+  const typingAnimationFrameRef = useRef<number | null>(null);
   const [liveThinkingText, setLiveThinkingText] = useState('');
   const [liveThinkingTarget, setLiveThinkingTarget] = useState('');
   const thinkingTypingTimerRef = useRef<number | null>(null);
@@ -2386,6 +2390,21 @@ export default function Dashboard() {
   }, [messages, activeView]);
 
   useEffect(() => {
+    if (activeView !== 'chat') return;
+    if (!typingMessageId && !aiThinking) return;
+    const container = chatScrollRef.current;
+    if (!container) return;
+
+    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceToBottom > 180) return;
+
+    const raf = window.requestAnimationFrame(() => {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [typingText, liveThinkingText, typingMessageId, aiThinking, activeView]);
+
+  useEffect(() => {
     if (simcarThinkingHidden) return;
     const target = simcarThinkingPanelRef.current;
     if (!target) return;
@@ -2687,12 +2706,85 @@ export default function Dashboard() {
     setPendingMapContext(undefined);
   };
 
+  const stopTypingAnimation = useCallback((clearTarget = false) => {
+    if (typingAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(typingAnimationFrameRef.current);
+      typingAnimationFrameRef.current = null;
+    }
+    if (clearTarget) {
+      typingTargetRef.current = '';
+      typingDisplayedRef.current = '';
+    }
+  }, []);
+
+  const flushTypingNow = useCallback(
+    (text: string) => {
+      stopTypingAnimation(false);
+      const normalized = String(text || '');
+      typingTargetRef.current = normalized;
+      typingDisplayedRef.current = normalized;
+      setTypingText(normalized);
+    },
+    [stopTypingAnimation]
+  );
+
+  const queueTypingAnimation = useCallback(
+    (text: string) => {
+      const normalized = String(text || '');
+      typingTargetRef.current = normalized;
+
+      if (!normalized) {
+        flushTypingNow('');
+        return;
+      }
+
+      if (typingAnimationFrameRef.current !== null) return;
+
+      const nextStep = (remaining: number) => {
+        if (remaining > 2000) return 120;
+        if (remaining > 1200) return 80;
+        if (remaining > 700) return 48;
+        if (remaining > 350) return 28;
+        if (remaining > 160) return 16;
+        return 8;
+      };
+
+      const animate = () => {
+        const target = typingTargetRef.current;
+        const current = typingDisplayedRef.current;
+
+        if (target === current) {
+          typingAnimationFrameRef.current = null;
+          return;
+        }
+
+        const next = !target.startsWith(current)
+          ? target
+          : target.slice(0, current.length + nextStep(target.length - current.length));
+
+        typingDisplayedRef.current = next;
+        setTypingText(next);
+
+        if (next !== typingTargetRef.current || typingDisplayedRef.current !== typingTargetRef.current) {
+          typingAnimationFrameRef.current = window.requestAnimationFrame(animate);
+          return;
+        }
+
+        typingAnimationFrameRef.current = null;
+      };
+
+      typingAnimationFrameRef.current = window.requestAnimationFrame(animate);
+    },
+    [flushTypingNow]
+  );
+
   useEffect(() => {
     return () => {
       chatAbortRef.current?.abort();
       chatAbortRef.current = null;
+      stopTypingAnimation(true);
     };
-  }, []);
+  }, [stopTypingAnimation]);
 
   const onStopChatGeneration = useCallback(() => {
     chatAbortRef.current?.abort();
@@ -2701,12 +2793,13 @@ export default function Dashboard() {
     setUploading(false);
     setAiThinking(false);
     setTypingMessageId(null);
-    setTypingText('');
+    flushTypingNow('');
+    stopTypingAnimation(true);
     setLiveThinkingText('');
     setLiveThinkingTarget('');
     setChatError('Resposta interrompida. Envie novamente quando quiser.');
     toast.info('Geração interrompida.');
-  }, []);
+  }, [flushTypingNow, stopTypingAnimation]);
 
   const onRetryLastPrompt = useCallback(() => {
     if (!lastPromptText.trim()) return;
@@ -5178,7 +5271,7 @@ export default function Dashboard() {
     setAiThinking(true);
     const typingId = nanoid();
     setTypingMessageId(typingId);
-    setTypingText('');
+    flushTypingNow('');
     setLiveThinkingText('');
     setLiveThinkingTarget('');
     setProcessingHintIndex(0);
@@ -5387,7 +5480,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           };
           setAiThinking(false);
           setTypingMessageId(null);
-          setTypingText('');
+          flushTypingNow('');
           setLiveThinkingText('');
           setLiveThinkingTarget('');
           const latestMessages = messagesRef.current.length ? messagesRef.current : nextMessages;
@@ -5445,7 +5538,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           }
           if (typeof chunk.content === 'string') {
             finalContent = chunk.content;
-            setTypingText(chunk.content);
+            queueTypingAnimation(chunk.content);
             setAiThinking(false);
           }
         }
@@ -5469,13 +5562,15 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             }
             if (typeof chunk.content === 'string') {
               finalContent = chunk.content;
-              setTypingText(chunk.content);
+              queueTypingAnimation(chunk.content);
             }
           } catch {
             // ignore trailing malformed line
           }
         }
       }
+
+      flushTypingNow(finalContent);
 
       const aiMessage: ChatMessage = {
         id: typingId,
@@ -5490,7 +5585,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       };
       setAiThinking(false);
       setTypingMessageId(null);
-      setTypingText('');
+      flushTypingNow('');
       setLiveThinkingText('');
       setLiveThinkingTarget('');
       const latestMessages = messagesRef.current.length ? messagesRef.current : nextMessages;
@@ -5507,7 +5602,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       setChatError(error.message || 'Falha ao conversar com a IA.');
       setAiThinking(false);
       setTypingMessageId(null);
-      setTypingText('');
+      flushTypingNow('');
+      stopTypingAnimation(true);
       setLiveThinkingText('');
       setLiveThinkingTarget('');
     } finally {
@@ -5582,7 +5678,15 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   : 'bg-slate-700'
                   }`}
               >
-                {msg.role === 'ai' ? <Leaf size={14} className="text-white" /> : <User size={14} className="text-slate-300" />}
+                {msg.role === 'ai' ? (
+                  <img
+                    src="/geoforest_app_logo.png"
+                    alt="GeoForest IA"
+                    className="h-6 w-6 rounded-full object-cover"
+                  />
+                ) : (
+                  <User size={14} className="text-slate-300" />
+                )}
               </div>
               <div
                 className={`
@@ -5708,9 +5812,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     ][processingHintIndex]}
                 </p>
               </div>
-              <div className="chat-markdown text-sm leading-relaxed text-slate-200/95 min-h-5">
-                {renderRichText(typingText || 'Gerando resposta...')}
-              </div>
+              <p className="text-sm leading-relaxed text-slate-200/95 min-h-5 whitespace-pre-wrap break-words">
+                {typingText || 'Gerando resposta...'}
+              </p>
               <div className="flex items-center gap-2 mt-2">
                 <span className="typing-dot"></span>
                 <span className="typing-dot"></span>
@@ -5916,8 +6020,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         <div className="p-6 flex items-center gap-3 cursor-pointer" onClick={() => setActiveView('chat')}>
           <div className="relative group">
             <div className="absolute inset-0 bg-emerald-500 blur opacity-40 group-hover:opacity-60 transition-opacity rounded-lg"></div>
-            <div className="relative bg-gradient-to-br from-emerald-400 to-green-600 p-2.5 rounded-xl shadow-lg shadow-emerald-900/50">
-              <Leaf size={24} className="text-white" fill="currentColor" fillOpacity={0.2} />
+            <div className="relative bg-gradient-to-br from-emerald-400 to-green-600 p-1.5 rounded-xl shadow-lg shadow-emerald-900/50">
+              <img
+                src="/geoforest_app_logo.png"
+                alt="GeoForest IA"
+                className="h-8 w-8 rounded-lg object-contain"
+              />
             </div>
           </div>
           <div className="flex flex-col xl:flex lg:hidden overflow-hidden">
@@ -6247,7 +6355,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
         {activeView === 'chat' ? (
           <>
-            <div className="flex-1 overflow-y-auto px-2 sm:px-4 py-4 sm:py-6 scroll-smooth custom-scrollbar relative z-0">
+            <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-2 sm:px-4 py-4 sm:py-6 scroll-smooth custom-scrollbar relative z-0">
               <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
                 {chatTimeline}
               </div>
@@ -8194,9 +8302,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 <div className="absolute top-0 right-0 w-72 h-72 bg-emerald-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3 pointer-events-none" />
                 <div className="absolute bottom-0 left-0 w-48 h-48 bg-purple-500/8 rounded-full blur-3xl translate-y-1/3 -translate-x-1/4 pointer-events-none" />
                 <div className="relative flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-6">
-                  <div className="p-3 sm:p-4 rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700 shadow-xl shadow-emerald-900/40 shrink-0">
-                    <Leaf size={28} className="text-white sm:hidden" fill="currentColor" fillOpacity={0.2} />
-                    <Leaf size={36} className="text-white hidden sm:block" fill="currentColor" fillOpacity={0.2} />
+                  <div className="p-2 sm:p-3 rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700 shadow-xl shadow-emerald-900/40 shrink-0">
+                    <img
+                      src="/geoforest_app_logo.png"
+                      alt="GeoForest IA"
+                      className="h-10 w-10 sm:h-12 sm:w-12 rounded-xl object-contain"
+                    />
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2">
@@ -8972,7 +9083,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
                   <h3 className="font-semibold text-lg text-slate-200">Segurança</h3>
                 </div>
-                <div className="grid grid-cols-1 gap-2 sm:gap-3 md:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2 sm:gap-3 md:grid-cols-3">
                   <button
                     type="button"
                     onClick={onResetPassword}
@@ -8998,6 +9109,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                     <ChevronDown size={16} className="text-slate-500 -rotate-90 group-hover:text-white transition-colors" />
                   </button>
+                  <TermsOfUseDialog
+                    triggerClassName="w-full flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/10 transition-colors group text-left"
+                  />
                 </div>
               </section>
             </div>
