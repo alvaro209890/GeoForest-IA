@@ -103,7 +103,8 @@ const CACHE_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
  * Larger properties need more pixels to capture detail;
  * smaller properties can use lower resolution to save bandwidth/tokens.
  *
- * Returns { width, height } capped between 800×600 and 2400×1800.
+ * Returns { width, height } with a minimum short side of 480 px and
+ * a maximum canvas of 2400×1800, preserving aspect ratio.
  */
 function calculateDynamicResolution(
     areaHa: number,
@@ -113,32 +114,46 @@ function calculateDynamicResolution(
     const bboxWidth = Math.abs(bbox[2] - bbox[0]);
     const bboxHeight = Math.abs(bbox[3] - bbox[1]);
     const aspect = bboxWidth > 0 && bboxHeight > 0 ? bboxWidth / bboxHeight : 4 / 3;
+    const MIN_SHORT_SIDE_PX = 480;
 
-    // Base resolution: scale with log of area
-    // < 50 ha → 800×600, ~500 ha → 1200×900, >5000 ha → 2000×1500, >20000 ha → 2400×1800
-    let baseWidth: number;
+    // Use the longest side as the area-driven dimension and preserve aspect ratio.
+    let baseLongSide: number;
     if (areaHa <= 50) {
-        baseWidth = 800;
+        baseLongSide = 800;
     } else if (areaHa <= 200) {
-        baseWidth = 900;
+        baseLongSide = 900;
     } else if (areaHa <= 500) {
-        baseWidth = 1200;
+        baseLongSide = 1200;
     } else if (areaHa <= 2000) {
-        baseWidth = 1600;
+        baseLongSide = 1600;
     } else if (areaHa <= 5000) {
-        baseWidth = 2000;
+        baseLongSide = 2000;
     } else {
-        baseWidth = 2400;
+        baseLongSide = 2400;
     }
 
-    // Adjust height based on aspect ratio
-    let height = Math.round(baseWidth / aspect);
+    let width: number;
+    let height: number;
+    if (aspect >= 1) {
+        width = baseLongSide;
+        height = Math.max(1, Math.round(width / aspect));
+    } else {
+        height = baseLongSide;
+        width = Math.max(1, Math.round(height * aspect));
+    }
 
-    // Clamp to reasonable bounds
-    baseWidth = Math.min(2400, Math.max(800, baseWidth));
-    height = Math.min(1800, Math.max(600, height));
+    const shortSide = Math.min(width, height);
+    if (shortSide < MIN_SHORT_SIDE_PX) {
+        const upscale = MIN_SHORT_SIDE_PX / Math.max(shortSide, 1);
+        width = Math.max(1, Math.round(width * upscale));
+        height = Math.max(1, Math.round(height * upscale));
+    }
 
-    return { width: baseWidth, height };
+    const scaleDown = Math.min(2400 / Math.max(width, 1), 1800 / Math.max(height, 1), 1);
+    width = Math.max(1, Math.round(width * scaleDown));
+    height = Math.max(1, Math.round(height * scaleDown));
+
+    return { width, height };
 }
 
 /* ——— Dynamic WMS Timeout ————————————————————————————— */
@@ -356,7 +371,7 @@ async function detectCloudCover(imageBuffer: Buffer): Promise<{
  */
 function simplifyGeometryForOverlay(
     geom: Geometry,
-    maxVertices = 500,
+    maxVertices = 1200,
 ): Geometry {
     const countVertices = (g: Geometry): number => {
         if (g.type === "Polygon") {
@@ -404,9 +419,9 @@ function simplifyGeometryForOverlay(
         Math.max(...xs) - Math.min(...xs),
         Math.max(...ys) - Math.min(...ys),
     );
-    // Tolerance: ~0.01% of extent for light simplification
+    // Conservative tolerance: reduce token cost without materially moving boundaries.
     const ratio = Math.max(1, vertices / maxVertices);
-    const tolerance = extent * 0.0001 * ratio;
+    const tolerance = extent * 0.00004 * Math.sqrt(ratio);
 
     if (geom.type === "Polygon") {
         return {
@@ -501,6 +516,8 @@ export type CachedJob = {
     inputZipUrl?: string;
     outputZipUrl?: string;
     contextJsonUrl?: string;
+    warnings?: string[];
+    propertySourceLayer?: "ATP" | "AIR";
 };
 const jobCache = new Map<string, CachedJob>();
 
@@ -807,16 +824,46 @@ type WfsFeature = {
     properties: Record<string, unknown>;
 };
 
+type WfsClipFetchResult = {
+    features: WfsFeature[];
+    warnings: string[];
+    partial: boolean;
+};
+
+function parseNumberMatched(xml: string): number | null {
+    const match = String(xml || "").match(/numberMatched="([^"]+)"/i);
+    if (!match) return null;
+    const numeric = Number(match[1]);
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
 async function fetchWfsClipFeatures(
     wfsLayerName: string,
     polygonWkt: string,
     srsName: string = "EPSG:4674",
-): Promise<WfsFeature[]> {
+): Promise<WfsClipFetchResult> {
     const geometryField = await getGeometryFieldForLayer(wfsLayerName);
     const cqlFilter = `INTERSECTS(${geometryField},${polygonWkt})`;
     const allFeatures: WfsFeature[] = [];
+    const warnings: string[] = [];
     let startIndex = 0;
     let usedFallback = false;
+    let partial = false;
+
+    let numberMatched: number | null = null;
+    try {
+        const hitsUrl = buildWfsUrl({
+            service: "WFS",
+            version: "2.0.0",
+            request: "GetFeature",
+            typeNames: wfsLayerName,
+            resultType: "hits",
+            CQL_FILTER: cqlFilter,
+        });
+        numberMatched = parseNumberMatched(await fetchTextWithTimeout(hitsUrl, WFS_TIMEOUT_MS));
+    } catch {
+        // Keep going without total count.
+    }
 
     while (allFeatures.length < WFS_MAX_FEATURES) {
         const pageSize = Math.min(WFS_PAGE_SIZE, WFS_MAX_FEATURES - allFeatures.length);
@@ -845,6 +892,7 @@ async function fetchWfsClipFeatures(
             ) {
                 // Retry without startIndex
                 usedFallback = true;
+                const fallbackCount = Math.min(WFS_MAX_FEATURES, WFS_PAGE_SIZE);
                 const fallbackUrl = buildWfsUrl({
                     service: "WFS",
                     version: "2.0.0",
@@ -852,10 +900,16 @@ async function fetchWfsClipFeatures(
                     typeNames: wfsLayerName,
                     outputFormat: "application/json",
                     srsName,
-                    count: Math.min(WFS_MAX_FEATURES, WFS_PAGE_SIZE),
+                    count: fallbackCount,
                     CQL_FILTER: cqlFilter,
                 });
                 page = await fetchJsonWithTimeout<any>(fallbackUrl, WFS_TIMEOUT_MS);
+                partial = numberMatched !== null ? numberMatched > fallbackCount : true;
+                warnings.push(
+                    numberMatched !== null && numberMatched > fallbackCount
+                        ? `WFS sem paginacao com startIndex para esta camada; total estimado ${numberMatched} feicoes, calculo limitado a ${fallbackCount}.`
+                        : `WFS sem paginacao com startIndex para esta camada; resultado limitado a ate ${fallbackCount} feicoes.`,
+                );
             } else {
                 throw error;
             }
@@ -876,7 +930,16 @@ async function fetchWfsClipFeatures(
         if (features.length < pageSize) break;
     }
 
-    return allFeatures;
+    if (allFeatures.length >= WFS_MAX_FEATURES && (numberMatched === null || numberMatched > allFeatures.length)) {
+        partial = true;
+        warnings.push(`Limite de ${WFS_MAX_FEATURES} feicoes atingido; resultado parcial.`);
+    }
+
+    return {
+        features: allFeatures,
+        warnings: dedupeWarnings(warnings),
+        partial,
+    };
 }
 
 /* ─── Feature Clipping ───────────────────────────────────────── */
@@ -1170,6 +1233,7 @@ export type LayerSummary = {
     features: number;
     areaHa?: number;
     warning?: string;
+    partial?: boolean;
 };
 
 type PersistedClipContextV1 = {
@@ -1184,6 +1248,8 @@ type PersistedClipContextV1 = {
     clippedGeometries: Record<string, Geometry[]>;
     inputZipUrl?: string;
     outputZipUrl?: string;
+    warnings?: string[];
+    propertySourceLayer?: "ATP" | "AIR";
 };
 
 function mapToObjectGeometry(value: Map<string, Geometry[]>): Record<string, Geometry[]> {
@@ -1204,6 +1270,113 @@ function objectToMapGeometry(value: Record<string, Geometry[]> | null | undefine
         if (cleaned.length > 0) out.set(key, cleaned);
     }
     return out;
+}
+
+function dedupeWarnings(values: Array<string | undefined | null>): string[] {
+    return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))];
+}
+
+function appendLayerWarning(layer: LayerSummary, warnings: Array<string | undefined | null>, partial = false): LayerSummary {
+    const merged = dedupeWarnings([layer.warning, ...warnings]);
+    return {
+        ...layer,
+        warning: merged.length > 0 ? merged.join(" | ") : undefined,
+        partial: partial || layer.partial || merged.some((item) => /parcial/i.test(item)),
+    };
+}
+
+function unionPolygonFeatures(features: Array<Feature<Polygon | MultiPolygon>>): Feature<Polygon | MultiPolygon> | null {
+    if (features.length === 0) return null;
+    let merged = features[0];
+    for (let i = 1; i < features.length; i += 1) {
+        try {
+            const unioned = turfUnion(turfFeatureCollection([merged, features[i]]) as any) as
+                | Feature<Polygon | MultiPolygon>
+                | null;
+            if (unioned) merged = unioned;
+        } catch {
+            // Keep partial union.
+        }
+    }
+    return merged;
+}
+
+function unionPolygonGeometries(geometries: Geometry[] | undefined): Feature<Polygon | MultiPolygon> | null {
+    if (!Array.isArray(geometries) || geometries.length === 0) return null;
+    const polygonFeatures = geometries
+        .map((geometry) => toPolygonOrMultiFeature(geometry))
+        .filter((feature): feature is Feature<Polygon | MultiPolygon> => Boolean(feature));
+    return unionPolygonFeatures(polygonFeatures);
+}
+
+function computeAreaHa(feature: Feature<Polygon | MultiPolygon> | null | undefined): number {
+    if (!feature) return 0;
+    try {
+        return turfArea(feature) / 10000;
+    } catch {
+        return 0;
+    }
+}
+
+function inspectPropertyLayerConsistency(
+    clippedGeometries: Map<string, Geometry[]>,
+): {
+    feature: Feature<Polygon | MultiPolygon> | null;
+    sourceLayer?: "ATP" | "AIR";
+    warnings: string[];
+} {
+    const atpFeature = unionPolygonGeometries(clippedGeometries.get("ATP"));
+    const airFeature = unionPolygonGeometries(clippedGeometries.get("AIR"));
+    const warnings: string[] = [];
+
+    const chosen = atpFeature
+        ? { feature: atpFeature, sourceLayer: "ATP" as const }
+        : airFeature
+            ? { feature: airFeature, sourceLayer: "AIR" as const }
+            : { feature: null, sourceLayer: undefined };
+
+    if (!atpFeature || !airFeature) {
+        if (chosen.sourceLayer) {
+            warnings.push(`Perimetro reconstruido a partir de ${chosen.sourceLayer}; camada complementar ausente ou invalida no ZIP.`);
+        }
+        return { feature: chosen.feature, sourceLayer: chosen.sourceLayer, warnings };
+    }
+
+    try {
+        const intersection = turfIntersect(turfFeatureCollection([atpFeature, airFeature]) as any) as
+            | Feature<Polygon | MultiPolygon>
+            | null;
+        const unioned = turfUnion(turfFeatureCollection([atpFeature, airFeature]) as any) as
+            | Feature<Polygon | MultiPolygon>
+            | null;
+        const atpAreaHa = computeAreaHa(atpFeature);
+        const airAreaHa = computeAreaHa(airFeature);
+        const unionAreaHa = computeAreaHa(unioned);
+        const overlapAreaHa = computeAreaHa(intersection);
+        const areaDeltaHa = Math.abs(atpAreaHa - airAreaHa);
+        const overlapPctOfUnion = unionAreaHa > 0 ? (overlapAreaHa / unionAreaHa) * 100 : 100;
+        const warnDeltaThresholdHa = Math.max(0.25, unionAreaHa * 0.005);
+        const failDeltaThresholdHa = Math.max(1, unionAreaHa * 0.02);
+
+        if (overlapPctOfUnion < 98 || areaDeltaHa > failDeltaThresholdHa) {
+            throw new Error(
+                `ZIP vetorizado inconsistente: ATP e AIR divergem (${overlapPctOfUnion.toFixed(2)}% de sobreposicao, delta ${areaDeltaHa.toFixed(2)} ha). Revise o perimetro antes da analise.`,
+            );
+        }
+
+        if (overlapPctOfUnion < 99.5 || areaDeltaHa > warnDeltaThresholdHa) {
+            warnings.push(
+                `ATP e AIR divergem levemente (${overlapPctOfUnion.toFixed(2)}% de sobreposicao, delta ${areaDeltaHa.toFixed(2)} ha). O perimetro da analise foi ancorado em ATP.`,
+            );
+        }
+    } catch (error) {
+        if (error instanceof Error && /ZIP vetorizado inconsistente/i.test(error.message)) {
+            throw error;
+        }
+        warnings.push("Nao foi possivel validar totalmente a consistencia geometrica entre ATP e AIR; ATP foi usado como perimetro principal.");
+    }
+
+    return { feature: chosen.feature, sourceLayer: chosen.sourceLayer, warnings };
 }
 
 function parsePersistedClipContext(raw: unknown): PersistedClipContextV1 | null {
@@ -1232,6 +1405,7 @@ function parsePersistedClipContext(raw: unknown): PersistedClipContextV1 | null 
                         ? undefined
                         : Number(row.areaHa),
                 warning: row?.warning ? String(row.warning) : undefined,
+                partial: row?.partial === true,
             }))
             .filter((row: LayerSummary) => Boolean(row.name))
         : [];
@@ -1248,6 +1422,11 @@ function parsePersistedClipContext(raw: unknown): PersistedClipContextV1 | null 
         clippedGeometries: mapToObjectGeometry(objectToMapGeometry(data.clippedGeometries)),
         inputZipUrl: typeof data.inputZipUrl === "string" ? data.inputZipUrl : undefined,
         outputZipUrl: typeof data.outputZipUrl === "string" ? data.outputZipUrl : undefined,
+        warnings: Array.isArray(data.warnings) ? dedupeWarnings(data.warnings) : undefined,
+        propertySourceLayer:
+            data.propertySourceLayer === "ATP" || data.propertySourceLayer === "AIR"
+                ? data.propertySourceLayer
+                : undefined,
     };
 }
 
@@ -1274,6 +1453,7 @@ async function processClip(
         totalFeaturesClipped: number;
         processingTimeMs: number;
         layers: LayerSummary[];
+        warnings?: string[];
     };
 }> {
     const startTime = Date.now();
@@ -1283,6 +1463,7 @@ async function processClip(
 
     const total = layerNames.length;
     const layerSummaries: LayerSummary[] = [];
+    const jobWarnings: string[] = [];
     let totalFeaturesClipped = 0;
 
     // 1. Parse user shapefile
@@ -1407,9 +1588,9 @@ async function processClip(
             status: "fetching",
         });
 
-        let wfsFeatures: WfsFeature[];
+        let wfsFetch: WfsClipFetchResult;
         try {
-            wfsFeatures = await fetchWfsClipFeatures(wfsTypeName, userWkt, "EPSG:4674");
+            wfsFetch = await fetchWfsClipFeatures(wfsTypeName, userWkt, "EPSG:4674");
         } catch (err: any) {
             console.error(`[SIMCAR CLIP] WFS fetch error for ${layerName}:`, err.message);
             layerSummaries.push({
@@ -1421,12 +1602,15 @@ async function processClip(
             continue;
         }
 
+        const wfsFeatures = wfsFetch.features;
         if (!wfsFeatures.length) {
-            layerSummaries.push({
+            const summary = appendLayerWarning({
                 name: layerName,
                 source: "wfs",
                 features: 0,
-            });
+            }, wfsFetch.warnings, wfsFetch.partial);
+            if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);
+            layerSummaries.push(summary);
             continue;
         }
 
@@ -1443,11 +1627,13 @@ async function processClip(
         const clipped = clipFeaturesToPolygon(wfsFeatures, userPolygon);
 
         if (!clipped.length) {
-            layerSummaries.push({
+            const summary = appendLayerWarning({
                 name: layerName,
                 source: "wfs",
                 features: 0,
-            });
+            }, wfsFetch.warnings, wfsFetch.partial);
+            if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);
+            layerSummaries.push(summary);
             continue;
         }
 
@@ -1492,12 +1678,14 @@ async function processClip(
         }
 
         totalFeaturesClipped += records.length;
-        layerSummaries.push({
+        const summary = appendLayerWarning({
             name: layerName,
             source: "wfs",
             features: records.length,
             areaHa: Number(layerAreaHa.toFixed(4)),
-        });
+        }, wfsFetch.warnings, wfsFetch.partial);
+        if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);
+        layerSummaries.push(summary);
     }
 
     // 6. Build output ZIP
@@ -1569,6 +1757,7 @@ async function processClip(
             clippedGeometries: mapToObjectGeometry(clippedGeometries),
             inputZipUrl: inUrl,
             outputZipUrl: outUrl,
+            warnings: dedupeWarnings(jobWarnings),
         };
         const contextBuffer = Buffer.from(JSON.stringify(persistedContext), "utf8");
         contextJsonUrl = await uploadRawBufferToCloudinary(
@@ -1595,6 +1784,7 @@ async function processClip(
         inputZipUrl,
         outputZipUrl,
         contextJsonUrl,
+        warnings: dedupeWarnings(jobWarnings),
     });
 
     // 8. Send completion event
@@ -1609,6 +1799,7 @@ async function processClip(
         totalFeaturesClipped,
         processingTimeMs,
         layers: layerSummaries,
+        warnings: dedupeWarnings(jobWarnings),
     };
     const downloadUrl = `/api/simcar/clip/download/${jobId}`;
     sendSSE(res, {
@@ -2020,14 +2211,13 @@ function buildWmsResolutionFallbacks(width: number, height: number): Array<[numb
     const seen = new Set<string>();
     const out: Array<[number, number]> = [];
     for (const factor of factors) {
-        const w = Math.max(800, Math.round(width * factor));
-        const h = Math.max(600, Math.round(height * factor));
+        const w = Math.max(1, Math.round(width * factor));
+        const h = Math.max(1, Math.round(height * factor));
         const key = `${w}x${h}`;
         if (seen.has(key)) continue;
         seen.add(key);
         out.push([w, h]);
     }
-    if (!seen.has("800x600")) out.push([800, 600]);
     return out;
 }
 
@@ -3654,6 +3844,42 @@ function padBbox(
     ];
 }
 
+function normalizeRenderBboxAspect(
+    bbox: [number, number, number, number],
+    maxAspectRatio = 2.5,
+): [number, number, number, number] {
+    const width = Math.max(0, bbox[2] - bbox[0]);
+    const height = Math.max(0, bbox[3] - bbox[1]);
+    if (width <= 0 || height <= 0) return bbox;
+
+    const centerX = (bbox[0] + bbox[2]) / 2;
+    const centerY = (bbox[1] + bbox[3]) / 2;
+    const aspect = width / height;
+    const safeMaxAspect = Math.max(1.1, maxAspectRatio);
+
+    if (aspect > safeMaxAspect) {
+        const targetHeight = width / safeMaxAspect;
+        const halfHeight = targetHeight / 2;
+        return [bbox[0], centerY - halfHeight, bbox[2], centerY + halfHeight];
+    }
+
+    if (aspect < 1 / safeMaxAspect) {
+        const targetWidth = height / safeMaxAspect;
+        const halfWidth = targetWidth / 2;
+        return [centerX - halfWidth, bbox[1], centerX + halfWidth, bbox[3]];
+    }
+
+    return bbox;
+}
+
+function buildRenderBbox(
+    bbox: [number, number, number, number],
+    paddingPercent = 0.10,
+    maxAspectRatio = 2.5,
+): [number, number, number, number] {
+    return normalizeRenderBboxAspect(padBbox(bbox, paddingPercent), maxAspectRatio);
+}
+
 /** Build shared context block (property info + quantitative table). */
 function buildPropertyContext(
     areaHa: number,
@@ -4685,7 +4911,7 @@ async function generateAuasSatelliteImages(
 }> {
     throwIfClientDisconnected(res);
     const { bbox, polygon: propertyPolygon, clippedGeometries } = job;
-    const paddedBbox = padBbox(bbox!, 0.10);
+    const paddedBbox = buildRenderBbox(bbox!, 0.10);
 
     // Dynamic resolution based on property size
     const areaHa = job.areaHa ?? 0;
@@ -4696,7 +4922,7 @@ async function generateAuasSatelliteImages(
     const rawLayerGeos = clippedGeometries ?? new Map<string, Geometry[]>();
     const layerGeos = new Map<string, Geometry[]>();
     for (const [name, geoms] of rawLayerGeos) {
-        layerGeos.set(name, geoms.map(g => simplifyGeometryForOverlay(g, 500)));
+        layerGeos.set(name, geoms.map(g => simplifyGeometryForOverlay(g, 1200)));
     }
     const images: Array<{ dataUrl: string; caption: string }> = [];
     const usedKeys: string[] = [];
@@ -5356,7 +5582,13 @@ async function processAuasAnalysis(
     contextUrl?: string,
     outputZipUrl?: string,
     acAvnMeta?: any,
-): Promise<boolean> {
+): Promise<{
+    analysisText: string;
+    images: Array<{ url: string; caption: string }>;
+    auasMeta: any;
+    layerSummaries: LayerSummary[];
+    cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
+} | null> {
     throwIfClientDisconnected(res);
     let job = jobCache.get(jobId);
     if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
@@ -5370,7 +5602,7 @@ async function processAuasAnalysis(
             type: "error",
             message: "Job não encontrado. Envie contextUrl ou gere o recorte novamente.",
         });
-        return false;
+        return null;
     }
 
     const { layerSummaries, areaHa: propAreaHa } = job;
@@ -5406,12 +5638,12 @@ async function processAuasAnalysis(
     } catch (err: any) {
         console.error("[AUAS ANALYSIS] Image generation error:", err.message);
         sendSSE(res, { type: "error", message: `Erro ao gerar imagens AUAS: ${err.message}` });
-        return false;
+        return null;
     }
 
     if (imagesToAnalyze.length === 0) {
         sendSSE(res, { type: "error", message: "Nenhuma imagem AUAS foi gerada. Verifique a disponibilidade das camadas WMS." });
-        return false;
+        return null;
     }
 
     // Step 2: Upload to Cloudinary
@@ -5535,7 +5767,7 @@ async function processAuasAnalysis(
 
     if (perSatResults.length === 0) {
         sendSSE(res, { type: "error", message: "Nenhuma análise AUAS individual foi concluída com sucesso." });
-        return false;
+        return null;
     }
 
     // Step 5: Final synthesis (combines AUAS + previous AC/AVN analysis)
@@ -5678,7 +5910,13 @@ async function processAuasAnalysis(
         auasMeta,
         cloudWarnings: cloudWarnings.length > 0 ? cloudWarnings : undefined,
     });
-    return true;
+    return {
+        analysisText,
+        images: cloudinaryUrls,
+        auasMeta,
+        layerSummaries,
+        cloudWarnings,
+    };
 }
 
 /**
@@ -5698,7 +5936,7 @@ async function generateSatelliteImages(
 }> {
     throwIfClientDisconnected(res);
     const { bbox, polygon: propertyPolygon, clippedGeometries } = job;
-    const paddedBbox = padBbox(bbox!, 0.10);
+    const paddedBbox = buildRenderBbox(bbox!, 0.10);
 
     // Dynamic resolution based on property size
     const areaHa = job.areaHa ?? 0;
@@ -5709,7 +5947,7 @@ async function generateSatelliteImages(
     const rawLayerGeos = clippedGeometries ?? new Map<string, Geometry[]>();
     const layerGeos = new Map<string, Geometry[]>();
     for (const [name, geoms] of rawLayerGeos) {
-        layerGeos.set(name, geoms.map(g => simplifyGeometryForOverlay(g, 500)));
+        layerGeos.set(name, geoms.map(g => simplifyGeometryForOverlay(g, 1200)));
     }
 
     const images: Array<{ dataUrl: string; caption: string }> = [];
@@ -5851,6 +6089,7 @@ function parseCachedContextFromOutputZip(
     const entries = extractZipEntries(zipBuffer);
     const clippedGeometries = new Map<string, Geometry[]>();
     const layerSummaries: LayerSummary[] = [];
+    const warnings: string[] = [];
 
     for (const entry of entries) {
         if (!entry.name.toLowerCase().endsWith(".shp")) continue;
@@ -5878,28 +6117,14 @@ function parseCachedContextFromOutputZip(
         });
     }
 
-    const propertyCandidates = ["ATP", "AIR"];
-    let propertyFeature: Feature<Polygon | MultiPolygon> | null = null;
-    for (const key of propertyCandidates) {
-        const geoms = clippedGeometries.get(key);
-        if (!geoms || geoms.length === 0) continue;
-        for (const geom of geoms) {
-            const polygonLike = toPolygonOrMultiFeature(geom);
-            if (!polygonLike) continue;
-            if (!propertyFeature) {
-                propertyFeature = polygonLike;
-                continue;
-            }
-            try {
-                const merged = turfUnion(turfFeatureCollection([propertyFeature, polygonLike]) as any) as
-                    | Feature<Polygon | MultiPolygon>
-                    | null;
-                if (merged) propertyFeature = merged;
-            } catch {
-                // keep partial
-            }
-        }
-        if (propertyFeature) break;
+    const propertySelection = inspectPropertyLayerConsistency(clippedGeometries);
+    warnings.push(...propertySelection.warnings);
+    const propertyFeature = propertySelection.feature;
+    if (propertySelection.warnings.length > 0) {
+        layerSummaries.forEach((layer, index) => {
+            if (layer.name !== "ATP" && layer.name !== "AIR") return;
+            layerSummaries[index] = appendLayerWarning(layer, propertySelection.warnings);
+        });
     }
 
     if (!propertyFeature) return null;
@@ -5916,6 +6141,8 @@ function parseCachedContextFromOutputZip(
         areaHa,
         clippedGeometries,
         outputZipUrl,
+        warnings: dedupeWarnings(warnings),
+        propertySourceLayer: propertySelection.sourceLayer,
     };
 }
 
@@ -5970,6 +6197,8 @@ async function hydrateJobFromPersistedContext(
             inputZipUrl: parsed.inputZipUrl,
             outputZipUrl: parsed.outputZipUrl,
             contextJsonUrl: contextUrl,
+            warnings: parsed.warnings,
+            propertySourceLayer: parsed.propertySourceLayer,
         };
         jobCache.set(jobId, hydrated);
         return hydrated;
@@ -6215,7 +6444,7 @@ async function processAnalysis(
     aiAnalysis = true,
     contextUrl?: string,
     outputZipUrl?: string,
-): Promise<boolean> {
+): Promise<AcAvnAnalysisResult | null> {
     throwIfClientDisconnected(res);
     let job = jobCache.get(jobId);
     if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
@@ -6230,11 +6459,11 @@ async function processAnalysis(
             message:
                 "Job nao encontrado no cache do servidor. Envie contextUrl salvo no Firebase/Cloudinary para reidratar ou gere o recorte novamente.",
         });
-        return false;
+        return null;
     }
 
     const result = await runAcAvnSatelliteAnalysis(res, job, selectedLayers, { tag: jobId.slice(0, 8), aiAnalysis });
-    if (!result) return false;
+    if (!result) return null;
 
     sendSSE(res, {
         type: "complete",
@@ -6247,7 +6476,7 @@ async function processAnalysis(
         satellitesMissing: result.missingSatelliteKeys,
         cloudWarnings: result.cloudWarnings.length > 0 ? result.cloudWarnings : undefined,
     });
-    return true;
+    return result;
 }
 
 function buildEstimatedUsageForFallback(args: {
@@ -6328,6 +6557,7 @@ async function persistSimcarClipProcessingState(args: {
             totalFeaturesClipped: number;
             processingTimeMs: number;
             layers: LayerSummary[];
+            warnings?: string[];
         };
         filename?: string;
     };
@@ -6362,6 +6592,7 @@ async function persistSimcarClipProcessingState(args: {
         layersWithData: Number(summary?.layersWithData || 0),
         totalLayers: Number(summary?.layersProcessed || 0),
         processingTimeMs: Number(summary?.processingTimeMs || 0),
+        summary: summary || null,
         error: args.error || null,
         timestamp: new Date().toISOString(),
         updatedAt: FieldValue.serverTimestamp(),
@@ -6380,6 +6611,27 @@ async function persistSimcarClipProcessingState(args: {
         });
     } catch (error) {
         console.warn("[SIMCAR CLIP] failed to persist processing state:", error);
+    }
+}
+
+async function persistSimcarClipArtifacts(args: {
+    uid: string;
+    jobId: string;
+    patch: Record<string, unknown>;
+}): Promise<void> {
+    const uid = String(args.uid || "").trim();
+    const jobId = String(args.jobId || "").trim();
+    if (!uid || !jobId || !args.patch || typeof args.patch !== "object") return;
+    try {
+        await adminDb.doc(`users/${uid}/simcar_clips/${jobId}`).set(
+            {
+                ...stripUndefinedDeep(args.patch),
+                updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+        );
+    } catch (error) {
+        console.warn("[SIMCAR CLIP] failed to persist analysis artifacts:", error);
     }
 }
 
@@ -6822,7 +7074,22 @@ export function registerSimcarClipRoutes(app: Express) {
                 status: "processing",
             });
 
-            const parsed = parseCachedContextFromOutputZip(zipBuffer, safeFilename);
+            let parsed: CachedJob | null = null;
+            try {
+                parsed = parseCachedContextFromOutputZip(zipBuffer, safeFilename);
+            } catch (parseErr: any) {
+                const message = String(parseErr?.message || "vectorized_zip_invalid");
+                await persistSimcarClipProcessingState({
+                    uid,
+                    jobId,
+                    filename: safeFilename,
+                    sourceMode: "vectorized-analysis",
+                    status: "failed",
+                    error: message,
+                });
+                res.status(400).json({ error: message });
+                return;
+            }
             if (!parsed || !parsed.bbox || !parsed.polygon || !parsed.layerSummaries) {
                 await persistSimcarClipProcessingState({
                     uid,
@@ -6874,6 +7141,8 @@ export function registerSimcarClipRoutes(app: Express) {
                     areaHa: Number(parsed.areaHa || 0),
                     clippedGeometries: mapToObjectGeometry(parsed.clippedGeometries || new Map<string, Geometry[]>()),
                     outputZipUrl,
+                    warnings: parsed.warnings,
+                    propertySourceLayer: parsed.propertySourceLayer,
                 };
                 const contextBuffer = Buffer.from(JSON.stringify(persistedContext), "utf8");
                 contextJsonUrl = await uploadRawBufferToCloudinary(
@@ -6929,6 +7198,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 totalFeaturesClipped,
                 processingTimeMs: 0,
                 layers: layerSummaries,
+                warnings: parsed.warnings,
             };
             await persistSimcarClipProcessingState({
                 uid,
@@ -7086,15 +7356,46 @@ export function registerSimcarClipRoutes(app: Express) {
             });
             sendSSE(res, { type: "job_started", jobId: processingJobId });
             console.log(`[AUAS ANALYSIS] Starting AUAS analysis for job: ${jobId}`);
-            let completed = false;
-            await runWithBillingUsageSession(async () => {
+            const auasOutcome = await runWithBillingUsageSession(async () => {
                 try {
-                    completed = await processAuasAnalysis(res, jobId, previousAnalysis, contextUrl, outputZipUrl, acAvnMeta);
+                    return await processAuasAnalysis(res, jobId, previousAnalysis, contextUrl, outputZipUrl, acAvnMeta);
                 } finally {
                     usageInputs = getBillingUsageSessionRecords();
                 }
             });
-            if (usageInputs.length > 0 || completed) {
+            if (!auasOutcome) {
+                if (usageInputs.length > 0) {
+                    const billing = await settleReservedCredits({
+                        uid,
+                        requestId: billingRequestId,
+                        endpoint: "/api/simcar/clip/analyze-auas",
+                        reservedBrl: billingReserved,
+                        usageInputs,
+                    });
+                    billingReserved = 0;
+                    chargedBrl = Number(billing.chargedBrl || 0);
+                    sendSSE(res, { type: "billing", billing });
+                } else if (billingReserved > 0) {
+                    await refundReserve({
+                        uid,
+                        requestId: billingRequestId,
+                        amountBrl: billingReserved,
+                        endpoint: "/api/simcar/clip/analyze-auas",
+                        reason: "analysis_failed_before_usage",
+                    });
+                    billingReserved = 0;
+                }
+                finishJob({
+                    jobId: processingJobId,
+                    status: "failed",
+                    billingSummary: {
+                        chargedBrl: Number(chargedBrl.toFixed(4)),
+                    },
+                    error: "auas_analysis_failed",
+                });
+                return;
+            }
+            if (usageInputs.length > 0 || auasOutcome) {
                 const usageForSettle = usageInputs.length > 0
                     ? usageInputs
                     : [
@@ -7126,6 +7427,19 @@ export function registerSimcarClipRoutes(app: Express) {
                 });
                 billingReserved = 0;
             }
+            await persistSimcarClipArtifacts({
+                uid,
+                jobId,
+                patch: {
+                    auasAnalysisImages: auasOutcome.images,
+                    auasAnalysisMessages: [{
+                        role: "ai",
+                        text: auasOutcome.analysisText,
+                        images: auasOutcome.images.map((item: { url: string }) => item.url),
+                    }],
+                    auasMeta: auasOutcome.auasMeta,
+                },
+            });
             finishJob({
                 jobId: processingJobId,
                 status: "completed",
@@ -7249,10 +7563,12 @@ export function registerSimcarClipRoutes(app: Express) {
             }
 
             const requestedLayers = Array.isArray(selectedLayers) ? selectedLayers : [];
-            const layers = getFixedAcAvnSatelliteKeys();
+            const layers = requestedLayers.length > 0
+                ? getOrderedSatelliteKeys(requestedLayers)
+                : getFixedAcAvnSatelliteKeys();
             if (requestedLayers.length > 0) {
                 console.log(
-                    `[SIMCAR ANALYSIS] Ignoring user-selected layers (${requestedLayers.join(", ")}). Using fixed AC/AVN set (${layers.join(", ")}).`,
+                    `[SIMCAR ANALYSIS] Using requested layers after sanitization (${layers.join(", ")}).`,
                 );
             }
             const aiAnalysis = !imageOnly;
@@ -7298,15 +7614,46 @@ export function registerSimcarClipRoutes(app: Express) {
             console.log(`[SIMCAR ANALYSIS] Starting analysis for job: ${jobId}, layers: ${layers.join(",")}, aiAnalysis: ${aiAnalysis}`);
 
             if (aiAnalysis) {
-                let completed = false;
-                await runWithBillingUsageSession(async () => {
+                const analysisOutcome = await runWithBillingUsageSession(async () => {
                     try {
-                        completed = await processAnalysis(res, jobId, layers, true, contextUrl, outputZipUrl);
+                        return await processAnalysis(res, jobId, layers, true, contextUrl, outputZipUrl);
                     } finally {
                         usageInputs = getBillingUsageSessionRecords();
                     }
                 });
-                if (usageInputs.length > 0 || completed) {
+                if (!analysisOutcome) {
+                    if (usageInputs.length > 0) {
+                        const billing = await settleReservedCredits({
+                            uid,
+                            requestId: billingRequestId,
+                            endpoint: "/api/simcar/clip/analyze",
+                            reservedBrl: billingReserved,
+                            usageInputs,
+                        });
+                        billingReserved = 0;
+                        chargedBrl = Number(billing.chargedBrl || 0);
+                        sendSSE(res, { type: "billing", billing });
+                    } else if (billingReserved > 0) {
+                        await refundReserve({
+                            uid,
+                            requestId: billingRequestId,
+                            amountBrl: billingReserved,
+                            endpoint: "/api/simcar/clip/analyze",
+                            reason: "analysis_failed_before_usage",
+                        });
+                        billingReserved = 0;
+                    }
+                    finishJob({
+                        jobId: processingJobId,
+                        status: "failed",
+                        billingSummary: {
+                            chargedBrl: Number(chargedBrl.toFixed(4)),
+                        },
+                        error: "simcar_analysis_failed",
+                    });
+                    return;
+                }
+                if (usageInputs.length > 0 || analysisOutcome) {
                     const usageForSettle = usageInputs.length > 0
                         ? usageInputs
                         : [
@@ -7338,8 +7685,32 @@ export function registerSimcarClipRoutes(app: Express) {
                     });
                     billingReserved = 0;
                 }
+                if (!analysisOutcome.imageOnly) {
+                    await persistSimcarClipArtifacts({
+                        uid,
+                        jobId,
+                        patch: {
+                            analysisImages: analysisOutcome.cloudinaryUrls,
+                            analysisMessages: [{
+                                role: "ai",
+                                text: analysisOutcome.analysisText,
+                                images: analysisOutcome.cloudinaryUrls.map((item: { url: string }) => item.url),
+                            }],
+                            analysisMeta: analysisOutcome.analysisMeta,
+                            analysisRulesVersion: "acavn-fixed-v4",
+                        },
+                    });
+                }
             } else {
-                await processAnalysis(res, jobId, layers, false, contextUrl, outputZipUrl);
+                const imageOnlyOutcome = await processAnalysis(res, jobId, layers, false, contextUrl, outputZipUrl);
+                if (!imageOnlyOutcome) {
+                    finishJob({
+                        jobId: processingJobId,
+                        status: "failed",
+                        error: "simcar_image_generation_failed",
+                    });
+                    return;
+                }
             }
             finishJob({
                 jobId: processingJobId,

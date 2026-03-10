@@ -451,6 +451,26 @@ type SimcarConversationEntry = {
   meta?: Partial<NonNullable<ChatMessage['meta']>>;
 };
 
+type SimcarLayerSummary = {
+  name: string;
+  source: 'property' | 'wfs';
+  features: number;
+  areaHa?: number;
+  warning?: string;
+  partial?: boolean;
+};
+
+type SimcarClipSummary = {
+  propertyAreaHa: number;
+  crs: string;
+  layersProcessed: number;
+  layersWithData: number;
+  totalFeaturesClipped: number;
+  processingTimeMs: number;
+  layers: SimcarLayerSummary[];
+  warnings?: string[];
+};
+
 type SimcarClipHistoryItem = {
   id: string;
   timestamp: string;
@@ -473,6 +493,7 @@ type SimcarClipHistoryItem = {
   auasAnalysisImages?: Array<{ url: string; caption: string }>;
   auasAnalysisMessages?: SimcarAnalysisMessage[];
   auasMeta?: SimcarAuasMeta;
+  summary?: SimcarClipSummary;
   status?: 'processing' | 'completed' | 'failed' | 'cancelled';
   error?: string;
 };
@@ -1194,7 +1215,7 @@ export default function Dashboard() {
   } | null>(null);
   const [simcarClipProgress, setSimcarClipProgress] = useState<{ current: number; total: number; layer: string; status: string } | null>(null);
   const [simcarClipDownloadUrl, setSimcarClipDownloadUrl] = useState<string | null>(null);
-  const [simcarClipSummary, setSimcarClipSummary] = useState<any>(null);
+  const [simcarClipSummary, setSimcarClipSummary] = useState<SimcarClipSummary | null>(null);
   const [simcarClipError, setSimcarClipError] = useState<string | null>(null);
   const simcarClipAbortRef = useRef<AbortController | null>(null);
   const simcarClipProcessJobIdRef = useRef<string | null>(null);
@@ -1983,6 +2004,38 @@ export default function Dashboard() {
     return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
   };
 
+  const normalizeSimcarClipSummary = useCallback((raw: any): SimcarClipSummary | null => {
+    if (!raw || typeof raw !== 'object') return null;
+    const toNumber = (value: any) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    const layers = Array.isArray(raw?.layers)
+      ? raw.layers
+        .map((layer: any) => ({
+          name: String(layer?.name || '').trim(),
+          source: layer?.source === 'property' ? 'property' : 'wfs',
+          features: toNumber(layer?.features),
+          areaHa: layer?.areaHa === undefined || layer?.areaHa === null ? undefined : toNumber(layer.areaHa),
+          warning: layer?.warning ? String(layer.warning) : undefined,
+          partial: layer?.partial === true,
+        }))
+        .filter((layer: SimcarLayerSummary) => Boolean(layer.name))
+      : [];
+    return {
+      propertyAreaHa: toNumber(raw?.propertyAreaHa),
+      crs: String(raw?.crs || 'EPSG:4674'),
+      layersProcessed: toNumber(raw?.layersProcessed ?? layers.length),
+      layersWithData: toNumber(raw?.layersWithData ?? layers.filter((layer: SimcarLayerSummary) => layer.features > 0).length),
+      totalFeaturesClipped: toNumber(raw?.totalFeaturesClipped),
+      processingTimeMs: toNumber(raw?.processingTimeMs),
+      layers,
+      warnings: Array.isArray(raw?.warnings)
+        ? raw.warnings.map((item: any) => String(item || '').trim()).filter(Boolean)
+        : undefined,
+    };
+  }, []);
+
   const normalizeAuasResultPayload = useCallback((raw: any): AuasTabResult => {
     const toNumber = (value: any) => {
       const parsed = Number(value);
@@ -2433,13 +2486,17 @@ export default function Dashboard() {
       if (clip.sourceMode === 'auto-clip' || clip.sourceMode === 'vectorized-analysis') {
         setSimcarClipMode(clip.sourceMode);
       }
-      setSimcarClipSummary({
-        totalFeaturesClipped: clip.totalFeatures,
-        propertyAreaHa: clip.propertyAreaHa,
-        layers: [],
-        processingTimeMs: 0,
-        crs: 'EPSG:4674',
-      });
+      setSimcarClipSummary(
+        clip.summary || {
+          totalFeaturesClipped: clip.totalFeatures,
+          propertyAreaHa: clip.propertyAreaHa,
+          layersProcessed: clip.totalLayers,
+          layersWithData: clip.layersWithData,
+          layers: [],
+          processingTimeMs: 0,
+          crs: 'EPSG:4674',
+        }
+      );
 
       setSimcarAnalysisImages(clip.analysisImages || []);
       const restoredMessages = clip.analysisMessages || [];
@@ -2744,6 +2801,7 @@ export default function Dashboard() {
             const rawDownloadUrl = data?.downloadUrl ? String(data.downloadUrl) : '';
             const normalizedDownloadUrl =
               rawDownloadUrl && rawDownloadUrl.startsWith('/api/') ? apiUrl(rawDownloadUrl) : rawDownloadUrl;
+            const summary = normalizeSimcarClipSummary(data?.summary);
             clips.push({
               id: String(data?.id || docSnap.id),
               timestamp: toIsoDateFromUnknown(data?.timestamp || data?.updatedAt || data?.createdAt),
@@ -2792,6 +2850,17 @@ export default function Dashboard() {
               auasAnalysisImages: Array.isArray(data?.auasAnalysisImages) ? data.auasAnalysisImages : [],
               auasAnalysisMessages: Array.isArray(data?.auasAnalysisMessages) ? data.auasAnalysisMessages : [],
               auasMeta: isPlainObject(data?.auasMeta) ? (data.auasMeta as SimcarAuasMeta) : undefined,
+              summary:
+                summary
+                || {
+                  propertyAreaHa: Number(data?.propertyAreaHa || 0),
+                  crs: 'EPSG:4674',
+                  layersProcessed: Number(data?.totalLayers || 0),
+                  layersWithData: Number(data?.layersWithData || 0),
+                  totalFeaturesClipped: Number(data?.totalFeatures || 0),
+                  processingTimeMs: Number(data?.processingTimeMs || 0),
+                  layers: [],
+                },
               status: (() => {
                 const parsed =
                   data?.status === 'processing' || data?.status === 'completed' || data?.status === 'failed' || data?.status === 'cancelled'
@@ -2850,7 +2919,7 @@ export default function Dashboard() {
     });
 
     return () => unsubscribe();
-  }, [mapAuasDocToHistoryItem, selectAuasHistoryEntry, selectSimcarClipEntry, setLocation]);
+  }, [mapAuasDocToHistoryItem, normalizeSimcarClipSummary, selectAuasHistoryEntry, selectSimcarClipEntry, setLocation]);
 
   useEffect(() => {
     const uid = String(userProfile?.uid || '').trim();
@@ -5921,8 +5990,7 @@ export default function Dashboard() {
     const hasAcAvnArtifacts =
       Boolean(existingAcAvnText) ||
       Boolean(existingAcAvnMeta) ||
-      existingAcAvnImages.length > 0 ||
-      Boolean(simcarServerRuntimeState?.hasCompletedAnalyze);
+      existingAcAvnImages.length > 0;
 
     simcarVectorizedResumeInFlightRef.current = jobId;
     setSimcarVectorizedRunning(true);
@@ -6013,8 +6081,12 @@ export default function Dashboard() {
 
       const auasImages = dedupeImages(auasResult.images || []);
       const mergedImages = dedupeImages([...acAvnImages, ...auasImages]);
-      const finalCombinedText = String(auasResult.aiMessage?.text || '').trim()
-        || buildIntegratedVectorizedReport(previousAnalysisText, auasResult.aiMessage?.text || '');
+      const rawAuasText = String(auasResult.aiMessage?.text || '').trim();
+      const backendLooksIntegrated =
+        /(ac\/avn|area consolidada|área consolidada)/i.test(rawAuasText) && /\bauas\b/i.test(rawAuasText);
+      const finalCombinedText = previousAnalysisText && rawAuasText && !backendLooksIntegrated
+        ? buildIntegratedVectorizedReport(previousAnalysisText, rawAuasText)
+        : rawAuasText || buildIntegratedVectorizedReport(previousAnalysisText, rawAuasText);
       const finalAiMessage: SimcarAnalysisMessage = {
         role: 'ai',
         text: finalCombinedText,
@@ -6123,7 +6195,7 @@ export default function Dashboard() {
         typeof payload?.downloadUrl === 'string' && payload.downloadUrl.startsWith('/api/')
           ? apiUrl(payload.downloadUrl)
           : String(payload?.downloadUrl || '');
-      const summary = payload?.summary;
+      const summary = normalizeSimcarClipSummary(payload?.summary);
       const newClip: SimcarClipHistoryItem = {
         id: jobId,
         timestamp: new Date().toISOString(),
@@ -6145,6 +6217,7 @@ export default function Dashboard() {
         sourceMode: 'vectorized-analysis',
         status: 'processing',
         processingStage: 'importing',
+        summary: summary || undefined,
       };
 
       setSimcarClipJobId(jobId);
@@ -6245,11 +6318,17 @@ export default function Dashboard() {
         .filter((img, idx, arr) => img?.url && arr.findIndex((x) => x.url === img.url) === idx);
       setSimcarAnalysisImages(acAvnImages);
       setSimcarAnalysisMessages([]);
-      const finalCombinedText = String(auasResult.aiMessage?.text || '').trim()
-        || buildIntegratedVectorizedReport(
-          acAvnResult.aiMessage?.text || '',
-          auasResult.aiMessage?.text || ''
-        );
+      const rawAuasText = String(auasResult.aiMessage?.text || '').trim();
+      const backendLooksIntegrated =
+        /(ac\/avn|area consolidada|área consolidada)/i.test(rawAuasText) && /\bauas\b/i.test(rawAuasText);
+      const finalCombinedText =
+        (previousAnalysisText && rawAuasText && !backendLooksIntegrated)
+          ? buildIntegratedVectorizedReport(previousAnalysisText, rawAuasText)
+          : rawAuasText
+            || buildIntegratedVectorizedReport(
+              acAvnResult.aiMessage?.text || '',
+              auasResult.aiMessage?.text || ''
+            );
       const mergedImages = [...acAvnImages, ...auasImages]
         .filter((img, idx, arr) => img?.url && arr.findIndex((x) => x.url === img.url) === idx);
       const finalAiMessage: SimcarAnalysisMessage = {
@@ -6341,6 +6420,7 @@ export default function Dashboard() {
     simcarAnalysisMessages,
     simcarClipFile,
     simcarFixedSatelliteKeys,
+    normalizeSimcarClipSummary,
     patchPersistedSimcarClip,
   ]);
 
@@ -8336,7 +8416,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     ? apiUrl(event.downloadUrl)
                                     : String(event.downloadUrl || '');
                                 setSimcarClipDownloadUrl(resolvedDownloadUrl);
-                                setSimcarClipSummary(event.summary);
+                                const summary = normalizeSimcarClipSummary(event.summary);
+                                setSimcarClipSummary(summary);
                                 const nextJobId =
                                   typeof event.jobId === 'string' && event.jobId.trim()
                                     ? event.jobId.trim()
@@ -8344,7 +8425,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 if (nextJobId) {
                                   setSimcarClipJobId(nextJobId);
                                   // Push to clip history for sidebar cards and persist in Firestore
-                                  const summary = event.summary;
                                   const newClip: SimcarClipHistoryItem = {
                                     id: nextJobId,
                                     timestamp: new Date().toISOString(),
@@ -8352,8 +8432,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     downloadUrl: resolvedDownloadUrl,
                                     totalFeatures: summary?.totalFeaturesClipped ?? 0,
                                     propertyAreaHa: summary?.propertyAreaHa ?? 0,
-                                    layersWithData: summary?.layers?.filter((l: any) => l.features > 0).length ?? 0,
-                                    totalLayers: summary?.layers?.length ?? 0,
+                                    layersWithData: summary?.layersWithData ?? 0,
+                                    totalLayers: summary?.layersProcessed ?? 0,
                                     jobId: nextJobId,
                                     conversationId: nanoid(),
                                     inputZipUrl: event.inputZipUrl || undefined,
@@ -8361,6 +8441,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     contextUrl: event.contextUrl || undefined,
                                     sourceMode: 'auto-clip',
                                     status: 'completed',
+                                    summary: summary || undefined,
                                   };
                                   setSimcarClipHistory((prev) => {
                                     const filtered = prev.filter((c) => c.jobId !== nextJobId);
@@ -8514,14 +8595,25 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
               {/* Result */}
               {simcarClipDownloadUrl && simcarClipSummary && (() => {
-                const layers: any[] = simcarClipSummary.layers || [];
-                const withData = layers.filter((l: any) => l.features > 0);
-                const withoutData = layers.filter((l: any) => l.features === 0);
-                const totalAreaHa = withData.reduce((sum: number, l: any) => sum + (l.areaHa || 0), 0);
+                const layers = simcarClipSummary.layers || [];
+                const withData = layers.filter((layer) => layer.features > 0);
+                const withoutData = layers.filter((layer) => layer.features === 0);
+                const totalAreaHa = withData.reduce((sum, layer) => sum + (layer.areaHa || 0), 0);
                 const totalFeatures = simcarClipSummary.totalFeaturesClipped || 0;
                 const propertyAreaHa = simcarClipSummary.propertyAreaHa || 0;
+                const summaryWarnings = Array.isArray(simcarClipSummary.warnings) ? simcarClipSummary.warnings : [];
                 return (
                   <>
+                    {summaryWarnings.length > 0 && (
+                      <section className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-amber-300">Avisos de qualidade</p>
+                        <div className="mt-2 space-y-1">
+                          {summaryWarnings.map((warning) => (
+                            <p key={warning} className="text-xs text-amber-100/90">{warning}</p>
+                          ))}
+                        </div>
+                      </section>
+                    )}
                     {simcarClipMode === 'auto-clip' && (
                       <>
                         {/* Summary Cards */}
@@ -8579,7 +8671,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {withData.map((layer: any) => {
+                                    {withData.map((layer) => {
                                       const pct = propertyAreaHa > 0 && layer.areaHa ? ((layer.areaHa / propertyAreaHa) * 100) : null;
                                       return (
                                         <tr key={layer.name} className="border-b border-white/5 hover:bg-white/[0.02]">
@@ -8626,7 +8718,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 Camadas sem dados na área ({withoutData.length})
                               </p>
                               <div className="flex flex-wrap gap-1.5">
-                                {withoutData.map((layer: any) => (
+                                  {withoutData.map((layer) => (
                                   <span
                                     key={layer.name}
                                     className="px-2 py-1 rounded-lg bg-white/5 text-[10px] text-slate-500 font-mono"
