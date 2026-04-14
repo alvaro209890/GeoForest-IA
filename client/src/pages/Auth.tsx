@@ -8,11 +8,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import TermsOfUseDialog from '@/components/TermsOfUseDialog';
 import { toast } from 'sonner';
-import { handleSignUp, handleLogin, handleGoogleSignIn } from '@/lib/auth';
+import { bootstrapAccount, handleSignUp, handleLogin, handleGoogleSignIn } from '@/lib/auth';
 import { useLocation } from 'wouter';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
+import { auth } from '@/lib/firebase';
 
 type AuthMode = 'login' | 'signup';
 
@@ -59,17 +58,11 @@ export default function Auth() {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) return;
       try {
-        const userDocRef = doc(db, 'users', currentUser.uid);
-        const userDocSnap = await getDoc(userDocRef);
-        if (!userDocSnap.exists()) {
-          await signOut(auth);
-          toast.error('Conta sem cadastro no sistema. Entre em contato com o suporte.');
-          return;
-        }
+        await bootstrapAccount(currentUser.displayName || '');
         setLocation('/dashboard');
       } catch (error) {
         await signOut(auth);
-        console.error('[auth-check] falha ao validar perfil no Firestore', error);
+        console.error('[auth-check] falha ao provisionar conta local', error);
         toast.error('Nao foi possivel validar sua conta agora. Tente novamente.');
       }
     });
@@ -455,4 +448,3 @@ export default function Auth() {
     </div>
   );
 }
-

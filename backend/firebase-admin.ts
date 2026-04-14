@@ -32,6 +32,17 @@ function parseBase64JsonSafe(raw: string | undefined): ServiceAccountLike | null
 }
 
 function getServiceAccountFromEnv(): ServiceAccountLike | null {
+  const fromPath = String(process.env.FIREBASE_SERVICE_ACCOUNT_PATH || "").trim();
+  if (fromPath) {
+    try {
+      const raw = fs.readFileSync(fromPath, "utf8");
+      const parsed = parseJsonSafe(raw);
+      if (parsed) return parsed;
+    } catch (error) {
+      console.error("[FIREBASE ADMIN] Failed to read FIREBASE_SERVICE_ACCOUNT_PATH.", error);
+    }
+  }
+
   const fromJson = parseJsonSafe(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
   if (fromJson) return fromJson;
 

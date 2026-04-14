@@ -23,7 +23,6 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import archiver from "archiver";
-import { Timestamp } from "firebase-admin/firestore";
 import {
     area as turfArea,
     bbox as turfBbox,
@@ -69,7 +68,7 @@ import {
     settleCloudinaryStorageReserve,
     settleReservedCredits,
 } from "./billing";
-import { adminDb } from "./firebase-admin";
+import { saveUserBuffer, writeDocBySegments } from "./local-storage";
 import {
     finishJob,
     isCancelRequested,
@@ -133,53 +132,28 @@ const AUAS_CLOUDINARY_UPLOAD_RETRY_ATTEMPTS = 3;
 const AUAS_FIRESTORE_PERSIST_RETRY_ATTEMPTS = 3;
 const AUAS_RETRY_BASE_DELAY_MS = 500;
 
-function cloudinarySign(params: Record<string, string>): string {
-    const apiSecret = process.env.CLOUDINARY_API_SECRET;
-    if (!apiSecret) throw new Error("Cloudinary não configurado.");
-    const base = Object.keys(params)
-        .sort()
-        .map((key) => `${key}=${params[key]}`)
-        .join("&");
-    return crypto.createHash("sha1").update(base + apiSecret).digest("hex");
-}
-
 async function uploadRawBufferToCloudinary(
     buffer: Buffer,
     filename: string,
     mimeType: string,
+    uid = "anonymous",
 ): Promise<string> {
-    const apiKey = process.env.CLOUDINARY_API_KEY;
-    const apiSecret = process.env.CLOUDINARY_API_SECRET;
-    const folder = process.env.CLOUDINARY_FOLDER;
-    if (!apiKey || !apiSecret) throw new Error("Cloudinary não configurado.");
-
-    const timestamp = Math.floor(Date.now() / 1000);
-    const publicId = `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_");
-    const params: Record<string, string> = { timestamp: String(timestamp), public_id: publicId };
-    if (folder) params.folder = folder;
-    const signature = cloudinarySign(params);
-
-    const dataUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
-    const form = new FormData();
-    form.append("file", dataUrl);
-    form.append("api_key", apiKey);
-    form.append("timestamp", String(timestamp));
-    form.append("signature", signature);
-    form.append("resource_type", "raw");
-    if (folder) form.append("folder", folder);
-    form.append("public_id", publicId);
-
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/raw/upload`;
-    const response = await fetch(uploadUrl, { method: "POST", body: form });
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Cloudinary raw error ${response.status}: ${text.slice(0, 200)}`);
-    }
-    return ((await response.json()) as { secure_url: string }).secure_url;
+    void mimeType;
+    return saveUserBuffer({
+        uid,
+        area: filename.toLowerCase().endsWith(".json") ? "auas/context" : "auas/output",
+        filename: `${Date.now()}_${filename}`,
+        buffer,
+    }).publicUrl;
 }
 
-async function uploadZipBufferToCloudinary(buffer: Buffer, filename: string): Promise<string> {
-    return uploadRawBufferToCloudinary(buffer, filename, "application/zip");
+async function uploadZipBufferToCloudinary(buffer: Buffer, filename: string, uid = "anonymous"): Promise<string> {
+    return saveUserBuffer({
+        uid,
+        area: filename.includes("input") ? "auas/input" : "auas/output",
+        filename: `${Date.now()}_${filename}`,
+        buffer,
+    }).publicUrl;
 }
 
 function sleepMs(ms: number): Promise<void> {
@@ -262,10 +236,7 @@ async function persistAuasJobInFirestore(args: {
 }): Promise<void> {
     const uid = String(args.uid || "").trim();
     const jobId = String(args.jobId || "").trim();
-    if (!uid || !jobId) throw new Error("Nao foi possivel persistir Novo CAR no Firestore (uid/jobId ausente).");
-
-    const docRef = adminDb.doc(`users/${uid}/auas_jobs/${jobId}`);
-    const now = Timestamp.now();
+    if (!uid || !jobId) throw new Error("Nao foi possivel persistir Novo CAR localmente (uid/jobId ausente).");
     const nowIso = new Date().toISOString();
     const payloadBase = stripUndefinedDeep<Record<string, unknown>>({
         id: jobId,
@@ -283,17 +254,10 @@ async function persistAuasJobInFirestore(args: {
             contextUrl: args.result.contextUrl || null,
         },
         analysisImageCount: Array.isArray(args.result.images) ? args.result.images.length : 0,
-        updatedAt: now,
     });
 
     await withRetry("firestore_persist_auas_job", AUAS_FIRESTORE_PERSIST_RETRY_ATTEMPTS, async () => {
-        await adminDb.runTransaction(async (tx) => {
-            const snap = await tx.get(docRef);
-            const createdAt = snap.exists
-                ? ((snap.get("createdAt") as Timestamp | undefined) || now)
-                : now;
-            tx.set(docRef, stripUndefinedDeep({ ...payloadBase, createdAt }), { merge: true });
-        });
+        writeDocBySegments(["users", uid, "auas_jobs", jobId], payloadBase, { merge: true });
     });
 }
 
@@ -307,7 +271,6 @@ async function persistAuasProcessingState(args: {
     const uid = String(args.uid || "").trim();
     const jobId = String(args.jobId || "").trim();
     if (!uid || !jobId) return;
-    const docRef = adminDb.doc(`users/${uid}/auas_jobs/${jobId}`);
     const filename = String(args.filename || `Novo CAR ${jobId.slice(0, 8)}`).trim();
     const payload = stripUndefinedDeep({
         id: jobId,
@@ -318,16 +281,9 @@ async function persistAuasProcessingState(args: {
         status: args.status,
         error: args.error || null,
         timestamp: new Date().toISOString(),
-        updatedAt: Timestamp.now(),
     });
     await withRetry("firestore_persist_auas_processing_state", AUAS_FIRESTORE_PERSIST_RETRY_ATTEMPTS, async () => {
-        await adminDb.runTransaction(async (tx) => {
-            const snap = await tx.get(docRef);
-            const createdAt = snap.exists
-                ? ((snap.get("createdAt") as Timestamp | undefined) || Timestamp.now())
-                : Timestamp.now();
-            tx.set(docRef, stripUndefinedDeep({ ...payload, createdAt }), { merge: true });
-        });
+        writeDocBySegments(["users", uid, "auas_jobs", jobId], payload, { merge: true });
     });
 }
 
@@ -1059,13 +1015,13 @@ async function runAuasAnalysis(
         {
             label: "input_zip",
             bytes: propertyZip.length,
-            run: () => uploadZipBufferToCloudinary(propertyZip, `auas_input_${tag}`),
+            run: () => uploadZipBufferToCloudinary(propertyZip, `auas_input_${tag}`, options?.uid || "anonymous"),
             assign: (url) => { inputZipUrl = url; },
         },
         {
             label: "output_zip",
             bytes: zipBuffer.length,
-            run: () => uploadZipBufferToCloudinary(zipBuffer, `auas_output_${tag}`),
+            run: () => uploadZipBufferToCloudinary(zipBuffer, `auas_output_${tag}`, options?.uid || "anonymous"),
             assign: (url) => { outputZipUrl = url; },
         },
         {
@@ -1075,6 +1031,7 @@ async function runAuasAnalysis(
                 contextBuffer,
                 `auas_context_${tag}.json`,
                 "application/json",
+                options?.uid || "anonymous",
             ),
             assign: (url) => { contextUrl = url; },
         },
@@ -1519,4 +1476,3 @@ export function registerAuasRoutes(app: Express) {
         res.send(job.buffer);
     });
 }
-

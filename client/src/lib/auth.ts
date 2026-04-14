@@ -1,10 +1,4 @@
-﻿/**
- * Authentication Functions
- *
- * Firebase Auth + Firestore profile enforcement.
- */
-
-import {
+﻿import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithEmailAndPassword,
@@ -12,14 +6,7 @@ import {
   signOut,
   User,
 } from 'firebase/auth';
-import {
-  doc,
-  getDoc,
-  setDoc,
-  serverTimestamp,
-  Timestamp,
-} from 'firebase/firestore';
-import { auth, db } from './firebase';
+import { auth } from './firebase';
 
 export interface UserProfile {
   uid: string;
@@ -27,8 +14,8 @@ export interface UserProfile {
   fullName: string;
   creaNumber?: string;
   specialization?: string;
-  createdAt: Timestamp;
-  updatedAt?: Timestamp;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export interface SignUpData {
@@ -37,39 +24,41 @@ export interface SignUpData {
   fullName: string;
 }
 
-async function assertFirestoreProfileExists(user: User): Promise<void> {
-  const userDocRef = doc(db, 'users', user.uid);
-  const userDocSnap = await getDoc(userDocRef);
-  if (userDocSnap.exists()) return;
+function apiUrl(path: string) {
+  const base = String(import.meta.env.VITE_API_BASE || '').trim().replace(/\/+$/, '');
+  return base ? `${base}${path}` : path;
+}
 
-  await signOut(auth);
-  throw new Error('Conta sem cadastro no sistema. Entre em contato com o suporte.');
+export async function bootstrapAccount(fullName?: string): Promise<UserProfile> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error('Usuário não autenticado.');
+  }
+  const token = await user.getIdToken();
+  const response = await fetch(apiUrl('/api/account/bootstrap'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      email: user.email || '',
+      fullName: fullName || user.displayName || '',
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error || 'Falha ao provisionar conta local.');
+  }
+  return payload.profile as UserProfile;
 }
 
 export async function handleSignUp(data: SignUpData): Promise<User> {
   try {
-    const userCredential = await createUserWithEmailAndPassword(
-      auth,
-      data.email,
-      data.password,
-    );
-
-    const user = userCredential.user;
-
-    const userProfile: UserProfile = {
-      uid: user.uid,
-      email: user.email || '',
-      fullName: data.fullName,
-      createdAt: serverTimestamp() as Timestamp,
-    };
-
-    await setDoc(doc(db, 'users', user.uid), userProfile);
-
-    console.log('Usuario cadastrado com sucesso:', user.uid);
-    return user;
+    const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
+    await bootstrapAccount(data.fullName);
+    return userCredential.user;
   } catch (error: any) {
-    console.error('Erro ao cadastrar:', error);
-
     switch (error.code) {
       case 'auth/email-already-in-use':
         throw new Error('Este e-mail ja esta cadastrado');
@@ -87,54 +76,19 @@ export async function handleGoogleSignIn(): Promise<User> {
   try {
     const provider = new GoogleAuthProvider();
     const result = await signInWithPopup(auth, provider);
-    const user = result.user;
-
-    const userDocRef = doc(db, 'users', user.uid);
-    const userDocSnap = await getDoc(userDocRef);
-
-    if (!userDocSnap.exists()) {
-      await signOut(auth);
-      throw new Error('Conta sem cadastro no sistema. Entre em contato com o suporte.');
-    }
-
-    const data = userDocSnap.data() as Partial<UserProfile>;
-    const updates: Partial<UserProfile> = {
-      email: data.email || user.email || '',
-      updatedAt: serverTimestamp() as Timestamp,
-    };
-
-    if (!data.fullName && user.displayName) {
-      updates.fullName = user.displayName;
-    }
-    if (!data.specialization) {
-      updates.specialization = 'outro';
-    }
-    if (!data.uid) {
-      updates.uid = user.uid;
-    }
-
-    await setDoc(userDocRef, updates, { merge: true });
-
-    console.log('Login com Google realizado com sucesso:', user.uid);
-    return user;
+    await bootstrapAccount(result.user.displayName || '');
+    return result.user;
   } catch (error: any) {
-    console.error('Erro no login com Google:', error);
     throw new Error(error.message || 'Erro ao entrar com Google');
   }
 }
 
-export async function handleLogin(
-  email: string,
-  password: string,
-): Promise<User> {
+export async function handleLogin(email: string, password: string): Promise<User> {
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    await assertFirestoreProfileExists(userCredential.user);
-    console.log('Login realizado com sucesso:', userCredential.user.uid);
+    await bootstrapAccount(userCredential.user.displayName || '');
     return userCredential.user;
   } catch (error: any) {
-    console.error('Erro ao fazer login:', error);
-
     switch (error.code) {
       case 'auth/user-not-found':
         throw new Error('Usuario nao encontrado');
@@ -153,9 +107,7 @@ export async function handleLogin(
 export async function handleLogout(): Promise<void> {
   try {
     await signOut(auth);
-    console.log('Logout realizado com sucesso');
   } catch (error: any) {
-    console.error('Erro ao fazer logout:', error);
     throw new Error(error.message || 'Erro ao fazer logout');
   }
 }

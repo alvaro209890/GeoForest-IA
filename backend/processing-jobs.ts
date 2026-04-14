@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
-import { FieldValue } from "firebase-admin/firestore";
-import { adminDb } from "./firebase-admin";
+import { writeDocBySegments } from "./local-storage";
 
 export type ProcessingJobStatus =
   | "running"
@@ -77,8 +76,8 @@ function stripUndefinedDeep(value: unknown): unknown {
 async function persistJobSnapshot(job: ProcessingJob): Promise<void> {
   if (!job.uid) return;
   try {
-    const ref = adminDb.doc(`users/${job.uid}/processing_jobs/${job.jobId}`);
-    await ref.set(
+    writeDocBySegments(
+      ["users", job.uid, "processing_jobs", job.jobId],
       {
         jobId: job.jobId,
         uid: job.uid,
@@ -92,7 +91,6 @@ async function persistJobSnapshot(job: ProcessingJob): Promise<void> {
         createdAtMs: job.createdAtMs,
         updatedAtMs: job.updatedAtMs,
         finishedAtMs: job.finishedAtMs || null,
-        updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true },
     );
