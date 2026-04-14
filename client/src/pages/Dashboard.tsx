@@ -1,12 +1,10 @@
 ﻿import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Feature, Geometry, MultiPolygon, Polygon } from 'geojson';
 import {
   Plus,
   Search,
   Send,
   Paperclip,
   MessageSquare,
-  Map as MapIcon,
   Zap,
   Sparkles,
   Menu,
@@ -31,7 +29,6 @@ import {
   SendHorizontal,
   Eye,
   BookOpen,
-  Globe,
   Cpu,
   TreePine,
   Satellite,
@@ -105,141 +102,10 @@ type ChatMessage = {
         estimated?: boolean;
       }>;
     };
-    mapContext?: {
-      layerName: string;
-      bbox: [number, number, number, number];
-      crs: string;
-      source: 'SEMA_WMS';
-      width?: number;
-      height?: number;
-      layerTitle?: string;
-      layerGroup?: string;
-      inferredYear?: string;
-      capturedAtIso?: string;
-      activeOverlays?: Array<{ name: string; title: string }>;
-      intersectionSummary?: {
-        polygonAreaHa: number;
-        computedAtIso: string;
-        layers: Array<{
-          layerName: string;
-          title: string;
-          status: 'ok' | 'not_in_wfs' | 'no_intersection' | 'invalid_layer' | 'error';
-          intersectionHa: number;
-          coveragePercentOfPolygon: number;
-          warnings: string[];
-        }>;
-      };
-    };
   };
 };
 
-type MapLayerOption = {
-  name: string;
-  title: string;
-  crs?: string[];
-  inferredYear?: string;
-  group?: 'spot' | 'landsat' | 'sentinel' | 'other';
-};
 
-type ParsedGeometry = {
-  bbox: [number, number, number, number];
-  polygon?: Array<[number, number]>;
-};
-type MapContext = NonNullable<NonNullable<ChatMessage['meta']>['mapContext']>;
-
-type IntersectionStatus = 'ok' | 'not_in_wfs' | 'no_intersection' | 'invalid_layer' | 'error';
-type IntersectionResult = {
-  layerName: string;
-  status: IntersectionStatus;
-  matchedFeatures: number;
-  intersectionHa: number;
-  coveragePercentOfPolygon: number;
-  warnings: string[];
-};
-type MapCapabilitiesResponse = {
-  serviceTitle?: string;
-  layers?: MapLayerOption[];
-  imageLayers?: MapLayerOption[];
-  simcarDigitalLayers?: Array<{ name: string; title: string }>;
-  defaultLayer?: string;
-};
-type IntersectionCacheEntry = {
-  expiresAt: number;
-  results: IntersectionResult[];
-  computedAtIso: string;
-};
-
-const FALLBACK_WMS_IMAGE_LAYERS: MapLayerOption[] = [
-  'SEMAMT:ALOS_PALSAR_DEM',
-  'Geoportal:DECLIVIDADE_GEOPORTAL',
-  'Mosaicos:LANDSAT_5_1984',
-  'semamt:LANDSAT_5',
-  'Mosaicos:LANDSAT_5_1985',
-  'Mosaicos:LANDSAT_5_1986',
-  'Mosaicos:LANDSAT_5_1987',
-  'Mosaicos:LANDSAT_5_1988',
-  'Mosaicos:LANDSAT_5_1989',
-  'Mosaicos:LANDSAT_5_1990',
-  'Mosaicos:LANDSAT_5_1991',
-  'Mosaicos:LANDSAT_5_1992',
-  'Mosaicos:LANDSAT_5_1993',
-  'Mosaicos:LANDSAT_5_1994',
-  'Mosaicos:LANDSAT_5_1995',
-  'Mosaicos:LANDSAT_5_1996',
-  'Mosaicos:LANDSAT_5_1997',
-  'Mosaicos:LANDSAT_5_1998',
-  'Mosaicos:LANDSAT_5_1999',
-  'Mosaicos:LANDSAT_5_2000',
-  'Mosaicos:LANDSAT_5_2003',
-  'Mosaicos:LANDSAT_5_2004',
-  'Mosaicos:LANDSAT_5_2005',
-  'Mosaicos:LANDSAT_5_2006',
-  'Mosaicos:LANDSAT_5_2007',
-  'Mosaicos:LANDSAT_5_2008',
-  'Mosaicos:LANDSAT_5_2009',
-  'Mosaicos:LANDSAT_5_2010',
-  'Mosaicos:LANDSAT_5_2011',
-  'Mosaicos:LANDSAT_7_2002',
-  'Mosaicos:LANDSAT_8_2013',
-  'Mosaicos:LANDSAT_8_2014',
-  'Mosaicos:LANDSAT_8_2015',
-  'Mosaicos:LANDSAT_8_2016',
-  'Mosaicos:LANDSAT_8_2017',
-  'Mosaicos:MOSAICO_SPOT_SEPLAN',
-  'Mosaicos:RESOURCESAT_2012',
-  'Mosaicos:SENTINEL_2_2016',
-  'Mosaicos:Geoportal_Sentinel_2_2016_NIR',
-  'Mosaicos:SENTINEL_2_2017',
-  'Mosaicos:Geoportal_Sentinel_2_2017_NIR',
-  'Mosaicos:SENTINEL_2_2018',
-  'Mosaicos:Geoportal_Sentinel_2_2018_NIR',
-  'Mosaicos:SENTINEL_2_2019',
-  'Mosaicos:SENTINEL_2_2020',
-  'Mosaicos:Geoportal_Sentinel_2_2020_NIR',
-  'Mosaicos:SENTINEL_2_2021',
-  'Mosaicos:Geoportal_Sentinel_2_2021_NIR',
-  'Mosaicos:SENTINEL_2_2022',
-  'Mosaicos:SENTINEL_2_2023',
-  'Mosaicos:SENTINEL_2_2024',
-].map((name) => ({
-  name,
-  title: name.split(':')[1] || name,
-  inferredYear: name.match(/\b(19|20)\d{2}\b/)?.[0],
-}));
-
-const SEMA_WMS_DIRECT_BASE =
-  'https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&version=1.1.1&authkey=541085de-9a2e-454e-bdba-eb3d57a2f492&request=GetMap';
-const SEMA_WFS_BASE_URL = 'https://geo.sema.mt.gov.br/geoserver/ows';
-const SEMA_WFS_AUTHKEY = '541085de-9a2e-454e-bdba-eb3d57a2f492';
-const FRONT_WFS_TIMEOUT_MS = 25000;
-const FRONT_WFS_PAGE_SIZE = 2000;
-const FRONT_WFS_MAX_FEATURES = 50000;
-const FRONT_WFS_CAPABILITIES_TTL_MS = 10 * 60 * 1000;
-const FRONT_WFS_DESCRIBE_TTL_MS = 30 * 60 * 1000;
-const FRONT_MAP_CAPABILITIES_TTL_MS = 10 * 60 * 1000;
-const FRONT_MAP_CAPABILITIES_STORAGE_KEY = 'geoforest.map.capabilities.v1';
-const FRONT_INTERSECTION_RESULT_TTL_MS = 6 * 60 * 1000;
-const FRONT_INTERSECTION_RESULT_CACHE_MAX = 48;
 const SIMCAR_MANDATORY_LAYERS = new Set(['AIR', 'ATP']);
 const SIMCAR_FIXED_AC_AVN_SATELLITES: Array<{ key: string; label: string; sensor: string; year: number }> = [
   { key: 'landsat5_2006', label: 'Landsat 2006', sensor: 'Landsat 5', year: 2006 },
@@ -248,25 +114,6 @@ const SIMCAR_FIXED_AC_AVN_SATELLITES: Array<{ key: string; label: string; sensor
   { key: 'landsat5_2008', label: 'Landsat 2008', sensor: 'Landsat 5', year: 2008 },
 ];
 
-const buildDirectWmsGetMapUrl = (
-  layerName: string,
-  bbox: [number, number, number, number],
-  width = 1100,
-  height = 700,
-  format = 'image/png'
-) => {
-  const params = new URLSearchParams({
-    layers: layerName,
-    styles: '',
-    format,
-    transparent: 'false',
-    srs: 'EPSG:4326',
-    bbox: bbox.join(','),
-    width: String(width),
-    height: String(height),
-  });
-  return `${SEMA_WMS_DIRECT_BASE}&${params.toString()}`;
-};
 
 const REQUIRED_MODELS: Array<{ id: string; label: string; capabilities: string[]; description: string }> = [
   {
@@ -621,118 +468,9 @@ const toFileProxyUrl = (url?: string, name?: string, mode: 'inline' | 'download'
   );
 };
 
-const inferMapLayerGroup = (layerName: string) => {
-  const low = layerName.toLowerCase();
-  if (low.startsWith('mosaicos:landsat_5_')) return 'Mosaicos / Landsat / Landsat-5';
-  if (low.startsWith('mosaicos:landsat_7_')) return 'Mosaicos / Landsat / Landsat-7';
-  if (low.startsWith('mosaicos:landsat_8_')) return 'Mosaicos / Landsat / Landsat-8';
-  if (low.includes('sentinel')) return 'Mosaicos / Sentinel-2';
-  if (low.includes('spot')) return 'Mosaicos / SPOT';
-  if (low.includes('resourcesat')) return 'Mosaicos / Resourcesat';
-  if (low.startsWith('semamt:')) return 'SEMAMT';
-  if (low.startsWith('geoportal:')) return 'Geoportal';
-  return 'Outras';
-};
 
-const intersectionStatusLabel = (status: IntersectionStatus) => {
-  switch (status) {
-    case 'ok':
-      return 'OK';
-    case 'no_intersection':
-      return 'Sem interseção';
-    case 'not_in_wfs':
-      return 'Fora do WFS';
-    case 'invalid_layer':
-      return 'Camada inválida';
-    case 'error':
-      return 'Erro';
-    default:
-      return status;
-  }
-};
 
-const intersectionStatusClass = (status: IntersectionStatus) => {
-  switch (status) {
-    case 'ok':
-      return 'text-emerald-300';
-    case 'no_intersection':
-      return 'text-slate-300';
-    case 'not_in_wfs':
-      return 'text-amber-300';
-    case 'invalid_layer':
-      return 'text-amber-300';
-    case 'error':
-      return 'text-rose-300';
-    default:
-      return 'text-slate-300';
-  }
-};
 
-const buildWfsUrl = (params: Record<string, string | number | undefined>) => {
-  const url = new URL(SEMA_WFS_BASE_URL);
-  Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null) return;
-    url.searchParams.set(key, String(value));
-  });
-  if (SEMA_WFS_AUTHKEY) {
-    url.searchParams.set('authkey', SEMA_WFS_AUTHKEY);
-  }
-  return url.toString();
-};
-
-const parseWfsLayerNamesFromCapabilities = (xml: string) => {
-  const names: string[] = [];
-  const regex = /<FeatureType\b[\s\S]*?<Name>\s*([^<]+)\s*<\/Name>[\s\S]*?<\/FeatureType>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(xml)) !== null) {
-    const name = String(match[1] || '').trim();
-    if (!name || !name.includes(':')) continue;
-    names.push(name);
-  }
-  return [...new Set(names)];
-};
-
-const parseGeometryFieldFromDescribe = (xml: string) => {
-  const candidates = [...xml.matchAll(/<xsd:element[^>]*name="([^"]+)"[^>]*type="gml:[^"]*PropertyType"/gi)]
-    .map((m) => String(m[1] || '').trim())
-    .filter(Boolean);
-  if (!candidates.length) return 'GEOMETRY';
-  const preferred = candidates.find((name) => name.toUpperCase() === 'GEOMETRY');
-  return preferred || candidates[0];
-};
-
-const parseNumberMatched = (xml: string) => {
-  const match = xml.match(/numberMatched="([^"]+)"/i);
-  if (!match) return null;
-  const raw = String(match[1] || '').trim();
-  if (!raw || raw.toLowerCase() === 'unknown') return null;
-  const value = Number(raw);
-  return Number.isFinite(value) ? value : null;
-};
-
-const numberToWkt = (value: number) => Number(value.toFixed(8)).toString();
-
-const polygonToWkt = (ring: number[][]) =>
-  `POLYGON((${ring.map(([x, y]) => `${numberToWkt(x)} ${numberToWkt(y)}`).join(',')}))`;
-
-const toPolygonLikeFeature = (geometry: Geometry | null | undefined): Feature<Polygon | MultiPolygon> | null => {
-  if (!geometry) return null;
-  if (geometry.type === 'Polygon') {
-    return {
-      type: 'Feature',
-      properties: {},
-      geometry: geometry as Polygon,
-    };
-  }
-  if (geometry.type === 'MultiPolygon') {
-    return {
-      type: 'Feature',
-      properties: {},
-      geometry: geometry as MultiPolygon,
-    };
-  }
-  return null;
-};
 
 const renderInlineRichText = (text: string) => {
   const parts: React.ReactNode[] = [];
@@ -1030,117 +768,6 @@ const buildIntegratedVectorizedReport = (acAvnText: string, auasText: string): s
     .trim();
 };
 
-const parseKmlGeometryOnClient = (kmlText: string): ParsedGeometry => {
-  const matches = [...kmlText.matchAll(/<coordinates>([\s\S]*?)<\/coordinates>/gi)];
-  if (!matches.length) {
-    throw new Error('KML sem coordenadas válidas.');
-  }
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  let bestPolygon: Array<[number, number]> | undefined;
-  for (const m of matches) {
-    const raw = String(m[1] || '').trim();
-    const tuples = raw.split(/\s+/);
-    const polygon: Array<[number, number]> = [];
-    for (const t of tuples) {
-      const [xStr, yStr] = t.split(',');
-      const x = Number(xStr);
-      const y = Number(yStr);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      polygon.push([x, y]);
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-    }
-    if (polygon.length >= 3 && (!bestPolygon || polygon.length > bestPolygon.length)) {
-      bestPolygon = polygon;
-    }
-  }
-  if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
-    throw new Error('Não foi possível extrair bbox do KML.');
-  }
-  return { bbox: [minX, minY, maxX, maxY], polygon: bestPolygon };
-};
-
-const parseZipShpGeometryOnClient = async (file: File): Promise<ParsedGeometry> => {
-  const arr = await file.arrayBuffer();
-  const bytes = new Uint8Array(arr);
-  const parseShpPolygon = (dv: DataView, byteOffset: number, byteLength: number) => {
-    if (byteLength < 100) return undefined;
-    let off = 100;
-    while (off + 12 <= byteLength) {
-      const recContentBytes = dv.getInt32(off + 4, false) * 2;
-      const recStart = off + 8;
-      if (recStart + recContentBytes > byteLength) break;
-      const shapeType = dv.getInt32(recStart, true);
-      if ((shapeType === 5 || shapeType === 15) && recContentBytes >= 44) {
-        const numParts = dv.getInt32(recStart + 36, true);
-        const numPoints = dv.getInt32(recStart + 40, true);
-        if (numParts > 0 && numPoints > 2) {
-          const partsOffset = recStart + 44;
-          const pointsOffset = partsOffset + numParts * 4;
-          if (pointsOffset + numPoints * 16 <= recStart + recContentBytes) {
-            const firstPart = dv.getInt32(partsOffset, true);
-            const nextPart = numParts > 1 ? dv.getInt32(partsOffset + 4, true) : numPoints;
-            const end = Math.min(nextPart, numPoints);
-            const poly: Array<[number, number]> = [];
-            for (let i = firstPart; i < end; i += 1) {
-              const pOff = pointsOffset + i * 16;
-              poly.push([dv.getFloat64(pOff, true), dv.getFloat64(pOff + 8, true)]);
-            }
-            if (poly.length >= 3) return poly;
-          }
-        }
-      }
-      off = recStart + recContentBytes;
-    }
-    return undefined;
-  };
-
-  let offset = 0;
-  while (offset + 30 <= bytes.length) {
-    const sig =
-      bytes[offset] |
-      (bytes[offset + 1] << 8) |
-      (bytes[offset + 2] << 16) |
-      (bytes[offset + 3] << 24);
-    if (sig !== 0x04034b50) break;
-    const method = bytes[offset + 8] | (bytes[offset + 9] << 8);
-    const compressedSize =
-      bytes[offset + 18] |
-      (bytes[offset + 19] << 8) |
-      (bytes[offset + 20] << 16) |
-      (bytes[offset + 21] << 24);
-    const fileNameLength = bytes[offset + 26] | (bytes[offset + 27] << 8);
-    const extraLength = bytes[offset + 28] | (bytes[offset + 29] << 8);
-    const nameStart = offset + 30;
-    const nameEnd = nameStart + fileNameLength;
-    const name = new TextDecoder().decode(bytes.slice(nameStart, nameEnd)).toLowerCase();
-    const dataStart = nameEnd + extraLength;
-    const dataEnd = dataStart + compressedSize;
-    if (dataEnd > bytes.length) break;
-    if (name.endsWith('.shp')) {
-      if (method !== 0) {
-        throw new Error('ZIP com SHP comprimido não suportado no frontend. Refaça ZIP sem compressão ou use backend novo.');
-      }
-      const dv = new DataView(arr, dataStart, compressedSize);
-      const minX = dv.getFloat64(36, true);
-      const minY = dv.getFloat64(44, true);
-      const maxX = dv.getFloat64(52, true);
-      const maxY = dv.getFloat64(60, true);
-      if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
-        throw new Error('Não foi possível extrair BBOX do shapefile.');
-      }
-      const polygon = parseShpPolygon(dv, dataStart, compressedSize);
-      return { bbox: [minX, minY, maxX, maxY], polygon };
-    }
-    offset = dataEnd;
-  }
-  throw new Error('ZIP sem arquivo .shp encontrado.');
-};
 
 export default function Dashboard() {
   const [input, setInput] = useState('');
@@ -1165,43 +792,6 @@ export default function Dashboard() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [queuedFiles, setQueuedFiles] = useState<File[]>([]);
-  const [pendingMapContext, setPendingMapContext] = useState<MapContext | undefined>(undefined);
-  const [pendingMapImageUrl, setPendingMapImageUrl] = useState<string | null>(null);
-  const [mapDialogOpen, setMapDialogOpen] = useState(false);
-  const [mapImageLayers, setMapImageLayers] = useState<MapLayerOption[]>([]);
-  const [selectedMapLayer, setSelectedMapLayer] = useState('');
-  const [mapLoading, setMapLoading] = useState(false);
-  const [mapCapturing, setMapCapturing] = useState(false);
-  const [mapBbox, setMapBbox] = useState<[number, number, number, number]>([-61, -18, -50, -8]);
-  const [mapOriginalPolygonBbox, setMapOriginalPolygonBbox] = useState<
-    [number, number, number, number] | null
-  >(null);
-  const [mapPolygon, setMapPolygon] = useState<Array<[number, number]>>([]);
-  const [mapPreviewDataUrl, setMapPreviewDataUrl] = useState('');
-  const [mapPreviewLoading, setMapPreviewLoading] = useState(false);
-  const mapPreviewCacheRef = useRef<Map<string, string>>(new Map());
-  const mapCapabilitiesCacheRef = useRef<{ expiresAt: number; data: MapCapabilitiesResponse } | null>(
-    null
-  );
-  const mapPreviewAbortRef = useRef<AbortController | null>(null);
-  const MAX_MAP_PREVIEW_CACHE = 24;
-  const [mapDragging, setMapDragging] = useState(false);
-  const [mapDragOffset, setMapDragOffset] = useState({ x: 0, y: 0 });
-  const [simcarDigitalLayers, setSimcarDigitalLayers] = useState<{ name: string; title: string }[]>([]);
-  const [selectedSimcarOverlays, setSelectedSimcarOverlays] = useState<string[]>([]);
-  const [intersectionLoading, setIntersectionLoading] = useState(false);
-  const [intersectionError, setIntersectionError] = useState<string | null>(null);
-  const [intersectionResults, setIntersectionResults] = useState<IntersectionResult[]>([]);
-  const [polygonAreaHa, setPolygonAreaHa] = useState<number | null>(null);
-  const [intersectionComputedAtIso, setIntersectionComputedAtIso] = useState<string | null>(null);
-  const [lastIntersectionRequestKey, setLastIntersectionRequestKey] = useState('');
-  const intersectionResultCacheRef = useRef<Map<string, IntersectionCacheEntry>>(new Map());
-  const intersectionAbortRef = useRef<AbortController | null>(null);
-  const intersectionDebounceRef = useRef<number | null>(null);
-  const wfsCapabilitiesCacheRef = useRef<{ expiresAt: number; layerNames: Set<string> } | null>(null);
-  const wfsDescribeCacheRef = useRef<Map<string, { expiresAt: number; geometryField: string }>>(new Map());
-  const [mapSectionOpen, setMapSectionOpen] = useState<Record<string, boolean>>({ imagery: true, simcar: true, advanced: false });
-  const [simcarSearchFilter, setSimcarSearchFilter] = useState('');
 
   // ─── SIMCAR Clip State ───
   const [simcarClipFile, setSimcarClipFile] = useState<File | null>(null);
@@ -1410,30 +1000,6 @@ export default function Dashboard() {
     () => SIMCAR_FIXED_AC_AVN_SATELLITES.map((sat) => sat.key),
     []
   );
-  const [mapRectZoomMode, setMapRectZoomMode] = useState(false);
-  const [mapRectSelection, setMapRectSelection] = useState<{
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
-  const mapPreviewViewportRef = useRef<HTMLDivElement | null>(null);
-  const mapPreviewImageRef = useRef<HTMLImageElement | null>(null);
-  const mapDragStateRef = useRef<{
-    startX: number;
-    startY: number;
-    startBbox: [number, number, number, number];
-  } | null>(null);
-  const mapRectStateRef = useRef<{
-    startX: number;
-    startY: number;
-    currentX: number;
-    currentY: number;
-    imageRect: DOMRect;
-    startBbox: [number, number, number, number];
-  } | null>(null);
-  const mapDraggedBboxRef = useRef<[number, number, number, number] | null>(null);
-  const mapWheelDebounceRef = useRef<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
   const chatAbortRef = useRef<AbortController | null>(null);
@@ -3343,14 +2909,6 @@ export default function Dashboard() {
     };
   }, [imagePreview]);
 
-  useEffect(() => {
-    return () => {
-      if (mapWheelDebounceRef.current) {
-        window.clearTimeout(mapWheelDebounceRef.current);
-        mapWheelDebounceRef.current = null;
-      }
-    };
-  }, []);
 
   useEffect(() => {
     if (aiThinking || typingMessageId) {
@@ -3556,8 +3114,6 @@ export default function Dashboard() {
     setImagePreview(null);
     setPdfFile(null);
     setQueuedFiles([]);
-    setPendingMapImageUrl(null);
-    setPendingMapContext(undefined);
   };
 
   const stopTypingAnimation = useCallback((clearTarget = false) => {
@@ -3707,8 +3263,6 @@ export default function Dashboard() {
     setImageFile(null);
     setImagePreview(null);
     setPdfFile(null);
-    setPendingMapImageUrl(null);
-    setPendingMapContext(undefined);
     setQueuedFiles(valid.slice(0, 10));
     if (invalidCount > 0) {
       toast.error(`${invalidCount} arquivo(s) ignorado(s): formato não suportado.`);
@@ -3806,1129 +3360,28 @@ export default function Dashboard() {
     };
   };
 
-  const autoExpandGroupForLayer = (layerName: string) => {
-    const nameLow = layerName.toLowerCase();
-    let groupName = 'Outras';
-    if (nameLow.startsWith('mosaicos:landsat_5_')) groupName = 'Mosaicos / Landsat / Landsat-5';
-    else if (nameLow.startsWith('mosaicos:landsat_7_')) groupName = 'Mosaicos / Landsat / Landsat-7';
-    else if (nameLow.startsWith('mosaicos:landsat_8_')) groupName = 'Mosaicos / Landsat / Landsat-8';
-    else if (nameLow.startsWith('mosaicos:sentinel_2_') || nameLow.includes('geoportal_sentinel_2_')) groupName = 'Mosaicos / Sentinel-2';
-    else if (nameLow.includes('spot')) groupName = 'Mosaicos / SPOT';
-    else if (nameLow.includes('resourcesat')) groupName = 'Mosaicos / Resourcesat';
-    else if (nameLow.startsWith('semamt:')) groupName = 'SEMAMT';
-    else if (nameLow.startsWith('geoportal:')) groupName = 'Geoportal';
-    else if (nameLow.startsWith('mosaicos:')) groupName = 'Mosaicos / Outras';
-    setMapSectionOpen((prev) => ({ ...prev, imagery: true, [`img_${groupName}`]: true }));
-  };
 
-  const readCachedMapCapabilities = useCallback((): MapCapabilitiesResponse | null => {
-    const now = Date.now();
-    const inMemory = mapCapabilitiesCacheRef.current;
-    if (inMemory && inMemory.expiresAt > now) {
-      return inMemory.data;
-    }
-    try {
-      const raw = window.sessionStorage.getItem(FRONT_MAP_CAPABILITIES_STORAGE_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as { expiresAt?: number; data?: MapCapabilitiesResponse };
-      if (!parsed?.data || !Number.isFinite(Number(parsed.expiresAt))) {
-        window.sessionStorage.removeItem(FRONT_MAP_CAPABILITIES_STORAGE_KEY);
-        return null;
-      }
-      if (Number(parsed.expiresAt) <= now) {
-        window.sessionStorage.removeItem(FRONT_MAP_CAPABILITIES_STORAGE_KEY);
-        return null;
-      }
-      mapCapabilitiesCacheRef.current = {
-        expiresAt: Number(parsed.expiresAt),
-        data: parsed.data,
-      };
-      return parsed.data;
-    } catch {
-      return null;
-    }
-  }, []);
 
-  const storeMapCapabilitiesCache = useCallback((data: MapCapabilitiesResponse) => {
-    const entry = {
-      expiresAt: Date.now() + FRONT_MAP_CAPABILITIES_TTL_MS,
-      data,
-    };
-    mapCapabilitiesCacheRef.current = entry;
-    try {
-      window.sessionStorage.setItem(FRONT_MAP_CAPABILITIES_STORAGE_KEY, JSON.stringify(entry));
-    } catch {
-      // ignore storage errors
-    }
-  }, []);
 
-  const loadMapCapabilities = useCallback(async (): Promise<MapCapabilitiesResponse> => {
-    const cached = readCachedMapCapabilities();
-    if (cached) return cached;
-    const res = await fetch(apiUrl('/api/map/capabilities'));
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(text || 'Falha ao carregar camadas de mapa');
-    }
-    const data = (await res.json()) as MapCapabilitiesResponse;
-    storeMapCapabilitiesCache(data);
-    return data;
-  }, [readCachedMapCapabilities, storeMapCapabilitiesCache]);
 
-  const openMapDialog = async () => {
-    setMapDialogOpen(true);
-    if (!mapPreviewDataUrl) setMapPreviewLoading(false);
-    setMapLoading(true);
-    try {
-      const data = await loadMapCapabilities();
-      const imageLayersRaw = (data?.imageLayers || data?.layers || []) as MapLayerOption[];
-      const imageLayers = imageLayersRaw.length ? imageLayersRaw : FALLBACK_WMS_IMAGE_LAYERS;
-      setMapImageLayers(imageLayers);
-      const simcarRaw = (data?.simcarDigitalLayers || []) as { name: string; title: string }[];
-      setSimcarDigitalLayers(simcarRaw);
-      const layerNames = new Set(imageLayers.map((l) => l.name));
-      const preferred = selectedMapLayer && layerNames.has(selectedMapLayer) ? selectedMapLayer : '';
-      const chosenLayer = preferred || data?.defaultLayer || imageLayers[0]?.name || '';
-      setSelectedMapLayer(chosenLayer);
-      if (chosenLayer) {
-        autoExpandGroupForLayer(chosenLayer);
-        setTimeout(() => {
-          refreshMapPreview(chosenLayer, mapBbox);
-        }, 0);
-      }
-    } catch (error: any) {
-      const imageLayers = FALLBACK_WMS_IMAGE_LAYERS;
-      setMapImageLayers(imageLayers);
-      const chosenLayer = selectedMapLayer || 'Mosaicos:SENTINEL_2_2024';
-      setSelectedMapLayer(chosenLayer);
-      autoExpandGroupForLayer(chosenLayer);
-      setTimeout(() => {
-        refreshMapPreview(chosenLayer, mapBbox);
-      }, 0);
-      toast.error(error?.message || 'Falha ao carregar capabilities. Usando catálogo fixo.');
-    } finally {
-      setMapLoading(false);
-    }
-  };
 
-  useEffect(() => {
-    void loadMapCapabilities().catch(() => undefined);
-  }, [loadMapCapabilities]);
 
-  const buildMapPreviewKey = (
-    layer: string,
-    bbox: [number, number, number, number],
-    width: number,
-    height: number,
-    format: string,
-    crs: string,
-    overlays?: string[]
-  ) => `${layer}|${bbox.join(',')}|${crs}|${width}x${height}|${format}|${(overlays || []).sort().join(',')}`;
 
-  const storeMapPreviewCache = (key: string, dataUrl: string) => {
-    const cache = mapPreviewCacheRef.current;
-    if (cache.has(key)) {
-      cache.delete(key);
-    }
-    cache.set(key, dataUrl);
-    if (cache.size > MAX_MAP_PREVIEW_CACHE) {
-      const oldestKey = cache.keys().next().value;
-      if (oldestKey) cache.delete(oldestKey);
-    }
-  };
 
-  const getCachedIntersectionResult = (cacheKey: string) => {
-    const cache = intersectionResultCacheRef.current;
-    const now = Date.now();
-    const cached = cache.get(cacheKey);
-    if (!cached) return null;
-    if (cached.expiresAt <= now) {
-      cache.delete(cacheKey);
-      return null;
-    }
-    cache.delete(cacheKey);
-    cache.set(cacheKey, cached);
-    return cached;
-  };
 
-  const storeIntersectionResultCache = (
-    cacheKey: string,
-    results: IntersectionResult[],
-    computedAtIso: string
-  ) => {
-    const cache = intersectionResultCacheRef.current;
-    const now = Date.now();
-    for (const [key, entry] of cache.entries()) {
-      if (entry.expiresAt <= now) cache.delete(key);
-    }
-    if (cache.has(cacheKey)) {
-      cache.delete(cacheKey);
-    }
-    cache.set(cacheKey, {
-      expiresAt: Date.now() + FRONT_INTERSECTION_RESULT_TTL_MS,
-      results,
-      computedAtIso,
-    });
-    while (cache.size > FRONT_INTERSECTION_RESULT_CACHE_MAX) {
-      const oldestKey = cache.keys().next().value;
-      if (!oldestKey) break;
-      cache.delete(oldestKey);
-    }
-  };
 
-  const preloadImage = (src: string) =>
-    new Promise<void>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error('Falha ao pré-carregar imagem.'));
-      img.src = src;
-    });
 
-  const refreshMapPreviewRef = useRef<((layerName?: string, bboxValue?: [number, number, number, number], overlays?: string[]) => Promise<void>) | undefined>(undefined);
-  const refreshMapPreview = useCallback(async (layerName?: string, bboxValue?: [number, number, number, number], overlays?: string[]) => {
-    return refreshMapPreviewRef.current?.(layerName, bboxValue, overlays);
-  }, []);
-  refreshMapPreviewRef.current = async (layerName?: string, bboxValue?: [number, number, number, number], overlays?: string[]) => {
-    const effectiveLayer = layerName || selectedMapLayer;
-    const effectiveBbox = bboxValue || mapBbox;
-    if (!effectiveLayer) return;
-    const width = 1100;
-    const height = 700;
-    const format = 'image/png';
-    const crs = 'EPSG:4326';
-    const currentOverlays = overlays !== undefined ? overlays : selectedSimcarOverlays;
-    const cacheKey = buildMapPreviewKey(effectiveLayer, effectiveBbox, width, height, format, crs, currentOverlays);
-    const cached = mapPreviewCacheRef.current.get(cacheKey);
-    if (cached) {
-      setMapPreviewDataUrl(cached);
-      setMapPreviewLoading(false);
-      return;
-    }
 
-    setMapPreviewLoading(true);
-    if (mapPreviewAbortRef.current) {
-      mapPreviewAbortRef.current.abort();
-    }
-    const controller = new AbortController();
-    mapPreviewAbortRef.current = controller;
-    try {
-      const res = await fetch(apiUrl('/api/map/snapshot'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': auth.currentUser ? `Bearer ${await auth.currentUser.getIdToken()}` : ''
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          layerName: effectiveLayer,
-          bbox: effectiveBbox,
-          crs,
-          width,
-          height,
-          format,
-          ...(currentOverlays.length ? { overlayLayers: currentOverlays } : {}),
-        }),
-      });
-      if (!res.ok) {
-        let payload: any = null;
-        try {
-          payload = await res.json();
-        } catch {
-          const text = await res.text();
-          throw new Error(text || 'Falha ao carregar prévia do mapa');
-        }
-        if (payload?.availableLayers?.length) {
-          const fallbackLayer = String(payload.availableLayers[0] || '');
-          if (fallbackLayer) {
-            setSelectedMapLayer(fallbackLayer);
-            toast.error(`Layer inválida. Usando '${fallbackLayer}'.`);
-            await refreshMapPreview(fallbackLayer, effectiveBbox);
-            return;
-          }
-        }
-        throw new Error(payload?.error || 'Falha ao carregar prévia do mapa');
-      }
-      const data = await res.json();
-      const dataUrl = String(data?.dataUrl || '');
-      if (!dataUrl) throw new Error('Prévia do mapa não retornou imagem.');
-      await preloadImage(dataUrl);
-      storeMapPreviewCache(cacheKey, dataUrl);
-      setMapPreviewDataUrl(dataUrl);
-    } catch (error: any) {
-      if (error?.name === 'AbortError') return;
-      const directUrl = buildDirectWmsGetMapUrl(effectiveLayer, effectiveBbox, 1100, 700, 'image/png');
-      try {
-        await preloadImage(directUrl);
-      } catch {
-        // ignore preload errors
-      }
-      storeMapPreviewCache(cacheKey, directUrl);
-      setMapPreviewDataUrl(directUrl);
-      toast.error('WMS via backend falhou. Usando prévia direta do WMS.');
-    } finally {
-      setMapPreviewLoading(false);
-    }
-  };
 
-  const buildIntersectionPolygonPayload = useCallback(() => {
-    if (mapPolygon.length < 3) return null;
-    const ring = mapPolygon
-      .filter(
-        (point) =>
-          Array.isArray(point) &&
-          point.length >= 2 &&
-          Number.isFinite(Number(point[0])) &&
-          Number.isFinite(Number(point[1]))
-      )
-      .map((point) => [Number(point[0]), Number(point[1])]);
-    if (ring.length < 3) return null;
-    const first = ring[0];
-    const last = ring[ring.length - 1];
-    if (first[0] !== last[0] || first[1] !== last[1]) {
-      ring.push([first[0], first[1]]);
-    }
-    if (ring.length < 4) return null;
-    return {
-      type: 'Polygon' as const,
-      coordinates: [ring],
-    };
-  }, [mapPolygon]);
 
-  const runIntersectionCalculation = useCallback(
-    async (overrides?: string[]) => {
-      const polygon = buildIntersectionPolygonPayload();
-      if (!polygon) {
-        setIntersectionLoading(false);
-        setIntersectionError(null);
-        setIntersectionResults([]);
-        setPolygonAreaHa(null);
-        setIntersectionComputedAtIso(null);
-        setLastIntersectionRequestKey('');
-        return;
-      }
 
-      const {
-        area: turfArea,
-        featureCollection: turfFeatureCollection,
-        intersect: turfIntersect,
-        polygon: turfPolygon,
-        union: turfUnion,
-      } = await import('@turf/turf');
 
-      const polygonFeature = turfPolygon(polygon.coordinates);
-      const polygonAreaValue = Number((turfArea(polygonFeature) / 10000).toFixed(4));
-      setPolygonAreaHa(polygonAreaValue);
 
-      const overlayNames = [...new Set((overrides ?? selectedSimcarOverlays).filter(Boolean))];
-      if (!overlayNames.length) {
-        setIntersectionLoading(false);
-        setIntersectionError(null);
-        setIntersectionResults([]);
-        setIntersectionComputedAtIso(null);
-        setLastIntersectionRequestKey('');
-        return;
-      }
 
-      const requestKey = `${polygon.coordinates[0]
-        .map((p) => `${p[0]},${p[1]}`)
-        .join('|')}::${overlayNames
-          .slice()
-          .sort()
-          .join(',')}`;
-      const cachedIntersection = getCachedIntersectionResult(requestKey);
-      if (cachedIntersection) {
-        setIntersectionLoading(false);
-        setIntersectionError(null);
-        setIntersectionResults(cachedIntersection.results);
-        setIntersectionComputedAtIso(cachedIntersection.computedAtIso);
-        setLastIntersectionRequestKey(requestKey);
-        return;
-      }
 
-      if (intersectionAbortRef.current) {
-        intersectionAbortRef.current.abort();
-      }
-      const controller = new AbortController();
-      intersectionAbortRef.current = controller;
-      setIntersectionLoading(true);
-      setIntersectionError(null);
 
-      try {
-        const fetchWithTimeout = async (url: string) => {
-          const timeoutController = new AbortController();
-          const timer = window.setTimeout(() => timeoutController.abort(), FRONT_WFS_TIMEOUT_MS);
-          const abortCurrent = () => timeoutController.abort();
-          controller.signal.addEventListener('abort', abortCurrent);
-          try {
-            return await fetch(url, { signal: timeoutController.signal });
-          } finally {
-            window.clearTimeout(timer);
-            controller.signal.removeEventListener('abort', abortCurrent);
-          }
-        };
 
-        const fetchText = async (url: string) => {
-          const response = await fetchWithTimeout(url);
-          if (!response.ok) {
-            const body = await response.text();
-            throw new Error(`WFS ${response.status}: ${String(body || '').slice(0, 220)}`);
-          }
-          return await response.text();
-        };
 
-        const fetchJson = async <T,>(url: string): Promise<T> => {
-          const response = await fetchWithTimeout(url);
-          if (!response.ok) {
-            const body = await response.text();
-            throw new Error(`WFS ${response.status}: ${String(body || '').slice(0, 220)}`);
-          }
-          return (await response.json()) as T;
-        };
-
-        const getAvailableLayers = async () => {
-          const cached = wfsCapabilitiesCacheRef.current;
-          if (cached && cached.expiresAt > Date.now()) {
-            return cached.layerNames;
-          }
-          const xml = await fetchText(
-            buildWfsUrl({ service: 'WFS', request: 'GetCapabilities', version: '2.0.0' })
-          );
-          const layerNames = new Set(parseWfsLayerNamesFromCapabilities(xml));
-          wfsCapabilitiesCacheRef.current = {
-            expiresAt: Date.now() + FRONT_WFS_CAPABILITIES_TTL_MS,
-            layerNames,
-          };
-          return layerNames;
-        };
-
-        const getGeometryField = async (layerName: string) => {
-          const cached = wfsDescribeCacheRef.current.get(layerName);
-          if (cached && cached.expiresAt > Date.now()) {
-            return cached.geometryField;
-          }
-          const xml = await fetchText(
-            buildWfsUrl({
-              service: 'WFS',
-              version: '2.0.0',
-              request: 'DescribeFeatureType',
-              typeNames: layerName,
-            })
-          );
-          const geometryField = parseGeometryFieldFromDescribe(xml);
-          wfsDescribeCacheRef.current.set(layerName, {
-            expiresAt: Date.now() + FRONT_WFS_DESCRIBE_TTL_MS,
-            geometryField,
-          });
-          return geometryField;
-        };
-
-        const polygonRing = polygon.coordinates[0].map((point) => [Number(point[0]), Number(point[1])]);
-        const polygonWkt = polygonToWkt(polygonRing);
-        const availableLayers = await getAvailableLayers();
-
-        const computeLayer = async (layerName: string): Promise<IntersectionResult> => {
-          if (!availableLayers.has(layerName)) {
-            return {
-              layerName,
-              status: 'not_in_wfs',
-              matchedFeatures: 0,
-              intersectionHa: 0,
-              coveragePercentOfPolygon: 0,
-              warnings: ['Camada nao encontrada no WFS.'],
-            };
-          }
-
-          const warnings: string[] = [];
-          try {
-            const geometryField = await getGeometryField(layerName);
-            const cqlFilter = `INTERSECTS(${geometryField},${polygonWkt})`;
-            const hitsXml = await fetchText(
-              buildWfsUrl({
-                service: 'WFS',
-                version: '2.0.0',
-                request: 'GetFeature',
-                typeNames: layerName,
-                resultType: 'hits',
-                CQL_FILTER: cqlFilter,
-              })
-            );
-            const numberMatched = parseNumberMatched(hitsXml);
-            if (numberMatched === 0) {
-              return {
-                layerName,
-                status: 'no_intersection',
-                matchedFeatures: 0,
-                intersectionHa: 0,
-                coveragePercentOfPolygon: 0,
-                warnings,
-              };
-            }
-
-            let startIndex = 0;
-            let totalFetched = 0;
-            let usedSinglePageFallback = false;
-            const clipped: Array<Feature<Polygon | MultiPolygon>> = [];
-
-            while (true) {
-              if (totalFetched >= FRONT_WFS_MAX_FEATURES) {
-                warnings.push(`Limite de ${FRONT_WFS_MAX_FEATURES} feicoes atingido; resultado parcial.`);
-                break;
-              }
-              const pageSize = Math.min(FRONT_WFS_PAGE_SIZE, FRONT_WFS_MAX_FEATURES - totalFetched);
-              if (pageSize <= 0) break;
-
-              const pageUrl = buildWfsUrl({
-                service: 'WFS',
-                version: '2.0.0',
-                request: 'GetFeature',
-                typeNames: layerName,
-                outputFormat: 'application/json',
-                srsName: 'EPSG:4326',
-                startIndex,
-                count: pageSize,
-                CQL_FILTER: cqlFilter,
-              });
-
-              let page: { features?: Array<{ geometry?: Geometry | null }> };
-              try {
-                page = await fetchJson<{ features?: Array<{ geometry?: Geometry | null }> }>(pageUrl);
-              } catch (error: any) {
-                const message = String(error?.message || '');
-                const requiresFallback =
-                  /natural order without a primary key/i.test(message) ||
-                  /cannot do natural order without a primary key/i.test(message) ||
-                  /\bWFS 400\b/i.test(message);
-                if (!requiresFallback || usedSinglePageFallback) {
-                  throw error;
-                }
-                const fallbackCount = Math.min(FRONT_WFS_MAX_FEATURES, Math.max(100, FRONT_WFS_PAGE_SIZE));
-                const fallbackUrl = buildWfsUrl({
-                  service: 'WFS',
-                  version: '2.0.0',
-                  request: 'GetFeature',
-                  typeNames: layerName,
-                  outputFormat: 'application/json',
-                  srsName: 'EPSG:4326',
-                  count: fallbackCount,
-                  CQL_FILTER: cqlFilter,
-                });
-                page = await fetchJson<{ features?: Array<{ geometry?: Geometry | null }> }>(fallbackUrl);
-                usedSinglePageFallback = true;
-                warnings.push(
-                  `WFS sem paginacao startIndex; calculo limitado a ${fallbackCount} feicoes nesta camada.`
-                );
-              }
-
-              const features = Array.isArray(page.features) ? page.features : [];
-              if (!features.length) break;
-
-              for (const rawFeature of features) {
-                const polygonLike = toPolygonLikeFeature(rawFeature.geometry);
-                if (!polygonLike) continue;
-                const intersection = turfIntersect(
-                  turfFeatureCollection([polygonFeature, polygonLike]) as any
-                ) as Feature<Polygon | MultiPolygon> | null;
-                if (!intersection) continue;
-                clipped.push(intersection);
-              }
-
-              totalFetched += features.length;
-              startIndex += features.length;
-              if (usedSinglePageFallback) break;
-              if (features.length < pageSize) break;
-              if (numberMatched !== null && startIndex >= numberMatched) break;
-            }
-
-            if (!clipped.length) {
-              return {
-                layerName,
-                status: 'no_intersection',
-                matchedFeatures: numberMatched ?? totalFetched,
-                intersectionHa: 0,
-                coveragePercentOfPolygon: 0,
-                warnings,
-              };
-            }
-
-            let merged = clipped[0];
-            for (let i = 1; i < clipped.length; i += 1) {
-              const unioned = turfUnion(
-                turfFeatureCollection([merged, clipped[i]]) as any
-              ) as Feature<Polygon | MultiPolygon> | null;
-              if (!unioned) {
-                warnings.push('Falha ao unir geometrias; mantendo uniao parcial.');
-                continue;
-              }
-              merged = unioned;
-            }
-
-            const intersectionHa = Number((turfArea(merged) / 10000).toFixed(4));
-            const coveragePercentOfPolygon =
-              polygonAreaValue > 0 ? Number(((intersectionHa / polygonAreaValue) * 100).toFixed(4)) : 0;
-            return {
-              layerName,
-              status: 'ok',
-              matchedFeatures: numberMatched ?? totalFetched,
-              intersectionHa,
-              coveragePercentOfPolygon,
-              warnings,
-            };
-          } catch (error: any) {
-            return {
-              layerName,
-              status: 'error',
-              matchedFeatures: 0,
-              intersectionHa: 0,
-              coveragePercentOfPolygon: 0,
-              warnings: [...warnings, String(error?.message || error || 'Erro interno')],
-            };
-          }
-        };
-
-        const orderedResults = new Array<IntersectionResult>(overlayNames.length);
-        let cursor = 0;
-        const workerCount = Math.max(1, Math.min(3, overlayNames.length));
-        const workers = Array.from({ length: workerCount }, async () => {
-          while (true) {
-            const idx = cursor;
-            cursor += 1;
-            if (idx >= overlayNames.length) break;
-            orderedResults[idx] = await computeLayer(overlayNames[idx]);
-          }
-        });
-        await Promise.all(workers);
-
-        const computedAtIso = new Date().toISOString();
-        setIntersectionResults(orderedResults);
-        setIntersectionComputedAtIso(computedAtIso);
-        setLastIntersectionRequestKey(requestKey);
-        storeIntersectionResultCache(requestKey, orderedResults, computedAtIso);
-      } catch (error: any) {
-        if (error?.name === 'AbortError') return;
-        setIntersectionResults([]);
-        setIntersectionComputedAtIso(null);
-        setLastIntersectionRequestKey('');
-        setIntersectionError(error?.message || 'Erro ao calcular intersecao das camadas.');
-      } finally {
-        if (intersectionAbortRef.current === controller) {
-          intersectionAbortRef.current = null;
-          setIntersectionLoading(false);
-        }
-      }
-    },
-    [buildIntersectionPolygonPayload, selectedSimcarOverlays]
-  );
-
-  const intersectionRowsSorted = useMemo(
-    () =>
-      [...intersectionResults].sort((a, b) => {
-        if (b.intersectionHa !== a.intersectionHa) return b.intersectionHa - a.intersectionHa;
-        return b.coveragePercentOfPolygon - a.coveragePercentOfPolygon;
-      }),
-    [intersectionResults]
-  );
-
-  const intersectionSummaryStats = useMemo(() => {
-    const totalHa = intersectionRowsSorted.reduce((acc, row) => acc + (Number(row.intersectionHa) || 0), 0);
-    const totalCoverage = intersectionRowsSorted.reduce(
-      (acc, row) => acc + (Number(row.coveragePercentOfPolygon) || 0),
-      0
-    );
-    const okCount = intersectionRowsSorted.filter((row) => row.status === 'ok').length;
-    return {
-      totalHa: Number(totalHa.toFixed(4)),
-      totalCoverage: Math.min(100, Number(totalCoverage.toFixed(4))),
-      okCount,
-    };
-  }, [intersectionRowsSorted]);
-
-  const intersectionSummaryForContext = useMemo(() => {
-    if (polygonAreaHa === null || !intersectionRowsSorted.length) return undefined;
-    const layers = intersectionRowsSorted.slice(0, 12).map((row) => {
-      const layerTitle =
-        simcarDigitalLayers.find((layer) => layer.name === row.layerName)?.title || row.layerName;
-      return {
-        layerName: row.layerName,
-        title: layerTitle,
-        status: row.status,
-        intersectionHa: Number(row.intersectionHa || 0),
-        coveragePercentOfPolygon: Number(row.coveragePercentOfPolygon || 0),
-        warnings: Array.isArray(row.warnings) ? row.warnings : [],
-      };
-    });
-    return {
-      polygonAreaHa: Number(polygonAreaHa.toFixed(4)),
-      computedAtIso: intersectionComputedAtIso || new Date().toISOString(),
-      layers,
-    };
-  }, [intersectionRowsSorted, polygonAreaHa, intersectionComputedAtIso, simcarDigitalLayers]);
-
-  useEffect(() => {
-    if (!mapDialogOpen) {
-      if (intersectionDebounceRef.current) {
-        window.clearTimeout(intersectionDebounceRef.current);
-        intersectionDebounceRef.current = null;
-      }
-      if (intersectionAbortRef.current) {
-        intersectionAbortRef.current.abort();
-        intersectionAbortRef.current = null;
-      }
-      return;
-    }
-
-    if (intersectionDebounceRef.current) {
-      window.clearTimeout(intersectionDebounceRef.current);
-      intersectionDebounceRef.current = null;
-    }
-    intersectionDebounceRef.current = window.setTimeout(() => {
-      void runIntersectionCalculation();
-    }, 350);
-
-    return () => {
-      if (intersectionDebounceRef.current) {
-        window.clearTimeout(intersectionDebounceRef.current);
-        intersectionDebounceRef.current = null;
-      }
-    };
-  }, [mapDialogOpen, mapPolygon, selectedSimcarOverlays, runIntersectionCalculation]);
-
-  const blobToDataUrl = (blob: Blob) =>
-    new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(new Error('Falha ao converter blob para dataUrl.'));
-      reader.readAsDataURL(blob);
-    });
-
-  const loadImageElement = (src: string) =>
-    new Promise<HTMLImageElement>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('Falha ao carregar imagem para anotação.'));
-      img.src = src;
-    });
-
-  const renderAnnotatedMapImage = async (
-    sourceDataUrl: string,
-    bbox: [number, number, number, number],
-    polygon: Array<[number, number]>
-  ) => {
-    const srcImage = await loadImageElement(sourceDataUrl);
-    const canvas = document.createElement('canvas');
-    canvas.width = srcImage.naturalWidth || srcImage.width || 1280;
-    canvas.height = srcImage.naturalHeight || srcImage.height || 960;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Falha ao obter contexto do canvas.');
-
-    ctx.drawImage(srcImage, 0, 0, canvas.width, canvas.height);
-
-    if (polygon.length >= 3) {
-      const [minX, minY, maxX, maxY] = bbox;
-      const spanX = maxX - minX;
-      const spanY = maxY - minY;
-      if (spanX > 0 && spanY > 0) {
-        ctx.beginPath();
-        polygon.forEach(([x, y], idx) => {
-          const px = ((x - minX) / spanX) * canvas.width;
-          const py = ((maxY - y) / spanY) * canvas.height;
-          if (idx === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        });
-        ctx.closePath();
-        ctx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
-        ctx.lineWidth = Math.max(2, Math.round(canvas.width / 400));
-        ctx.stroke();
-      }
-    }
-
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((b) => {
-        if (!b) {
-          reject(new Error('Falha ao gerar imagem anotada.'));
-          return;
-        }
-        resolve(b);
-      }, 'image/png');
-    });
-    return blob;
-  };
-
-  const createAnnotatedMapFile = async (
-    source: string,
-    bbox: [number, number, number, number],
-    polygon: Array<[number, number]>,
-    fileName: string
-  ) => {
-    const sourceBlob = source.startsWith('data:')
-      ? await fetch(source).then((r) => r.blob())
-      : await fetch(source).then((r) => {
-        if (!r.ok) throw new Error('Falha ao baixar imagem do mapa.');
-        return r.blob();
-      });
-    const sourceDataUrl = await blobToDataUrl(sourceBlob);
-    const annotated = await renderAnnotatedMapImage(sourceDataUrl, bbox, polygon);
-    return new File([annotated], fileName, { type: 'image/png' });
-  };
-
-  const applyMapZoomFromWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    if (!selectedMapLayer || mapRectZoomMode) return;
-    event.preventDefault();
-    const el = mapPreviewViewportRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
-
-    const ratioX = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-    const ratioY = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
-    const [minX, minY, maxX, maxY] = mapBbox;
-    const spanX = maxX - minX;
-    const spanY = maxY - minY;
-    if (spanX <= 0 || spanY <= 0) return;
-
-    const zoomFactor = event.deltaY < 0 ? 0.85 : 1.18;
-    const nextSpanX = Math.max(0.000001, spanX * zoomFactor);
-    const nextSpanY = Math.max(0.000001, spanY * zoomFactor);
-
-    const centerX = minX + ratioX * spanX;
-    const centerY = maxY - ratioY * spanY;
-    const nextBbox: [number, number, number, number] = [
-      centerX - ratioX * nextSpanX,
-      centerY - (1 - ratioY) * nextSpanY,
-      centerX + (1 - ratioX) * nextSpanX,
-      centerY + ratioY * nextSpanY,
-    ];
-    setMapBbox(nextBbox);
-
-    if (mapWheelDebounceRef.current) {
-      window.clearTimeout(mapWheelDebounceRef.current);
-    }
-    mapWheelDebounceRef.current = window.setTimeout(() => {
-      refreshMapPreview(undefined, nextBbox);
-    }, 300);
-  };
-
-  const startMapDrag = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || !selectedMapLayer) return;
-    event.preventDefault();
-    if (mapRectZoomMode) {
-      const imageRect = mapPreviewImageRef.current?.getBoundingClientRect();
-      if (!imageRect || imageRect.width <= 1 || imageRect.height <= 1) return;
-      if (
-        event.clientX < imageRect.left ||
-        event.clientX > imageRect.right ||
-        event.clientY < imageRect.top ||
-        event.clientY > imageRect.bottom
-      ) {
-        return;
-      }
-      mapRectStateRef.current = {
-        startX: event.clientX,
-        startY: event.clientY,
-        currentX: event.clientX,
-        currentY: event.clientY,
-        imageRect,
-        startBbox: mapBbox,
-      };
-      setMapRectSelection({ left: event.clientX, top: event.clientY, width: 0, height: 0 });
-      return;
-    }
-    mapDragStateRef.current = {
-      startX: event.clientX,
-      startY: event.clientY,
-      startBbox: mapBbox,
-    };
-    mapDraggedBboxRef.current = mapBbox;
-    setMapDragging(true);
-  };
-
-  useEffect(() => {
-    const onMouseMove = (event: MouseEvent) => {
-      const rectZoom = mapRectStateRef.current;
-      if (rectZoom) {
-        const clampedX = Math.max(rectZoom.imageRect.left, Math.min(rectZoom.imageRect.right, event.clientX));
-        const clampedY = Math.max(rectZoom.imageRect.top, Math.min(rectZoom.imageRect.bottom, event.clientY));
-        rectZoom.currentX = clampedX;
-        rectZoom.currentY = clampedY;
-        const left = Math.min(rectZoom.startX, clampedX);
-        const top = Math.min(rectZoom.startY, clampedY);
-        const width = Math.abs(clampedX - rectZoom.startX);
-        const height = Math.abs(clampedY - rectZoom.startY);
-        setMapRectSelection({ left, top, width, height });
-        return;
-      }
-
-      const drag = mapDragStateRef.current;
-      const el = mapPreviewViewportRef.current;
-      if (!drag || !el) return;
-      const rect = el.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
-
-      const dxPx = event.clientX - drag.startX;
-      const dyPx = event.clientY - drag.startY;
-      const [startMinX, startMinY, startMaxX, startMaxY] = drag.startBbox;
-      const spanX = startMaxX - startMinX;
-      const spanY = startMaxY - startMinY;
-      if (spanX <= 0 || spanY <= 0) return;
-
-      const deltaX = (-dxPx / rect.width) * spanX;
-      const deltaY = (-dyPx / rect.height) * spanY;
-      const nextBbox: [number, number, number, number] = [
-        startMinX + deltaX,
-        startMinY + deltaY,
-        startMaxX + deltaX,
-        startMaxY + deltaY,
-      ];
-      mapDraggedBboxRef.current = nextBbox;
-      setMapBbox(nextBbox);
-      setMapDragOffset({ x: dxPx, y: dyPx });
-    };
-
-    const onMouseUp = () => {
-      const rectZoom = mapRectStateRef.current;
-      if (rectZoom) {
-        const left = Math.min(rectZoom.startX, rectZoom.currentX);
-        const right = Math.max(rectZoom.startX, rectZoom.currentX);
-        const top = Math.min(rectZoom.startY, rectZoom.currentY);
-        const bottom = Math.max(rectZoom.startY, rectZoom.currentY);
-        const widthPx = right - left;
-        const heightPx = bottom - top;
-        mapRectStateRef.current = null;
-        setMapRectSelection(null);
-
-        if (widthPx >= 8 && heightPx >= 8) {
-          const imageRect = rectZoom.imageRect;
-          const x0 = (left - imageRect.left) / imageRect.width;
-          const x1 = (right - imageRect.left) / imageRect.width;
-          const y0 = (top - imageRect.top) / imageRect.height;
-          const y1 = (bottom - imageRect.top) / imageRect.height;
-          const [minX, minY, maxX, maxY] = rectZoom.startBbox;
-          const spanX = maxX - minX;
-          const spanY = maxY - minY;
-          if (spanX > 0 && spanY > 0) {
-            const nextBbox: [number, number, number, number] = [
-              minX + x0 * spanX,
-              maxY - y1 * spanY,
-              minX + x1 * spanX,
-              maxY - y0 * spanY,
-            ];
-            setMapBbox(nextBbox);
-            setMapRectZoomMode(false);
-            refreshMapPreview(undefined, nextBbox);
-          }
-        }
-        return;
-      }
-
-      if (!mapDragStateRef.current) return;
-      const nextBbox = mapDraggedBboxRef.current || mapDragStateRef.current.startBbox;
-      mapDragStateRef.current = null;
-      mapDraggedBboxRef.current = null;
-      setMapDragging(false);
-      setMapDragOffset({ x: 0, y: 0 });
-      refreshMapPreview(undefined, nextBbox);
-    };
-
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-    return () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-  }, [selectedMapLayer, refreshMapPreview, mapRectZoomMode]);
-
-  const captureVisibleMapArea = async () => {
-    if (!selectedMapLayer) {
-      toast.error('Selecione uma camada');
-      return;
-    }
-
-    const bbox: [number, number, number, number] = mapBbox;
-    const selectedLayerMeta = mapImageLayers.find((l) => l.name === selectedMapLayer);
-    const inferredYearFromName =
-      selectedMapLayer.match(/\b(19|20)\d{2}\b/)?.[0] || selectedLayerMeta?.inferredYear || '';
-    const activeOverlaysMeta = selectedSimcarOverlays
-      .map((name) => {
-        const meta = simcarDigitalLayers.find((l) => l.name === name);
-        return { name, title: meta?.title || name.split(':').pop() || name };
-      });
-
-    const baseMapContext: MapContext = {
-      layerName: selectedMapLayer,
-      layerTitle: selectedLayerMeta?.title || selectedMapLayer,
-      layerGroup: inferMapLayerGroup(selectedMapLayer),
-      inferredYear: inferredYearFromName || undefined,
-      bbox,
-      crs: 'EPSG:4326',
-      source: 'SEMA_WMS',
-      width: 1280,
-      height: 960,
-      capturedAtIso: new Date().toISOString(),
-      activeOverlays: activeOverlaysMeta.length ? activeOverlaysMeta : undefined,
-      intersectionSummary: intersectionSummaryForContext,
-    };
-
-    setMapCapturing(true);
-    try {
-      const res = await fetch(apiUrl('/api/map/snapshot'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': auth.currentUser ? `Bearer ${await auth.currentUser.getIdToken()}` : ''
-        },
-        body: JSON.stringify({
-          layerName: selectedMapLayer,
-          bbox,
-          crs: 'EPSG:4326',
-          width: 1280,
-          height: 960,
-          format: 'image/png',
-          ...(selectedSimcarOverlays.length ? { overlayLayers: selectedSimcarOverlays } : {}),
-        }),
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Falha ao capturar imagem do mapa');
-      }
-
-      const data = await res.json();
-      const dataUrl = String(data?.dataUrl || '');
-      if (!dataUrl) throw new Error('Imagem do mapa não retornou dataUrl');
-
-      const file = await createAnnotatedMapFile(dataUrl, bbox, mapPolygon, `mapa-${Date.now()}.png`);
-
-      if (imagePreview) URL.revokeObjectURL(imagePreview);
-      setImageFile(file);
-      setImagePreview(URL.createObjectURL(file));
-      setPdfFile(null);
-      setPendingMapImageUrl(null);
-      setPendingMapContext({
-        ...baseMapContext,
-        ...((data?.mapContext as MapContext) || {}),
-        layerTitle: baseMapContext.layerTitle,
-        layerGroup: baseMapContext.layerGroup,
-        inferredYear: baseMapContext.inferredYear,
-        capturedAtIso: baseMapContext.capturedAtIso,
-      });
-      setMapDialogOpen(false);
-      toast.success('Área do mapa anexada ao chat com demarcação do polígono');
-    } catch (error: any) {
-      const directUrl = buildDirectWmsGetMapUrl(selectedMapLayer, bbox, 1280, 960, 'image/png');
-      try {
-        const source = mapPreviewDataUrl || directUrl;
-        const file = await createAnnotatedMapFile(source, bbox, mapPolygon, `mapa-${Date.now()}.png`);
-        if (imagePreview) URL.revokeObjectURL(imagePreview);
-        setImageFile(file);
-        setImagePreview(URL.createObjectURL(file));
-        setPdfFile(null);
-        setPendingMapImageUrl(null);
-        setPendingMapContext(baseMapContext);
-        setMapDialogOpen(false);
-        toast.error('Captura backend falhou, mas a imagem com demarcação foi gerada via fallback.');
-      } catch {
-        if (imagePreview) URL.revokeObjectURL(imagePreview);
-        setImageFile(null);
-        setImagePreview(null);
-        setPdfFile(null);
-        setPendingMapImageUrl(directUrl);
-        setPendingMapContext(baseMapContext);
-        setMapDialogOpen(false);
-        toast.error('Não foi possível rasterizar a demarcação no fallback. URL direta mantida.');
-      }
-    } finally {
-      setMapCapturing(false);
-    }
-  };
-
-  const onPickAreaFile = async (file: File | null) => {
-    if (!file) return;
-    const fileName = file.name.toLowerCase();
-    if (!fileName.endsWith('.kml') && !fileName.endsWith('.zip')) {
-      toast.error('Envie um arquivo .kml ou .zip (shapefile)');
-      return;
-    }
-    try {
-      if (fileName.endsWith('.kml')) {
-        const text = await file.text();
-        const geom = parseKmlGeometryOnClient(text);
-        setMapBbox(geom.bbox);
-        setMapOriginalPolygonBbox(geom.bbox);
-        setMapPolygon(geom.polygon || []);
-        await refreshMapPreview(undefined, geom.bbox);
-        toast.success('Área do KML carregada no frontend');
-        return;
-      }
-      if (fileName.endsWith('.zip')) {
-        try {
-          const geom = await parseZipShpGeometryOnClient(file);
-          const [minX, minY, maxX, maxY] = geom.bbox;
-          const looksLatLon = minX >= -180 && maxX <= 180 && minY >= -90 && maxY <= 90;
-          if (!looksLatLon) {
-            throw new Error('Shapefile em coordenadas projetadas; usando parser do servidor.');
-          }
-          setMapBbox(geom.bbox);
-          setMapOriginalPolygonBbox(geom.bbox);
-          setMapPolygon(
-            geom.polygon || [
-              [geom.bbox[0], geom.bbox[1]],
-              [geom.bbox[2], geom.bbox[1]],
-              [geom.bbox[2], geom.bbox[3]],
-              [geom.bbox[0], geom.bbox[3]],
-              [geom.bbox[0], geom.bbox[1]],
-            ]
-          );
-          await refreshMapPreview(undefined, geom.bbox);
-          toast.success('Área do shapefile ZIP carregada no frontend');
-          return;
-        } catch (localErr) {
-          // Fallback to backend parser if frontend parser can't handle this zip flavor or CRS.
-        }
-      }
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(new Error('Falha ao ler arquivo de área'));
-        reader.readAsDataURL(file);
-      });
-      const res = await fetch(apiUrl('/api/geometry/bbox'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataUrl, filename: file.name }),
-      });
-      if (!res.ok) {
-        if (res.status === 404) {
-          throw new Error('Endpoint /api/geometry/bbox não encontrado. Atualize o backend na Render.');
-        }
-        const text = await res.text();
-        throw new Error(text || 'Falha ao processar arquivo de área');
-      }
-      const data = await res.json();
-      const bbox = data?.bbox as [number, number, number, number];
-      if (!bbox || bbox.length !== 4) throw new Error('BBox inválida retornada do arquivo');
-      const poly = Array.isArray(data?.polygon)
-        ? (data.polygon as Array<[number, number]>).filter(
-          (p) => Array.isArray(p) && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]))
-        )
-        : [];
-      setMapBbox(bbox);
-      setMapOriginalPolygonBbox(bbox);
-      setMapPolygon(
-        poly.length >= 3
-          ? poly
-          : [
-            [bbox[0], bbox[1]],
-            [bbox[2], bbox[1]],
-            [bbox[2], bbox[3]],
-            [bbox[0], bbox[3]],
-            [bbox[0], bbox[1]],
-          ]
-      );
-      await refreshMapPreview(undefined, bbox);
-      toast.success('Área carregada do arquivo e aplicada no mapa');
-    } catch (error: any) {
-      toast.error(error?.message || 'Erro ao carregar arquivo de área');
-    }
-  };
 
   const updateConversationMeta = async (updatedMessages: ChatMessage[], lastUserText: string) => {
     if (!activeConversationRef) return;
@@ -6442,7 +4895,7 @@ export default function Dashboard() {
   };
 
   const handleSend = async () => {
-    if ((!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl && queuedFiles.length === 0) || sending) return;
+    if ((!input.trim() && !imageFile && !pdfFile && queuedFiles.length === 0) || sending) return;
 
 
     if (!activeConversationRef && conversationsRef) {
@@ -6460,10 +4913,9 @@ export default function Dashboard() {
     });
     const selectedImageFiles = [...queuedImageFiles, ...(imageFile ? [imageFile] : [])];
     const selectedPdfFiles = [...queuedPdfFiles, ...(pdfFile ? [pdfFile] : [])];
-    const selectedMapImageUrl = pendingMapImageUrl;
     setChatError(null);
-    const totalAttachments = selectedImageFiles.length + selectedPdfFiles.length + (selectedMapImageUrl ? 1 : 0);
-    let localImagePreviewForChat: string | null = selectedMapImageUrl || null;
+    const totalAttachments = selectedImageFiles.length + selectedPdfFiles.length;
+    let localImagePreviewForChat: string | null = null;
 
     if (selectedImageFiles.length > 0) {
       try {
@@ -6474,53 +4926,10 @@ export default function Dashboard() {
     }
 
     let userPayloadText = userText;
-    if (selectedImageFiles.length || selectedMapImageUrl) {
-      const overlayLines = (pendingMapContext?.activeOverlays || []).map(
-        (o) => `  • ${o.title} (${o.name})`
-      );
-      const intersectionSummaryLines = (pendingMapContext?.intersectionSummary?.layers || [])
-        .slice(0, 12)
-        .map(
-          (row) =>
-            `  - ${row.title} (${row.layerName}) | ${row.intersectionHa.toFixed(4)} ha | ${row.coveragePercentOfPolygon.toFixed(4)}% | ${row.status}`
-        );
-      const mapContextBlock = pendingMapContext
-        ? [
-          'Contexto técnico da imagem de mapa:',
-          `- Camada base WMS: ${pendingMapContext.layerName}`,
-          pendingMapContext.layerTitle ? `- Título da camada base: ${pendingMapContext.layerTitle}` : '',
-          pendingMapContext.layerGroup ? `- Grupo: ${pendingMapContext.layerGroup}` : '',
-          pendingMapContext.inferredYear ? `- Ano da imagem base: ${pendingMapContext.inferredYear}` : '',
-          `- BBOX (minX,minY,maxX,maxY): ${pendingMapContext.bbox.join(', ')}`,
-          `- CRS: ${pendingMapContext.crs}`,
-          `- Fonte: ${pendingMapContext.source}`,
-          pendingMapContext.width && pendingMapContext.height
-            ? `- Resolução de captura: ${pendingMapContext.width}x${pendingMapContext.height} px`
-            : '',
-          pendingMapContext.capturedAtIso
-            ? `- Data/hora de captura (ISO): ${pendingMapContext.capturedAtIso}`
-            : '',
-          overlayLines.length
-            ? `- Camadas de overlay ativas (${overlayLines.length} camadas sobrepostas à imagem base):\n${overlayLines.join('\n')}`
-            : '- Camadas de overlay ativas: nenhuma',
-          pendingMapContext.intersectionSummary
-            ? `- Intersecao WFS (ha/% por camada) sobre o poligono importado:\n` +
-            `  Area total do poligono: ${pendingMapContext.intersectionSummary.polygonAreaHa.toFixed(4)} ha\n` +
-            `  Data/hora do calculo (ISO): ${pendingMapContext.intersectionSummary.computedAtIso}\n` +
-            `${intersectionSummaryLines.length ? intersectionSummaryLines.join('\n') : '  - sem linhas de intersecao'}`
-            : '- Intersecao WFS: sem calculo WFS disponivel.',
-          '- Observação: a imagem pode conter demarcação vetorial da área de interesse.' +
-          (overlayLines.length
-            ? ' As camadas de overlay listadas acima estão visíveis na imagem e devem ser consideradas na análise (ex: limites de CAR, áreas consolidadas, AUAs, APPs, reservas legais, SIMCAR, etc.).'
-            : ''),
-        ]
-          .filter(Boolean)
-          .join('\n')
-        : '';
+    if (selectedImageFiles.length) {
       const attachmentList = [
         ...selectedImageFiles.map((f) => `- Imagem: ${f.name}`),
         ...selectedPdfFiles.map((f) => `- PDF: ${f.name}`),
-        ...(selectedMapImageUrl ? ['- Imagem de mapa WMS com demarcação de polígono'] : []),
       ].join('\n');
       userPayloadText =
         `${userText || 'Analise a imagem anexada.'}
@@ -6529,8 +4938,7 @@ export default function Dashboard() {
         'Contexto: a imagem foi anexada pelo usuário para interpretação ambiental/florestal. ' +
         'Descreva achados objetivos, limitações e próximos dados necessários.' +
         `\n\nTotal de anexos: ${totalAttachments}` +
-        (attachmentList ? `\nArquivos anexados:\n${attachmentList}` : '') +
-        (mapContextBlock ? `\n\n${mapContextBlock}` : '');
+        (attachmentList ? `\nArquivos anexados:\n${attachmentList}` : '');
     } else if (selectedPdfFiles.length) {
       userPayloadText =
         `${userText || 'Analise o PDF anexado.'}
@@ -6547,19 +4955,17 @@ export default function Dashboard() {
     const userMessage: ChatMessage = {
       id: nanoid(),
       role: 'user',
-      text: userText || (selectedImageFiles.length || selectedMapImageUrl ? 'Analise a imagem.' : 'Analise o PDF.'),
+      text: userText || (selectedImageFiles.length ? 'Analise a imagem.' : 'Analise o PDF.'),
       time,
-      meta: selectedImageFiles.length || selectedMapImageUrl
+      meta: selectedImageFiles.length
         ? {
           fileType: 'image',
           fileName:
             totalAttachments > 1
               ? `${totalAttachments} arquivo(s) anexado(s)`
-              : selectedImageFiles[0]?.name || 'mapa-wms.png',
-          uploadStatus: selectedMapImageUrl ? 'done' : 'uploading',
+              : selectedImageFiles[0]?.name || 'imagem.png',
+          uploadStatus: 'uploading',
           imageUrl: localImagePreviewForChat || undefined,
-          fileDownloadUrl: selectedMapImageUrl || undefined,
-          mapContext: pendingMapContext,
         }
         : selectedPdfFiles.length
           ? {
@@ -6581,8 +4987,6 @@ export default function Dashboard() {
     setImagePreview(null);
     setPdfFile(null);
     setQueuedFiles([]);
-    setPendingMapImageUrl(null);
-    setPendingMapContext(undefined);
     setSending(true);
     setUploading(Boolean(selectedImageFiles.length || selectedPdfFiles.length));
     setAiThinking(true);
@@ -6598,7 +5002,6 @@ export default function Dashboard() {
     const imageUploadPromise = Promise.all(
       selectedImageFiles.map((file) => uploadImageFile(file).catch(() => null as string | null))
     ).then((urls) => [
-      ...(selectedMapImageUrl ? [selectedMapImageUrl] : []),
       ...urls.filter((u): u is string => Boolean(u)),
     ]);
     const pdfUploadPromise = Promise.all(
@@ -6646,7 +5049,6 @@ export default function Dashboard() {
       });
 
     const imageDataUrlsForAi: string[] = [];
-    if (selectedMapImageUrl) imageDataUrlsForAi.push(selectedMapImageUrl);
     for (const image of selectedImageFiles) {
       try {
         imageDataUrlsForAi.push(await readFileAsDataUrl(image));
@@ -7173,100 +5575,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
     ]
   );
 
-  const mapPolygonPoints = useMemo(() => {
-    if (!mapPolygon.length) return '';
-    const [minX, minY, maxX, maxY] = mapBbox;
-    const dx = maxX - minX;
-    const dy = maxY - minY;
-    if (!Number.isFinite(dx) || !Number.isFinite(dy) || dx <= 0 || dy <= 0) return '';
-    const points = mapPolygon
-      .map(([x, y]) => {
-        const px = ((x - minX) / dx) * 100;
-        const py = ((maxY - y) / dy) * 100;
-        return `${Math.max(0, Math.min(100, px))},${Math.max(0, Math.min(100, py))}`;
-      })
-      .join(' ');
-    return points;
-  }, [mapPolygon, mapBbox]);
-  const mapRectSelectionStyle = useMemo(() => {
-    if (!mapRectSelection || !mapPreviewViewportRef.current) return null;
-    const viewport = mapPreviewViewportRef.current.getBoundingClientRect();
-    return {
-      left: mapRectSelection.left - viewport.left,
-      top: mapRectSelection.top - viewport.top,
-      width: mapRectSelection.width,
-      height: mapRectSelection.height,
-    };
-  }, [mapRectSelection]);
 
-  const groupedImageLayers = useMemo(() => {
-    const preferredOrderMap = new Map<string, number>();
-    FALLBACK_WMS_IMAGE_LAYERS.forEach((layer, idx) => {
-      const key = layer.name.toLowerCase();
-      if (!preferredOrderMap.has(key)) preferredOrderMap.set(key, idx);
-    });
-    const parseYear = (text: string) => {
-      const m = text.match(/\b(19|20)\d{2}\b/);
-      return m ? Number(m[0]) : 0;
-    };
-    const groups: Record<string, MapLayerOption[]> = {};
-    const pickGroup = (layer: MapLayerOption) => {
-      const nameLow = layer.name.toLowerCase();
-      if (nameLow.startsWith('mosaicos:landsat_5_')) return 'Mosaicos / Landsat / Landsat-5';
-      if (nameLow.startsWith('mosaicos:landsat_7_')) return 'Mosaicos / Landsat / Landsat-7';
-      if (nameLow.startsWith('mosaicos:landsat_8_')) return 'Mosaicos / Landsat / Landsat-8';
-      if (nameLow.startsWith('mosaicos:sentinel_2_') || nameLow.includes('geoportal_sentinel_2_')) {
-        return 'Mosaicos / Sentinel-2';
-      }
-      if (nameLow.includes('spot')) return 'Mosaicos / SPOT';
-      if (nameLow.includes('resourcesat')) return 'Mosaicos / Resourcesat';
-      if (nameLow.startsWith('semamt:')) return 'SEMAMT';
-      if (nameLow.startsWith('geoportal:')) return 'Geoportal';
-      if (nameLow.startsWith('mosaicos:')) return 'Mosaicos / Outras';
-      return 'Outras';
-    };
-    for (const layer of mapImageLayers) {
-      const groupName = pickGroup(layer);
-      if (!groups[groupName]) groups[groupName] = [];
-      groups[groupName].push(layer);
-    }
-    Object.values(groups).forEach((arr) =>
-      arr.sort((a, b) => {
-        const aOrder = preferredOrderMap.get(a.name.toLowerCase());
-        const bOrder = preferredOrderMap.get(b.name.toLowerCase());
-        if (aOrder !== undefined || bOrder !== undefined) {
-          if (aOrder === undefined) return 1;
-          if (bOrder === undefined) return -1;
-          if (aOrder !== bOrder) return aOrder - bOrder;
-        }
-        const y = parseYear(`${b.name} ${b.title}`) - parseYear(`${a.name} ${a.title}`);
-        if (y !== 0) return y;
-        return a.name.localeCompare(b.name);
-      })
-    );
-    return groups;
-  }, [mapImageLayers]);
-  const groupedImageLayerEntries = useMemo(() => {
-    const order = [
-      'Mosaicos / Landsat / Landsat-5',
-      'Mosaicos / Landsat / Landsat-7',
-      'Mosaicos / Landsat / Landsat-8',
-      'Mosaicos / Sentinel-2',
-      'Mosaicos / SPOT',
-      'Mosaicos / Resourcesat',
-      'SEMAMT',
-      'Geoportal',
-      'Mosaicos / Outras',
-      'Outras',
-    ];
-    const rank = new Map(order.map((name, idx) => [name, idx]));
-    return Object.entries(groupedImageLayers).sort((a, b) => {
-      const ra = rank.get(a[0]) ?? 999;
-      const rb = rank.get(b[0]) ?? 999;
-      if (ra !== rb) return ra - rb;
-      return a[0].localeCompare(b[0]);
-    });
-  }, [groupedImageLayers]);
 
   // Custom components
   const CustomSelect = ({ label, icon: Icon, options, value, onChange }: any) => (
@@ -7773,8 +6082,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       </aside>
 
       <main
-        className={`flex-1 flex flex-col relative h-full w-full overflow-hidden ${mapDialogOpen ? 'z-[220]' : 'z-10'
-          }`}
+        className="flex-1 flex flex-col relative h-full w-full overflow-hidden z-10"
       >
         <header className="h-14 sm:h-16 flex-shrink-0 flex items-center justify-between px-3 sm:px-6 border-b border-white/5 bg-[#050b08]/50 backdrop-blur-md">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -7847,17 +6155,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     rows={1}
                     style={{ height: input ? `${Math.min(input.split('\n').length * 24 + 32, 200)}px` : '60px' }}
                   />
-                  {(imageFile || pdfFile || pendingMapImageUrl || queuedFiles.length > 0) && (
+                  {(imageFile || pdfFile || queuedFiles.length > 0) && (
                     <div className="px-4 pb-2">
                       <div className="inline-flex max-w-[320px] items-center gap-2 px-2.5 py-2 rounded-xl bg-[#0c1511] border border-white/10 text-xs text-slate-200 shadow-sm">
                         <div
-                          className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${imageFile || pendingMapImageUrl || queuedFiles.some((f) => (f.type || '').toLowerCase().startsWith('image/'))
+                          className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${imageFile || queuedFiles.some((f) => (f.type || '').toLowerCase().startsWith('image/'))
                             ? 'bg-emerald-500/20 text-emerald-300'
                             : 'bg-red-500/20 text-red-300'
                             }`}
                         >
                           {imageFile ||
-                            pendingMapImageUrl ||
                             queuedFiles.some((f) => (f.type || '').toLowerCase().startsWith('image/')) ? (
                             <ImagePlus size={13} />
                           ) : (
@@ -7868,12 +6175,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           <p className="truncate font-medium">
                             {queuedFiles.length > 0
                               ? `${queuedFiles.length} arquivo(s) selecionado(s)`
-                              : imageFile?.name || pdfFile?.name || 'mapa-wms.png'}
+                              : imageFile?.name || pdfFile?.name}
                           </p>
                           <p className="text-[10px] text-slate-500">
                             {queuedFiles.length > 0
                               ? 'Múltiplos anexos prontos para envio'
-                              : imageFile || pendingMapImageUrl
+                              : imageFile
                                 ? 'Imagem pronta para envio'
                                 : 'PDF pronto para envio'}
                           </p>
@@ -7904,14 +6211,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           }}
                         />
                       </label>
-                      <button
-                        type="button"
-                        onClick={openMapDialog}
-                        className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs"
-                      >
-                        <MapIcon size={16} className="text-emerald-300" />
-                        <span className="hidden sm:inline">Mapa</span>
-                      </button>
                       <div className="relative z-40" ref={modelMenuRef}>
                         <button
                           type="button"
@@ -7992,8 +6291,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <div className="h-4 w-[1px] bg-white/10 hidden sm:block"></div>
                       <button
                         onClick={handleSend}
-                        disabled={sending || uploading || (!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl && queuedFiles.length === 0)}
-                        className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${input.trim() || imageFile || pdfFile || pendingMapImageUrl || queuedFiles.length > 0
+                        disabled={sending || uploading || (!input.trim() && !imageFile && !pdfFile && queuedFiles.length === 0)}
+                        className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${input.trim() || imageFile || pdfFile || queuedFiles.length > 0
                           ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/25 hover:bg-emerald-400'
                           : 'bg-white/5 text-slate-500 cursor-not-allowed'
                           }`}
@@ -10334,499 +8633,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           </div>
         )}
 
-        {
-          mapDialogOpen && (
-            <div className="fixed inset-0 z-[140] bg-black/70 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4">
-              <div className="w-full h-full sm:max-w-6xl sm:h-[82vh] sm:rounded-2xl border-0 sm:border border-white/10 bg-[#0b120f] shadow-2xl overflow-hidden flex flex-col">
-                <div className="h-12 sm:h-14 px-3 sm:px-4 border-b border-white/10 flex items-center justify-between shrink-0">
-                  <div className="flex items-center gap-2">
-                    <MapIcon size={16} className="text-emerald-300" />
-                    <span className="text-sm text-white font-medium">Selecionar Área no Mapa</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setMapDialogOpen(false)}
-                    className="h-8 w-8 rounded-md text-slate-400 hover:text-white hover:bg-white/10 flex items-center justify-center"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-                <div className="flex flex-col lg:grid lg:grid-cols-[280px_1fr] min-h-0 flex-1 overflow-hidden">
-                  <div className="border-b lg:border-b-0 lg:border-r border-white/10 overflow-auto custom-scrollbar flex flex-col max-h-[40vh] lg:max-h-none">
-                    {/* ── Section: Camada Base (Imagery) ── */}
-                    <div className="border-b border-white/10">
-                      <button
-                        type="button"
-                        onClick={() => setMapSectionOpen((s) => ({ ...s, imagery: !s.imagery }))}
-                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Layers size={14} className="text-emerald-400" />
-                          <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Imagens de Satélite</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {selectedMapLayer && (
-                            <span className="text-[10px] text-emerald-400/80 bg-emerald-500/10 px-1.5 py-0.5 rounded">
-                              {mapImageLayers.find((l) => l.name === selectedMapLayer)?.inferredYear || '1'}
-                            </span>
-                          )}
-                          <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.imagery ? '' : '-rotate-90'}`} />
-                        </div>
-                      </button>
-                      {mapSectionOpen.imagery && (
-                        <div className="px-3 pb-3 space-y-1">
-                          {groupedImageLayerEntries.map(([groupName, layers]) => {
-                            if (!layers.length) return null;
-                            const groupKey = `img_${groupName}`;
-                            const isGroupOpen = mapSectionOpen[groupKey] ?? layers.some((l) => l.name === selectedMapLayer);
-                            const activeInGroup = layers.some((l) => l.name === selectedMapLayer);
-                            return (
-                              <div key={groupName}>
-                                <button
-                                  type="button"
-                                  onClick={() => setMapSectionOpen((p) => ({ ...p, [groupKey]: !isGroupOpen }))}
-                                  className={`w-full flex items-center justify-between px-1 pt-2 pb-1 group ${activeInGroup ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
-                                >
-                                  <span className="text-[10px] uppercase tracking-wider font-medium">{groupName.split(' / ').pop()}</span>
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-[9px] opacity-60">{layers.length}</span>
-                                    <ChevronDown size={10} className={`transition-transform ${isGroupOpen ? '' : '-rotate-90'}`} />
-                                  </div>
-                                </button>
-                                {isGroupOpen && (
-                                  <div className="space-y-0.5">
-                                    {layers.map((layer) => {
-                                      const isActive = selectedMapLayer === layer.name;
-                                      return (
-                                        <button
-                                          key={layer.name}
-                                          type="button"
-                                          onClick={() => {
-                                            setSelectedMapLayer(layer.name);
-                                            autoExpandGroupForLayer(layer.name);
-                                            refreshMapPreview(layer.name, mapBbox);
-                                          }}
-                                          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition-all ${isActive
-                                            ? 'bg-emerald-500/15 text-emerald-200 border border-emerald-500/30'
-                                            : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
-                                            }`}
-                                        >
-                                          <div className={`w-2.5 h-2.5 rounded-full border-2 flex-shrink-0 transition-colors ${isActive ? 'border-emerald-400 bg-emerald-400' : 'border-slate-600'
-                                            }`} />
-                                          <span className="truncate flex-1">{layer.title}</span>
-                                          {layer.inferredYear && (
-                                            <span className={`text-[10px] flex-shrink-0 ${isActive ? 'text-emerald-300' : 'text-slate-600'}`}>{layer.inferredYear}</span>
-                                          )}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* ── Section: SIMCAR Digital Overlays ── */}
-                    {simcarDigitalLayers.length > 0 && (
-                      <div className="border-b border-white/10">
-                        <button
-                          type="button"
-                          onClick={() => setMapSectionOpen((s) => ({ ...s, simcar: !s.simcar }))}
-                          className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Shield size={14} className="text-amber-400" />
-                            <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Overlays SIMCAR</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {selectedSimcarOverlays.length > 0 && (
-                              <span className="text-[10px] text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded font-medium">
-                                {selectedSimcarOverlays.length}
-                              </span>
-                            )}
-                            <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.simcar ? '' : '-rotate-90'}`} />
-                          </div>
-                        </button>
-                        {mapSectionOpen.simcar && (
-                          <div className="px-3 pb-3 space-y-2">
-                            {/* Search input */}
-                            <div className="relative">
-                              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
-                              <input
-                                type="text"
-                                value={simcarSearchFilter}
-                                onChange={(e) => setSimcarSearchFilter(e.target.value)}
-                                placeholder="Buscar camada..."
-                                className="w-full bg-[#050b08] border border-white/10 rounded-md text-xs text-slate-300 py-1.5 pl-7 pr-2 outline-none focus:border-emerald-500/50 placeholder:text-slate-600"
-                              />
-                            </div>
-                            {/* Select all / Clear all */}
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const filtered = simcarDigitalLayers
-                                    .filter((l) => !simcarSearchFilter || l.title.toLowerCase().includes(simcarSearchFilter.toLowerCase()))
-                                    .map((l) => l.name);
-                                  const merged = [...new Set([...selectedSimcarOverlays, ...filtered])];
-                                  setSelectedSimcarOverlays(merged);
-                                  refreshMapPreview(undefined, undefined, merged);
-                                }}
-                                className="text-[10px] text-slate-500 hover:text-emerald-300 transition-colors"
-                              >
-                                Selecionar todos
-                              </button>
-                              <span className="text-slate-700">|</span>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedSimcarOverlays([]);
-                                  refreshMapPreview(undefined, undefined, []);
-                                }}
-                                className="text-[10px] text-slate-500 hover:text-red-300 transition-colors"
-                              >
-                                Limpar todos
-                              </button>
-                            </div>
-                            {/* Layer list */}
-                            <div className="max-h-52 overflow-auto custom-scrollbar space-y-0.5">
-                              {simcarDigitalLayers
-                                .filter((l) => !simcarSearchFilter || l.title.toLowerCase().includes(simcarSearchFilter.toLowerCase()))
-                                .map((layer) => {
-                                  const isChecked = selectedSimcarOverlays.includes(layer.name);
-                                  return (
-                                    <label key={layer.name} className={`flex items-center gap-2 cursor-pointer text-xs py-1.5 px-2 rounded-md transition-all ${isChecked ? 'bg-amber-500/10 text-amber-200' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-                                      }`}>
-                                      <input
-                                        type="checkbox"
-                                        checked={isChecked}
-                                        onChange={(e) => {
-                                          const next = e.target.checked
-                                            ? [...selectedSimcarOverlays, layer.name]
-                                            : selectedSimcarOverlays.filter((n) => n !== layer.name);
-                                          setSelectedSimcarOverlays(next);
-                                          refreshMapPreview(undefined, undefined, next);
-                                        }}
-                                        className="accent-amber-500 w-3.5 h-3.5 flex-shrink-0"
-                                      />
-                                      <span className="truncate">{layer.title}</span>
-                                    </label>
-                                  );
-                                })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* ── Section: WFS Intersection ── */}
-                    <div className="border-b border-white/10">
-                      <div className="px-4 py-3 flex items-center justify-between">
-                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                          Interseção WFS (ha)
-                        </span>
-                        {intersectionLoading ? (
-                          <span className="text-[10px] text-emerald-300">calculando...</span>
-                        ) : null}
-                      </div>
-                      <div className="px-3 pb-3 space-y-2">
-                        {mapPolygon.length < 3 ? (
-                          <p className="text-[11px] text-slate-500">
-                            Importe um poligono (.kml/.zip) para calcular intersecao por camada.
-                          </p>
-                        ) : (
-                          <>
-                            {polygonAreaHa !== null && (
-                              <p className="text-[11px] text-slate-400">
-                                Area do poligono: <span className="text-slate-200 font-medium">{polygonAreaHa.toFixed(4)} ha</span>
-                              </p>
-                            )}
-                            {intersectionComputedAtIso && (
-                              <p className="text-[10px] text-slate-500">
-                                Calculo: {new Date(intersectionComputedAtIso).toLocaleString()} | Camadas OK: {intersectionSummaryStats.okCount}
-                              </p>
-                            )}
-                            {selectedSimcarOverlays.length === 0 ? (
-                              <p className="text-[11px] text-slate-500">
-                                Selecione ao menos um overlay SIMCAR para calcular. A area total ja foi calculada.
-                              </p>
-                            ) : intersectionError ? (
-                              <p className="text-[11px] text-rose-300">{intersectionError}</p>
-                            ) : (
-                              <>
-                                <p className="text-[11px] text-slate-400">
-                                  Soma das intersecoes: <span className="text-slate-200 font-medium">{intersectionSummaryStats.totalHa.toFixed(4)} ha</span> |
-                                  Cobertura total (cap): <span className="text-slate-200 font-medium">{intersectionSummaryStats.totalCoverage.toFixed(4)}%</span>
-                                </p>
-                                <div className="max-h-48 overflow-auto custom-scrollbar rounded-lg border border-white/10">
-                                  <table className="w-full text-[11px]">
-                                    <thead className="bg-white/5 text-slate-400">
-                                      <tr>
-                                        <th className="text-left px-2 py-1.5 font-medium">Camada</th>
-                                        <th className="text-right px-2 py-1.5 font-medium">Intersecao (ha)</th>
-                                        <th className="text-right px-2 py-1.5 font-medium">% poligono</th>
-                                        <th className="text-left px-2 py-1.5 font-medium">Status</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {intersectionRowsSorted.map((row) => {
-                                        const layerTitle =
-                                          simcarDigitalLayers.find((l) => l.name === row.layerName)?.title ||
-                                          row.layerName;
-                                        const firstWarning = row.warnings[0] || '';
-                                        return (
-                                          <tr key={row.layerName} className="border-t border-white/5 text-slate-300">
-                                            <td className="px-2 py-1.5">
-                                              <div className="truncate" title={`${layerTitle} (${row.layerName})`}>
-                                                {layerTitle}
-                                              </div>
-                                            </td>
-                                            <td className="px-2 py-1.5 text-right tabular-nums">
-                                              {row.intersectionHa.toFixed(4)}
-                                            </td>
-                                            <td className="px-2 py-1.5 text-right tabular-nums">
-                                              {row.coveragePercentOfPolygon.toFixed(4)}%
-                                            </td>
-                                            <td className={`px-2 py-1.5 ${intersectionStatusClass(row.status)}`}>
-                                              <div>{intersectionStatusLabel(row.status)}</div>
-                                              {firstWarning ? (
-                                                <div className="text-[10px] text-amber-300 truncate" title={row.warnings.join('\n')}>
-                                                  {firstWarning}
-                                                </div>
-                                              ) : null}
-                                            </td>
-                                          </tr>
-                                        );
-                                      })}
-                                      {!intersectionLoading && intersectionRowsSorted.length === 0 && (
-                                        <tr>
-                                          <td colSpan={4} className="px-2 py-2 text-slate-500">
-                                            Nenhum resultado para exibir.
-                                          </td>
-                                        </tr>
-                                      )}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* ── Section: Advanced / Tools ── */}
-                    <div className="border-b border-white/10">
-                      <button
-                        type="button"
-                        onClick={() => setMapSectionOpen((s) => ({ ...s, advanced: !s.advanced }))}
-                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Settings size={14} className="text-slate-400" />
-                          <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">Avançado</span>
-                        </div>
-                        <ChevronDown size={14} className={`text-slate-500 transition-transform ${mapSectionOpen.advanced ? '' : '-rotate-90'}`} />
-                      </button>
-                      {mapSectionOpen.advanced && (
-                        <div className="px-3 pb-3 space-y-3">
-                          <label className="inline-flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs cursor-pointer">
-                            <FileText size={14} className="text-emerald-300" />
-                            Importar área (.kml/.zip)
-                            <input
-                              type="file"
-                              accept=".kml,.zip,application/vnd.google-earth.kml+xml,application/zip"
-                              className="hidden"
-                              onChange={(e) => {
-                                onPickAreaFile(e.target.files?.[0] || null);
-                                e.currentTarget.value = '';
-                              }}
-                            />
-                          </label>
-                          <div className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-2">
-                            <p className="text-[10px] uppercase tracking-wider text-slate-500">BBox (fallback manual)</p>
-                            <div className="grid grid-cols-2 gap-2">
-                              <input type="number" step="0.000001" value={mapBbox[0]} onChange={(e) => setMapBbox([Number(e.target.value), mapBbox[1], mapBbox[2], mapBbox[3]])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="minX" />
-                              <input type="number" step="0.000001" value={mapBbox[1]} onChange={(e) => setMapBbox([mapBbox[0], Number(e.target.value), mapBbox[2], mapBbox[3]])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="minY" />
-                              <input type="number" step="0.000001" value={mapBbox[2]} onChange={(e) => setMapBbox([mapBbox[0], mapBbox[1], Number(e.target.value), mapBbox[3]])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="maxX" />
-                              <input type="number" step="0.000001" value={mapBbox[3]} onChange={(e) => setMapBbox([mapBbox[0], mapBbox[1], mapBbox[2], Number(e.target.value)])} className="bg-[#050b08] border border-white/10 rounded px-2 py-1 text-xs text-slate-300" placeholder="maxY" />
-                            </div>
-                            <p className="text-[10px] text-slate-500">Coordenadas em EPSG:4326 (longitude/latitude).</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* ── Hint ── */}
-                    <div className="px-4 py-3">
-                      <p className="text-[11px] text-slate-500 leading-relaxed">
-                        🖱️ Arraste para mover, roda para zoom. Prévia e snapshot carregados via WMS SEMA.
-                      </p>
-                    </div>
-
-                    {/* ── Action Buttons ── */}
-                    <div className="mt-auto px-3 pb-3 space-y-2">
-                      <button
-                        type="button"
-                        onClick={() => refreshMapPreview()}
-                        disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
-                        className={`w-full py-2 rounded-lg text-xs font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer
-                          ? 'bg-white/5 text-slate-600 cursor-not-allowed'
-                          : 'bg-white/10 text-slate-300 hover:bg-white/15'
-                          }`}
-                      >
-                        {mapPreviewLoading ? 'Atualizando prévia...' : 'Atualizar Prévia'}
-                      </button>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!mapOriginalPolygonBbox) return;
-                            setMapBbox(mapOriginalPolygonBbox);
-                            setMapRectZoomMode(false);
-                            setMapRectSelection(null);
-                            mapRectStateRef.current = null;
-                            refreshMapPreview(undefined, mapOriginalPolygonBbox);
-                          }}
-                          disabled={mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox}
-                          className={`flex-1 py-2 rounded-lg text-xs font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer || !mapOriginalPolygonBbox
-                            ? 'bg-white/5 text-slate-600 cursor-not-allowed'
-                            : 'bg-white/10 text-slate-300 hover:bg-white/15'
-                            }`}
-                        >
-                          Zoom Original
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMapRectZoomMode((prev) => !prev);
-                            setMapRectSelection(null);
-                            mapRectStateRef.current = null;
-                          }}
-                          disabled={mapLoading || mapPreviewLoading || !selectedMapLayer}
-                          className={`flex-1 py-2 rounded-lg text-xs font-medium transition ${mapLoading || mapPreviewLoading || !selectedMapLayer
-                            ? 'bg-white/5 text-slate-600 cursor-not-allowed'
-                            : mapRectZoomMode
-                              ? 'bg-amber-500/25 text-amber-200 border border-amber-400/30'
-                              : 'bg-white/10 text-slate-300 hover:bg-white/15'
-                            }`}
-                        >
-                          {mapRectZoomMode ? 'Cancelar Zoom' : 'Zoom Retângulo'}
-                        </button>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={captureVisibleMapArea}
-                        disabled={mapLoading || mapCapturing || !selectedMapLayer}
-                        className={`w-full py-2.5 rounded-lg text-sm font-semibold transition ${mapLoading || mapCapturing || !selectedMapLayer
-                          ? 'bg-white/5 text-slate-600 cursor-not-allowed'
-                          : 'bg-emerald-500 text-white hover:bg-emerald-400 shadow-lg shadow-emerald-500/20'
-                          }`}
-                      >
-                        {mapCapturing ? 'Capturando...' : '📸 Capturar Área Visível'}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="relative min-h-[200px] flex-1">
-                    {mapLoading && !mapPreviewDataUrl ? (
-                      <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm">
-                        <div className="flex flex-col items-center gap-3">
-                          <div className="w-8 h-8 border-2 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin" />
-                          <span>Carregando camadas do mapa...</span>
-                        </div>
-                      </div>
-                    ) : mapPreviewDataUrl || mapPreviewLoading ? (
-                      <div
-                        ref={mapPreviewViewportRef}
-                        onWheel={applyMapZoomFromWheel}
-                        onMouseDown={startMapDrag}
-                        className={`h-full w-full bg-black/25 flex items-center justify-center p-2 select-none ${mapRectZoomMode ? 'cursor-crosshair' : mapDragging ? 'cursor-grabbing' : 'cursor-grab'
-                          }`}
-                      >
-                        <div className="relative max-h-full max-w-full">
-                          {mapPreviewDataUrl && mapDragging && (
-                            <img
-                              src={mapPreviewDataUrl}
-                              alt=""
-                              aria-hidden="true"
-                              className="absolute inset-0 max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain opacity-30 blur-[1px] pointer-events-none"
-                              draggable={false}
-                            />
-                          )}
-                          {mapPreviewDataUrl ? (
-                            <img
-                              ref={mapPreviewImageRef}
-                              src={mapPreviewDataUrl}
-                              alt="Prévia WMS da área selecionada"
-                              className="max-h-[calc(82vh-130px)] max-w-full w-auto h-auto object-contain pointer-events-none transition-opacity duration-300"
-                              style={{
-                                ...(mapDragging
-                                  ? { transform: `translate(${mapDragOffset.x}px, ${mapDragOffset.y}px)` }
-                                  : {}),
-                                opacity: mapPreviewLoading ? 0.5 : 1,
-                              }}
-                              draggable={false}
-                            />
-                          ) : (
-                            <div className="max-h-[calc(82vh-130px)] max-w-full px-4 py-3 rounded-lg bg-black/35 text-xs text-slate-400">
-                              Carregando prévia do mapa...
-                            </div>
-                          )}
-                          {mapPolygonPoints && (
-                            <svg
-                              viewBox="0 0 100 100"
-                              preserveAspectRatio="none"
-                              className="absolute inset-0 h-full w-full pointer-events-none transition-opacity duration-300"
-                              style={{
-                                ...(mapDragging
-                                  ? { transform: `translate(${mapDragOffset.x}px, ${mapDragOffset.y}px)` }
-                                  : {}),
-                                opacity: mapPreviewLoading ? 0.4 : 1,
-                              }}
-                            >
-                              <polygon
-                                points={mapPolygonPoints}
-                                fill="none"
-                                stroke="rgba(239, 68, 68, 0.98)"
-                                strokeWidth="0.6"
-                              />
-                            </svg>
-                          )}
-                        </div>
-                        {mapPreviewLoading && (
-                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-                            <div className="flex flex-col items-center gap-2 bg-black/50 backdrop-blur-sm px-5 py-3 rounded-xl">
-                              <div className="w-6 h-6 border-2 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin" />
-                              <span className="text-xs text-slate-300">Carregando prévia...</span>
-                            </div>
-                          </div>
-                        )}
-                        {mapRectSelectionStyle && (
-                          <div
-                            className="pointer-events-none absolute border-2 border-amber-300 bg-amber-300/15"
-                            style={{
-                              left: `${mapRectSelectionStyle.left}px`,
-                              top: `${mapRectSelectionStyle.top}px`,
-                              width: `${mapRectSelectionStyle.width}px`,
-                              height: `${mapRectSelectionStyle.height}px`,
-                            }}
-                          />
-                        )}
-                      </div>
-                    ) : (
-                      <div className="h-full w-full flex items-center justify-center text-slate-400 text-sm px-6 text-center">
-                        Selecione uma camada e clique em "Atualizar Prévia WMS".
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )
-        }
 
         {
           billingTopupOpen && (
