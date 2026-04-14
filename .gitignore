@@ -107,3 +107,7 @@ temp/
 
 # Webdev artifacts (checkpoint zips, migrations, etc.)
 .webdev/
+
+# Firebase service account
+*-firebase-adminsdk-*.json
+backend/firebase-service-account.json

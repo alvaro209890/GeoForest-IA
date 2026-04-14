@@ -67,8 +67,7 @@ import {
   deleteDoc,
   setDoc,
   serverTimestamp,
-  type DocumentReference,
-} from 'firebase/firestore';
+} from '@/lib/localFirestore';
 import { auth, db } from '@/lib/firebase';
 import { handleLogout, UserProfile } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
@@ -78,6 +77,7 @@ import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
+type DocumentReference = ReturnType<typeof doc>;
 
 type ChatMessage = {
   id: string;
@@ -2935,7 +2935,7 @@ export default function Dashboard() {
         const jobsRef = collection(db, 'users', uid, 'processing_jobs');
         const jobsSnap = await getDocs(query(jobsRef, orderBy('updatedAtMs', 'desc')));
         if (!active) return;
-        const runningCount = jobsSnap.docs.filter((docSnap) => {
+        const runningCount = jobsSnap.docs.filter((docSnap: any) => {
           const status = String((docSnap.data() as any)?.status || '').trim().toLowerCase();
           return status === 'running' || status === 'cancel_requested';
         }).length;
@@ -2985,13 +2985,13 @@ export default function Dashboard() {
         if (!alive) return;
 
         const related = jobsSnap.docs
-          .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as any) }))
-          .filter((data) => {
+          .map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() as any) }))
+          .filter((data: any) => {
             const endpoint = String(data?.endpoint || '').trim().toLowerCase();
             const clipJobId = String(data?.metadata?.clipJobId || '').trim();
             return clipJobId === activeClipJobId && endpoint.startsWith('/api/simcar/clip');
           })
-          .sort((a, b) => Number(b?.updatedAtMs || 0) - Number(a?.updatedAtMs || 0));
+          .sort((a: any, b: any) => Number(b?.updatedAtMs || 0) - Number(a?.updatedAtMs || 0));
         if (related.length === 0) {
           setSimcarServerRuntimeState(null);
           return;
@@ -3001,22 +3001,22 @@ export default function Dashboard() {
         const latestStatus = String(latest?.status || '').trim().toLowerCase();
         const endpoint = String(latest?.endpoint || '').trim();
         const normalizedLatestEndpoint = endpoint.toLowerCase();
-        const hasRunningJob = related.some((item) => {
+        const hasRunningJob = related.some((item: any) => {
           const status = String(item?.status || '').trim().toLowerCase();
           return status === 'running' || status === 'cancel_requested';
         });
-        const hasCompletedImport = related.some((item) => {
+        const hasCompletedImport = related.some((item: any) => {
           const status = String(item?.status || '').trim().toLowerCase();
           const normalizedEndpoint = String(item?.endpoint || '').trim().toLowerCase();
           return status === 'completed' && normalizedEndpoint === '/api/simcar/clip/import-vectorized';
         });
-        const hasCompletedAnalyze = related.some((item) => {
+        const hasCompletedAnalyze = related.some((item: any) => {
           const status = String(item?.status || '').trim().toLowerCase();
           const normalizedEndpoint = String(item?.endpoint || '').trim().toLowerCase();
           const imageOnly = item?.metadata?.imageOnly === true;
           return status === 'completed' && normalizedEndpoint === '/api/simcar/clip/analyze' && !imageOnly;
         });
-        const hasCompletedAuas = related.some((item) => {
+        const hasCompletedAuas = related.some((item: any) => {
           const status = String(item?.status || '').trim().toLowerCase();
           const normalizedEndpoint = String(item?.endpoint || '').trim().toLowerCase();
           return status === 'completed' && normalizedEndpoint === '/api/simcar/clip/analyze-auas';
@@ -6444,11 +6444,6 @@ export default function Dashboard() {
   const handleSend = async () => {
     if ((!input.trim() && !imageFile && !pdfFile && !pendingMapImageUrl && queuedFiles.length === 0) || sending) return;
 
-    const walletBalance = Number(billingMe?.wallet?.balanceBrl);
-    if (Number.isFinite(walletBalance) && walletBalance <= 0) {
-      handleInsufficientCredits('Voce esta sem creditos. Recarregue para continuar.');
-      return;
-    }
 
     if (!activeConversationRef && conversationsRef) {
       await createConversation(conversationsRef.collection);
@@ -9424,11 +9419,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     disabled={!auasFile}
                     onClick={async () => {
                       if (!auasFile) return;
-                      const walletBalance = Number(billingMe?.wallet?.balanceBrl);
-                      if (Number.isFinite(walletBalance) && walletBalance <= 0) {
-                        handleInsufficientCredits('Voce esta sem creditos. Recarregue para continuar.');
-                        return;
-                      }
                       setAuasError(null);
                       setAuasProcessing(true);
                       setAuasProgress({ step: 'upload', percent: 5, message: 'Enviando shapefile...' });
@@ -11095,5 +11085,3 @@ Arquivo de imagem previamente anexado pelo usuário.`;
     </div >
   );
 }
-
-

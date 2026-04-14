@@ -76,8 +76,8 @@ import {
     settleCloudinaryStorageReserve,
     settleReservedCredits,
 } from "./billing";
-import { adminAuth, adminDb, isFirebaseConfigError } from "./firebase-admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
+import { removeStoragePath, saveUserBuffer, writeDocBySegments } from "./local-storage";
 import {
     finishJob,
     isCancelRequested,
@@ -502,6 +502,7 @@ const DIRECT_COPY_LAYERS = new Set(["AIR", "ATP"]);
 /* ─── Job Cache ──────────────────────────────────────────────── */
 
 export type CachedJob = {
+    uid?: string;
     buffer?: Buffer;
     expiresAt: number;
     filename: string;
@@ -1432,6 +1433,7 @@ function parsePersistedClipContext(raw: unknown): PersistedClipContextV1 | null 
 
 async function processClip(
     res: Response,
+    uid: string,
     propertyZip: Buffer,
     requestedLayers: string[] | null,
     airIdentificacao?: string,
@@ -1740,8 +1742,8 @@ async function processClip(
     try {
         sendSSE(res, { type: "progress", layer: "UPLOAD", current: total, total, status: "uploading_cloudinary" });
         const [inUrl, outUrl] = await Promise.all([
-            uploadBufferToCloudinary(propertyZip, `simcar_input_${jobId.slice(0, 8)}`),
-            uploadBufferToCloudinary(zipBuffer, `simcar_output_${jobId.slice(0, 8)}`),
+            uploadBufferToCloudinary(propertyZip, `simcar_input_${jobId.slice(0, 8)}`, uid),
+            uploadBufferToCloudinary(zipBuffer, `simcar_output_${jobId.slice(0, 8)}`, uid),
         ]);
         inputZipUrl = inUrl;
         outputZipUrl = outUrl;
@@ -1764,6 +1766,7 @@ async function processClip(
             contextBuffer,
             `simcar_context_${jobId.slice(0, 8)}.json`,
             "application/json",
+            uid,
         );
         cloudinaryStoredBytes = propertyZip.length + zipBuffer.length + contextBuffer.length;
         console.log(`[SIMCAR CLIP] Cloudinary: input=${inUrl}, output=${outUrl}, context=${contextJsonUrl}`);
@@ -1773,6 +1776,7 @@ async function processClip(
     }
 
     jobCache.set(jobId, {
+        uid,
         buffer: zipBuffer,
         expiresAt: Date.now() + CACHE_TTL_MS,
         filename,
@@ -2374,52 +2378,16 @@ async function compressForVision(dataUrl: string): Promise<string> {
     return `data:image/jpeg;base64,${compressed.toString("base64")}`;
 }
 
-/** Cloudinary commons */
-const CLOUDINARY_CLOUD = "da19dwpgk";
-
-function cloudinarySign(params: Record<string, string>): string {
-    const apiSecret = process.env.CLOUDINARY_API_SECRET;
-    if (!apiSecret) throw new Error("Cloudinary não configurado.");
-    const base = Object.keys(params).sort().map((k) => `${k}=${params[k]}`).join("&");
-    return crypto.createHash("sha1").update(base + apiSecret).digest("hex");
-}
-
-/** Upload a data URL (image) to Cloudinary. Returns secure_url. */
-async function uploadToCloudinary(dataUrl: string, filename: string): Promise<string> {
-    const apiKey = process.env.CLOUDINARY_API_KEY;
-    const apiSecret = process.env.CLOUDINARY_API_SECRET;
-    const folder = process.env.CLOUDINARY_FOLDER;
-    if (!apiKey || !apiSecret) throw new Error("Cloudinary não configurado.");
-
-    const timestamp = Math.floor(Date.now() / 1000);
-    const publicId = `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_");
-    const params: Record<string, string> = { timestamp: String(timestamp), public_id: publicId };
-    if (folder) params.folder = folder;
-    const signature = cloudinarySign(params);
-
-    const form = new FormData();
-    form.append("file", dataUrl);
-    form.append("api_key", apiKey);
-    form.append("timestamp", String(timestamp));
-    form.append("signature", signature);
-    if (folder) form.append("folder", folder);
-    form.append("public_id", publicId);
-
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`;
-    const response = await fetch(uploadUrl, { method: "POST", body: form });
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Cloudinary error ${response.status}: ${text.slice(0, 200)}`);
-    }
-    return ((await response.json()) as { secure_url: string }).secure_url;
-}
-
-/** Extract Cloudinary public_id from a secure_url. */
-function extractCloudinaryPublicId(url: string): string | null {
-    // e.g. https://res.cloudinary.com/da19dwpgk/image/upload/v123/folder/public_id.ext
-    //   or https://res.cloudinary.com/da19dwpgk/raw/upload/v123/folder/public_id.zip
-    const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.[^.]+)?$/);
-    return match ? match[1] : null;
+/** Local storage helpers replacing Cloudinary persistence. */
+async function uploadToCloudinary(dataUrl: string, filename: string, uid = "anonymous"): Promise<string> {
+    const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(base64, "base64");
+    return saveUserBuffer({
+        uid,
+        area: "simcar/analysis",
+        filename: `${Date.now()}_${filename}`,
+        buffer,
+    }).publicUrl;
 }
 
 /**
@@ -2430,10 +2398,7 @@ function extractCloudinaryPublicId(url: string): string | null {
  * The original full-resolution URL is kept intact for user display.
  */
 function getCloudinaryAiUrl(url: string): string {
-    // Only transform Cloudinary image URLs (not raw resources).
-    if (!url.includes("/image/upload/")) return url;
-    // Insert transformation string right after /image/upload/
-    return url.replace("/image/upload/", "/image/upload/w_800,h_600,c_limit,q_65,f_jpg,fl_strip_profile/");
+    return url;
 }
 
 /**
@@ -2445,75 +2410,37 @@ function getCloudinaryAiUrl(url: string): string {
  * native vegetation (Cerrado/Forest) from degraded pasture.
  */
 function getCloudinaryGeminiUrl(url: string): string {
-    if (!url.includes("/image/upload/")) return url;
-    return url.replace("/image/upload/", "/image/upload/w_1280,h_960,c_limit,q_88,f_jpg,fl_strip_profile/");
+    return url;
 }
 
-/** Delete a resource from Cloudinary by its secure_url. */
 async function deleteFromCloudinary(secureUrl: string, resourceType: "image" | "raw" = "image"): Promise<void> {
-    const apiKey = process.env.CLOUDINARY_API_KEY;
-    const apiSecret = process.env.CLOUDINARY_API_SECRET;
-    if (!apiKey || !apiSecret) return;
-
-    const publicId = extractCloudinaryPublicId(secureUrl);
-    if (!publicId) return;
-
-    const timestamp = Math.floor(Date.now() / 1000);
-    const params: Record<string, string> = { public_id: publicId, timestamp: String(timestamp) };
-    const signature = cloudinarySign(params);
-
-    const form = new FormData();
-    form.append("public_id", publicId);
-    form.append("api_key", apiKey);
-    form.append("timestamp", String(timestamp));
-    form.append("signature", signature);
-
-    const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/${resourceType}/destroy`;
-    try {
-        await fetch(url, { method: "POST", body: form });
-    } catch (err: any) {
-        console.warn(`[CLOUDINARY DELETE] Failed for ${publicId}: ${err.message}`);
-    }
+    void resourceType;
+    removeStoragePath(secureUrl);
 }
 
-/** Upload a raw Buffer (ZIP/JSON etc.) to Cloudinary. Returns secure_url. */
 async function uploadRawBufferToCloudinary(
     buffer: Buffer,
     filename: string,
     mimeType: string,
+    uid = "anonymous",
 ): Promise<string> {
-    const apiKey = process.env.CLOUDINARY_API_KEY;
-    const apiSecret = process.env.CLOUDINARY_API_SECRET;
-    const folder = process.env.CLOUDINARY_FOLDER;
-    if (!apiKey || !apiSecret) throw new Error("Cloudinary não configurado.");
-
-    const timestamp = Math.floor(Date.now() / 1000);
-    const publicId = `${Date.now()}-${filename}`.replace(/[^a-zA-Z0-9-_]/g, "_");
-    const params: Record<string, string> = { timestamp: String(timestamp), public_id: publicId };
-    if (folder) params.folder = folder;
-    const signature = cloudinarySign(params);
-
-    const b64 = `data:${mimeType};base64,${buffer.toString("base64")}`;
-    const form = new FormData();
-    form.append("file", b64);
-    form.append("api_key", apiKey);
-    form.append("timestamp", String(timestamp));
-    form.append("signature", signature);
-    if (folder) form.append("folder", folder);
-    form.append("public_id", publicId);
-    form.append("resource_type", "raw");
-
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/raw/upload`;
-    const response = await fetch(uploadUrl, { method: "POST", body: form });
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Cloudinary raw error ${response.status}: ${text.slice(0, 200)}`);
-    }
-    return ((await response.json()) as { secure_url: string }).secure_url;
+    void mimeType;
+    const area = filename.toLowerCase().endsWith(".json") ? "simcar/context" : "simcar/output";
+    return saveUserBuffer({
+        uid,
+        area,
+        filename: `${Date.now()}_${filename}`,
+        buffer,
+    }).publicUrl;
 }
 
-async function uploadBufferToCloudinary(buffer: Buffer, filename: string): Promise<string> {
-    return uploadRawBufferToCloudinary(buffer, filename, "application/zip");
+async function uploadBufferToCloudinary(buffer: Buffer, filename: string, uid = "anonymous"): Promise<string> {
+    return saveUserBuffer({
+        uid,
+        area: filename.includes("input") ? "simcar/input" : "simcar/output",
+        filename: `${Date.now()}_${filename}`,
+        buffer,
+    }).publicUrl;
 }
 
 type AiImage = {
@@ -5655,7 +5582,7 @@ async function processAuasAnalysis(
             throwIfClientDisconnected(res);
             const img = imagesToAnalyze[i];
             const filename = `simcar_auas_${jobId.slice(0, 8)}_img${i + 1}`;
-            const url = await uploadToCloudinary(img.dataUrl, filename);
+            const url = await uploadToCloudinary(img.dataUrl, filename, job.uid || "anonymous");
             cloudinaryUrls.push({ url, caption: img.caption });
             sendSSE(res, {
                 type: "progress", step: "uploading_images",
@@ -6267,7 +6194,7 @@ export async function runAcAvnSatelliteAnalysis(
             throwIfClientDisconnected(res);
             const img = imagesToAnalyze![i];
             const filename = `simcar_analysis_${tag}_img${i + 1}`;
-            const url = await uploadToCloudinary(img.dataUrl, filename);
+            const url = await uploadToCloudinary(img.dataUrl, filename, job.uid || "anonymous");
             cloudinaryUrls.push({ url, caption: img.caption });
             cloudinaryStoredBytes += estimateBytesFromDataUrl(img.dataUrl);
             console.log(`[SIMCAR ANALYSIS] Uploaded image ${i + 1}: ${url}`);
@@ -6567,7 +6494,6 @@ async function persistSimcarClipProcessingState(args: {
     const jobId = String(args.jobId || "").trim();
     if (!uid || !jobId) return;
     const sourceMode = args.sourceMode || "auto-clip";
-    const docRef = adminDb.doc(`users/${uid}/simcar_clips/${jobId}`);
     const summary = args.result?.summary;
     const safeFilename = String(args.filename || args.result?.filename || `Recorte ${jobId.slice(0, 8)}`).trim();
     const payload = stripUndefinedDeep({
@@ -6595,20 +6521,9 @@ async function persistSimcarClipProcessingState(args: {
         summary: summary || null,
         error: args.error || null,
         timestamp: new Date().toISOString(),
-        updatedAt: FieldValue.serverTimestamp(),
     });
     try {
-        await adminDb.runTransaction(async (tx) => {
-            const snap = await tx.get(docRef);
-            tx.set(
-                docRef,
-                {
-                    ...payload,
-                    createdAt: snap.exists ? snap.get("createdAt") || FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
-                },
-                { merge: true },
-            );
-        });
+        writeDocBySegments(["users", uid, "simcar_clips", jobId], payload, { merge: true });
     } catch (error) {
         console.warn("[SIMCAR CLIP] failed to persist processing state:", error);
     }
@@ -6623,13 +6538,7 @@ async function persistSimcarClipArtifacts(args: {
     const jobId = String(args.jobId || "").trim();
     if (!uid || !jobId || !args.patch || typeof args.patch !== "object") return;
     try {
-        await adminDb.doc(`users/${uid}/simcar_clips/${jobId}`).set(
-            {
-                ...stripUndefinedDeep(args.patch),
-                updatedAt: FieldValue.serverTimestamp(),
-            },
-            { merge: true },
-        );
+        writeDocBySegments(["users", uid, "simcar_clips", jobId], stripUndefinedDeep(args.patch), { merge: true });
     } catch (error) {
         console.warn("[SIMCAR CLIP] failed to persist analysis artifacts:", error);
     }
@@ -6812,6 +6721,7 @@ export function registerSimcarClipRoutes(app: Express) {
 
             const clipResult = await processClip(
                 res,
+                uid,
                 zipBuffer,
                 body.layerNames || null,
                 body.airIdentificacao || undefined,
@@ -7128,6 +7038,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 outputZipUrl = await uploadBufferToCloudinary(
                     zipBuffer,
                     `simcar_vectorized_${jobId.slice(0, 8)}`,
+                    uid,
                 );
 
                 const persistedContext: PersistedClipContextV1 = {
@@ -7149,6 +7060,7 @@ export function registerSimcarClipRoutes(app: Express) {
                     contextBuffer,
                     `simcar_vectorized_context_${jobId.slice(0, 8)}.json`,
                     "application/json",
+                    uid,
                 );
                 cloudinaryStoredBytes = zipBuffer.length + contextBuffer.length;
             } catch (uploadErr: any) {
@@ -7158,6 +7070,7 @@ export function registerSimcarClipRoutes(app: Express) {
             pruneJobCache();
             jobCache.set(jobId, {
                 ...parsed,
+                uid,
                 buffer: zipBuffer,
                 expiresAt: Date.now() + CACHE_TTL_MS,
                 outputZipUrl,
@@ -8120,8 +8033,3 @@ export function registerSimcarClipRoutes(app: Express) {
         }
     });
 }
-
-
-
-
-
