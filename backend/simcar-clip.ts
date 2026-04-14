@@ -2398,6 +2398,9 @@ async function uploadToCloudinary(dataUrl: string, filename: string, uid = "anon
  * The original full-resolution URL is kept intact for user display.
  */
 function getCloudinaryAiUrl(url: string): string {
+    if (url.startsWith("/")) {
+        return `${PUBLIC_API_BASE_URL}${url}`;
+    }
     return url;
 }
 
@@ -2410,6 +2413,9 @@ function getCloudinaryAiUrl(url: string): string {
  * native vegetation (Cerrado/Forest) from degraded pasture.
  */
 function getCloudinaryGeminiUrl(url: string): string {
+    if (url.startsWith("/")) {
+        return `${PUBLIC_API_BASE_URL}${url}`;
+    }
     return url;
 }
 
