@@ -2,6 +2,17 @@
   "hosting": {
     "public": "dist/public",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      }
+    ],
     "redirects": [
       {
         "source": "/api/:path*",

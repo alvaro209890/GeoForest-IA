@@ -7,6 +7,12 @@ type PlainObject = Record<string, any>;
 const DEFAULT_STORAGE_ROOT =
   "/media/server/HD Backup/Servidores_NAO_MEXA/Banco_de_dados/GeoForest";
 
+const PUBLIC_API_BASE_URL = String(
+  process.env.PUBLIC_API_BASE_URL ||
+  process.env.VITE_API_BASE ||
+  "https://geoforest-api.cursar.space",
+).trim().replace(/\/+$/, "");
+
 export const STORAGE_ROOT = path.resolve(
   process.env.LOCAL_DATA_ROOT || DEFAULT_STORAGE_ROOT,
 );
@@ -236,7 +242,7 @@ export function saveUserBuffer(args: {
   return {
     relativePath,
     absolutePath,
-    publicUrl: `/api/storage/${relativePath.split(path.sep).join("/")}`,
+    publicUrl: `${PUBLIC_API_BASE_URL}/api/storage/${relativePath.split(path.sep).join("/")}`,
   };
 }
 

@@ -2479,8 +2479,18 @@ async function startServer() {
   app.get("/api/file-proxy", async (req, res) => {
     try {
       const mode = String(req.query.mode || "inline");
-      const remoteUrl = String(req.query.url || "");
+      let remoteUrl = String(req.query.url || "").trim();
       const name = String(req.query.name || "arquivo.pdf").replace(/[^a-zA-Z0-9._-]/g, "_");
+      if (/^https?:\/\//i.test(remoteUrl)) {
+        try {
+          const parsed = new URL(remoteUrl);
+          if (parsed.pathname.startsWith("/api/storage/")) {
+            remoteUrl = `${parsed.pathname}${parsed.search}`;
+          }
+        } catch {
+          remoteUrl = "";
+        }
+      }
       if (!remoteUrl || !remoteUrl.startsWith("/api/storage/")) {
         res.status(400).json({ error: "URL de arquivo inválida." });
         return;
