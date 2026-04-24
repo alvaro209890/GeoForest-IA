@@ -148,10 +148,11 @@ async function uploadRawBufferToCloudinary(
 }
 
 async function uploadZipBufferToCloudinary(buffer: Buffer, filename: string, uid = "anonymous"): Promise<string> {
+    const storedFilename = filename.toLowerCase().endsWith(".zip") ? filename : `${filename}.zip`;
     return saveUserBuffer({
         uid,
-        area: filename.includes("input") ? "auas/input" : "auas/output",
-        filename: `${Date.now()}_${filename}`,
+        area: storedFilename.includes("input") ? "auas/input" : "auas/output",
+        filename: `${Date.now()}_${storedFilename}`,
         buffer,
     }).publicUrl;
 }
