@@ -7834,6 +7834,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         const reader2 = resp.body.getReader();
                         const decoder = new TextDecoder();
                         let buf = '';
+                        let receivedAuasResult = false;
                         while (true) {
                           const { value, done } = await reader2.read();
                           if (done) break;
@@ -7937,10 +7938,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               if (missingArtifacts.length > 0) {
                                 throw new Error(`Falha na persistencia Cloudinary do Novo CAR: ${missingArtifacts.join(', ')}.`);
                               }
+                              receivedAuasResult = true;
                               setAuasResult(normalizedResult);
                               setAuasJobId(nextJobId);
-                              setAuasProcessing(false);
-                              setAuasProgress(null);
+                              setAuasProgress({ step: 'finalizing', percent: 100, message: 'Resultado recebido. Finalizando sincronizacao...' });
                               setAuasAgentLog((prev) => prev.map((item) => ({ ...item, done: true })));
 
                               const entry: AuasHistoryItem = {
@@ -8008,6 +8009,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               });
                             }
                           }
+                        }
+                        if (receivedAuasResult) {
+                          setAuasProcessing(false);
+                          setAuasProgress(null);
                         }
                       } catch (err: any) {
                         if (err?.name !== 'AbortError') {

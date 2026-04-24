@@ -323,6 +323,18 @@ function sendSSE(res: Response, data: Record<string, unknown>) {
     if (typeof (res as any).flush === "function") (res as any).flush();
 }
 
+function startSseHeartbeat(res: Response, intervalMs = 15_000): ReturnType<typeof setInterval> {
+    return setInterval(() => {
+        if (isSseConnectionClosed(res)) return;
+        try {
+            res.write(": heartbeat\n\n");
+            if (typeof (res as any).flush === "function") (res as any).flush();
+        } catch {
+            // The route finally block clears this interval.
+        }
+    }, intervalMs);
+}
+
 function isSseConnectionClosed(res: Response): boolean {
     const anyRes = res as any;
     return Boolean(
@@ -1137,6 +1149,7 @@ export function registerAuasRoutes(app: Express) {
         let usageInputs: Array<any> = [];
         let chargedBrl = 0;
         let processingJobId = "";
+        let sseHeartbeat: ReturnType<typeof setInterval> | null = null;
         let body: { propertyZip?: string; filename?: string } = {};
         try {
             const uid = String(req.authUid || "");
@@ -1203,6 +1216,7 @@ export function registerAuasRoutes(app: Express) {
             res.setHeader("Cache-Control", "no-cache");
             res.setHeader("Connection", "keep-alive");
             res.flushHeaders?.();
+            sseHeartbeat = startSseHeartbeat(res);
             const processingJob = startJob({
                 uid,
                 endpoint: "/api/auas/analyze",
@@ -1455,6 +1469,7 @@ export function registerAuasRoutes(app: Express) {
                 }
             }
         } finally {
+            if (sseHeartbeat) clearInterval(sseHeartbeat);
             if (!res.writableEnded) res.end();
         }
     });
