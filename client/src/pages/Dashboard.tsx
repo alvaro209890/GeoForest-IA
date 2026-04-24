@@ -3368,6 +3368,21 @@ export default function Dashboard() {
     window.open(toFileProxyUrl(sourceUrl, fileName, 'download'), '_blank', 'noopener,noreferrer');
   }, []);
 
+  const downloadSimcarZip = useCallback((url?: string | null, filename = 'SIMCAR_Recorte.zip') => {
+    const resolved = resolveBackendUrl(url || '');
+    if (!resolved) {
+      toast.error('Link do ZIP indisponível. Processe o recorte novamente.');
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = resolved;
+    a.download = filename.replace(/[^a-zA-Z0-9._-]/g, '_') || 'SIMCAR_Recorte.zip';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }, []);
+
   const uploadImageFile = async (file: File): Promise<string | null> => {
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -7007,14 +7022,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 Processado em {(simcarClipSummary.processingTimeMs / 1000).toFixed(1)}s • CRS: {simcarClipSummary.crs}
                               </p>
                             </div>
-                            <a
-                              href={simcarClipDownloadUrl}
-                              download
+                            <button
+                              type="button"
+                              onClick={() => downloadSimcarZip(
+                                simcarClipDownloadUrl,
+                                `SIMCAR_Recorte_${(simcarClipJobId || 'resultado').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`
+                              )}
                               className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/30 w-full sm:w-auto justify-center sm:justify-start"
                             >
                               <Download size={14} />
                               Baixar ZIP
-                            </a>
+                            </button>
                           </div>
 
                           {/* Layers with data */}
@@ -7105,21 +7123,21 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         {/* ZIP Download Links */}
                         {(() => {
                           const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
-                          const inputUrl = historyEntry?.inputZipUrl;
-                          const outputUrl = historyEntry?.outputZipUrl;
+                          const inputUrl = resolveBackendUrl(historyEntry?.inputZipUrl);
+                          const outputUrl = resolveBackendUrl(historyEntry?.outputZipUrl);
                           return (inputUrl || outputUrl) ? (
                             <div className="flex gap-2">
                               {inputUrl && (
-                                <a href={inputUrl} target="_blank" rel="noopener noreferrer"
+                                <button type="button" onClick={() => downloadSimcarZip(inputUrl, `SIMCAR_Original_${(simcarClipJobId || 'resultado').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`)}
                                   className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white text-xs font-medium transition-colors">
                                   <Download size={14} /> Shapefile Original
-                                </a>
+                                </button>
                               )}
                               {outputUrl && (
-                                <a href={outputUrl} target="_blank" rel="noopener noreferrer"
+                                <button type="button" onClick={() => downloadSimcarZip(outputUrl, `SIMCAR_Recorte_${(simcarClipJobId || 'resultado').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`)}
                                   className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-emerald-700/30 hover:bg-emerald-600/30 text-emerald-300 hover:text-white text-xs font-medium transition-colors">
                                   <Download size={14} /> ZIP Recortado
-                                </a>
+                                </button>
                               )}
                             </div>
                           ) : null;
