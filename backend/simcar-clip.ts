@@ -78,7 +78,7 @@ import {
     settleReservedCredits,
 } from "./billing";
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
-import { removeStoragePath, saveUserBuffer, writeDocBySegments } from "./local-storage";
+import { removeStoragePath, saveUserBuffer, STORAGE_ROOT, writeDocBySegments } from "./local-storage";
 import {
     finishJob,
     isCancelRequested,
@@ -2152,7 +2152,7 @@ async function processClip(
         layers: layerSummaries,
         warnings: dedupeWarnings(jobWarnings),
     };
-    const downloadUrl = `/api/simcar/clip/download/${jobId}`;
+    const downloadUrl = toPublicApiUrl(`/api/simcar/clip/download/${jobId}`);
     sendSSE(res, {
         type: "complete",
         jobId,
@@ -2184,6 +2184,31 @@ const PUBLIC_API_BASE_URL = (
     process.env.VITE_API_BASE ||
     "https://geoforest-api.cursar.space"
 ).trim().replace(/\/+$/, "");
+
+function toPublicApiUrl(url: string | undefined | null): string {
+    const clean = String(url || "").trim();
+    if (!clean) return "";
+    return clean.startsWith("/api/") ? `${PUBLIC_API_BASE_URL}${clean}` : clean;
+}
+
+function readPersistedSimcarClip(jobId: string): Record<string, any> | null {
+    const safeJobId = String(jobId || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_");
+    if (!safeJobId) return null;
+    const usersDir = path.join(STORAGE_ROOT, "users");
+    try {
+        if (!fs.existsSync(usersDir)) return null;
+        for (const entry of fs.readdirSync(usersDir, { withFileTypes: true })) {
+            if (!entry.isDirectory()) continue;
+            const docPath = path.join(usersDir, entry.name, "simcar_clips", `${safeJobId}.json`);
+            if (!fs.existsSync(docPath)) continue;
+            const parsed = JSON.parse(fs.readFileSync(docPath, "utf8"));
+            if (parsed && typeof parsed === "object") return parsed as Record<string, any>;
+        }
+    } catch (error) {
+        console.warn("[SIMCAR CLIP] failed to read persisted clip for download:", error);
+    }
+    return null;
+}
 const SPOT_LAYER = "Mosaicos:MOSAICO_SPOT_SEPLAN";
 const WMS_FETCH_RETRY_ATTEMPTS = Math.max(1, Number(process.env.WMS_FETCH_RETRY_ATTEMPTS || 2));
 const WMS_RETRY_BASE_DELAY_MS = 1200;
@@ -7605,7 +7630,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 status: "completed",
                 result: {
                     filename: safeFilename,
-                    downloadUrl: `/api/simcar/clip/download/${jobId}`,
+                    downloadUrl: toPublicApiUrl(`/api/simcar/clip/download/${jobId}`),
                     inputZipUrl,
                     outputZipUrl,
                     contextUrl: contextJsonUrl,
@@ -7615,7 +7640,7 @@ export function registerSimcarClipRoutes(app: Express) {
 
             res.json({
                 jobId,
-                downloadUrl: `/api/simcar/clip/download/${jobId}`,
+                downloadUrl: toPublicApiUrl(`/api/simcar/clip/download/${jobId}`),
                 inputZipUrl,
                 outputZipUrl,
                 contextUrl: contextJsonUrl,
@@ -7672,6 +7697,19 @@ export function registerSimcarClipRoutes(app: Express) {
 
         if (!cached || cached.expiresAt <= Date.now()) {
             if (cached) jobCache.delete(jobId);
+            const persisted = readPersistedSimcarClip(jobId);
+            const persistedOutputUrl = String(
+                persisted?.outputZipUrl ||
+                persisted?.files?.outputZipUrl ||
+                "",
+            ).trim();
+            const persistedDownloadUrl = String(persisted?.downloadUrl || "").trim();
+            const persistedUrl = persistedOutputUrl ||
+                (persistedDownloadUrl.includes(`/api/simcar/clip/download/${jobId}`) ? "" : persistedDownloadUrl);
+            if (persistedUrl) {
+                res.redirect(toPublicApiUrl(persistedUrl));
+                return;
+            }
             res.status(404).json({
                 error: "Download expirado ou não encontrado. Processe novamente.",
             });
@@ -7679,7 +7717,7 @@ export function registerSimcarClipRoutes(app: Express) {
         }
         if (!cached.buffer) {
             if (cached.outputZipUrl) {
-                res.redirect(cached.outputZipUrl);
+                res.redirect(toPublicApiUrl(cached.outputZipUrl));
                 return;
             }
             res.status(404).json({ error: "Arquivo do recorte não disponível no cache." });

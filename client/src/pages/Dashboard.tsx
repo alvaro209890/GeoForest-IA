@@ -410,11 +410,20 @@ const SETTINGS_FONT_SIZE_OPTIONS = ['Pequeno', 'Padrão', 'Grande'] as const;
 const AUAS_FIRESTORE_WRITE_RETRIES = 3;
 const AUAS_FIRESTORE_RETRY_BASE_MS = 450;
 
-const CONFIGURED_API_BASE = String(import.meta.env.VITE_API_BASE || '').trim().replace(/\/+$/, '');
+const DEFAULT_PRODUCTION_API_BASE = 'https://geoforest-api.cursar.space';
+const CONFIGURED_API_BASE = String(
+  import.meta.env.VITE_API_BASE ||
+  (typeof window !== 'undefined' && /\.web\.app$/i.test(window.location.hostname) ? DEFAULT_PRODUCTION_API_BASE : '')
+).trim().replace(/\/+$/, '');
 const apiUrl = (path: string) => {
   if (!path) return CONFIGURED_API_BASE || '';
   if (!CONFIGURED_API_BASE) return path;
   return `${CONFIGURED_API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
+};
+const resolveBackendUrl = (url?: string) => {
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  return raw.startsWith('/api/') ? apiUrl(raw) : raw;
 };
 
 const sanitizeMessagesForFirestore = (msgs: ChatMessage[]) =>
@@ -469,11 +478,9 @@ const toFileProxyUrl = (url?: string, name?: string, mode: 'inline' | 'download'
 };
 
 const resolveBackendDownloadUrl = (downloadUrl?: string, persistentUrl?: string) => {
-  const persistent = String(persistentUrl || '').trim();
+  const persistent = resolveBackendUrl(persistentUrl);
   if (persistent) return persistent;
-  const raw = String(downloadUrl || '').trim();
-  if (!raw) return '';
-  return raw.startsWith('/api/') ? apiUrl(raw) : raw;
+  return resolveBackendUrl(downloadUrl);
 };
 
 
@@ -1686,10 +1693,7 @@ export default function Dashboard() {
     const inputZipUrl = String(raw?.inputZipUrl || '').trim() || undefined;
     const contextUrl = String(raw?.contextUrl || '').trim() || undefined;
     const rawDownloadUrl = String(raw?.downloadUrl || '').trim();
-    const resolvedDownloadUrl = outputZipUrl
-      || (rawDownloadUrl
-        ? (rawDownloadUrl.startsWith('/api/') ? apiUrl(rawDownloadUrl) : rawDownloadUrl)
-        : undefined);
+    const resolvedDownloadUrl = resolveBackendDownloadUrl(rawDownloadUrl, outputZipUrl) || undefined;
     const images = Array.isArray(raw?.images)
       ? raw.images
         .map((img: any) => ({
@@ -2122,7 +2126,7 @@ export default function Dashboard() {
         clip.status === 'processing' ||
         (isVectorized && clip.status === 'completed' && !hasVectorizedFinalReport);
 
-      setSimcarClipDownloadUrl(clip.outputZipUrl || clip.downloadUrl);
+      setSimcarClipDownloadUrl(resolveBackendDownloadUrl(clip.downloadUrl, clip.outputZipUrl));
       setSimcarClipJobId(clip.jobId);
       if (clip.sourceMode === 'auto-clip' || clip.sourceMode === 'vectorized-analysis') {
         setSimcarClipMode(clip.sourceMode);

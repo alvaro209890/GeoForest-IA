@@ -2,6 +2,13 @@
   "hosting": {
     "public": "dist/public",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "redirects": [
+      {
+        "source": "/api/:path*",
+        "destination": "https://geoforest-api.cursar.space/api/:path",
+        "type": 302
+      }
+    ],
     "rewrites": [{ "source": "**", "destination": "/index.html" }]
   }
 }
