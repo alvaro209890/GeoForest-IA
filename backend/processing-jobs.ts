@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
-import { writeDocBySegments } from "./local-storage";
+import fs from "node:fs";
+import path from "node:path";
+import { STORAGE_ROOT, writeDocBySegments } from "./local-storage";
 
 export type ProcessingJobStatus =
   | "running"
@@ -114,6 +116,78 @@ function pruneJobsInMemory(): void {
 }
 
 setInterval(pruneJobsInMemory, 5 * 60 * 1000).unref();
+
+function readJsonSafe(filePath: string): Record<string, any> | null {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, any>;
+  } catch {
+    return null;
+  }
+}
+
+export function markPersistedRunningJobsInterrupted(): number {
+  const usersDir = path.join(STORAGE_ROOT, "users");
+  if (!fs.existsSync(usersDir)) return 0;
+
+  let count = 0;
+  const now = Date.now();
+  for (const uid of fs.readdirSync(usersDir)) {
+    const processingDir = path.join(usersDir, uid, "processing_jobs");
+    if (!fs.existsSync(processingDir)) continue;
+    for (const entry of fs.readdirSync(processingDir)) {
+      if (!entry.endsWith(".json")) continue;
+      const jobId = entry.replace(/\.json$/i, "");
+      const data = readJsonSafe(path.join(processingDir, entry));
+      const status = safeTrim(data?.status).toLowerCase();
+      if (status !== "running" && status !== "cancel_requested") continue;
+
+      const endpoint = safeTrim(data?.endpoint);
+      const error = "Processamento interrompido pelo reinicio do servidor.";
+      writeDocBySegments(
+        ["users", uid, "processing_jobs", jobId],
+        {
+          status: "failed",
+          cancelRequested: false,
+          error,
+          updatedAtMs: now,
+          finishedAtMs: now,
+        },
+        { merge: true },
+      );
+
+      const clipJobId = safeTrim(data?.metadata?.clipJobId);
+      if (clipJobId && endpoint.startsWith("/api/simcar/clip")) {
+        const clipData = readJsonSafe(path.join(usersDir, uid, "simcar_clips", `${clipJobId}.json`));
+        const sourceMode = safeTrim(clipData?.sourceMode);
+        const isAutoClipAuas = endpoint === "/api/simcar/clip/analyze-auas" && sourceMode === "auto-clip";
+        writeDocBySegments(
+          ["users", uid, "simcar_clips", clipJobId],
+          {
+            status: isAutoClipAuas ? "completed" : "failed",
+            processingStage: isAutoClipAuas ? undefined : "error",
+            error,
+          },
+          { merge: true },
+        );
+      }
+
+      if (endpoint === "/api/auas/analyze") {
+        writeDocBySegments(
+          ["users", uid, "auas_jobs", jobId],
+          {
+            status: "failed",
+            error,
+          },
+          { merge: true },
+        );
+      }
+
+      count++;
+    }
+  }
+  return count;
+}
 
 export function startJob(input: StartJobInput): ProcessingJob {
   const now = Date.now();

@@ -41,6 +41,7 @@ import {
   JobCancelledError,
   finishJob,
   isCancelRequested,
+  markPersistedRunningJobsInterrupted,
   markDisconnected,
   requestCancel,
   startJob,
@@ -165,6 +166,10 @@ async function startServer() {
   });
 
   ensureStorageRoot();
+  const interruptedJobs = markPersistedRunningJobsInterrupted();
+  if (interruptedJobs > 0) {
+    logBackend("processing_jobs_interrupted_on_boot", { count: interruptedJobs }, "warn");
+  }
   app.use(express.json({ limit: "25mb" }));
 
   const isDevelopment = process.env.NODE_ENV !== "production";

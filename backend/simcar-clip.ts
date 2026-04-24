@@ -702,6 +702,18 @@ function sendSSE(res: Response, data: Record<string, unknown>) {
     if (typeof (res as any).flush === "function") (res as any).flush();
 }
 
+function startSseHeartbeat(res: Response, intervalMs = 15_000): ReturnType<typeof setInterval> {
+    return setInterval(() => {
+        if (isSseConnectionClosed(res)) return;
+        try {
+            res.write(": heartbeat\n\n");
+            if (typeof (res as any).flush === "function") (res as any).flush();
+        } catch {
+            // The route finally block will close the interval.
+        }
+    }, intervalMs);
+}
+
 class ClientAbortError extends Error {
     constructor(message = "Cliente desconectou durante a análise.") {
         super(message);
@@ -4897,6 +4909,134 @@ function explainAuasBridgeVerdict(value: AcAvnVerdict | undefined | null): strin
     return "a relação AVN x AUAS ficou inconclusiva para este recorte.";
 }
 
+function formatOperationalStatus(value: AcAvnVerdict | undefined | null): string {
+    if (value === "SIM") return "Revisar";
+    if (value === "NAO") return "Sem ajuste indicado";
+    return "Inconclusivo";
+}
+
+function buildAcDecisionText(value: AcAvnVerdict): string {
+    if (value === "SIM") {
+        return "foi detectado uso antrópico fora do polígono AC. Revisar o limite da AC nos trechos apontados.";
+    }
+    if (value === "NAO") {
+        return "não foi detectado uso antrópico relevante fora do polígono AC nas imagens avaliadas.";
+    }
+    return "não houve segurança suficiente para confirmar ou descartar uso antrópico fora do polígono AC. Tratar como pendência de revisão, não como erro confirmado.";
+}
+
+function buildAvnDecisionText(value: AcAvnVerdict): string {
+    if (value === "SIM") {
+        return "foi detectado trecho antropizado dentro do polígono AVN. Revisar a AVN no setor indicado.";
+    }
+    if (value === "NAO") {
+        return "não foi detectada antropização consistente dentro do polígono AVN declarado.";
+    }
+    return "não houve segurança suficiente para confirmar a integridade da AVN. Revisar com imagem complementar ou checagem técnica.";
+}
+
+function buildAuasBridgeDecisionText(value: AcAvnVerdict, auasContext?: AcAvnAuasContext | null): string {
+    if (!auasContext?.hasAuasLayer) return "camada AUAS ausente ou insuficiente neste recorte; executar a rotina AUAS se essa validação for necessária.";
+    if (value === "SIM") {
+        return "há sinal de vegetação nativa fora da AVN, mas dentro da AUAS. Executar a análise AUAS antes de decidir ajuste.";
+    }
+    if (value === "NAO") {
+        return "não há indicação de conflito visual entre AVN e AUAS para este critério.";
+    }
+    return "a relação AVN x AUAS não ficou segura; usar a análise AUAS temporal para fechar a decisão.";
+}
+
+function buildAcAvnExecutiveSummary(args: {
+    acForaShape: AcAvnVerdict;
+    avnDentroShapeAntropizado: AcAvnVerdict;
+    confidence: AcAvnConfidence;
+}): string {
+    const issues: string[] = [];
+    if (args.acForaShape === "SIM") issues.push("AC precisa de revisão");
+    if (args.avnDentroShapeAntropizado === "SIM") issues.push("AVN precisa de revisão");
+    if (args.acForaShape === "INCONCLUSIVO") issues.push("AC ficou inconclusiva");
+    if (args.avnDentroShapeAntropizado === "INCONCLUSIVO") issues.push("AVN ficou inconclusiva");
+
+    if (issues.length === 0) {
+        return `As imagens avaliadas não indicam ajuste obrigatório nos shapes AC e AVN. Confiança geral: **${formatAcAvnConfidence(args.confidence)}**.`;
+    }
+    return `${issues.join("; ")}. Confiança geral: **${formatAcAvnConfidence(args.confidence)}**.`;
+}
+
+function buildSatelliteReadableLine(sat: AcAvnSatelliteVerdict): string {
+    if (sat.status === "missing") {
+        return `- **${sat.label}:** imagem indisponível; não foi usada na decisão.`;
+    }
+    const ac = sat.acForaShape === "SIM"
+        ? "AC fora do shape detectada"
+        : sat.acForaShape === "NAO"
+            ? "AC fora do shape não detectada"
+            : "AC fora do shape inconclusiva";
+    const avn = sat.avnDentroShapeAntropizado === "SIM"
+        ? "antropização dentro da AVN detectada"
+        : sat.avnDentroShapeAntropizado === "NAO"
+            ? "antropização dentro da AVN não detectada"
+            : "AVN inconclusiva";
+    const weight = sat.key.toLowerCase().includes("spot")
+        ? "maior peso por melhor resolução"
+        : sat.confidence === "BAIXA" || sat.confidence === "INCONCLUSIVO"
+            ? "apoio limitado"
+            : "apoio válido";
+    return `- **${sat.label}:** ${ac}; ${avn}. Confiança ${formatAcAvnConfidence(sat.confidence).toLowerCase()} (${weight}).`;
+}
+
+function buildAcAvnConclusion(args: {
+    acForaShape: AcAvnVerdict;
+    avnDentroShapeAntropizado: AcAvnVerdict;
+    avnParcialForaShapeMasEmAuas: AcAvnVerdict;
+    missingSatellites: string[];
+    coherenceNotes: string[];
+}): string {
+    const lines: string[] = [];
+    if (args.acForaShape === "SIM" || args.avnDentroShapeAntropizado === "SIM") {
+        lines.push("Há indicação de ajuste vetorial. Priorize os trechos onde a imagem mostra uso antrópico fora da AC ou dentro da AVN.");
+    } else if (args.acForaShape === "NAO" && args.avnDentroShapeAntropizado === "NAO") {
+        lines.push("Não foi identificado ajuste obrigatório para AC ou AVN com base no conjunto de imagens analisado.");
+    } else {
+        lines.push("O resultado principal é parcialmente inconclusivo. Isso significa que a análise não confirmou erro vetorial, mas também não descartou totalmente a dúvida nas áreas ambíguas.");
+    }
+    if (args.avnParcialForaShapeMasEmAuas === "SIM") {
+        lines.push("A relação AVN x AUAS exige validação temporal específica antes de qualquer alteração no shape.");
+    }
+    if (args.coherenceNotes.length > 0) {
+        lines.push("Há divergência entre cenas; por isso a conclusão deve ser tratada com cautela técnica.");
+    }
+    if (args.missingSatellites.length > 0) {
+        lines.push(`Imagens indisponíveis: ${args.missingSatellites.join(", ")}.`);
+    }
+    return lines.map((line) => `- ${line}`).join("\n");
+}
+
+function buildAcAvnRecommendation(args: {
+    acForaShape: AcAvnVerdict;
+    avnDentroShapeAntropizado: AcAvnVerdict;
+    avnParcialForaShapeMasEmAuas: AcAvnVerdict;
+}): string {
+    const lines: string[] = [];
+    if (args.acForaShape === "SIM") {
+        lines.push("Revisar e, se confirmado, ampliar o shape AC nos trechos antropizados fora do polígono atual.");
+    } else if (args.acForaShape === "INCONCLUSIVO") {
+        lines.push("Revisar manualmente as bordas AC/AVN com imagem de maior resolução antes de alterar o shape AC.");
+    }
+    if (args.avnDentroShapeAntropizado === "SIM") {
+        lines.push("Revisar o shape AVN e excluir trechos claramente antropizados, mantendo registro da evidência visual.");
+    } else if (args.avnDentroShapeAntropizado === "INCONCLUSIVO") {
+        lines.push("Validar a AVN com imagem complementar ou checagem de campo nos setores de textura ambígua.");
+    }
+    if (args.avnParcialForaShapeMasEmAuas === "SIM" || args.avnParcialForaShapeMasEmAuas === "INCONCLUSIVO") {
+        lines.push("Executar a análise AUAS temporal para confirmar a coerência entre AUAS e vegetação remanescente.");
+    }
+    if (lines.length === 0) {
+        lines.push("Manter os shapes AC e AVN como estão, salvo se houver nova evidência ou ajuste cadastral externo.");
+    }
+    return lines.map((line) => `- ${line}`).join("\n");
+}
+
 function extractMarkdownSection(text: string, title: string): string {
     const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const re = new RegExp(`(^|\\n)##\\s+${escaped}\\s*\\n([\\s\\S]*?)(?=\\n##\\s+|$)`, "i");
@@ -4916,49 +5056,38 @@ function buildReadableAcAvnReport(args: {
 }): string {
     const original = String(args.originalText || "");
     const evidences = extractMarkdownSection(original, "Evidências por Imagem");
-    const conclusion = extractMarkdownSection(original, "Conclusão Técnica");
-    const recommendation = extractMarkdownSection(original, "Recomendação Operacional");
     const context = args.auasContext?.hasAuasLayer
         ? [
             `AUAS declarada: ${args.auasContext.auasAreaHa.toFixed(2)} ha.`,
             `AVN declarada: ${args.auasContext.avnAreaHa.toFixed(2)} ha.`,
             `Interseção AUAS x AVN: ${args.auasContext.overlapAreaHa.toFixed(2)} ha (${args.auasContext.overlapPctOfAuas.toFixed(1)}% da AUAS).`,
+            `AUAS fora do AVN: ${args.auasContext.auasOutsideAvnAreaHa.toFixed(2)} ha (${args.auasContext.auasOutsideAvnPct.toFixed(1)}% da AUAS).`,
         ]
         : [];
-
-    const satelliteRows = args.satelliteVerdicts.map((sat) => {
-        const note =
-            sat.status === "missing"
-                ? "Imagem indisponível"
-                : sat.confidence === "BAIXA" || sat.confidence === "INCONCLUSIVO"
-                    ? "Usar apenas como apoio"
-                    : sat.key.toLowerCase().includes("spot")
-                        ? "Imagem de maior resolução"
-                        : "Cena avaliada";
-        return `| ${sat.label} | ${formatAcAvnVerdict(sat.acForaShape)} | ${formatAcAvnVerdict(sat.avnDentroShapeAntropizado)} | ${formatAcAvnConfidence(sat.confidence)} | ${note} |`;
-    });
-
+    const satelliteLines = args.satelliteVerdicts.map(buildSatelliteReadableLine);
     const coherent = args.coherenceNotes.length === 0;
+
     return [
-        "## Resultado da Validação AC/AVN",
-        `A leitura geral indica que ${explainAcVerdict(args.acForaShape)} Para a AVN, ${explainAvnVerdict(args.avnDentroShapeAntropizado)} Confiança geral: **${formatAcAvnConfidence(args.confidence)}**.`,
+        "## Parecer Técnico AC/AVN",
+        buildAcAvnExecutiveSummary({
+            acForaShape: args.acForaShape,
+            avnDentroShapeAntropizado: args.avnDentroShapeAntropizado,
+            confidence: args.confidence,
+        }),
         "",
-        "## Pontos de Decisão",
-        `- **AC fora do shape:** ${formatAcAvnVerdict(args.acForaShape)} — ${explainAcVerdict(args.acForaShape)}`,
-        "- **Vegetação fora do shape AVN:** não aplicável nesta rotina; esse critério é ignorado por regra técnica.",
-        `- **Trecho antropizado dentro da AVN:** ${formatAcAvnVerdict(args.avnDentroShapeAntropizado)} — ${explainAvnVerdict(args.avnDentroShapeAntropizado)}`,
-        `- **Relação AVN x AUAS:** ${formatAcAvnVerdict(args.avnParcialForaShapeMasEmAuas)} — ${explainAuasBridgeVerdict(args.avnParcialForaShapeMasEmAuas)}`,
+        "## Decisão por Tema",
+        `- **AC fora do shape:** ${formatOperationalStatus(args.acForaShape)} — ${buildAcDecisionText(args.acForaShape)}`,
+        `- **Antropização dentro da AVN:** ${formatOperationalStatus(args.avnDentroShapeAntropizado)} — ${buildAvnDecisionText(args.avnDentroShapeAntropizado)}`,
+        `- **Relação AVN x AUAS:** ${formatOperationalStatus(args.avnParcialForaShapeMasEmAuas)} — ${buildAuasBridgeDecisionText(args.avnParcialForaShapeMasEmAuas, args.auasContext)}`,
         "",
         ...(context.length ? ["## Contexto AUAS x AVN", ...context.map((item) => `- ${item}`), ""] : []),
-        "## Leitura por Satélite",
-        "| Satélite | AC fora do shape | AVN antropizada dentro do shape | Confiança | Interpretação |",
-        "|---|---|---|---|---|",
-        ...satelliteRows,
+        "## Imagens Avaliadas",
+        ...(satelliteLines.length ? satelliteLines : ["- Nenhuma imagem válida foi registrada para esta etapa."]),
         "",
-        "## Coerência entre as Imagens",
+        "## Coerência Técnica",
         coherent
-            ? "- Os vereditos globais estão coerentes com as imagens avaliadas."
-            : "- Há divergência entre imagens; por isso a conclusão deve ser lida com cautela.",
+            ? "- Os vereditos globais estão coerentes com os vereditos por imagem."
+            : "- Há divergência entre imagens; a decisão final foi conservadora.",
         ...args.coherenceNotes.map((note) => `- ${note}`),
         ...(args.missingSatellites.length > 0
             ? [`- Imagens indisponíveis: ${args.missingSatellites.join(", ")}.`]
@@ -4968,15 +5097,20 @@ function buildReadableAcAvnReport(args: {
         evidences || "- A IA não detalhou evidências suficientes por imagem; recomenda-se revisar visualmente os painéis gerados.",
         "",
         "## Conclusão Técnica",
-        conclusion || buildUserFriendlyAcAvnGuidance(
-            args.acForaShape,
-            args.avnDentroShapeAntropizado,
-            args.avnParcialForaShapeMasEmAuas,
-            args.missingSatellites,
-        ),
+        buildAcAvnConclusion({
+            acForaShape: args.acForaShape,
+            avnDentroShapeAntropizado: args.avnDentroShapeAntropizado,
+            avnParcialForaShapeMasEmAuas: args.avnParcialForaShapeMasEmAuas,
+            missingSatellites: args.missingSatellites,
+            coherenceNotes: args.coherenceNotes,
+        }),
         "",
         "## Próximas Ações Recomendadas",
-        recommendation || "- Conferir os limites de AC, AVN e AUAS nos setores apontados e reprocessar caso algum shape seja ajustado.",
+        buildAcAvnRecommendation({
+            acForaShape: args.acForaShape,
+            avnDentroShapeAntropizado: args.avnDentroShapeAntropizado,
+            avnParcialForaShapeMasEmAuas: args.avnParcialForaShapeMasEmAuas,
+        }),
     ].join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
@@ -6316,18 +6450,9 @@ async function processAuasAnalysis(
         firstDeforestationYear,
     );
 
-    // Step 6: Complete
-    const auasSummary = layerSummaries.find((l) => l.name === "AUAS");
-    sendSSE(res, {
-        type: "complete",
-        percent: 100,
-        analysis: analysisText,
-        images: cloudinaryUrls,
-        layerSummaries: layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
-        auasAreaHa: auasSummary?.areaHa ?? 0,
-        auasMeta,
-        cloudWarnings: cloudWarnings.length > 0 ? cloudWarnings : undefined,
-    });
+    // The route sends the final SSE event only after billing, persistence and
+    // job finalization succeed, so the frontend never sees a completed result
+    // before the saved card is durable.
     return {
         analysisText,
         images: cloudinaryUrls,
@@ -7777,6 +7902,7 @@ export function registerSimcarClipRoutes(app: Express) {
         let usageInputs: Array<any> = [];
         let chargedBrl = 0;
         let processingJobId = "";
+        let sseHeartbeat: ReturnType<typeof setInterval> | null = null;
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
@@ -7819,6 +7945,7 @@ export function registerSimcarClipRoutes(app: Express) {
             });
 
             sendSseHeaders(res);
+            sseHeartbeat = startSseHeartbeat(res);
             const processingJob = startJob({
                 uid,
                 endpoint: "/api/simcar/clip/analyze-auas",
@@ -7922,6 +8049,17 @@ export function registerSimcarClipRoutes(app: Express) {
                     chargedBrl: Number(chargedBrl.toFixed(4)),
                 },
             });
+            const auasSummary = auasOutcome.layerSummaries.find((l) => l.name === "AUAS");
+            sendSSE(res, {
+                type: "complete",
+                percent: 100,
+                analysis: auasOutcome.analysisText,
+                images: auasOutcome.images,
+                layerSummaries: auasOutcome.layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
+                auasAreaHa: auasSummary?.areaHa ?? 0,
+                auasMeta: auasOutcome.auasMeta,
+                cloudWarnings: auasOutcome.cloudWarnings.length > 0 ? auasOutcome.cloudWarnings : undefined,
+            });
         } catch (err: any) {
             if (err instanceof ClientAbortError) {
                 if (billingUid && billingReserved > 0 && billingRequestId) {
@@ -8005,6 +8143,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 res.status(500).json({ error: err.message || "Erro interno inesperado." });
             }
         } finally {
+            if (sseHeartbeat) clearInterval(sseHeartbeat);
             if (!res.writableEnded) res.end();
         }
     });
