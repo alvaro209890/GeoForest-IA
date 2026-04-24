@@ -468,6 +468,14 @@ const toFileProxyUrl = (url?: string, name?: string, mode: 'inline' | 'download'
   );
 };
 
+const resolveBackendDownloadUrl = (downloadUrl?: string, persistentUrl?: string) => {
+  const persistent = String(persistentUrl || '').trim();
+  if (persistent) return persistent;
+  const raw = String(downloadUrl || '').trim();
+  if (!raw) return '';
+  return raw.startsWith('/api/') ? apiUrl(raw) : raw;
+};
+
 
 
 
@@ -2364,9 +2372,12 @@ export default function Dashboard() {
           const clips: SimcarClipHistoryItem[] = [];
           simcarSnap.forEach((docSnap) => {
             const data = docSnap.data() as any;
-            const rawDownloadUrl = data?.downloadUrl ? String(data.downloadUrl) : '';
-            const normalizedDownloadUrl =
-              rawDownloadUrl && rawDownloadUrl.startsWith('/api/') ? apiUrl(rawDownloadUrl) : rawDownloadUrl;
+            const outputZipUrl = data?.outputZipUrl
+              ? String(data.outputZipUrl)
+              : data?.files?.outputZipUrl
+                ? String(data.files.outputZipUrl)
+                : undefined;
+            const normalizedDownloadUrl = resolveBackendDownloadUrl(data?.downloadUrl, outputZipUrl);
             const summary = normalizeSimcarClipSummary(data?.summary);
             clips.push({
               id: String(data?.id || docSnap.id),
@@ -2384,11 +2395,7 @@ export default function Dashboard() {
                 : data?.files?.inputZipUrl
                   ? String(data.files.inputZipUrl)
                   : undefined,
-              outputZipUrl: data?.outputZipUrl
-                ? String(data.outputZipUrl)
-                : data?.files?.outputZipUrl
-                  ? String(data.files.outputZipUrl)
-                  : undefined,
+              outputZipUrl,
               contextUrl: data?.contextUrl
                 ? String(data.contextUrl)
                 : data?.files?.contextUrl
@@ -4639,10 +4646,7 @@ export default function Dashboard() {
         throw new Error('Importação concluída sem jobId válido.');
       }
       pipelineJobId = jobId;
-      const resolvedDownloadUrl =
-        typeof payload?.downloadUrl === 'string' && payload.downloadUrl.startsWith('/api/')
-          ? apiUrl(payload.downloadUrl)
-          : String(payload?.downloadUrl || '');
+      const resolvedDownloadUrl = resolveBackendDownloadUrl(payload?.downloadUrl, payload?.outputZipUrl);
       const summary = normalizeSimcarClipSummary(payload?.summary);
       const newClip: SimcarClipHistoryItem = {
         id: jobId,
@@ -4660,6 +4664,7 @@ export default function Dashboard() {
         totalLayers: Number(summary?.layersProcessed || summary?.layers?.length || 0),
         jobId,
         conversationId: nanoid(),
+        inputZipUrl: payload?.inputZipUrl ? String(payload.inputZipUrl) : undefined,
         outputZipUrl: payload?.outputZipUrl ? String(payload.outputZipUrl) : undefined,
         contextUrl: payload?.contextUrl ? String(payload.contextUrl) : undefined,
         sourceMode: 'vectorized-analysis',
@@ -6319,7 +6324,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </h2>
                       <p className="text-[11px] sm:text-xs text-slate-400">
                         {simcarClipMode === 'auto-clip'
-                          ? 'Envie o shapefile do imóvel e receba as camadas SIMCAR Digital locais recortadas'
+                          ? 'Envie o shapefile do imóvel e receba as camadas SIMCAR Digital da SEMA-MT recortadas'
                           : 'Envie o ZIP do modelo vetorizado para analisar diretamente com IA, sem recorte WFS'}
                       </p>
                       {isSimcarModeLocked && (
@@ -6700,10 +6705,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                   status: event.status,
                                 });
                               } else if (event.type === 'complete') {
-                                const resolvedDownloadUrl =
-                                  typeof event.downloadUrl === 'string' && event.downloadUrl.startsWith('/api/')
-                                    ? apiUrl(event.downloadUrl)
-                                    : String(event.downloadUrl || '');
+                                const resolvedDownloadUrl = resolveBackendDownloadUrl(event.downloadUrl, event.outputZipUrl);
                                 setSimcarClipDownloadUrl(resolvedDownloadUrl);
                                 const summary = normalizeSimcarClipSummary(event.summary);
                                 setSimcarClipSummary(summary);
@@ -6866,12 +6868,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                     <p className="text-[10px] text-slate-500 mt-2">
                       {(simcarClipProgress.status === 'fetching' || simcarClipProgress.status === 'fetching_local') &&
-                        'Lendo feições da base SIMCAR Digital local...'}
+                        'Lendo feições no WFS da SEMA-MT...'}
                       {simcarClipProgress.status === 'clipping' && 'Recortando feições...'}
                       {simcarClipProgress.status === 'copying_property' && 'Copiando polígono do imóvel...'}
                       {simcarClipProgress.status === 'building_zip' && 'Montando arquivo ZIP...'}
                       {simcarClipProgress.status === 'no_wfs_match' && 'Camada não encontrada no WFS'}
-                      {simcarClipProgress.status === 'no_local_match' && 'Camada não encontrada na base local'}
+                      {simcarClipProgress.status === 'no_local_match' && 'Camada não encontrada no WFS da SEMA-MT'}
                     </p>
                   </section>
                 );

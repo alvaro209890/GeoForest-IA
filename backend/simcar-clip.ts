@@ -1826,6 +1826,7 @@ async function processClip(
     }
 
     const { polygon: userPolygon, geometry: userGeometry, areaHa } = userResult;
+    const userWkt = polygonToWkt(userGeometry);
 
     // 2. Read template
     let templateEntries: Array<{ name: string; data: Buffer }>;
@@ -1847,24 +1848,16 @@ async function processClip(
         }
     }
 
-    // 4. Local SIMCAR Digital snapshot → discover layer mapping
-    let localLayerMapping = new Map<string, LocalSimcarLayerSource>();
+    // 4. SEMA-MT WFS GetCapabilities -> discover layer mapping
+    let layerMapping = new Map<string, string>();
     try {
-        if (!fs.existsSync(SIMCAR_LOCAL_SHAPES_ROOT)) {
-            throw new Error(`Diretorio nao encontrado: ${SIMCAR_LOCAL_SHAPES_ROOT}`);
-        }
-        buildLocalSimcarLayerIndex(SIMCAR_LOCAL_SHAPES_ROOT);
-        for (const layerName of TEMPLATE_LAYERS) {
-            if (DIRECT_COPY_LAYERS.has(layerName)) continue;
-            const source = resolveLocalSimcarLayer(layerName);
-            if (source) localLayerMapping.set(layerName, source);
-        }
-        console.log(
-            `[SIMCAR CLIP] Local SIMCAR Digital mapping: ${localLayerMapping.size} layers matched from ${SIMCAR_LOCAL_SHAPES_ROOT}`,
-        );
+        const caps = await getCapabilitiesCached(false);
+        const wfsNames = [...caps.layerNames];
+        layerMapping = discoverLayerMapping(TEMPLATE_LAYERS, wfsNames);
+        console.log(`[SIMCAR CLIP] SEMA WFS layer mapping: ${layerMapping.size} layers matched`);
     } catch (err: any) {
-        console.error("[SIMCAR CLIP] Local SIMCAR Digital source error:", err.message);
-        sendSSE(res, { type: "error", message: `Base local SIMCAR Digital indisponível: ${err.message}` });
+        console.error("[SIMCAR CLIP] WFS capabilities error:", err.message);
+        sendSSE(res, { type: "error", message: "Serviço WFS da SEMA-MT indisponível." });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
 
@@ -1917,21 +1910,21 @@ async function processClip(
             continue;
         }
 
-        // Category 2: local SIMCAR Digital ZIP + clip
-        const localSource = localLayerMapping.get(layerName);
-        if (!localSource) {
+        // Category 2: SEMA-MT WFS query + local clip
+        const wfsTypeName = layerMapping.get(layerName);
+        if (!wfsTypeName) {
             sendSSE(res, {
                 type: "progress",
                 layer: layerName,
                 current,
                 total,
-                status: "no_local_match",
+                status: "no_wfs_match",
             });
             layerSummaries.push({
                 name: layerName,
                 source: "wfs",
                 features: 0,
-                warning: "Camada não encontrada na base local SIMCAR Digital",
+                warning: "Camada não encontrada no WFS da SEMA-MT",
             });
             continue;
         }
@@ -1942,40 +1935,48 @@ async function processClip(
             layer: layerName,
             current,
             total,
-            status: "fetching_local",
+            status: "fetching",
         });
 
-        let localFetch: WfsClipFetchResult;
+        let wfsFetch: WfsClipFetchResult;
         try {
-            localFetch = readLocalSimcarClipFeatures(localSource, userPolygon, featureBbox(userPolygon));
+            wfsFetch = await fetchWfsClipFeatures(wfsTypeName, userWkt, "EPSG:4674");
         } catch (err: any) {
-            console.error(`[SIMCAR CLIP] Local SIMCAR read error for ${layerName}:`, err.message);
+            console.error(`[SIMCAR CLIP] WFS fetch error for ${layerName}:`, err.message);
             layerSummaries.push({
                 name: layerName,
                 source: "wfs",
                 features: 0,
-                warning: `Erro base local: ${err.message?.slice(0, 100)}`,
+                warning: `Erro WFS: ${err.message?.slice(0, 100)}`,
             });
             continue;
         }
 
-        const clipped = localFetch.features.map((feature) => ({
-            geometry: feature.geometry,
-            properties: feature.properties,
-        })).filter((feature): feature is { geometry: Geometry; properties: Record<string, unknown> } => Boolean(feature.geometry));
+        const wfsFeatures = wfsFetch.features;
+        if (!wfsFeatures.length) {
+            const summary = appendLayerWarning({
+                name: layerName,
+                source: "wfs",
+                features: 0,
+            }, wfsFetch.warnings, wfsFetch.partial);
+            if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);
+            layerSummaries.push(summary);
+            continue;
+        }
+
+        const clipped = clipFeaturesToPolygon(wfsFeatures, userPolygon);
 
         if (!clipped.length) {
             const summary = appendLayerWarning({
                 name: layerName,
                 source: "wfs",
                 features: 0,
-            }, localFetch.warnings, localFetch.partial);
+            }, wfsFetch.warnings, wfsFetch.partial);
             if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);
             layerSummaries.push(summary);
             continue;
         }
 
-        // Build output from clipped local features
         sendSSE(res, {
             type: "progress",
             layer: layerName,
@@ -2031,7 +2032,7 @@ async function processClip(
             source: "wfs",
             features: records.length,
             areaHa: Number(layerAreaHa.toFixed(4)),
-        }, localFetch.warnings, localFetch.partial);
+        }, wfsFetch.warnings, wfsFetch.partial);
         if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);
         layerSummaries.push(summary);
     }
@@ -2792,10 +2793,11 @@ async function uploadRawBufferToCloudinary(
 }
 
 async function uploadBufferToCloudinary(buffer: Buffer, filename: string, uid = "anonymous"): Promise<string> {
+    const storedFilename = filename.toLowerCase().endsWith(".zip") ? filename : `${filename}.zip`;
     return saveUserBuffer({
         uid,
-        area: filename.includes("input") ? "simcar/input" : "simcar/output",
-        filename: `${Date.now()}_${filename}`,
+        area: storedFilename.includes("input") ? "simcar/input" : "simcar/output",
+        filename: `${Date.now()}_${storedFilename}`,
         buffer,
     }).publicUrl;
 }
@@ -7388,15 +7390,25 @@ export function registerSimcarClipRoutes(app: Express) {
                 });
             }
 
+            let inputZipUrl: string | undefined;
             let outputZipUrl: string | undefined;
             let contextJsonUrl: string | undefined;
             let cloudinaryStoredBytes = 0;
             try {
-                outputZipUrl = await uploadBufferToCloudinary(
-                    zipBuffer,
-                    `simcar_vectorized_${jobId.slice(0, 8)}`,
-                    uid,
-                );
+                const [inUrl, outUrl] = await Promise.all([
+                    uploadBufferToCloudinary(
+                        zipBuffer,
+                        `simcar_vectorized_input_${jobId.slice(0, 8)}`,
+                        uid,
+                    ),
+                    uploadBufferToCloudinary(
+                        zipBuffer,
+                        `simcar_vectorized_output_${jobId.slice(0, 8)}`,
+                        uid,
+                    ),
+                ]);
+                inputZipUrl = inUrl;
+                outputZipUrl = outUrl;
 
                 const persistedContext: PersistedClipContextV1 = {
                     version: 1,
@@ -7408,6 +7420,7 @@ export function registerSimcarClipRoutes(app: Express) {
                     layerSummaries: parsed.layerSummaries,
                     areaHa: Number(parsed.areaHa || 0),
                     clippedGeometries: mapToObjectGeometry(parsed.clippedGeometries || new Map<string, Geometry[]>()),
+                    inputZipUrl,
                     outputZipUrl,
                     warnings: parsed.warnings,
                     propertySourceLayer: parsed.propertySourceLayer,
@@ -7419,7 +7432,7 @@ export function registerSimcarClipRoutes(app: Express) {
                     "application/json",
                     uid,
                 );
-                cloudinaryStoredBytes = zipBuffer.length + contextBuffer.length;
+                cloudinaryStoredBytes = zipBuffer.length * 2 + contextBuffer.length;
             } catch (uploadErr: any) {
                 console.warn("[SIMCAR VECTOR IMPORT] Cloudinary persist failed:", uploadErr?.message || uploadErr);
             }
@@ -7430,6 +7443,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 uid,
                 buffer: zipBuffer,
                 expiresAt: Date.now() + CACHE_TTL_MS,
+                inputZipUrl,
                 outputZipUrl,
                 contextJsonUrl,
             });
@@ -7479,7 +7493,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 result: {
                     filename: safeFilename,
                     downloadUrl: `/api/simcar/clip/download/${jobId}`,
-                    inputZipUrl: undefined,
+                    inputZipUrl,
                     outputZipUrl,
                     contextUrl: contextJsonUrl,
                     summary: summaryPayload,
@@ -7489,6 +7503,7 @@ export function registerSimcarClipRoutes(app: Express) {
             res.json({
                 jobId,
                 downloadUrl: `/api/simcar/clip/download/${jobId}`,
+                inputZipUrl,
                 outputZipUrl,
                 contextUrl: contextJsonUrl,
                 summary: summaryPayload,
