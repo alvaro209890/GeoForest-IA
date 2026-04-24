@@ -6014,17 +6014,11 @@ async function processAuasAnalysis(
     cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
 } | null> {
     throwIfClientDisconnected(res);
-    let job = jobCache.get(jobId);
-    if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
-        job = (await hydrateJobFromPersistedContext(jobId, contextUrl)) ?? undefined;
-    }
-    if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && outputZipUrl) {
-        job = (await hydrateJobFromOutputZipUrl(jobId, outputZipUrl)) ?? undefined;
-    }
+    const job = await hydrateCachedJob(jobId, contextUrl, outputZipUrl);
     if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
         sendSSE(res, {
             type: "error",
-            message: "Job não encontrado. Envie contextUrl ou gere o recorte novamente.",
+            message: "Job não encontrado. O servidor não localizou contexto ou ZIP persistido para reidratar o recorte.",
         });
         return null;
     }
@@ -6572,8 +6566,9 @@ function parseCachedContextFromOutputZip(
 
 async function hydrateJobFromOutputZipUrl(jobId: string, outputZipUrl?: string): Promise<CachedJob | null> {
     if (!outputZipUrl) return null;
+    const zipUrl = toPublicApiUrl(outputZipUrl);
     try {
-        const response = await fetch(outputZipUrl);
+        const response = await fetch(zipUrl);
         if (!response.ok) {
             throw new Error(`ZIP ${response.status}`);
         }
@@ -6582,7 +6577,7 @@ async function hydrateJobFromOutputZipUrl(jobId: string, outputZipUrl?: string):
         const hydrated = parseCachedContextFromOutputZip(
             zipBuffer,
             `SIMCAR_Recorte_${jobId}.zip`,
-            outputZipUrl,
+            zipUrl,
         );
         if (!hydrated) {
             throw new Error("Não foi possível reconstruir contexto pelo ZIP");
@@ -6600,8 +6595,9 @@ async function hydrateJobFromPersistedContext(
     contextUrl?: string,
 ): Promise<CachedJob | null> {
     if (!contextUrl) return null;
+    const contextFetchUrl = toPublicApiUrl(contextUrl);
     try {
-        const response = await fetch(contextUrl);
+        const response = await fetch(contextFetchUrl);
         if (!response.ok) {
             throw new Error(`Contexto ${response.status}`);
         }
@@ -6620,7 +6616,7 @@ async function hydrateJobFromPersistedContext(
             clippedGeometries: clipMap,
             inputZipUrl: parsed.inputZipUrl,
             outputZipUrl: parsed.outputZipUrl,
-            contextJsonUrl: contextUrl,
+            contextJsonUrl: contextFetchUrl,
             warnings: parsed.warnings,
             propertySourceLayer: parsed.propertySourceLayer,
         };
@@ -6630,6 +6626,55 @@ async function hydrateJobFromPersistedContext(
         console.warn(`[SIMCAR ANALYSIS] context hydrate failed for ${jobId}:`, err?.message || err);
         return null;
     }
+}
+
+function getPersistedHydrationUrls(jobId: string, contextUrl?: string, outputZipUrl?: string): {
+    contextUrl?: string;
+    outputZipUrl?: string;
+} {
+    const persisted = readPersistedSimcarClip(jobId);
+    const persistedDownloadUrl = String(persisted?.downloadUrl || "").trim();
+    const safeDownloadUrl =
+        persistedDownloadUrl && !persistedDownloadUrl.includes(`/api/simcar/clip/download/${jobId}`)
+            ? persistedDownloadUrl
+            : "";
+    const resolvedContextUrl = String(
+        contextUrl ||
+        persisted?.contextUrl ||
+        persisted?.files?.contextUrl ||
+        "",
+    ).trim();
+    const resolvedOutputZipUrl = String(
+        outputZipUrl ||
+        persisted?.outputZipUrl ||
+        persisted?.files?.outputZipUrl ||
+        safeDownloadUrl ||
+        "",
+    ).trim();
+    return {
+        contextUrl: resolvedContextUrl ? toPublicApiUrl(resolvedContextUrl) : undefined,
+        outputZipUrl: resolvedOutputZipUrl ? toPublicApiUrl(resolvedOutputZipUrl) : undefined,
+    };
+}
+
+async function hydrateCachedJob(
+    jobId: string,
+    contextUrl?: string,
+    outputZipUrl?: string,
+): Promise<CachedJob | undefined> {
+    let job = jobCache.get(jobId);
+    if (job?.bbox && job.polygon && job.layerSummaries) return job;
+
+    const urls = getPersistedHydrationUrls(jobId, contextUrl, outputZipUrl);
+    if (urls.contextUrl) {
+        job = (await hydrateJobFromPersistedContext(jobId, urls.contextUrl)) ?? undefined;
+        if (job?.bbox && job.polygon && job.layerSummaries) return job;
+    }
+    if (urls.outputZipUrl) {
+        job = (await hydrateJobFromOutputZipUrl(jobId, urls.outputZipUrl)) ?? undefined;
+        if (job?.bbox && job.polygon && job.layerSummaries) return job;
+    }
+    return undefined;
 }
 
 /**
@@ -6870,18 +6915,12 @@ async function processAnalysis(
     outputZipUrl?: string,
 ): Promise<AcAvnAnalysisResult | null> {
     throwIfClientDisconnected(res);
-    let job = jobCache.get(jobId);
-    if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && contextUrl) {
-        job = (await hydrateJobFromPersistedContext(jobId, contextUrl)) ?? undefined;
-    }
-    if ((!job || !job.bbox || !job.polygon || !job.layerSummaries) && outputZipUrl) {
-        job = (await hydrateJobFromOutputZipUrl(jobId, outputZipUrl)) ?? undefined;
-    }
+    const job = await hydrateCachedJob(jobId, contextUrl, outputZipUrl);
     if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
         sendSSE(res, {
             type: "error",
             message:
-                "Job nao encontrado no cache do servidor. Envie contextUrl salvo no Firebase/Cloudinary para reidratar ou gere o recorte novamente.",
+                "Job não encontrado. O servidor não localizou contexto ou ZIP persistido para reidratar o recorte.",
         });
         return null;
     }
