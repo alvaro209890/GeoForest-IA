@@ -250,15 +250,20 @@ export function getAbsoluteStoragePath(relativePath: string): string {
 }
 
 export function removeStoragePath(relativePath: string | undefined | null): void {
-  const clean = String(relativePath || "").trim().replace(/^\/api\/storage\//, "");
+  const clean = storageUrlToRelativePath(relativePath) || String(relativePath || "").trim().replace(/^\/api\/storage\//, "");
   if (!clean) return;
   const absolute = getAbsoluteStoragePath(clean);
   if (fs.existsSync(absolute)) fs.rmSync(absolute, { force: true });
 }
 
 export function storageUrlToRelativePath(urlOrPath: string | undefined | null): string | null {
-  const raw = String(urlOrPath || "").trim();
+  let raw = String(urlOrPath || "").trim();
   if (!raw) return null;
+  try {
+    if (/^https?:\/\//i.test(raw)) raw = new URL(raw).pathname;
+  } catch {
+    return null;
+  }
   if (raw.startsWith("/api/storage/")) return raw.slice("/api/storage/".length);
   if (raw.startsWith("users/")) return raw;
   return null;
