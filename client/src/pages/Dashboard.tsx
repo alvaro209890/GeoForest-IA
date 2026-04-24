@@ -644,63 +644,130 @@ const renderRichText = (text: string) => {
 
 const renderAnalysisRichText = (text: string) => {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
-  return lines.map((line, i) => {
+  const nodes: React.ReactNode[] = [];
+  let i = 0;
+  let key = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
     const trimmed = line.trim();
     if (!trimmed) {
-      return <div key={`analysis-gap-${i}`} className="analysis-gap" />;
+      nodes.push(<div key={`analysis-gap-${key++}`} className="analysis-gap" />);
+      i += 1;
+      continue;
+    }
+
+    const tableHeader = splitMarkdownTableRow(line);
+    const nextLine = lines[i + 1] || '';
+    if (tableHeader.length >= 2 && isMarkdownTableSeparator(nextLine)) {
+      const bodyRows: string[][] = [];
+      let cursor = i + 2;
+      while (cursor < lines.length) {
+        const rowLine = lines[cursor];
+        const rowTrimmed = rowLine.trim();
+        if (!rowTrimmed || !rowTrimmed.includes('|')) break;
+        if (isMarkdownTableSeparator(rowLine)) {
+          cursor += 1;
+          continue;
+        }
+        const cells = splitMarkdownTableRow(rowLine);
+        if (cells.length < 2) break;
+        bodyRows.push(cells);
+        cursor += 1;
+      }
+      const cols = Math.max(tableHeader.length, ...bodyRows.map((r) => r.length));
+      const normalizedHeader = Array.from({ length: cols }, (_, idx) => tableHeader[idx] || '');
+      const normalizedBody = bodyRows.map((row) => Array.from({ length: cols }, (_, idx) => row[idx] || ''));
+      nodes.push(
+        <div key={`analysis-table-wrap-${key++}`} className="chat-table-wrap">
+          <table className="chat-table">
+            <thead>
+              <tr>
+                {normalizedHeader.map((cell, idx) => (
+                  <th key={`analysis-th-${idx}`}>{renderInlineRichText(cell)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {normalizedBody.map((row, rowIdx) => (
+                <tr key={`analysis-tr-${rowIdx}`}>
+                  {row.map((cell, cellIdx) => (
+                    <td key={`analysis-td-${rowIdx}-${cellIdx}`}>{renderInlineRichText(cell)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      i = cursor;
+      continue;
     }
 
     const divider = trimmed.match(/^[-_*]{3,}$/);
     if (divider) {
-      return <div key={`analysis-divider-${i}`} className="analysis-divider" />;
+      nodes.push(<div key={`analysis-divider-${key++}`} className="analysis-divider" />);
+      i += 1;
+      continue;
     }
 
     const title = trimmed.match(/^(#{1,3})\s+(.+)$/);
     if (title) {
       const level = title[1].length;
       const klass = level === 1 ? 'analysis-h1' : level === 2 ? 'analysis-h2' : 'analysis-h3';
-      return (
-        <div key={`analysis-title-${i}`} className={klass}>
+      nodes.push(
+        <div key={`analysis-title-${key++}`} className={klass}>
           {renderInlineRichText(title[2])}
         </div>
       );
+      i += 1;
+      continue;
     }
 
     const numbered = trimmed.match(/^(\d+)[.)]\s+(.+)$/);
     if (numbered) {
-      return (
-        <div key={`analysis-ol-${i}`} className="analysis-item">
+      nodes.push(
+        <div key={`analysis-ol-${key++}`} className="analysis-item">
           <span className="analysis-marker">{numbered[1]}.</span>
           <span className="analysis-content">{renderInlineRichText(numbered[2])}</span>
         </div>
       );
+      i += 1;
+      continue;
     }
 
     const bullet = trimmed.match(/^[-*•]\s+(.+)$/);
     if (bullet) {
-      return (
-        <div key={`analysis-ul-${i}`} className="analysis-item">
+      nodes.push(
+        <div key={`analysis-ul-${key++}`} className="analysis-item">
           <span className="analysis-marker">•</span>
           <span className="analysis-content">{renderInlineRichText(bullet[1])}</span>
         </div>
       );
+      i += 1;
+      continue;
     }
 
     const quote = trimmed.match(/^>\s+(.+)$/);
     if (quote) {
-      return (
-        <div key={`analysis-quote-${i}`} className="analysis-quote">
+      nodes.push(
+        <div key={`analysis-quote-${key++}`} className="analysis-quote">
           {renderInlineRichText(quote[1])}
         </div>
       );
+      i += 1;
+      continue;
     }
 
-    return (
-      <p key={`analysis-p-${i}`} className="analysis-p">
+    nodes.push(
+      <p key={`analysis-p-${key++}`} className="analysis-p">
         {renderInlineRichText(line)}
       </p>
     );
-  });
+    i += 1;
+  }
+
+  return nodes;
 };
 
 const normalizeImageCaption = (rawCaption: string): string => {

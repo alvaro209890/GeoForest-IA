@@ -4840,6 +4840,121 @@ function buildUserFriendlyAcAvnGuidance(
     ].filter(Boolean).join("\n");
 }
 
+function formatAcAvnVerdict(value: AcAvnVerdict | "IGNORAR" | undefined | null): string {
+    if (value === "SIM") return "Sim";
+    if (value === "NAO") return "Não";
+    if (value === "IGNORAR") return "Não aplicável";
+    return "Inconclusivo";
+}
+
+function formatAcAvnConfidence(value: AcAvnConfidence | undefined | null): string {
+    if (value === "ALTA") return "Alta";
+    if (value === "MEDIA") return "Média";
+    if (value === "BAIXA") return "Baixa";
+    return "Inconclusiva";
+}
+
+function explainAcVerdict(value: AcAvnVerdict | undefined | null): string {
+    if (value === "SIM") return "há indício de uso consolidado fora do polígono AC declarado.";
+    if (value === "NAO") return "não há indício consistente de uso consolidado fora do polígono AC declarado.";
+    return "as imagens não permitem afirmar se há uso consolidado fora do polígono AC.";
+}
+
+function explainAvnVerdict(value: AcAvnVerdict | undefined | null): string {
+    if (value === "SIM") return "há indício de trecho antropizado dentro do polígono AVN declarado.";
+    if (value === "NAO") return "não há indício consistente de antropização dentro do polígono AVN declarado.";
+    return "as imagens não permitem concluir a integridade da AVN com segurança.";
+}
+
+function explainAuasBridgeVerdict(value: AcAvnVerdict | undefined | null): string {
+    if (value === "SIM") return "há possível vegetação fora do shape AVN, mas inserida na AUAS; a etapa AUAS deve confirmar a coerência temporal.";
+    if (value === "NAO") return "não há indício de vegetação nativa fora do shape AVN dentro da AUAS.";
+    return "a relação AVN x AUAS ficou inconclusiva para este recorte.";
+}
+
+function extractMarkdownSection(text: string, title: string): string {
+    const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`(^|\\n)##\\s+${escaped}\\s*\\n([\\s\\S]*?)(?=\\n##\\s+|$)`, "i");
+    return String(text || "").match(re)?.[2]?.trim() || "";
+}
+
+function buildReadableAcAvnReport(args: {
+    originalText: string;
+    acForaShape: AcAvnVerdict;
+    avnDentroShapeAntropizado: AcAvnVerdict;
+    avnParcialForaShapeMasEmAuas: AcAvnVerdict;
+    confidence: AcAvnConfidence;
+    satelliteVerdicts: AcAvnSatelliteVerdict[];
+    coherenceNotes: string[];
+    missingSatellites: string[];
+    auasContext?: AcAvnAuasContext | null;
+}): string {
+    const original = String(args.originalText || "");
+    const evidences = extractMarkdownSection(original, "Evidências por Imagem");
+    const conclusion = extractMarkdownSection(original, "Conclusão Técnica");
+    const recommendation = extractMarkdownSection(original, "Recomendação Operacional");
+    const context = args.auasContext?.hasAuasLayer
+        ? [
+            `AUAS declarada: ${args.auasContext.auasAreaHa.toFixed(2)} ha.`,
+            `AVN declarada: ${args.auasContext.avnAreaHa.toFixed(2)} ha.`,
+            `Interseção AUAS x AVN: ${args.auasContext.overlapAreaHa.toFixed(2)} ha (${args.auasContext.overlapPctOfAuas.toFixed(1)}% da AUAS).`,
+        ]
+        : [];
+
+    const satelliteRows = args.satelliteVerdicts.map((sat) => {
+        const note =
+            sat.status === "missing"
+                ? "Imagem indisponível"
+                : sat.confidence === "BAIXA" || sat.confidence === "INCONCLUSIVO"
+                    ? "Usar apenas como apoio"
+                    : sat.key.toLowerCase().includes("spot")
+                        ? "Imagem de maior resolução"
+                        : "Cena avaliada";
+        return `| ${sat.label} | ${formatAcAvnVerdict(sat.acForaShape)} | ${formatAcAvnVerdict(sat.avnDentroShapeAntropizado)} | ${formatAcAvnConfidence(sat.confidence)} | ${note} |`;
+    });
+
+    const coherent = args.coherenceNotes.length === 0;
+    return [
+        "## Resultado da Validação AC/AVN",
+        `A leitura geral indica que ${explainAcVerdict(args.acForaShape)} Para a AVN, ${explainAvnVerdict(args.avnDentroShapeAntropizado)} Confiança geral: **${formatAcAvnConfidence(args.confidence)}**.`,
+        "",
+        "## Pontos de Decisão",
+        `- **AC fora do shape:** ${formatAcAvnVerdict(args.acForaShape)} — ${explainAcVerdict(args.acForaShape)}`,
+        "- **Vegetação fora do shape AVN:** não aplicável nesta rotina; esse critério é ignorado por regra técnica.",
+        `- **Trecho antropizado dentro da AVN:** ${formatAcAvnVerdict(args.avnDentroShapeAntropizado)} — ${explainAvnVerdict(args.avnDentroShapeAntropizado)}`,
+        `- **Relação AVN x AUAS:** ${formatAcAvnVerdict(args.avnParcialForaShapeMasEmAuas)} — ${explainAuasBridgeVerdict(args.avnParcialForaShapeMasEmAuas)}`,
+        "",
+        ...(context.length ? ["## Contexto AUAS x AVN", ...context.map((item) => `- ${item}`), ""] : []),
+        "## Leitura por Satélite",
+        "| Satélite | AC fora do shape | AVN antropizada dentro do shape | Confiança | Interpretação |",
+        "|---|---|---|---|---|",
+        ...satelliteRows,
+        "",
+        "## Coerência entre as Imagens",
+        coherent
+            ? "- Os vereditos globais estão coerentes com as imagens avaliadas."
+            : "- Há divergência entre imagens; por isso a conclusão deve ser lida com cautela.",
+        ...args.coherenceNotes.map((note) => `- ${note}`),
+        ...(args.missingSatellites.length > 0
+            ? [`- Imagens indisponíveis: ${args.missingSatellites.join(", ")}.`]
+            : []),
+        "",
+        "## Evidências por Imagem",
+        evidences || "- A IA não detalhou evidências suficientes por imagem; recomenda-se revisar visualmente os painéis gerados.",
+        "",
+        "## Conclusão Técnica",
+        conclusion || buildUserFriendlyAcAvnGuidance(
+            args.acForaShape,
+            args.avnDentroShapeAntropizado,
+            args.avnParcialForaShapeMasEmAuas,
+            args.missingSatellites,
+        ),
+        "",
+        "## Próximas Ações Recomendadas",
+        recommendation || "- Conferir os limites de AC, AVN e AUAS nos setores apontados e reprocessar caso algum shape seja ajustado.",
+    ].join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function normalizeAcAvnAnalysisOutput(
     rawText: string,
     options: {
@@ -5022,27 +5137,19 @@ function normalizeAcAvnAnalysisOutput(
             `- ${sat.label} | AC_FORA_SHAPE=${sat.acForaShape || "INCONCLUSIVO"} | AVN_DENTRO_SHAPE_ANTROPIZADO=${sat.avnDentroShapeAntropizado || "INCONCLUSIVO"} | CONFIANCA=${sat.confidence}`,
     );
 
-    text += [
-        "",
-        "## Vereditos por Satélite (Normalizado)",
-        ...canonicalSatLines,
-        "",
-        "## Validação de Coerência AC/AVN (Normalizado)",
-        coherenceCheck.notes.length > 0
-            ? "- Coerência: NÃO, com ajustes para INCONCLUSIVO no veredito global."
-            : "- Coerência: SIM, sem conflitos relevantes entre veredito global e satélites.",
-        ...coherenceCheck.notes.map((note) => `- ${note}`),
-    ].join("\n");
+    void canonicalSatLines;
 
-    text += [
-        "",
-        buildUserFriendlyAcAvnGuidance(
-            resolvedAc,
-            resolvedAvn,
-            resolvedAvnAuasBridge,
-            options.satellitesMissing.map((sat) => sat.label),
-        ),
-    ].join("\n");
+    text = buildReadableAcAvnReport({
+        originalText: text,
+        acForaShape: resolvedAc,
+        avnDentroShapeAntropizado: resolvedAvn,
+        avnParcialForaShapeMasEmAuas: resolvedAvnAuasBridge,
+        confidence: resolvedConfidence,
+        satelliteVerdicts,
+        coherenceNotes: coherenceCheck.notes,
+        missingSatellites: options.satellitesMissing.map((sat) => sat.label),
+        auasContext,
+    });
 
     return {
         text: text.trim(),
@@ -5682,9 +5789,13 @@ function stripRoboticVerdictLines(text: string): string {
             if (!trimmed) return true;
             if (/^[-*•]?\s*STATUS_FINAL\s*=/i.test(trimmed)) return false;
             if (/^[-*•]?\s*ANO_PROVAVEL_INICIO_DESMATE\s*=/i.test(trimmed)) return false;
+            if (/^[-*•]?\s*(AC_FORA_SHAPE|AVN_FORA_SHAPE|AVN_DENTRO_SHAPE_ANTROPIZADO|AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS|CONFIANCA_GERAL)\s*=/i.test(trimmed)) return false;
+            if (/AC_FORA_SHAPE\s*=.*AVN_DENTRO_SHAPE_ANTROPIZADO\s*=.*CONFIANCA\s*=/i.test(trimmed)) return false;
             return true;
         })
         .join("\n")
+        .replace(/##\s*Veredito Objetivo\s*(?=\n##\s+|$)/gi, "")
+        .replace(/##\s*Vereditos por Sat[eé]lite(?:\s*\(Normalizado\))?\s*(?=\n##\s+|$)/gi, "")
         .replace(/\n{3,}/g, "\n\n")
         .trim();
     return cleaned;
@@ -5846,6 +5957,8 @@ function buildIntegratedAcAvnAuasPrompt(
         "",
         "Regras obrigatórias:",
         "- Escrever em português técnico claro, em frases naturais.",
+        "- Não copiar para a resposta final os códigos técnicos AC_FORA_SHAPE, AVN_FORA_SHAPE, AVN_DENTRO_SHAPE_ANTROPIZADO ou AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS.",
+        "- Quando precisar usar os metadados AC/AVN, traduza: AC fora do shape, AVN antropizada dentro do shape, relação AVN x AUAS.",
         "- Não usar linhas no formato STATUS_FINAL = ...",
         "- Não usar linhas no formato ANO_PROVAVEL_INICIO_DESMATE = ...",
         "- Quando citar ano provável de desmate, escrever em frase corrida.",
