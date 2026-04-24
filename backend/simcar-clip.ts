@@ -16,6 +16,7 @@ import archiver from "archiver";
 import proj4 from "proj4";
 import ExcelJS from "exceljs";
 import sharp from "sharp";
+import { inflateRawSync } from "zlib";
 import {
     area as turfArea,
     featureCollection as turfFeatureCollection,
@@ -35,7 +36,7 @@ import type {
 import { fileURLToPath } from "url";
 
 // Internal modules
-import { extractZipEntries, detectUtmProj } from "./geo-utils";
+import { extractZipEntries, detectUtmProj, reprojectBbox } from "./geo-utils";
 import {
     buildWfsUrl,
     fetchJsonWithTimeout,
@@ -91,6 +92,9 @@ const __dirname = path.dirname(__filename);
 /* ─── Constants ──────────────────────────────────────────────── */
 
 const MODELO_ZIP_PATH = path.resolve(__dirname, "..", "Arquivo Modelo.zip");
+const SIMCAR_LOCAL_SHAPES_ROOT =
+    process.env.SIMCAR_LOCAL_SHAPES_ROOT ||
+    "/media/server/HD Backup/VETOR/CAR_Digital/current/datasets/simcar_digital";
 const WFS_MAX_FEATURES = 50000;
 const CACHE_TTL_MS = 15 * 60 * 1000;    // 15 minutes
 const CACHE_MAX_JOBS = 10;
@@ -499,6 +503,153 @@ const TEMPLATE_LAYERS = [
 /** Layers that receive the property polygon directly (no WFS query). */
 const DIRECT_COPY_LAYERS = new Set(["AIR", "ATP"]);
 
+type LocalSimcarLayerSource = {
+    zipPath: string;
+    storeName: string;
+};
+
+let localSimcarLayerIndex:
+    | { root: string; mtimeMs: number; byStoreName: Map<string, LocalSimcarLayerSource> }
+    | null = null;
+
+function normalizeLocalLayerKey(value: string): string {
+    return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/^geoportal:/, "")
+        .replace(/^semamt:/, "")
+        .replace(/^car_digital_/, "")
+        .replace(/^simcar_d_/, "")
+        .replace(/^simcar_d_/, "")
+        .replace(/^simcar_/, "")
+        .replace(/^car_/, "");
+}
+
+function getLocalLayerCandidateNames(templateLayer: string): string[] {
+    const lower = templateLayer.toLowerCase();
+    const aliases: Record<string, string[]> = {
+        vereda: ["veredas", "vereda"],
+        arlrem: ["arlrem", "arld"],
+        area_uso_restrito: ["area_uso_restrito", "areas_uso_restrito"],
+        area_altitude_1800: ["area_altitude_1800", "altitude_1800"],
+        rio_acima_600: ["rio_acima_600", "rio_maior_600"],
+    };
+    return Array.from(new Set([lower, ...(aliases[lower] || [])]));
+}
+
+function buildLocalSimcarLayerIndex(root = SIMCAR_LOCAL_SHAPES_ROOT): Map<string, LocalSimcarLayerSource> {
+    const stat = fs.statSync(root);
+    if (
+        localSimcarLayerIndex &&
+        localSimcarLayerIndex.root === root &&
+        localSimcarLayerIndex.mtimeMs === stat.mtimeMs
+    ) {
+        return localSimcarLayerIndex.byStoreName;
+    }
+
+    const byStoreName = new Map<string, LocalSimcarLayerSource>();
+    const entries = fs.readdirSync(root, { withFileTypes: true });
+    for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const dir = path.join(root, entry.name);
+        const zipPath = path.join(dir, `${entry.name}.zip`);
+        if (!fs.existsSync(zipPath)) continue;
+        byStoreName.set(entry.name.toLowerCase(), {
+            zipPath,
+            storeName: entry.name,
+        });
+    }
+
+    localSimcarLayerIndex = {
+        root,
+        mtimeMs: stat.mtimeMs,
+        byStoreName,
+    };
+    return byStoreName;
+}
+
+function resolveLocalSimcarLayer(templateLayer: string): LocalSimcarLayerSource | null {
+    const byStoreName = buildLocalSimcarLayerIndex();
+    const candidates = getLocalLayerCandidateNames(templateLayer);
+    for (const name of candidates) {
+        const directStore = `car_digital_simcar_d_simcar_d_${name}`;
+        const direct = byStoreName.get(directStore);
+        if (direct) return direct;
+    }
+
+    for (const [storeName, source] of byStoreName) {
+        const normalized = normalizeLocalLayerKey(storeName);
+        if (candidates.some((candidate) => normalized === candidate || normalized.endsWith(`_${candidate}`))) {
+            return source;
+        }
+    }
+    return null;
+}
+
+function extractZipEntriesByExtension(zipBuffer: Buffer, extensions: string[]) {
+    const wanted = new Set(extensions.map((ext) => ext.toLowerCase()));
+    const entries: Array<{ name: string; data: Buffer }> = [];
+    const EOCD_SIG = 0x06054b50;
+    const CEN_SIG = 0x02014b50;
+    const LOC_SIG = 0x04034b50;
+    const maxScan = Math.min(zipBuffer.length, 65557);
+
+    let eocdOffset = -1;
+    for (let i = zipBuffer.length - 22; i >= zipBuffer.length - maxScan; i -= 1) {
+        if (i < 0) break;
+        if (zipBuffer.readUInt32LE(i) === EOCD_SIG) {
+            eocdOffset = i;
+            break;
+        }
+    }
+    if (eocdOffset < 0) return entries;
+
+    const totalEntries = zipBuffer.readUInt16LE(eocdOffset + 10);
+    const centralDirOffset = zipBuffer.readUInt32LE(eocdOffset + 16);
+    let cenOffset = centralDirOffset;
+
+    for (let i = 0; i < totalEntries; i += 1) {
+        if (cenOffset + 46 > zipBuffer.length) break;
+        if (zipBuffer.readUInt32LE(cenOffset) !== CEN_SIG) break;
+
+        const method = zipBuffer.readUInt16LE(cenOffset + 10);
+        const compressedSize = zipBuffer.readUInt32LE(cenOffset + 20);
+        const fileNameLength = zipBuffer.readUInt16LE(cenOffset + 28);
+        const extraLength = zipBuffer.readUInt16LE(cenOffset + 30);
+        const commentLength = zipBuffer.readUInt16LE(cenOffset + 32);
+        const localHeaderOffset = zipBuffer.readUInt32LE(cenOffset + 42);
+        const fileNameStart = cenOffset + 46;
+        const fileNameEnd = fileNameStart + fileNameLength;
+        if (fileNameEnd > zipBuffer.length) break;
+        const fileName = zipBuffer.subarray(fileNameStart, fileNameEnd).toString("utf8");
+        const ext = path.extname(fileName).toLowerCase();
+
+        cenOffset = fileNameEnd + extraLength + commentLength;
+        if (!wanted.has(ext)) continue;
+        if (localHeaderOffset + 30 > zipBuffer.length) continue;
+        if (zipBuffer.readUInt32LE(localHeaderOffset) !== LOC_SIG) continue;
+
+        const localNameLen = zipBuffer.readUInt16LE(localHeaderOffset + 26);
+        const localExtraLen = zipBuffer.readUInt16LE(localHeaderOffset + 28);
+        const dataStart = localHeaderOffset + 30 + localNameLen + localExtraLen;
+        const dataEnd = dataStart + compressedSize;
+        if (dataEnd > zipBuffer.length) continue;
+
+        const compressed = zipBuffer.subarray(dataStart, dataEnd);
+        if (method === 0) {
+            entries.push({ name: fileName, data: Buffer.from(compressed) });
+        } else if (method === 8) {
+            try {
+                entries.push({ name: fileName, data: Buffer.from(inflateRawSync(compressed)) });
+            } catch {
+                continue;
+            }
+        }
+    }
+
+    return entries;
+}
+
 /* ─── Job Cache ──────────────────────────────────────────────── */
 
 export type CachedJob = {
@@ -626,6 +777,203 @@ function readFullShapefile(shpBuffer: Buffer): number[][][][] {
         offset = recEnd;
     }
     return polygons;
+}
+
+function getDbfRecordCount(dbfBuffer: Buffer): number {
+    if (dbfBuffer.length < 12) return 0;
+    return dbfBuffer.readInt32LE(4);
+}
+
+function readDbfRecord(
+    dbfBuffer: Buffer,
+    fields: DbfFieldDef[],
+    recordIndex: number,
+): Record<string, unknown> {
+    if (dbfBuffer.length < 32 || recordIndex < 0) return {};
+    const headerBytes = dbfBuffer.readUInt16LE(8);
+    const recordBytes = dbfBuffer.readUInt16LE(10);
+    const offset = headerBytes + recordIndex * recordBytes;
+    if (offset + recordBytes > dbfBuffer.length) return {};
+    if (dbfBuffer[offset] === 0x2a) return {};
+
+    const out: Record<string, unknown> = {};
+    let fieldOffset = offset + 1;
+    for (const field of fields) {
+        const raw = dbfBuffer
+            .subarray(fieldOffset, fieldOffset + field.length)
+            .toString("latin1")
+            .trim();
+        fieldOffset += field.length;
+
+        if (!raw) {
+            out[field.name] = null;
+        } else if (field.type === "N" || field.type === "F") {
+            const num = Number(raw.replace(",", "."));
+            out[field.name] = Number.isFinite(num) ? num : raw;
+        } else {
+            out[field.name] = raw;
+        }
+    }
+    return out;
+}
+
+function bboxIntersects(
+    a: [number, number, number, number],
+    b: [number, number, number, number],
+): boolean {
+    return a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
+}
+
+function featureBbox(feature: Feature<Polygon | MultiPolygon>): [number, number, number, number] {
+    const coords =
+        feature.geometry.type === "Polygon"
+            ? feature.geometry.coordinates.flat()
+            : feature.geometry.coordinates.flat(2);
+    const xs = coords.map((coord) => coord[0]).filter(Number.isFinite);
+    const ys = coords.map((coord) => coord[1]).filter(Number.isFinite);
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
+function ringsToFeature(rings: number[][][]): Feature<Polygon | MultiPolygon> | null {
+    const closedRings = rings
+        .map((ring) => {
+            if (ring.length < 3) return [];
+            const first = ring[0];
+            const last = ring[ring.length - 1];
+            const closed = first[0] === last[0] && first[1] === last[1]
+                ? ring
+                : [...ring, [first[0], first[1]]];
+            return closed.length >= 4 ? closed : [];
+        })
+        .filter((ring) => ring.length >= 4);
+    if (!closedRings.length) return null;
+    try {
+        return turfPolygon(closedRings);
+    } catch {
+        return null;
+    }
+}
+
+function readLocalSimcarClipFeatures(
+    source: LocalSimcarLayerSource,
+    userPolygon: Feature<Polygon | MultiPolygon>,
+    userBbox: [number, number, number, number],
+): WfsClipFetchResult {
+    const zipBuffer = fs.readFileSync(source.zipPath);
+    const entries = extractZipEntriesByExtension(zipBuffer, [".shp", ".dbf", ".prj"]);
+    const shpEntry = entries.find((entry) => entry.name.toLowerCase().endsWith(".shp"));
+    const dbfEntry = entries.find((entry) => entry.name.toLowerCase().endsWith(".dbf"));
+    const prjEntry = entries.find((entry) => entry.name.toLowerCase().endsWith(".prj"));
+    if (!shpEntry || !dbfEntry) {
+        return {
+            features: [],
+            warnings: [`Base local ${source.storeName} sem .shp/.dbf valido.`],
+            partial: false,
+        };
+    }
+
+    const dbfFields = parseDbfSchema(dbfEntry.data);
+    const dbfRecordCount = getDbfRecordCount(dbfEntry.data);
+    const prjText = prjEntry?.data.toString("utf8") || "";
+    const projDef = prjText ? detectUtmProj(prjText) : null;
+    const compareBbox = projDef ? reprojectBbox(userBbox, projDef) : userBbox;
+    const clipped: WfsFeature[] = [];
+    const shpBuffer = shpEntry.data;
+    const warnings: string[] = [];
+
+    if (shpBuffer.length < 100) {
+        return {
+            features: [],
+            warnings: [`Base local ${source.storeName} com .shp invalido.`],
+            partial: false,
+        };
+    }
+
+    let offset = 100;
+    let recordIndex = 0;
+    while (offset + 12 <= shpBuffer.length) {
+        const contentLengthWords = shpBuffer.readInt32BE(offset + 4);
+        const contentLengthBytes = contentLengthWords * 2;
+        const recStart = offset + 8;
+        const recEnd = recStart + contentLengthBytes;
+        if (recEnd > shpBuffer.length || contentLengthBytes < 4) break;
+
+        const shapeType = shpBuffer.readInt32LE(recStart);
+        if ((shapeType === 5 || shapeType === 15 || shapeType === 25) && contentLengthBytes >= 44) {
+            const recordBbox: [number, number, number, number] = [
+                shpBuffer.readDoubleLE(recStart + 4),
+                shpBuffer.readDoubleLE(recStart + 12),
+                shpBuffer.readDoubleLE(recStart + 20),
+                shpBuffer.readDoubleLE(recStart + 28),
+            ];
+            if (bboxIntersects(recordBbox, compareBbox)) {
+                const numParts = shpBuffer.readInt32LE(recStart + 36);
+                const numPoints = shpBuffer.readInt32LE(recStart + 40);
+                if (numParts > 0 && numPoints > 2) {
+                    const partsOffset = recStart + 44;
+                    const pointsOffset = partsOffset + numParts * 4;
+                    if (pointsOffset + numPoints * 16 <= recEnd) {
+                        const partIndices: number[] = [];
+                        for (let p = 0; p < numParts; p += 1) {
+                            partIndices.push(shpBuffer.readInt32LE(partsOffset + p * 4));
+                        }
+                        partIndices.push(numPoints);
+
+                        const rings: number[][][] = [];
+                        for (let p = 0; p < numParts; p += 1) {
+                            const ring: number[][] = [];
+                            for (let i = partIndices[p]; i < partIndices[p + 1]; i += 1) {
+                                const pOff = pointsOffset + i * 16;
+                                const x = shpBuffer.readDoubleLE(pOff);
+                                const y = shpBuffer.readDoubleLE(pOff + 8);
+                                if (Number.isFinite(x) && Number.isFinite(y)) {
+                                    if (projDef) {
+                                        const [lon, lat] = proj4(projDef, "EPSG:4326", [x, y]) as [number, number];
+                                        if (Number.isFinite(lon) && Number.isFinite(lat)) ring.push([lon, lat]);
+                                    } else {
+                                        ring.push([x, y]);
+                                    }
+                                }
+                            }
+                            if (ring.length >= 3) rings.push(ring);
+                        }
+
+                        const localFeature = ringsToFeature(rings);
+                        if (localFeature) {
+                            const intersections = clipFeaturesToPolygon(
+                                [
+                                    {
+                                        geometry: localFeature.geometry,
+                                        properties:
+                                            recordIndex < dbfRecordCount
+                                                ? readDbfRecord(dbfEntry.data, dbfFields, recordIndex)
+                                                : {},
+                                    },
+                                ],
+                                userPolygon,
+                            );
+                            for (const intersection of intersections) {
+                                clipped.push(intersection);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        recordIndex += 1;
+        offset = recEnd;
+    }
+
+    if (!clipped.length) {
+        warnings.push(`Base local ${source.storeName} consultada sem intersecoes.`);
+    }
+
+    return {
+        features: clipped,
+        warnings,
+        partial: false,
+    };
 }
 
 /**
@@ -1478,7 +1826,6 @@ async function processClip(
     }
 
     const { polygon: userPolygon, geometry: userGeometry, areaHa } = userResult;
-    const userWkt = polygonToWkt(userGeometry);
 
     // 2. Read template
     let templateEntries: Array<{ name: string; data: Buffer }>;
@@ -1500,16 +1847,24 @@ async function processClip(
         }
     }
 
-    // 4. WFS GetCapabilities → discover layer mapping
-    let layerMapping = new Map<string, string>();
+    // 4. Local SIMCAR Digital snapshot → discover layer mapping
+    let localLayerMapping = new Map<string, LocalSimcarLayerSource>();
     try {
-        const caps = await getCapabilitiesCached(false);
-        const wfsNames = [...caps.layerNames];
-        layerMapping = discoverLayerMapping(TEMPLATE_LAYERS, wfsNames);
-        console.log(`[SIMCAR CLIP] Layer mapping: ${layerMapping.size} layers matched`);
+        if (!fs.existsSync(SIMCAR_LOCAL_SHAPES_ROOT)) {
+            throw new Error(`Diretorio nao encontrado: ${SIMCAR_LOCAL_SHAPES_ROOT}`);
+        }
+        buildLocalSimcarLayerIndex(SIMCAR_LOCAL_SHAPES_ROOT);
+        for (const layerName of TEMPLATE_LAYERS) {
+            if (DIRECT_COPY_LAYERS.has(layerName)) continue;
+            const source = resolveLocalSimcarLayer(layerName);
+            if (source) localLayerMapping.set(layerName, source);
+        }
+        console.log(
+            `[SIMCAR CLIP] Local SIMCAR Digital mapping: ${localLayerMapping.size} layers matched from ${SIMCAR_LOCAL_SHAPES_ROOT}`,
+        );
     } catch (err: any) {
-        console.error("[SIMCAR CLIP] WFS capabilities error:", err.message);
-        sendSSE(res, { type: "error", message: "Serviço WFS da SEMA-MT indisponível." });
+        console.error("[SIMCAR CLIP] Local SIMCAR Digital source error:", err.message);
+        sendSSE(res, { type: "error", message: `Base local SIMCAR Digital indisponível: ${err.message}` });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
 
@@ -1562,21 +1917,21 @@ async function processClip(
             continue;
         }
 
-        // Category 2: WFS query + clip
-        const wfsTypeName = layerMapping.get(layerName);
-        if (!wfsTypeName) {
+        // Category 2: local SIMCAR Digital ZIP + clip
+        const localSource = localLayerMapping.get(layerName);
+        if (!localSource) {
             sendSSE(res, {
                 type: "progress",
                 layer: layerName,
                 current,
                 total,
-                status: "no_wfs_match",
+                status: "no_local_match",
             });
             layerSummaries.push({
                 name: layerName,
                 source: "wfs",
                 features: 0,
-                warning: "Camada não encontrada no WFS",
+                warning: "Camada não encontrada na base local SIMCAR Digital",
             });
             continue;
         }
@@ -1587,57 +1942,48 @@ async function processClip(
             layer: layerName,
             current,
             total,
-            status: "fetching",
+            status: "fetching_local",
         });
 
-        let wfsFetch: WfsClipFetchResult;
+        let localFetch: WfsClipFetchResult;
         try {
-            wfsFetch = await fetchWfsClipFeatures(wfsTypeName, userWkt, "EPSG:4674");
+            localFetch = readLocalSimcarClipFeatures(localSource, userPolygon, featureBbox(userPolygon));
         } catch (err: any) {
-            console.error(`[SIMCAR CLIP] WFS fetch error for ${layerName}:`, err.message);
+            console.error(`[SIMCAR CLIP] Local SIMCAR read error for ${layerName}:`, err.message);
             layerSummaries.push({
                 name: layerName,
                 source: "wfs",
                 features: 0,
-                warning: `Erro WFS: ${err.message?.slice(0, 100)}`,
+                warning: `Erro base local: ${err.message?.slice(0, 100)}`,
             });
             continue;
         }
 
-        const wfsFeatures = wfsFetch.features;
-        if (!wfsFeatures.length) {
-            const summary = appendLayerWarning({
-                name: layerName,
-                source: "wfs",
-                features: 0,
-            }, wfsFetch.warnings, wfsFetch.partial);
-            if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);
-            layerSummaries.push(summary);
-            continue;
-        }
-
-        // Clip
-        sendSSE(res, {
-            type: "progress",
-            layer: layerName,
-            current,
-            total,
-            status: "clipping",
-            features: wfsFeatures.length,
-        });
-
-        const clipped = clipFeaturesToPolygon(wfsFeatures, userPolygon);
+        const clipped = localFetch.features.map((feature) => ({
+            geometry: feature.geometry,
+            properties: feature.properties,
+        })).filter((feature): feature is { geometry: Geometry; properties: Record<string, unknown> } => Boolean(feature.geometry));
 
         if (!clipped.length) {
             const summary = appendLayerWarning({
                 name: layerName,
                 source: "wfs",
                 features: 0,
-            }, wfsFetch.warnings, wfsFetch.partial);
+            }, localFetch.warnings, localFetch.partial);
             if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);
             layerSummaries.push(summary);
             continue;
         }
+
+        // Build output from clipped local features
+        sendSSE(res, {
+            type: "progress",
+            layer: layerName,
+            current,
+            total,
+            status: "clipping",
+            features: clipped.length,
+        });
 
         // Build shapefile records
         const fieldDefs = templateSchemas.get(layerName) || [
@@ -1685,7 +2031,7 @@ async function processClip(
             source: "wfs",
             features: records.length,
             areaHa: Number(layerAreaHa.toFixed(4)),
-        }, wfsFetch.warnings, wfsFetch.partial);
+        }, localFetch.warnings, localFetch.partial);
         if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);
         layerSummaries.push(summary);
     }
@@ -1832,6 +2178,11 @@ async function processClip(
 
 const SEMA_WMS_BASE = process.env.SEMA_WMS_BASE_URL || "https://geo.sema.mt.gov.br/geoserver/ows";
 const SEMA_WMS_AUTHKEY = process.env.SEMA_WMS_AUTHKEY || "541085de-9a2e-454e-bdba-eb3d57a2f492";
+const PUBLIC_API_BASE_URL = (
+    process.env.PUBLIC_API_BASE_URL ||
+    process.env.VITE_API_BASE ||
+    "https://geoforest-api.cursar.space"
+).trim().replace(/\/+$/, "");
 const SPOT_LAYER = "Mosaicos:MOSAICO_SPOT_SEPLAN";
 const WMS_FETCH_RETRY_ATTEMPTS = Math.max(1, Number(process.env.WMS_FETCH_RETRY_ATTEMPTS || 2));
 const WMS_RETRY_BASE_DELAY_MS = 1200;

@@ -3531,13 +3531,8 @@ export default function Dashboard() {
   }, [updateSettings]);
 
   const onClearLocalCaches = useCallback(() => {
-    mapPreviewCacheRef.current.clear();
-    mapCapabilitiesCacheRef.current = null;
-    intersectionResultCacheRef.current.clear();
-    wfsCapabilitiesCacheRef.current = null;
-    wfsDescribeCacheRef.current.clear();
     try {
-      window.sessionStorage.removeItem(FRONT_MAP_CAPABILITIES_STORAGE_KEY);
+      window.sessionStorage.removeItem('geoforest.map.capabilities.v1');
       const localKeys = Object.keys(window.localStorage).filter((k) => k.startsWith('geoforest.'));
       for (const key of localKeys) window.localStorage.removeItem(key);
     } catch {
@@ -6324,7 +6319,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </h2>
                       <p className="text-[11px] sm:text-xs text-slate-400">
                         {simcarClipMode === 'auto-clip'
-                          ? 'Envie o shapefile do imóvel e receba as camadas SIMCAR recortadas'
+                          ? 'Envie o shapefile do imóvel e receba as camadas SIMCAR Digital locais recortadas'
                           : 'Envie o ZIP do modelo vetorizado para analisar diretamente com IA, sem recorte WFS'}
                       </p>
                       {isSimcarModeLocked && (
@@ -6870,11 +6865,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <span className="text-sm font-semibold text-emerald-400 tabular-nums min-w-[3ch] text-right">{pct}%</span>
                     </div>
                     <p className="text-[10px] text-slate-500 mt-2">
-                      {simcarClipProgress.status === 'fetching' && 'Buscando feições do WFS...'}
+                      {(simcarClipProgress.status === 'fetching' || simcarClipProgress.status === 'fetching_local') &&
+                        'Lendo feições da base SIMCAR Digital local...'}
                       {simcarClipProgress.status === 'clipping' && 'Recortando feições...'}
                       {simcarClipProgress.status === 'copying_property' && 'Copiando polígono do imóvel...'}
                       {simcarClipProgress.status === 'building_zip' && 'Montando arquivo ZIP...'}
                       {simcarClipProgress.status === 'no_wfs_match' && 'Camada não encontrada no WFS'}
+                      {simcarClipProgress.status === 'no_local_match' && 'Camada não encontrada na base local'}
                     </p>
                   </section>
                 );
