@@ -229,6 +229,143 @@ type AuasResultData = {
     analysisRulesVersion?: string;
 };
 
+type NovoCarAnalysisMeta = {
+    classification: {
+        propertyAreaHa: number;
+        acAreaHa: number;
+        auasAreaHa: number;
+        avnAreaHa: number;
+        riverBufferHa: number;
+        acPct: number;
+        auasPct: number;
+        avnPct: number;
+        riverBufferPct: number;
+        accountedAreaHa: number;
+        accountingDeltaHa: number;
+    };
+    opening: {
+        year?: number;
+        date?: string;
+        source?: AuasOpeningSource;
+    };
+    flags: string[];
+};
+
+function roundMetric(value: unknown, digits = 2): number {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    return Number(num.toFixed(digits));
+}
+
+function areaPct(partHa: number, totalHa: number): number {
+    if (!Number.isFinite(totalHa) || totalHa <= 0) return 0;
+    return roundMetric((partHa / totalHa) * 100, 2);
+}
+
+function buildNovoCarQualityFlags(args: {
+    propertyAreaHa: number;
+    acAreaHa: number;
+    auasAreaHa: number;
+    avnAreaHa: number;
+    riverBufferHa: number;
+    openingResolution: AuasOpeningResolution;
+}): string[] {
+    const flags: string[] = [];
+    const auasPct = areaPct(args.auasAreaHa, args.propertyAreaHa);
+    const acPct = areaPct(args.acAreaHa, args.propertyAreaHa);
+    const avnPct = areaPct(args.avnAreaHa, args.propertyAreaHa);
+    const riverPct = areaPct(args.riverBufferHa, args.propertyAreaHa);
+    const accounted = args.acAreaHa + args.auasAreaHa + args.avnAreaHa + args.riverBufferHa;
+    const delta = Math.abs(args.propertyAreaHa - accounted);
+
+    if (args.auasAreaHa <= 0.01) {
+        flags.push("Nenhuma AUAS pós-2008 foi detectada na base PRODES; validar se o imóvel realmente não possui uso alternativo recente.");
+    }
+    if (args.acAreaHa <= 0.01) {
+        flags.push("Nenhuma área consolidada pré-2008 foi detectada; conferir histórico de uso caso exista ocupação antiga no imóvel.");
+    }
+    if (auasPct >= 50) {
+        flags.push(`AUAS representa ${auasPct}% do imóvel; revisar a distribuição espacial e a data de abertura antes de protocolar.`);
+    }
+    if (avnPct > 0 && avnPct < 5) {
+        flags.push(`AVN/ARL residual baixa (${avnPct}% do imóvel); conferir se não houve sobreposição ou perda indevida de vegetação nativa.`);
+    }
+    if (riverPct > 0) {
+        flags.push(`Buffer de rios aplicado (${riverPct}% do imóvel); conferir APP hídrica e eventuais recortes sobre AC/AUAS.`);
+    }
+    if (args.openingResolution.source === "AI_FALLBACK") {
+        flags.push("Ano de abertura estimado por IA por ausência de ano PRODES; tratar como evidência auxiliar, não como fonte oficial isolada.");
+    }
+    if (!args.openingResolution.year && args.auasAreaHa > 0.01) {
+        flags.push("AUAS detectada sem ano de abertura confiável; revisar manualmente a tabela do shape AUAS.");
+    }
+    if (delta > Math.max(0.5, args.propertyAreaHa * 0.02)) {
+        flags.push(`Fechamento de áreas com diferença de ${roundMetric(delta)} ha entre imóvel e classes calculadas; revisar geometrias de entrada e buffers.`);
+    }
+    if (acPct + auasPct > 95 && avnPct < 5) {
+        flags.push("Imóvel quase totalmente classificado como uso consolidado/alternativo; validar se a AVN não foi subestimada.");
+    }
+
+    return flags;
+}
+
+function buildNovoCarAnalysisMeta(args: {
+    propertyAreaHa: number;
+    acAreaHa: number;
+    auasAreaHa: number;
+    avnAreaHa: number;
+    riverBufferHa: number;
+    openingResolution: AuasOpeningResolution;
+    auasOpeningDate?: string;
+}): NovoCarAnalysisMeta {
+    const accountedAreaHa = args.acAreaHa + args.auasAreaHa + args.avnAreaHa + args.riverBufferHa;
+    return {
+        classification: {
+            propertyAreaHa: roundMetric(args.propertyAreaHa),
+            acAreaHa: roundMetric(args.acAreaHa),
+            auasAreaHa: roundMetric(args.auasAreaHa),
+            avnAreaHa: roundMetric(args.avnAreaHa),
+            riverBufferHa: roundMetric(args.riverBufferHa),
+            acPct: areaPct(args.acAreaHa, args.propertyAreaHa),
+            auasPct: areaPct(args.auasAreaHa, args.propertyAreaHa),
+            avnPct: areaPct(args.avnAreaHa, args.propertyAreaHa),
+            riverBufferPct: areaPct(args.riverBufferHa, args.propertyAreaHa),
+            accountedAreaHa: roundMetric(accountedAreaHa),
+            accountingDeltaHa: roundMetric(args.propertyAreaHa - accountedAreaHa),
+        },
+        opening: {
+            year: args.openingResolution.year || undefined,
+            date: args.auasOpeningDate,
+            source: args.openingResolution.source,
+        },
+        flags: buildNovoCarQualityFlags(args),
+    };
+}
+
+function buildNovoCarTechnicalSummary(meta: NovoCarAnalysisMeta): string {
+    const c = meta.classification;
+    const openingText = meta.opening.year
+        ? `${meta.opening.date || `01/01/${meta.opening.year}`} (${meta.opening.source || "fonte não definida"})`
+        : "não definida";
+    const flags = meta.flags.length > 0
+        ? meta.flags.map((flag) => `- ${flag}`).join("\n")
+        : "- Sem alertas críticos automáticos; manter conferência visual e documental.";
+
+    return [
+        "## Síntese Técnica Novo CAR",
+        "",
+        `- Imóvel analisado: ${c.propertyAreaHa} ha.`,
+        `- Área Consolidada (AC): ${c.acAreaHa} ha (${c.acPct}%).`,
+        `- AUAS pós-2008: ${c.auasAreaHa} ha (${c.auasPct}%).`,
+        `- AVN/ARL calculada: ${c.avnAreaHa} ha (${c.avnPct}%).`,
+        `- Buffer hídrico descontado: ${c.riverBufferHa} ha (${c.riverBufferPct}%).`,
+        `- Data de abertura AUAS: ${openingText}.`,
+        "",
+        "### Alertas automáticos",
+        flags,
+    ].join("\n");
+}
+
 async function persistAuasJobInFirestore(args: {
     uid: string;
     jobId: string;
@@ -956,6 +1093,16 @@ async function runAuasAnalysis(
         console.warn("[AUAS] ABERTURA sem ano detectado.");
     }
     const auasOpeningDate = openingResolution.year ? `01/01/${openingResolution.year}` : undefined;
+    const novoCarMeta = buildNovoCarAnalysisMeta({
+        propertyAreaHa,
+        acAreaHa,
+        auasAreaHa,
+        avnAreaHa,
+        riverBufferHa,
+        openingResolution,
+        auasOpeningDate,
+    });
+    const novoCarSummary = buildNovoCarTechnicalSummary(novoCarMeta);
     const auasFieldDefs = readTemplateSchema(templateEntries, "AUAS");
     const auasAberturaAttrib = buildAuasAberturaAttrib(auasFieldDefs, openingResolution.year);
 
@@ -1105,14 +1252,21 @@ async function runAuasAnalysis(
         auasOpeningDate,
         auasOpeningSource: openingResolution.source,
         ...(aiResult && !aiResult.imageOnly ? {
-            analysis: aiResult.analysisText,
+            analysis: [novoCarSummary, aiResult.analysisText].filter((part) => String(part || "").trim()).join("\n\n"),
             images: aiResult.cloudinaryUrls,
             satellitesUsed: aiResult.usedSatelliteKeys,
             satellitesMissing: aiResult.missingSatelliteKeys,
             cloudWarnings: aiResult.cloudWarnings.length > 0 ? aiResult.cloudWarnings : undefined,
-            analysisMeta: aiResult.analysisMeta,
-            analysisRulesVersion: "acavn-fixed-v4",
-        } : {}),
+            analysisMeta: {
+                ...(aiResult.analysisMeta && typeof aiResult.analysisMeta === "object" ? aiResult.analysisMeta : {}),
+                novoCar: novoCarMeta,
+            },
+            analysisRulesVersion: "acavn-fixed-v4+novo-car-v1",
+        } : {
+            analysis: novoCarSummary,
+            analysisMeta: { novoCar: novoCarMeta },
+            analysisRulesVersion: "novo-car-v1",
+        }),
     };
 
     if (options?.uid) {

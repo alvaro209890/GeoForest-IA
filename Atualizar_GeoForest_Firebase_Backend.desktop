@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Atualizar GeoForest Firebase + Backend
+Comment=Build, deploy Firebase Hosting e restart do backend GeoForest
+Exec="/media/server/HD Backup/Servidores_NAO_MEXA/GeoForest-IA/scripts/deploy-firebase-restart-backend.sh"
+Icon=utilities-terminal
+Terminal=true
+Categories=Development;

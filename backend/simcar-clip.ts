@@ -5677,6 +5677,11 @@ type AuasYearVerdictLabel =
     | "DESMATAMENTO_RECENTE"
     | "INCONCLUSIVO";
 
+type AuasFinalStatusLabel =
+    | "AUAS_VALIDA"
+    | "AUAS_INVALIDA"
+    | "AUAS_PARCIAL";
+
 type AuasAvnCrossCheck = {
     auasAreaHa: number;
     avnAreaHa: number;
@@ -5802,6 +5807,114 @@ function extractFirstDeforestationYearFromText(text: string): number | null {
     if (token === "INCONCLUSIVO") return null;
     const year = Number(token);
     return Number.isFinite(year) ? year : null;
+}
+
+function extractAuasFinalStatus(text: string): AuasFinalStatusLabel | null {
+    const match = String(text || "").match(/STATUS_FINAL\s*=\s*(AUAS_VALIDA|AUAS_INVALIDA|AUAS_PARCIAL)/i);
+    const token = String(match?.[1] || "").toUpperCase();
+    if (token === "AUAS_VALIDA" || token === "AUAS_INVALIDA" || token === "AUAS_PARCIAL") {
+        return token as AuasFinalStatusLabel;
+    }
+    return null;
+}
+
+function extractAuasPassivoAmbiental(text: string): boolean {
+    const normalized = String(text || "");
+    if (/PASSIVO_AMBIENTAL\s*=\s*IDENTIFICADO/i.test(normalized)) return true;
+    return /(passivo\s+ambiental|supress[aã]o\s+p[oó]s-marco|supress[aã]o\s+ap[oó]s\s*2008|desmatamento\s+recente)/i.test(normalized);
+}
+
+function deriveAuasFinalStatus(args: {
+    hasAuasLayer: boolean;
+    yearVerdicts: Array<{ year: number; verdict: AuasYearVerdictLabel }>;
+    firstDeforestationYear: number | null;
+    crossCheck?: AuasAvnCrossCheck | null;
+}): AuasFinalStatusLabel {
+    const hasPost2008Evidence =
+        (Number.isFinite(args.firstDeforestationYear as number) && Number(args.firstDeforestationYear) > 2008) ||
+        args.yearVerdicts.some((item) => item.year > 2008 && item.verdict === "DESMATAMENTO_RECENTE");
+    const allInconclusive = args.yearVerdicts.length > 0 && args.yearVerdicts.every((item) => item.verdict === "INCONCLUSIVO");
+    const relevantAuasAvnOverlap = Boolean(args.crossCheck && args.crossCheck.overlapPctOfAuas >= 5);
+
+    if (allInconclusive) return "AUAS_PARCIAL";
+    if (!args.hasAuasLayer && hasPost2008Evidence) return "AUAS_PARCIAL";
+    if (relevantAuasAvnOverlap) return "AUAS_PARCIAL";
+    return "AUAS_VALIDA";
+}
+
+function buildAuasQualityFlags(args: {
+    hasAuasLayer: boolean;
+    yearVerdicts: Array<{ satelliteLabel: string; year: number; verdict: AuasYearVerdictLabel }>;
+    firstDeforestationYear: number | null;
+    crossCheck?: AuasAvnCrossCheck | null;
+    cloudWarnings?: Array<{ satellite: string; cloudScore: number }>;
+}): string[] {
+    const flags: string[] = [];
+    const hasBaseline2008 = args.yearVerdicts.some((item) => item.year === 2008 && item.verdict !== "INCONCLUSIVO");
+    const post2008Desmate = args.yearVerdicts
+        .filter((item) => item.year > 2008 && item.verdict === "DESMATAMENTO_RECENTE")
+        .map((item) => `${item.satelliteLabel} ${item.year}`);
+
+    if (!hasBaseline2008) {
+        flags.push("Referência de 2008 insuficiente ou inconclusiva; confiança temporal reduzida.");
+    }
+    if (post2008Desmate.length > 0) {
+        flags.push(`Indício de supressão pós-2008 detectado em: ${post2008Desmate.slice(0, 5).join(", ")}.`);
+    }
+    if (!args.hasAuasLayer) {
+        flags.push("Camada AUAS ausente no ZIP; a conclusão usa inferência temporal sobre a propriedade.");
+    }
+    if (args.crossCheck && args.crossCheck.overlapPctOfAuas >= 5) {
+        flags.push(`Sobreposição AUAS x AVN relevante: ${args.crossCheck.overlapAreaHa.toFixed(2)} ha (${args.crossCheck.overlapPctOfAuas.toFixed(1)}% da AUAS).`);
+    }
+    const cloudy = (args.cloudWarnings || []).filter((item) => item.cloudScore >= 0.35);
+    if (cloudy.length > 0) {
+        flags.push(`Cenas com possível nebulosidade/oclusão: ${cloudy.map((item) => `${item.satellite} ${Math.round(item.cloudScore * 100)}%`).join(", ")}.`);
+    }
+    if (Number.isFinite(args.firstDeforestationYear as number) && Number(args.firstDeforestationYear) > 2008) {
+        flags.push(`Ano provável inicial de supressão: ${Number(args.firstDeforestationYear)}.`);
+    }
+
+    return flags;
+}
+
+function buildAuasTechnicalSummaryMarkdown(args: {
+    finalStatus: AuasFinalStatusLabel;
+    confidence: AcAvnConfidence;
+    passivoAmbiental: boolean;
+    hasAuasLayer: boolean;
+    firstDeforestationYear: number | null;
+    qualityFlags: string[];
+    crossCheck?: AuasAvnCrossCheck | null;
+}): string {
+    const statusText =
+        args.finalStatus === "AUAS_VALIDA"
+            ? "AUAS válida ou coerente com a série temporal"
+            : args.finalStatus === "AUAS_INVALIDA"
+                ? "AUAS inválida por inconsistência técnica relevante"
+                : "AUAS parcialmente consistente ou dependente de revisão";
+    const lines = [
+        "## Síntese Técnica Automática",
+        `- Status estruturado: ${statusText}.`,
+        `- Confiança geral: ${args.confidence}.`,
+        `- Passivo ambiental pós-2008: ${args.passivoAmbiental ? "identificado" : "não identificado com segurança"}.`,
+        `- Camada AUAS vetorizada no ZIP: ${args.hasAuasLayer ? "sim" : "não"}.`,
+    ];
+    if (Number.isFinite(args.firstDeforestationYear as number)) {
+        lines.push(`- Ano provável inicial de supressão: ${Number(args.firstDeforestationYear)}.`);
+    }
+    if (args.crossCheck) {
+        lines.push(
+            `- Cruzamento AUAS x AVN: ${args.crossCheck.overlapAreaHa.toFixed(2)} ha de sobreposição (${args.crossCheck.overlapPctOfAuas.toFixed(1)}% da AUAS).`,
+        );
+    }
+    if (args.qualityFlags.length > 0) {
+        lines.push("- Alertas técnicos:");
+        for (const flag of args.qualityFlags.slice(0, 6)) {
+            lines.push(`  - ${flag}`);
+        }
+    }
+    return lines.join("\n");
 }
 
 /**
@@ -6374,6 +6487,9 @@ async function processAuasAnalysis(
             .sort((a, b) => a - b);
         firstDeforestationYear = inferred.length > 0 ? inferred[0] : null;
     }
+    const synthesisFinalStatus = extractAuasFinalStatus(auasSynthesisText);
+    const synthesisConfidence = extractAcAvnConfidence(auasSynthesisText);
+    const synthesisPassivoAmbiental = extractAuasPassivoAmbiental(auasSynthesisText);
 
     let analysisText = auasSynthesisText;
     if (truncatedPreviousAnalysis.trim()) {
@@ -6428,9 +6544,30 @@ async function processAuasAnalysis(
         (Number.isFinite(firstDeforestationYear as number) && Number(firstDeforestationYear) > 2008) ||
         yearVerdicts.some((item) => item.year > 2008 && item.verdict === "DESMATAMENTO_RECENTE")
     );
+    const finalStatus =
+        synthesisFinalStatus ||
+        extractAuasFinalStatus(analysisText) ||
+        deriveAuasFinalStatus({ hasAuasLayer, yearVerdicts, firstDeforestationYear, crossCheck });
+    const confidence = synthesisConfidence || extractAcAvnConfidence(analysisText);
+    const passivoAmbiental =
+        synthesisPassivoAmbiental ||
+        extractAuasPassivoAmbiental(analysisText) ||
+        inferredAuasNotVectorized ||
+        yearVerdicts.some((item) => item.year > 2008 && item.verdict === "DESMATAMENTO_RECENTE");
+    const qualityFlags = buildAuasQualityFlags({
+        hasAuasLayer,
+        yearVerdicts,
+        firstDeforestationYear,
+        crossCheck,
+        cloudWarnings,
+    });
     const auasMeta = {
         yearVerdicts,
         firstDeforestationYear,
+        finalStatus,
+        confidence,
+        passivoAmbiental,
+        qualityFlags,
         auasAvnCrossCheck: crossCheck,
         acAvnContextSource:
             resolvedAcAvnMeta?.source === "derived_from_previous_analysis" ? "derived_from_previous_analysis" : "provided",
@@ -6449,6 +6586,18 @@ async function processAuasAnalysis(
         yearVerdicts,
         firstDeforestationYear,
     );
+    const technicalSummary = buildAuasTechnicalSummaryMarkdown({
+        finalStatus,
+        confidence,
+        passivoAmbiental,
+        hasAuasLayer,
+        firstDeforestationYear,
+        qualityFlags,
+        crossCheck,
+    });
+    if (!/##\s*S[ií]ntese T[eé]cnica Autom[aá]tica/i.test(analysisText)) {
+        analysisText = [technicalSummary, analysisText].filter(Boolean).join("\n\n");
+    }
 
     // The route sends the final SSE event only after billing, persistence and
     // job finalization succeed, so the frontend never sees a completed result
@@ -7030,6 +7179,20 @@ export async function runAcAvnSatelliteAnalysis(
     };
 }
 
+function sendAcAvnComplete(res: Response, result: AcAvnAnalysisResult) {
+    sendSSE(res, {
+        type: "complete",
+        percent: 100,
+        ...(!result.imageOnly && { analysis: result.analysisText, analysisMeta: result.analysisMeta }),
+        images: result.cloudinaryUrls,
+        layerSummaries: result.layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
+        analysisRulesVersion: "acavn-fixed-v4",
+        satellitesUsed: result.usedSatelliteKeys,
+        satellitesMissing: result.missingSatelliteKeys,
+        cloudWarnings: result.cloudWarnings.length > 0 ? result.cloudWarnings : undefined,
+    });
+}
+
 /** Main analysis pipeline (called from the SSE endpoint). */
 async function processAnalysis(
     res: Response,
@@ -7053,17 +7216,6 @@ async function processAnalysis(
     const result = await runAcAvnSatelliteAnalysis(res, job, selectedLayers, { tag: jobId.slice(0, 8), aiAnalysis });
     if (!result) return null;
 
-    sendSSE(res, {
-        type: "complete",
-        percent: 100,
-        ...(!result.imageOnly && { analysis: result.analysisText, analysisMeta: result.analysisMeta }),
-        images: result.cloudinaryUrls,
-        layerSummaries: result.layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
-        analysisRulesVersion: "acavn-fixed-v4",
-        satellitesUsed: result.usedSatelliteKeys,
-        satellitesMissing: result.missingSatelliteKeys,
-        cloudWarnings: result.cloudWarnings.length > 0 ? result.cloudWarnings : undefined,
-    });
     return result;
 }
 
@@ -8156,6 +8308,7 @@ export function registerSimcarClipRoutes(app: Express) {
         let usageInputs: Array<any> = [];
         let chargedBrl = 0;
         let processingJobId = "";
+        let sseHeartbeat: ReturnType<typeof setInterval> | null = null;
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
@@ -8214,6 +8367,7 @@ export function registerSimcarClipRoutes(app: Express) {
             }
 
             sendSseHeaders(res);
+            sseHeartbeat = startSseHeartbeat(res);
             const processingJob = startJob({
                 uid,
                 endpoint: "/api/simcar/clip/analyze",
@@ -8227,6 +8381,7 @@ export function registerSimcarClipRoutes(app: Express) {
             sendSSE(res, { type: "job_started", jobId: processingJobId });
             console.log(`[SIMCAR ANALYSIS] Starting analysis for job: ${jobId}, layers: ${layers.join(",")}, aiAnalysis: ${aiAnalysis}`);
 
+            let analysisCompletePayload: AcAvnAnalysisResult | null = null;
             if (aiAnalysis) {
                 const analysisOutcome = await runWithBillingUsageSession(async () => {
                     try {
@@ -8267,6 +8422,13 @@ export function registerSimcarClipRoutes(app: Express) {
                     });
                     return;
                 }
+                analysisCompletePayload = analysisOutcome;
+                sendSSE(res, {
+                    type: "progress",
+                    step: "finalizing",
+                    percent: 96,
+                    message: "Finalizando análise, cobrança e salvamento do histórico...",
+                });
                 if (usageInputs.length > 0 || analysisOutcome) {
                     const usageForSettle = usageInputs.length > 0
                         ? usageInputs
@@ -8325,6 +8487,13 @@ export function registerSimcarClipRoutes(app: Express) {
                     });
                     return;
                 }
+                analysisCompletePayload = imageOnlyOutcome;
+                sendSSE(res, {
+                    type: "progress",
+                    step: "finalizing",
+                    percent: 96,
+                    message: "Finalizando geração de imagens...",
+                });
             }
             finishJob({
                 jobId: processingJobId,
@@ -8333,6 +8502,9 @@ export function registerSimcarClipRoutes(app: Express) {
                     chargedBrl: Number(chargedBrl.toFixed(4)),
                 },
             });
+            if (analysisCompletePayload) {
+                sendAcAvnComplete(res, analysisCompletePayload);
+            }
         } catch (err: any) {
             if (err instanceof ClientAbortError) {
                 if (billingUid && billingReserved > 0 && billingRequestId) {
@@ -8416,6 +8588,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 res.status(500).json({ error: err.message || "Erro interno inesperado." });
             }
         } finally {
+            if (sseHeartbeat) clearInterval(sseHeartbeat);
             if (!res.writableEnded) res.end();
         }
     });
