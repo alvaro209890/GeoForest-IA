@@ -10,6 +10,7 @@
     "start": "NODE_ENV=production node dist/index.js",
     "preview": "vite preview --host",
     "check": "tsc --noEmit",
+    "eval:atp": "node scripts/evaluate-atp-analyses.mjs",
     "format": "prettier --write ."
   },
   "dependencies": {
