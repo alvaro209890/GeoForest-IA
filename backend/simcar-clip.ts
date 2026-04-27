@@ -96,6 +96,11 @@ const MODELO_ZIP_PATH = path.resolve(__dirname, "..", "Arquivo Modelo.zip");
 const SIMCAR_LOCAL_SHAPES_ROOT =
     process.env.SIMCAR_LOCAL_SHAPES_ROOT ||
     "/media/server/HD Backup/VETOR/CAR_Digital/current/datasets/simcar_digital";
+const SIGEF_WFS_BASE_URL =
+    process.env.SIGEF_WFS_BASE_URL ||
+    "http://acervofundiario.incra.gov.br/i3geo/ogc.php?tema=certificada_sigef_particular_mt";
+const SIGEF_WFS_TYPENAME = "certificada_sigef_particular_mt";
+const SIGEF_WFS_FILTER_PARAM = "map_layer_certificada_sigef_particular_mt_filter";
 const WFS_MAX_FEATURES = 50000;
 const CACHE_TTL_MS = 15 * 60 * 1000;    // 15 minutes
 const CACHE_MAX_JOBS = 10;
@@ -1797,6 +1802,7 @@ async function processClip(
     uid: string,
     propertyZip: Buffer | null,
     carNumber: string | null,
+    sigefParcelCode: string | null,
     requestedLayers: string[] | null,
     airIdentificacao?: string,
     forcedJobId?: string,
@@ -1836,7 +1842,25 @@ async function processClip(
     let areaHa: number;
     let userWkt: string;
 
-    if (carNumber) {
+    if (sigefParcelCode) {
+        sendSSE(res, { type: "progress", layer: "SIGEF", stage: "Buscando parcela certificada no WFS do INCRA...", percent: 2 });
+        try {
+            const feature = await fetchSigefBoundaryByParcelCode(sigefParcelCode);
+            userGeometry = feature.geometry;
+            userPolygon = feature;
+            areaHa = computeAreaHa(feature);
+            userWkt = polygonToWkt(userGeometry);
+            sendSSE(res, { type: "progress", layer: "SIGEF", stage: `Parcela SIGEF localizada — ${areaHa.toFixed(2)} ha`, percent: 5 });
+        } catch (err: any) {
+            const message = err?.message || "Erro ao buscar certificação SIGEF no WFS do INCRA.";
+            console.error("[SIMCAR CLIP] SIGEF boundary lookup failed:", {
+                sigefParcelCode,
+                message,
+            });
+            sendSSE(res, { type: "error", message });
+            return { ok: false, cloudinaryStoredBytes: 0 };
+        }
+    } else if (carNumber) {
         sendSSE(res, { type: "progress", layer: "WFS", stage: "Buscando limite do CAR no SEMA WFS...", percent: 2 });
         try {
             const feature = await fetchCarBoundaryByNumber(carNumber);
@@ -7322,6 +7346,140 @@ function normalizeCarLookupValues(raw: string): string[] {
     return Array.from(new Set([compact, withoutCarPrefix].filter(Boolean)));
 }
 
+function xmlDecode(value: string): string {
+    return String(value || "")
+        .replace(/&quot;/g, "\"")
+        .replace(/&apos;/g, "'")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&amp;/g, "&");
+}
+
+function normalizeSigefParcelCode(raw: string): string {
+    return String(raw || "").trim();
+}
+
+function buildSigefI3geoFilter(parcelCode: string): string {
+    const safeValue = parcelCode.replace(/'/g, "''");
+    return `(('[parcela_codigo]'='${safeValue}'))`;
+}
+
+function buildSigefWfsUrl(parcelCode: string): string {
+    const url = new URL(SIGEF_WFS_BASE_URL);
+    url.searchParams.set(SIGEF_WFS_FILTER_PARAM, buildSigefI3geoFilter(parcelCode));
+    url.searchParams.set("SERVICE", "WFS");
+    url.searchParams.set("VERSION", "1.0.0");
+    url.searchParams.set("REQUEST", "GetFeature");
+    url.searchParams.set("TYPENAME", SIGEF_WFS_TYPENAME);
+    url.searchParams.set("MAXFEATURES", "1");
+    url.searchParams.set("propertyName", "msGeometry,parcela_codigo");
+    return url.toString();
+}
+
+function parseGmlCoordinates(text: string): number[][] {
+    const coords = String(text || "")
+        .trim()
+        .split(/\s+/g)
+        .map((pair) => pair.trim())
+        .filter(Boolean)
+        .map((pair) => {
+            const [xRaw, yRaw] = pair.split(",");
+            const x = Number(xRaw);
+            const y = Number(yRaw);
+            return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null;
+        })
+        .filter((coord): coord is number[] => Array.isArray(coord));
+    if (coords.length >= 3) {
+        const first = coords[0];
+        const last = coords[coords.length - 1];
+        if (first[0] !== last[0] || first[1] !== last[1]) coords.push([first[0], first[1]]);
+    }
+    return coords;
+}
+
+function parseGmlPosList(text: string): number[][] {
+    const values = String(text || "")
+        .trim()
+        .split(/\s+/g)
+        .map((n) => Number(n))
+        .filter(Number.isFinite);
+    const coords: number[][] = [];
+    for (let i = 0; i + 1 < values.length; i += 2) {
+        const a = values[i];
+        const b = values[i + 1];
+        const looksLikeLatLonAxis = Math.abs(a) <= 30 && Math.abs(b) >= 30;
+        coords.push(looksLikeLatLonAxis ? [b, a] : [a, b]);
+    }
+    if (coords.length >= 3) {
+        const first = coords[0];
+        const last = coords[coords.length - 1];
+        if (first[0] !== last[0] || first[1] !== last[1]) coords.push([first[0], first[1]]);
+    }
+    return coords;
+}
+
+function parseSigefGeometryFromGml(xml: string): Polygon | MultiPolygon | null {
+    const featureMatch = String(xml || "").match(/<gml:featureMember\b[\s\S]*?<\/gml:featureMember>/i);
+    if (!featureMatch) return null;
+    const geometryMatch = featureMatch[0].match(/<ms:msGeometry\b[^>]*>([\s\S]*?)<\/ms:msGeometry>/i);
+    if (!geometryMatch) return null;
+    const geometryXml = geometryMatch[1];
+    const polygons: number[][][][] = [];
+    const polygonRegex = /<gml:Polygon\b[^>]*>([\s\S]*?)<\/gml:Polygon>/gi;
+    let polygonMatch: RegExpExecArray | null;
+    while ((polygonMatch = polygonRegex.exec(geometryXml))) {
+        const polygonXml = polygonMatch[1];
+        const rings: number[][][] = [];
+        const coordinatesRegex = /<gml:coordinates\b[^>]*>([\s\S]*?)<\/gml:coordinates>/gi;
+        const posListRegex = /<gml:posList\b[^>]*>([\s\S]*?)<\/gml:posList>/gi;
+        let coordMatch: RegExpExecArray | null;
+        while ((coordMatch = coordinatesRegex.exec(polygonXml))) {
+            const ring = parseGmlCoordinates(xmlDecode(coordMatch[1]));
+            if (ring.length >= 4) rings.push(ring);
+        }
+        while ((coordMatch = posListRegex.exec(polygonXml))) {
+            const ring = parseGmlPosList(xmlDecode(coordMatch[1]));
+            if (ring.length >= 4) rings.push(ring);
+        }
+        if (rings.length > 0) polygons.push(rings);
+    }
+
+    if (polygons.length === 1) {
+        return { type: "Polygon", coordinates: polygons[0] };
+    }
+    if (polygons.length > 1) {
+        return { type: "MultiPolygon", coordinates: polygons };
+    }
+    return null;
+}
+
+async function fetchSigefBoundaryByParcelCode(parcelCodeRaw: string): Promise<Feature<Polygon | MultiPolygon>> {
+    const parcelCode = normalizeSigefParcelCode(parcelCodeRaw);
+    if (!parcelCode) throw new Error("Código da parcela SIGEF inválido.");
+
+    const wfsUrl = buildSigefWfsUrl(parcelCode);
+    const xml = await fetchTextWithTimeout(wfsUrl, WFS_TIMEOUT_MS);
+    if (!/<gml:featureMember\b/i.test(xml)) {
+        throw new Error(`Nenhuma certificação SIGEF encontrada para parcela_codigo: ${parcelCode}`);
+    }
+
+    const returnedCode = xmlDecode(
+        xml.match(/<ms:parcela_codigo\b[^>]*>([\s\S]*?)<\/ms:parcela_codigo>/i)?.[1] || "",
+    ).trim();
+    if (returnedCode !== parcelCode) {
+        throw new Error(`O WFS do SIGEF não retornou a parcela solicitada (${parcelCode}).`);
+    }
+
+    const geometry = parseSigefGeometryFromGml(xml);
+    if (!geometry) throw new Error("A geometria retornada pelo WFS do SIGEF não é um polígono válido.");
+
+    return {
+        type: "Feature",
+        properties: { parcela_codigo: returnedCode },
+        geometry,
+    };
+}
+
 async function fetchCarBoundaryByNumber(carNumber: string): Promise<Feature<Polygon | MultiPolygon>> {
     const values = normalizeCarLookupValues(carNumber);
     if (!values.length) throw new Error("Número do CAR inválido.");
@@ -8114,6 +8272,7 @@ export function registerSimcarClipRoutes(app: Express) {
         let body: {
             propertyZip?: string;
             carNumber?: string;
+            sigefParcelCode?: string;
             filename?: string;
             layerNames?: string[];
             airIdentificacao?: string;
@@ -8135,13 +8294,14 @@ export function registerSimcarClipRoutes(app: Express) {
             body = req.body as {
                 propertyZip?: string;
                 carNumber?: string;
+                sigefParcelCode?: string;
                 filename?: string;
                 layerNames?: string[];
                 airIdentificacao?: string;
             };
 
-            if (!body.propertyZip && !body.carNumber) {
-                sendSSE(res, { type: "error", message: "Campo propertyZip ou carNumber é obrigatório." });
+            if (!body.propertyZip && !body.carNumber && !body.sigefParcelCode) {
+                sendSSE(res, { type: "error", message: "Campo propertyZip, carNumber ou sigefParcelCode é obrigatório." });
                 res.end();
                 return;
             }
@@ -8228,6 +8388,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 uid,
                 zipBuffer,
                 body.carNumber || null,
+                body.sigefParcelCode || null,
                 body.layerNames || null,
                 body.airIdentificacao || undefined,
                 processingJobId || undefined,

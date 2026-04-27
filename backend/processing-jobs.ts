@@ -126,6 +126,22 @@ function readJsonSafe(filePath: string): Record<string, any> | null {
   }
 }
 
+function markCbersScenesInterrupted(current: Record<string, any> | null, error: string): Record<string, any>[] | undefined {
+  if (!Array.isArray(current?.scenes)) return undefined;
+  return current.scenes.map((scene: Record<string, any>) => {
+    const status = safeTrim(scene?.status).toLowerCase();
+    if (status === "completed" || status === "failed" || status === "cancelled") return scene;
+    return {
+      ...scene,
+      status: "failed",
+      stage: "interrupted",
+      percent: Number(scene?.percent || 0) > 1 ? scene.percent : 0,
+      message: error,
+      error,
+    };
+  });
+}
+
 export function markPersistedRunningJobsInterrupted(): number {
   const usersDir = path.join(STORAGE_ROOT, "users");
   if (!fs.existsSync(usersDir)) return 0;
@@ -184,6 +200,7 @@ export function markPersistedRunningJobsInterrupted(): number {
       }
 
       if (endpoint === "/api/cbers-wpm/jobs") {
+        const cbersData = readJsonSafe(path.join(usersDir, uid, "cbers_wpm_jobs", `${jobId}.json`));
         writeDocBySegments(
           ["users", uid, "cbers_wpm_jobs", jobId],
           {
@@ -191,6 +208,7 @@ export function markPersistedRunningJobsInterrupted(): number {
             stage: "interrupted",
             error,
             message: error,
+            scenes: markCbersScenesInterrupted(cbersData, error),
           },
           { merge: true },
         );
