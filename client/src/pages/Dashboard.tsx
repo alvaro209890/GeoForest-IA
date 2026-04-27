@@ -1,4 +1,4 @@
-﻿import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus,
   Search,
@@ -7025,8 +7025,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <input
                       type="text"
                       value={simcarAirId}
-                      onChange={(e) => setSimcarAirId(e.target.value)}
-                      placeholder="Ex: MT-5107768-4D6B3C22B5FE4..."
+                      onChange={(e) => setSimcarAirId(e.target.value.replace(/[a-zA-ZÀ-ÿ]/g, ''))}
+                      placeholder="Ex: 5107768..."
                       className="w-full px-4 py-2.5 rounded-xl bg-black/30 border border-white/10 text-white text-sm placeholder-slate-500 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none transition-colors"
                     />
                     <p className="text-[10px] text-slate-500 mt-1">Será preenchido no campo IDENTIFIC da camada AIR</p>
@@ -8290,39 +8290,63 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6 animate-fade-in-up">
 
               {/* ─── Cabeçalho ─── */}
-              <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-[#0a110e]/70 backdrop-blur-2xl p-5 sm:p-8 md:p-10 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-                {/* Decorative glowing orbs */}
-                <div className="absolute -top-32 -right-32 w-64 h-64 bg-amber-500/20 rounded-full blur-3xl pointer-events-none" />
-                <div className="absolute -bottom-32 -left-32 w-64 h-64 bg-orange-500/10 rounded-full blur-3xl pointer-events-none" />
-                <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 via-transparent to-orange-500/10 rounded-3xl blur-xl group-hover:blur-2xl transition-all duration-700 pointer-events-none" />
-
-                <div className="relative flex flex-col sm:flex-row items-start gap-5 sm:gap-6">
-                  <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-500/20 to-orange-600/10 border border-amber-500/20 shadow-[0_0_20px_rgba(245,158,11,0.15)] shrink-0 text-amber-400">
-                    <Layers size={28} strokeWidth={2} />
-                  </div>
-                  <div>
-                    <h1 className="text-xl sm:text-2xl font-bold text-white mb-2 tracking-tight">Novo CAR</h1>
-                    <p className="text-slate-400 text-xs sm:text-sm leading-relaxed max-w-2xl">
-                      Classifica as áreas do imóvel com base no PRODES (desmatamento pré e pós-2008),
-                      aplica buffer de 2 m para cada lado nos rios da base SFB e calcula
-                      <strong className="text-amber-300"> AC</strong>,
-                      <strong className="text-emerald-300"> AUAS</strong>,
-                      <strong className="text-blue-300"> AVN</strong> e
-                      <strong className="text-purple-300"> ARL</strong>.
-                    </p>
-                    <div className="mt-4 flex flex-wrap gap-2 sm:gap-3 text-[10px] sm:text-xs">
-                      {[
-                        { label: 'AC', desc: 'Desmatamento < 2008', color: 'amber' },
-                        { label: 'AUAS', desc: 'Desmatamento ≥ 2008', color: 'emerald' },
-                        { label: 'AVN', desc: 'Imóvel − AC − AUAS − Rios', color: 'blue' },
-                        { label: 'ARL', desc: 'Igual à AVN', color: 'purple' },
-                      ].map((item) => (
-                        <span key={item.label} className={`px-3 py-1.5 rounded-xl bg-${item.color}-500/10 border border-${item.color}-500/20 text-${item.color}-300 flex items-center gap-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]`}>
-                          <span className={`w-1.5 h-1.5 rounded-full bg-${item.color}-400`} />
-                          <strong>{item.label}</strong> <span className="text-white/20">|</span> <span className="opacity-80 font-medium">{item.desc}</span>
-                        </span>
-                      ))}
+              <section className="rounded-2xl border border-white/10 bg-[#0a110e]/80 p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+                <div className="flex flex-col gap-5">
+                  <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 shrink-0">
+                      <Layers size={24} strokeWidth={2} />
                     </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between">
+                        <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Novo CAR</h1>
+                        {activeAuasEntry?.status && (
+                          <span className={`w-fit rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-wider ${activeAuasEntry.status === 'completed'
+                            ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300'
+                            : activeAuasEntry.status === 'processing'
+                              ? 'border-amber-500/25 bg-amber-500/10 text-amber-300'
+                              : activeAuasEntry.status === 'cancelled'
+                                ? 'border-orange-500/25 bg-orange-500/10 text-orange-300'
+                                : 'border-red-500/25 bg-red-500/10 text-red-300'
+                            }`}>
+                            {activeAuasEntry.status === 'completed'
+                              ? 'Concluído'
+                              : activeAuasEntry.status === 'processing'
+                                ? 'Processando'
+                                : activeAuasEntry.status === 'cancelled'
+                                  ? 'Cancelado'
+                                  : 'Falhou'}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-2 text-xs sm:text-sm text-slate-400 leading-relaxed max-w-3xl">
+                        Classifica o imóvel em AC, AUAS, AVN e ARL usando PRODES e base hidrográfica SFB, com resumo técnico e arquivos finais para conferência.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {[
+                      { label: 'Upload', icon: Upload, done: Boolean(auasFile || auasResult), active: !auasResult && !auasProcessing },
+                      { label: 'Bases', icon: Satellite, done: Boolean(auasResult), active: auasProcessing },
+                      { label: 'Cálculo', icon: BarChart3, done: Boolean(auasResult), active: auasProcessing },
+                      { label: 'Resultado', icon: FileText, done: Boolean(auasResult), active: Boolean(auasResult) },
+                    ].map((step) => {
+                      const Icon = step.icon;
+                      return (
+                        <div
+                          key={step.label}
+                          className={`rounded-xl border px-3 py-2.5 flex items-center gap-2 ${step.done
+                            ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200'
+                            : step.active
+                              ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
+                              : 'border-white/10 bg-white/[0.03] text-slate-400'
+                            }`}
+                        >
+                          {step.done ? <CheckCircle2 size={15} /> : <Icon size={15} />}
+                          <span className="text-xs font-semibold">{step.label}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </section>
@@ -8783,30 +8807,127 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               {/* ─── Resultados ─── */}
               {auasResult && !auasProcessing && (
                 <>
-                  {/* Cards de área */}
-                  <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
-                    {[
-                      { label: 'Imóvel', value: auasResult.propertyAreaHa, color: 'slate', icon: '🏠' },
-                      { label: 'AC (pré-2008)', value: auasResult.acAreaHa, color: 'amber', icon: '📅' },
-                      { label: 'AUAS (pós-2008)', value: auasResult.auasAreaHa, color: 'emerald', icon: '🌿' },
-                      { label: 'AVN / ARL', value: auasResult.avnAreaHa, color: 'blue', icon: '🌳' },
-                    ].map((card, idx) => (
-                      <div key={card.label} className={`group/card relative overflow-hidden rounded-2xl bg-[#131b17] border border-white/[0.05] p-4 sm:p-5 hover:border-${card.color}-500/30 hover:bg-[#16201b] transition-all duration-300 shadow-sm animate-fade-in-up`} style={{ animationDelay: `${idx * 50}ms` }}>
-                        <div className={`absolute -right-4 -top-4 w-16 h-16 bg-${card.color}-500/5 rounded-full blur-xl group-hover/card:bg-${card.color}-500/10 transition-colors pointer-events-none`} />
-                        <div className="flex flex-col h-full relative z-10">
-                          <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2 flex items-center gap-1.5">
-                            <span className="text-sm">{card.icon}</span> {card.label}
-                          </p>
-                          <div className="mt-auto">
-                            <p className={`text-2xl sm:text-3xl font-bold text-${card.color}-300 tracking-tight group-hover/card:scale-105 origin-left transition-transform duration-300`}>
-                              {card.value.toFixed(2)}
-                            </p>
-                            <p className="text-[10px] font-medium text-slate-500 mt-0.5">hectares</p>
+                  {(() => {
+                    const total = Math.max(0, Number(auasResult.propertyAreaHa || 0));
+                    const pct = (area: number) => total > 0 ? `${((Number(area || 0) / total) * 100).toFixed(1)}%` : '-';
+                    const dominantRows = [
+                      { label: 'AC', area: auasResult.acAreaHa },
+                      { label: 'AUAS', area: auasResult.auasAreaHa },
+                      { label: 'AVN/ARL', area: auasResult.avnAreaHa },
+                    ].sort((a, b) => b.area - a.area);
+                    const dominant = dominantRows[0];
+                    const resultRows = [
+                      {
+                        label: 'AC',
+                        desc: 'Área consolidada pré-2008',
+                        area: auasResult.acAreaHa,
+                        pct: pct(auasResult.acAreaHa),
+                        badge: 'border-amber-500/20 bg-amber-500/10 text-amber-300',
+                      },
+                      {
+                        label: 'AUAS',
+                        desc: 'Uso alternativo pós-2008',
+                        area: auasResult.auasAreaHa,
+                        pct: pct(auasResult.auasAreaHa),
+                        badge: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300',
+                      },
+                      {
+                        label: 'AVN/ARL',
+                        desc: 'Vegetação nativa remanescente',
+                        area: auasResult.avnAreaHa,
+                        pct: pct(auasResult.avnAreaHa),
+                        badge: 'border-blue-500/20 bg-blue-500/10 text-blue-300',
+                      },
+                      {
+                        label: 'Rios',
+                        desc: 'Buffer SFB removido do cálculo',
+                        area: auasResult.riverBufferHa,
+                        pct: pct(auasResult.riverBufferHa),
+                        badge: 'border-cyan-500/20 bg-cyan-500/10 text-cyan-300',
+                      },
+                    ];
+                    return (
+                      <>
+                        <section className="rounded-2xl border border-white/10 bg-[#0e1612]/80 p-5 sm:p-6 animate-fade-in-up">
+                          <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+                            <div>
+                              <div className="flex items-center gap-3 mb-3">
+                                <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                                  <CheckCircle2 size={18} />
+                                </div>
+                                <div>
+                                  <h2 className="text-base font-semibold text-white">Resultado Técnico Novo CAR</h2>
+                                  <p className="text-[11px] text-slate-500">Síntese pronta para conferência e exportação.</p>
+                                </div>
+                              </div>
+                              <p className="text-sm text-slate-300 leading-relaxed">
+                                O imóvel possui <strong className="text-white">{total.toFixed(2)} ha</strong>. A classe predominante é{' '}
+                                <strong className="text-emerald-300">{dominant.label}</strong>, com{' '}
+                                <strong className="text-white">{dominant.area.toFixed(2)} ha</strong>. A AUAS calculada representa{' '}
+                                <strong className="text-emerald-300">{pct(auasResult.auasAreaHa)}</strong> do imóvel.
+                              </p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Imóvel</p>
+                                <p className="mt-1 text-xl font-bold text-white">{total.toFixed(2)} ha</p>
+                              </div>
+                              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3">
+                                <p className="text-[10px] uppercase tracking-wider text-emerald-300/80 font-semibold">AUAS</p>
+                                <p className="mt-1 text-xl font-bold text-emerald-200">{auasResult.auasAreaHa.toFixed(2)} ha</p>
+                              </div>
+                              <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-3">
+                                <p className="text-[10px] uppercase tracking-wider text-blue-300/80 font-semibold">AVN/ARL</p>
+                                <p className="mt-1 text-xl font-bold text-blue-200">{auasResult.avnAreaHa.toFixed(2)} ha</p>
+                              </div>
+                              <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-3">
+                                <p className="text-[10px] uppercase tracking-wider text-cyan-300/80 font-semibold">Rios</p>
+                                <p className="mt-1 text-xl font-bold text-cyan-200">{auasResult.riverBufferHa.toFixed(4)} ha</p>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                        </section>
+
+                        <section className="rounded-2xl border border-white/10 bg-[#0e1612]/70 overflow-hidden animate-fade-in-up" style={{ animationDelay: '120ms' }}>
+                          <div className="px-5 py-4 border-b border-white/10 flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-white/10 text-slate-200">
+                              <BarChart3 size={18} />
+                            </div>
+                            <div>
+                              <h3 className="font-semibold text-slate-200 text-sm sm:text-base">Quadro de Classes</h3>
+                              <p className="text-xs text-slate-500">Áreas calculadas e participação no imóvel.</p>
+                            </div>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full min-w-[560px] text-sm">
+                              <thead className="bg-white/[0.03] text-[10px] uppercase tracking-wider text-slate-500">
+                                <tr>
+                                  <th className="px-5 py-3 text-left font-semibold">Classe</th>
+                                  <th className="px-5 py-3 text-left font-semibold">Critério</th>
+                                  <th className="px-5 py-3 text-right font-semibold">Área</th>
+                                  <th className="px-5 py-3 text-right font-semibold">% imóvel</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-white/5">
+                                {resultRows.map((row) => (
+                                  <tr key={row.label} className="hover:bg-white/[0.025] transition-colors">
+                                    <td className="px-5 py-3">
+                                      <span className={`inline-flex min-w-20 justify-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${row.badge}`}>
+                                        {row.label}
+                                      </span>
+                                    </td>
+                                    <td className="px-5 py-3 text-slate-400">{row.desc}</td>
+                                    <td className="px-5 py-3 text-right font-semibold text-slate-100">{row.area.toFixed(row.label === 'Rios' ? 4 : 2)} ha</td>
+                                    <td className="px-5 py-3 text-right text-slate-300">{row.pct}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </section>
+                      </>
+                    );
+                  })()}
 
                   <section className="relative overflow-hidden bg-gradient-to-br from-[#0e1612]/80 to-[#0a110e]/90 border border-white/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] rounded-2xl p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
                     <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
@@ -8888,6 +9009,63 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </section>
                   )}
 
+                  {Array.isArray(auasResult.images) && auasResult.images.length > 0 && (
+                    <section className="rounded-2xl border border-white/10 bg-[#0e1612]/70 p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '235ms' }}>
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                          <Eye size={18} />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-slate-200 text-sm sm:text-base">Imagens de Conferência</h3>
+                          <p className="text-xs text-slate-500 mt-0.5">Clique para ampliar e baixar a imagem usada no processamento.</p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {auasResult.images.map((img, idx) => {
+                          const captionText = normalizeImageCaption(img.caption);
+                          return (
+                            <button
+                              key={`${img.url}-${idx}`}
+                              type="button"
+                              onClick={() => openSimcarAnalysisImage(img, 'Novo CAR')}
+                              className="group relative overflow-hidden rounded-xl border border-white/10 bg-black/20 text-left hover:border-cyan-500/30 transition-colors"
+                            >
+                              <img
+                                src={resolveBackendUrl(img.url)}
+                                alt={captionText}
+                                className="h-36 w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                                loading="lazy"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
+                                <span className="text-[10px] text-white flex items-center gap-1">
+                                  <Eye size={10} /> Ampliar
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 px-3 py-2 bg-black/35 truncate" title={captionText}>{captionText}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+
+                  {auasResult.analysis && (
+                    <section className="rounded-2xl border border-white/10 bg-[#0e1612]/70 p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '240ms' }}>
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="p-2 rounded-lg bg-purple-500/10 text-purple-300 border border-purple-500/20">
+                          <Brain size={18} />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-slate-200 text-sm sm:text-base">Resumo da IA</h3>
+                          <p className="text-xs text-slate-500 mt-0.5">Leitura técnica complementar para revisão.</p>
+                        </div>
+                      </div>
+                      <div className="analysis-markdown max-h-80 overflow-y-auto custom-scrollbar rounded-xl border border-white/5 bg-black/20 p-4">
+                        {renderAnalysisRichText(auasResult.analysis)}
+                      </div>
+                    </section>
+                  )}
+
                   {/* Buffer de rios */}
                   {auasResult.riverBufferHa > 0 && (
                     <section className="relative overflow-hidden bg-gradient-to-br from-cyan-950/20 to-[#0e1612]/80 border border-cyan-500/10 shadow-[0_0_15px_rgba(6,182,212,0.03)] rounded-2xl p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '250ms' }}>
@@ -8935,7 +9113,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 <div
                                   className="absolute top-0 left-0 h-full rounded-lg bg-gradient-to-r from-emerald-500/80 to-teal-400/80 transition-all duration-1000 ease-out flex items-center shadow-[0_0_10px_rgba(16,185,129,0.3)]"
                                   style={{
-                                    width: `${Math.max(2, Math.min(100, (p.areaHa / auasResult.auasAreaHa) * 100))}%`,
+                                    width: `${Math.max(2, Math.min(100, auasResult.auasAreaHa > 0 ? (p.areaHa / auasResult.auasAreaHa) * 100 : 0))}%`,
                                     transformOrigin: 'left',
                                     animation: `scaleX 1s ease-out ${350 + idx * 50}ms both`
                                   }}

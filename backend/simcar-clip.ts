@@ -2727,13 +2727,13 @@ function buildPolygonOverlaySvg(
         }
     }
 
-    // Always draw property polygon outline (red, no fill)
+    // Always draw property polygon outline (red, no fill, thick stroke)
     svgParts.push(
         `<!-- Propriedade -->`,
         geometriesToSvgPaths(
             [propertyPolygon.geometry],
             bbox, width, height,
-            "#EF4444", 3, "none",
+            "#FF0000", 3.5, "transparent",
         ),
     );
 
@@ -4321,12 +4321,12 @@ function buildSingleSatellitePrompt(
                 "",
             ]
             : []),
-        "**Legenda dos polígonos:**",
-        "- 🟥 **Contorno vermelho**: limite da PROPRIEDADE RURAL (ATP)",
-        "- 🟪 **Roxo semi-transparente**: ÁREA CONSOLIDADA (AC) — uso antrópico declarado",
-        "- 🟨 **Amarelo semi-transparente**: VEGETAÇÃO NATIVA (AVN) — vegetação nativa declarada",
-        ...(hasAuas ? ["- ⬜ **Branco semi-transparente**: AUAS — uso alternativo do solo"] : []),
-        ...(hasArl ? ["- 🟩 **Verde tracejado**: RESERVA LEGAL (ARL/ARLREM)"] : []),
+        "**Legenda dos polígonos (Sem preenchimento para visualização real do solo):**",
+        "- 🟥 **Contorno Vermelho**: limite da PROPRIEDADE RURAL (ATP)",
+        "- 🟪 **Contorno Magenta Neon**: ÁREA CONSOLIDADA (AC) — uso antrópico declarado",
+        "- 🟦 **Contorno Ciano Neon**: VEGETAÇÃO NATIVA (AVN) — vegetação nativa declarada",
+        ...(hasAuas ? ["- 🟧 **Contorno Laranja Neon**: AUAS — uso alternativo do solo"] : []),
+        ...(hasArl ? ["- 🟩 **Contorno Verde Neon**: RESERVA LEGAL (ARL/ARLREM)"] : []),
         "",
         `- Imagem 1: Visão Geral — base ${sat.label} + propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}${hasArl ? " + ARL" : ""}`,
         `- Imagem 2: Área Consolidada — base ${sat.label} + propriedade + somente AC`,
@@ -4334,20 +4334,20 @@ function buildSingleSatellitePrompt(
         "",
         "---",
         "",
-        "## Análise da Área Consolidada (AC — polígono roxo)",
-        "- As áreas em roxo correspondem a uso antrópico visível (pastagem limpa, agricultura, solo exposto, benfeitorias)?",
+        "## Análise da Área Consolidada (AC — contorno magenta)",
+        "- As áreas contornadas em magenta correspondem a uso antrópico visível (pastagem limpa, agricultura, solo exposto, benfeitorias, cicatrizes de fogo, estradas)?",
         "- Padrão de textura antrópica: pastagem → tonalidade uniforme; agricultura → linhas regulares; solo exposto → tons claros sem estrutura.",
-        "- Algum trecho de AC apresenta textura de vegetação nativa (dossel rugoso, gradiente verde-escuro, estrutura de Cerrado/Floresta)?",
+        "- Algum trecho da AC apresenta textura de vegetação nativa (dossel rugoso, gradiente verde-escuro, estrutura de Cerrado/Floresta)?",
         "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada e manchas arbustivas intercaladas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso antrópico.",
-        "- Para cada zona da AC, estimar percentual de concordância/discordância com a classificação CAR.",
-        "- Indicar localização aproximada dos trechos discordantes: 'porção norte', 'borda leste', 'setor central', etc., e estimar área em hectares quando viável.",
+        "- Para cada zona da AC, estimar o percentual (%) relativo de concordância/discordância com a classificação CAR, ao invés de hectares absolutos.",
+        "- Indicar localização aproximada dos trechos discordantes: 'porção norte', 'borda leste', 'setor central', etc.",
         "",
-        "## Análise da Vegetação Nativa (AVN — polígono amarelo)",
-        "- As áreas em amarelo apresentam textura de vegetação nativa contínua (floresta, cerrado, mata ciliar)?",
+        "## Análise da Vegetação Nativa (AVN — contorno ciano)",
+        "- As áreas contornadas em ciano apresentam textura de vegetação nativa contínua (floresta, cerrado, mata ciliar)?",
         "- Distinguir tipologias: Floresta → dossel denso e contínuo; Cerrado → mosaico arbustivo-herbáceo; Campo nativo → tonalidade mais clara com textura variada.",
-        "- Algum trecho de AVN parece antropizado (pastagem, desmatamento, queimada recente, cicatriz de fogo)?",
+        "- Algum trecho de AVN parece antropizado (pastagem limpa, lavoura, estradas rasgadas, desmatamento evidente, cicatriz de fogo)?",
         "- Avaliar integridade e conectividade: fragmentação, clareiras, bordas antropizadas.",
-        "- **Bordas de transição AC/AVN:** examinar a faixa de transição entre AC e AVN. Se a borda for gradual (buffer de incerteza), reportar como zona de transição com largura estimada, não como discordância categórica.",
+        "- **Bordas de transição AC/AVN:** examinar a faixa de transição entre AC e AVN. Se a borda for gradual (buffer de incerteza), reportar como zona de transição com percentual estimado, não como discordância categórica.",
         ...(hasAuas
             ? [
                 "- Verificar se existe vegetação nativa aparente fora do AVN, porém dentro do shape AUAS (contorno branco).",
@@ -4365,7 +4365,7 @@ function buildSingleSatellitePrompt(
             : []),
         "## Concordâncias e Discordâncias",
         "- **✅ CONCORDA**: áreas onde a classificação CAR coincide com o uso visível.",
-        "- **❌ DISCORDA**: áreas onde a classificação não condiz. Indicar: (a) classificação mais apropriada, (b) localização relativa (porção N/NE/S etc.), (c) área estimada em hectares.",
+        "- **❌ DISCORDA**: áreas onde a classificação não condiz. Indicar: (a) classificação mais apropriada, (b) localização relativa (porção N/NE/S etc.), (c) percentual aproximado do polígono.",
         "- **⚠️ INCONCLUSIVO**: quando resolução, nuvem ou sazonalidade impedem conclusão segura.",
         "",
         "## Nível de Confiança",
@@ -4405,8 +4405,8 @@ function buildAnalysisPrompt(
             `- Revisita: ${meta.revisitDays} dias | Uso ideal: ${meta.bestUseCase}`,
             `- Peso da evidência: ${meta.spatialResolution.includes("2.5") ? "ALTO (confirmação isolada suficiente)" : meta.spatialResolution.includes("10") ? "MÉDIO (verificar com outra fonte)" : "BAIXO (requer confirmação cruzada)"}`,
             `- Imagem ${imgBase}: visão geral (propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}${hasArl ? " + ARL" : ""})`,
-            `- Imagem ${imgBase + 1}: foco AC (polígono roxo)`,
-            `- Imagem ${imgBase + 2}: foco AVN (polígono amarelo)`,
+            `- Imagem ${imgBase + 1}: foco AC (contorno magenta)`,
+            `- Imagem ${imgBase + 2}: foco AVN (contorno ciano)`,
         ].join("\n");
     }).join("\n\n");
 
@@ -4429,15 +4429,15 @@ function buildAnalysisPrompt(
             : []),
         "## Regras Técnicas Obrigatórias",
         "",
-        "### Área Consolidada (AC — polígono roxo)",
+        "### Área Consolidada (AC — contorno magenta)",
         "- AC_FORA_SHAPE = **SIM** somente quando houver EVIDÊNCIA VISUAL CLARA de uso antrópico (pastagem, agricultura, solo exposto, estrada, benfeitorias) em área do imóvel que NÃO está coberta pelo polígono AC.",
         "- Critério de evidência clara: SPOT 2008 confirmando sozinho É suficiente (2.5m de resolução). Para Landsat, exige concordância de ao menos 2 cenas independentes.",
-        "- Padrão de textura antrópica: tonalidade uniforme sem gradiente de dossel, estrutura regular de lavoura ou pasto limpo, cicatrizes de fogo.",
+        "- Padrão de textura antrópica: tonalidade uniforme sem gradiente de dossel, estrutura regular de lavoura ou pasto limpo, estradas visíveis ou cicatrizes de fogo.",
         "- Padrão de vegetação nativa: textura rugosa de copas, gradiente de cor verde-escuro, estrutura irregular de dossel (Floresta), ou manchas herbáceas intercaladas com arbustos (Cerrado).",
         "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada, manchas arbustivas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso antrópico.",
         "- Se a área em questão apresentar textura ambígua (campo nativo, palhada, solo seco), classifique como INCONCLUSIVO.",
         "",
-        "### Vegetação Nativa (AVN — polígono amarelo)",
+        "### Vegetação Nativa (AVN — contorno ciano)",
         "- AVN_FORA_SHAPE = **IGNORAR** sempre. Não reportar vegetação fora do shape AVN.",
         "- AVN_DENTRO_SHAPE_ANTROPIZADO = **SIM** apenas quando houver área CLARAMENTE antropizada DENTRO do polígono AVN.",
         "- Avalie integridade do dossel, continuidade da cobertura e sinais de fragmentação.",
@@ -5613,7 +5613,7 @@ function buildAuasSingleSatPrompt(
     return [
         "Você é analista técnica de AUAS para validação de CAR em imóvel rural de Mato Grosso.",
         hasAuasLayer
-            ? `Avalie SOMENTE a área delimitada pelo polígono AUAS (contorno branco) na imagem ${sat.label}.`
+            ? `Avalie SOMENTE a área delimitada pelo polígono AUAS (contorno laranja) na imagem ${sat.label}.`
             : `Não há shape AUAS vetorizado no ZIP. Avalie toda a propriedade buscando supressão pós-2008 que caracterize AUAS não vetorizada.`,
         ...(baselineHint ? [baselineHint] : []),
         "",
@@ -5640,9 +5640,9 @@ function buildAuasSingleSatPrompt(
             : "- Sem shape AUAS, mapeie toda a área da propriedade em busca de supressão.",
         "- Solo exposto sazonal (palhada, pastagem seca) ≠ desmatamento: confirme persistência temporal antes de classificar.",
         "- Padrão de vegetação nativa: dossel rugoso/contínuo (Floresta) ou mosaico arbustivo-herbáceo (Cerrado). Tonalidade verde-escuro irregular.",
-        "- Padrão antrópico: tonalidade uniforme (pastagem), linhas regulares (agricultura), tons claros (solo exposto).",
+        "- Padrão antrópico: tonalidade uniforme (pastagem), linhas regulares (agricultura), tons claros (solo exposto), presença de estradas ou cicatrizes de fogo.",
         "- **Campo nativo × pastagem degradada:** em Cerrado, campo nativo apresenta tonalidade clara com textura variada e manchas arbustivas intercaladas. Pastagem degradada tem tonalidade uniforme sem arbustos. Campo nativo NÃO é supressão.",
-        "- **Bordas de transição:** quando a transição entre vegetação nativa e uso antrópico for gradual, reportar como zona de incerteza com largura estimada.",
+        "- **Bordas de transição:** quando a transição entre vegetação nativa e uso antrópico for gradual, reportar como zona de incerteza com percentual da área estimado, não em hectares.",
         "",
         "**Resposta em até 400 palavras, sem tabela, sem emoji e sem bloco <think>.**",
         "Estrutura obrigatória:",
@@ -6717,14 +6717,14 @@ async function generateSatelliteImages(
         // 3 composites per satellite
         // 1: Overview (AC + AVN + AUAS + ARL + property)
         const overviewLayers: Array<{ name: string; stroke: string; fill: string; strokeWidth: number }> = [
-            { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.22)", strokeWidth: 2.5 },
-            { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.22)", strokeWidth: 2.5 },
-            { name: "AUAS", stroke: "#FFFFFF", fill: "rgba(255, 255, 255, 0.10)", strokeWidth: 2 },
+            { name: "AREA_CONSOLIDADA", stroke: "#FF00FF", fill: "transparent", strokeWidth: 3.5 }, // Neon Magenta
+            { name: "AVN", stroke: "#00FFFF", fill: "transparent", strokeWidth: 3.5 }, // Neon Cyan
+            { name: "AUAS", stroke: "#FF5500", fill: "transparent", strokeWidth: 2.5 }, // Neon Orange
         ];
         // Add ARL/ARLREM overlay if present
         if (layerGeos.has("ARL") || layerGeos.has("ARLREM")) {
-            overviewLayers.push({ name: "ARL", stroke: "#22C55E", fill: "rgba(34, 197, 94, 0.12)", strokeWidth: 2 });
-            overviewLayers.push({ name: "ARLREM", stroke: "#16A34A", fill: "rgba(22, 163, 74, 0.10)", strokeWidth: 1.8 });
+            overviewLayers.push({ name: "ARL", stroke: "#00FF00", fill: "transparent", strokeWidth: 2.5 }); // Neon Green
+            overviewLayers.push({ name: "ARLREM", stroke: "#32CD32", fill: "transparent", strokeWidth: 2.5 });
         }
         const overviewSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, overviewLayers);
         const hasArl = layerGeos.has("ARL") || layerGeos.has("ARLREM");
@@ -6737,16 +6737,16 @@ async function generateSatelliteImages(
             message: `${sat.label}: renderizando Area Consolidada...`,
         });
 
-        // 2: AC only (increased stroke width for clarity)
+        // 2: AC only (Neon Magenta, transparent fill)
         const acSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
-            { name: "AREA_CONSOLIDADA", stroke: "#9333EA", fill: "rgba(147, 51, 234, 0.28)", strokeWidth: 3 },
+            { name: "AREA_CONSOLIDADA", stroke: "#FF00FF", fill: "transparent", strokeWidth: 4 },
         ]);
         images.push({ dataUrl: await compositeOverlay(basePng, acSvg), caption: `${sat.label} - Area Consolidada` });
         step++;
 
-        // 3: AVN only (increased stroke width for clarity)
+        // 3: AVN only (Neon Cyan, transparent fill)
         const avnSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
-            { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.28)", strokeWidth: 3 },
+            { name: "AVN", stroke: "#00FFFF", fill: "transparent", strokeWidth: 4 },
         ]);
         images.push({ dataUrl: await compositeOverlay(basePng, avnSvg), caption: `${sat.label} - AVN` });
         step++;
@@ -7727,6 +7727,67 @@ async function buildSimcarReportPdfBuffer(args: {
         doc.moveDown(1);
     }
 
+    // --- Gráfico de Áreas ---
+    const chartDataArray = layers.filter((l: any) => Number(l?.features || 0) > 0 && Number(l?.areaHa || 0) > 0);
+    if (chartDataArray.length > 0) {
+        chartDataArray.sort((a: any, b: any) => Number(b.areaHa || 0) - Number(a.areaHa || 0));
+        
+        // Vamos limitar as top 15 camadas para manter o gráfico legível
+        const topChartLayers = chartDataArray.slice(0, 15);
+        
+        const chartConfig = {
+            type: 'horizontalBar',
+            data: {
+                labels: topChartLayers.map((l: any) => reportSingleLineText(l.name || "Desconhecido", 22)),
+                datasets: [{
+                    label: 'Área (ha)',
+                    data: topChartLayers.map((l: any) => Number(l.areaHa || 0).toFixed(2)),
+                    backgroundColor: colors.primary,
+                    borderWidth: 0,
+                }]
+            },
+            options: {
+                plugins: {
+                    datalabels: { anchor: 'end', align: 'right', color: colors.darkText, font: { weight: 'bold' } }
+                },
+                legend: { display: false },
+                title: { display: false },
+                scales: {
+                    xAxes: [{ ticks: { beginAtZero: true, fontColor: colors.lightText }, gridLines: { color: colors.border } }],
+                    yAxes: [{ ticks: { fontColor: colors.text, fontStyle: 'bold' }, gridLines: { display: false } }]
+                }
+            }
+        };
+        
+        const chartHeight = Math.max(220, topChartLayers.length * 28 + 60);
+        const chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(chartConfig))}&w=600&h=${chartHeight}&bkg=white&devicePixelRatio=2.0`;
+        
+        try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 8000);
+            const resp = await fetch(chartUrl, { signal: controller.signal });
+            clearTimeout(timer);
+            
+            if (resp.ok) {
+                const chartBuf = Buffer.from(await resp.arrayBuffer());
+                sectionTitle("Proporção de Áreas por Camada (ha)");
+                
+                const frameHeight = Math.max(160, topChartLayers.length * 22 + 50);
+                ensureSpace(frameHeight + 60);
+                const chartY = doc.y;
+                
+                doc.rect(margin, chartY, contentW, frameHeight).fillAndStroke("#FFFFFF", colors.border);
+                doc.image(chartBuf, margin + 10, chartY + 10, { fit: [contentW - 20, frameHeight - 20], align: "center", valign: "center" });
+                
+                doc.y = chartY + frameHeight + 10;
+                doc.x = margin;
+                doc.moveDown(0.5);
+            }
+        } catch (err) {
+            console.warn("[SIMCAR PDF] Falha ao gerar gráfico via quickchart.io", err);
+        }
+    }
+
     // --- Análise IA Textos ---
     if (args.analysisText) {
         sectionTitle("Análise de Área Consolidada e Vegetação Nativa (AC/AVN)");
@@ -7742,13 +7803,28 @@ async function buildSimcarReportPdfBuffer(args: {
         sectionTitle("Anexo Fotográfico: Satélites e Vetores Analisados");
         for (const img of imageBuffers) {
             if (!img.buffer) continue;
-            ensureSpace(260);
-            const imgY = doc.y;
             try {
-                doc.rect(margin, imgY, contentW, 200).fillAndStroke(colors.bg, colors.border);
-                doc.image(img.buffer, margin + 2, imgY + 2, { fit: [contentW - 4, 196], align: "center", valign: "center" });
+                const pdfImg = (doc as any).openImage(img.buffer);
+                const aspectRatio = pdfImg.width / pdfImg.height;
+                const MAX_HEIGHT = 450;
                 
-                doc.y = imgY + 210;
+                let targetWidth = contentW - 4;
+                let targetHeight = targetWidth / aspectRatio;
+                
+                if (targetHeight > MAX_HEIGHT) {
+                    targetHeight = MAX_HEIGHT;
+                    targetWidth = targetHeight * aspectRatio;
+                }
+
+                ensureSpace(targetHeight + 40);
+                const imgY = doc.y;
+                
+                const offsetX = margin + 2 + ((contentW - 4 - targetWidth) / 2);
+
+                doc.rect(margin, imgY, contentW, targetHeight + 4).fillAndStroke(colors.bg, colors.border);
+                doc.image(img.buffer, offsetX, imgY + 2, { width: targetWidth, height: targetHeight });
+                
+                doc.y = imgY + targetHeight + 12;
                 doc.font("Helvetica-Oblique").fontSize(9).fillColor(colors.lightText).text(reportSingleLineText(img.caption || "Imagem de análise espacial", 150), margin, doc.y, {
                     width: contentW,
                     align: "center",
