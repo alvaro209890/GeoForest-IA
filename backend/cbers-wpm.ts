@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
+import archiver from "archiver";
 import {
   area as turfArea,
   bboxPolygon,
@@ -14,6 +15,7 @@ import type { Feature, Geometry, MultiPolygon, Polygon } from "geojson";
 import { parseUserShapefile } from "./simcar-clip";
 import {
   deleteDocBySegments,
+  getAbsoluteStoragePath,
   readDocBySegments,
   removeStoragePath,
   saveUserFileFromPath,
@@ -77,6 +79,10 @@ type CbersProgressPatch = {
   outputRelativePath?: string;
   outputFilename?: string;
   outputBytes?: number;
+  batchZipUrl?: string;
+  batchZipRelativePath?: string;
+  batchZipFilename?: string;
+  batchZipBytes?: number;
   completedAt?: string;
   scene?: CbersScene | null;
   scenes?: CbersSceneJobState[];
@@ -121,6 +127,10 @@ function cbersOutputFilename(itemId: string): string {
     .replace(/_C?342(?:_PAN)?$/i, "")
     .replace(/_PAN$/i, "");
   return `${stem}_C342_PAN.TIF`;
+}
+
+function cbersBatchZipFilename(jobId: string): string {
+  return safeName(`CBERS_4A_WPM_LOTE_${jobId.slice(0, 8)}_C342_PAN.zip`, "CBERS_4A_WPM_LOTE_C342_PAN.zip");
 }
 
 function parseBase64Zip(raw: unknown): Buffer {
@@ -644,6 +654,61 @@ async function processCbersScene(args: {
   };
 }
 
+async function createCbersBatchZip(args: {
+  uid: string;
+  jobId: string;
+  tmpDir: string;
+  scenes: CbersSceneJobState[];
+}): Promise<{
+  url: string;
+  relativePath: string;
+  filename: string;
+  bytes: number;
+  fileCount: number;
+} | null> {
+  const entries = args.scenes
+    .filter((scene) => scene.status === "completed" && scene.outputRelativePath)
+    .map((scene) => {
+      const absolutePath = getAbsoluteStoragePath(String(scene.outputRelativePath));
+      return {
+        absolutePath,
+        name: scene.outputFilename || cbersOutputFilename(scene.scene?.id || scene.itemId),
+      };
+    })
+    .filter((entry) => fs.existsSync(entry.absolutePath));
+  if (!entries.length) return null;
+
+  const filename = cbersBatchZipFilename(args.jobId);
+  const tempZipPath = path.join(args.tmpDir, filename);
+  const output = fs.createWriteStream(tempZipPath);
+  const archive = archiver("zip", { zlib: { level: 0 } });
+
+  await new Promise<void>((resolve, reject) => {
+    output.on("close", resolve);
+    output.on("error", reject);
+    archive.on("error", reject);
+    archive.pipe(output);
+
+    for (const entry of entries) archive.file(entry.absolutePath, { name: entry.name });
+    void archive.finalize().catch(reject);
+  });
+
+  if (!fs.existsSync(tempZipPath)) return null;
+  const stored = saveUserFileFromPath({
+    uid: args.uid,
+    area: "cbers/output",
+    filename,
+    sourcePath: tempZipPath,
+  });
+  return {
+    url: stored.publicUrl,
+    relativePath: stored.relativePath,
+    filename,
+    bytes: stored.bytes,
+    fileCount: entries.length,
+  };
+}
+
 async function runCbersJob(input: {
   uid: string;
   jobId: string;
@@ -825,6 +890,20 @@ async function runCbersBatchJob(input: {
     const completed = scenes.filter((scene) => scene.status === "completed");
     const failed = scenes.filter((scene) => scene.status === "failed");
     const finalStatus: CbersJobStatus = completed.length > 0 ? "completed" : "failed";
+    let batchZip: Awaited<ReturnType<typeof createCbersBatchZip>> = null;
+    if (input.itemIds.length > 1 && completed.length > 0) {
+      persistBatch({
+        stage: "zip",
+        percent: 99,
+        message: `Compactando ${completed.length} GeoTIFF(s) do lote.`,
+      });
+      batchZip = await createCbersBatchZip({
+        uid,
+        jobId,
+        tmpDir,
+        scenes: completed,
+      });
+    }
     progress(uid, jobId, {
       status: finalStatus,
       mode: "batch",
@@ -835,6 +914,10 @@ async function runCbersBatchJob(input: {
           ? `${completed.length} cena(s) concluída(s), ${failed.length} falharam.`
           : `${completed.length} cena(s) concluída(s).`,
       scenes,
+      batchZipUrl: batchZip?.url,
+      batchZipRelativePath: batchZip?.relativePath,
+      batchZipFilename: batchZip?.filename,
+      batchZipBytes: batchZip?.bytes,
       completedAt: new Date().toISOString(),
     });
     finishJob({ jobId, status: finalStatus, error: finalStatus === "failed" ? "all_scenes_failed" : undefined });
@@ -1051,6 +1134,7 @@ export function registerCbersWpmRoutes(app: Express): void {
     }
     requestCancel(jobId, uid);
     removeStoragePath(String(data.outputRelativePath || data.outputUrl || ""));
+    removeStoragePath(String(data.batchZipRelativePath || data.batchZipUrl || ""));
     if (Array.isArray(data.scenes)) {
       for (const scene of data.scenes) {
         removeStoragePath(String(scene?.outputRelativePath || scene?.outputUrl || ""));
