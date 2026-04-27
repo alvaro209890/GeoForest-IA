@@ -1839,28 +1839,19 @@ async function processClip(
     if (carNumber) {
         sendSSE(res, { type: "progress", layer: "WFS", stage: "Buscando limite do CAR no SEMA WFS...", percent: 2 });
         try {
-            const wfsUrl = buildWfsUrl({
-                service: "WFS",
-                version: "1.0.0",
-                request: "GetFeature",
-                typeName: "simcar:simcar_requerido",
-                outputFormat: "application/json",
-                CQL_FILTER: `recibo_car='${carNumber}' OR cod_car='${carNumber}' OR numero_do_car='${carNumber}'`,
-            });
-            const featureCollection = await fetchJsonWithTimeout<any>(wfsUrl, WFS_TIMEOUT_MS);
-            if (!featureCollection || !featureCollection.features || featureCollection.features.length === 0) {
-                throw new Error(`Nenhum imóvel encontrado no WFS SEMA para o CAR: ${carNumber}`);
-            }
-            const feature = featureCollection.features[0] as Feature<Polygon | MultiPolygon>;
-            const geom = normalizePolygonGeometry(feature.geometry);
-            if (!geom) throw new Error("A geometria retornada pelo WFS não é um polígono válido.");
-            userGeometry = geom;
+            const feature = await fetchCarBoundaryByNumber(carNumber);
+            userGeometry = feature.geometry;
             userPolygon = feature;
             areaHa = computeAreaHa(feature);
             userWkt = polygonToWkt(userGeometry);
             sendSSE(res, { type: "progress", layer: "WFS", stage: `CAR localizado — ${areaHa.toFixed(2)} ha`, percent: 5 });
         } catch (err: any) {
-            sendSSE(res, { type: "error", message: err.message || "Erro ao buscar CAR no WFS da SEMA." });
+            const message = err?.message || "Erro ao buscar CAR no WFS da SEMA.";
+            console.error("[SIMCAR CLIP] CAR boundary lookup failed:", {
+                carNumber,
+                message,
+            });
+            sendSSE(res, { type: "error", message });
             return { ok: false, cloudinaryStoredBytes: 0 };
         }
     } else if (propertyZip) {
@@ -7319,6 +7310,54 @@ function stripUndefinedDeep<T>(value: T): T {
         return out as T;
     }
     return value;
+}
+
+function cqlString(value: string): string {
+    return `'${String(value || "").replace(/'/g, "''")}'`;
+}
+
+function normalizeCarLookupValues(raw: string): string[] {
+    const compact = String(raw || "").trim().replace(/\s+/g, "").toUpperCase();
+    const withoutCarPrefix = compact.replace(/^CAR[_-]?/i, "");
+    return Array.from(new Set([compact, withoutCarPrefix].filter(Boolean)));
+}
+
+async function fetchCarBoundaryByNumber(carNumber: string): Promise<Feature<Polygon | MultiPolygon>> {
+    const values = normalizeCarLookupValues(carNumber);
+    if (!values.length) throw new Error("Número do CAR inválido.");
+
+    const cqlFilter = values
+        .flatMap((value) => [
+            `NUMEROESTADUAL=${cqlString(value)}`,
+            `CAR_FEDERAL=${cqlString(value)}`,
+            `PROTOCOLO=${cqlString(value)}`,
+        ])
+        .join(" OR ");
+
+    const wfsUrl = buildWfsUrl({
+        service: "WFS",
+        version: "1.0.0",
+        request: "GetFeature",
+        typeName: "Geoportal:CAR_ATP",
+        outputFormat: "application/json",
+        srsName: "EPSG:4674",
+        maxFeatures: 1,
+        CQL_FILTER: cqlFilter,
+    });
+
+    const featureCollection = await fetchJsonWithTimeout<any>(wfsUrl, WFS_TIMEOUT_MS);
+    const feature = Array.isArray(featureCollection?.features) ? featureCollection.features[0] : null;
+    if (!feature) {
+        throw new Error(`Nenhum imóvel encontrado na camada CAR_ATP da SEMA para o CAR: ${values.join(" / ")}`);
+    }
+
+    const geom = normalizePolygonGeometry(feature.geometry);
+    if (!geom) throw new Error("A geometria retornada pelo WFS não é um polígono válido.");
+    return {
+        type: "Feature",
+        properties: feature.properties || {},
+        geometry: geom,
+    };
 }
 
 async function persistSimcarClipProcessingState(args: {
