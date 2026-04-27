@@ -71,6 +71,51 @@ function ensureDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
 }
 
+function removeStaleTempCopies(dir: string, prefix: string): void {
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix) || !entry.endsWith(".tmp")) continue;
+    const tempPath = path.join(dir, entry);
+    try {
+      const stat = fs.statSync(tempPath);
+      if (stat.mtimeMs < cutoff) fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+}
+
+function copyFileAtomic(sourcePath: string, absolutePath: string): number {
+  const dir = path.dirname(absolutePath);
+  ensureDir(dir);
+  const sourceStat = fs.statSync(sourcePath);
+  const tempPrefix = `.${path.basename(absolutePath)}.`;
+  removeStaleTempCopies(dir, tempPrefix);
+  const tempPath = path.join(dir, `${tempPrefix}${crypto.randomUUID()}.tmp`);
+  try {
+    fs.copyFileSync(sourcePath, tempPath);
+    const tempStat = fs.statSync(tempPath);
+    if (tempStat.size !== sourceStat.size) {
+      throw new Error(`COPY_SIZE_MISMATCH:${tempStat.size}:${sourceStat.size}`);
+    }
+    fs.renameSync(tempPath, absolutePath);
+    return tempStat.size;
+  } catch (error) {
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Keep the original copy error.
+    }
+    throw error;
+  }
+}
+
 function writeJsonAtomic(filePath: string, data: unknown): void {
   ensureDir(path.dirname(filePath));
   const tempPath = `${filePath}.${crypto.randomUUID()}.tmp`;
@@ -258,14 +303,12 @@ export function saveUserFileFromPath(args: {
   const cleanName = safeSegment(args.filename) || crypto.randomUUID();
   const relativePath = path.posix.join("users", safeSegment(args.uid), args.area, cleanName);
   const absolutePath = path.join(userDir, args.area, cleanName);
-  ensureDir(path.dirname(absolutePath));
-  fs.copyFileSync(args.sourcePath, absolutePath);
-  const stat = fs.statSync(absolutePath);
+  const bytes = copyFileAtomic(args.sourcePath, absolutePath);
   return {
     relativePath,
     absolutePath,
     publicUrl: `${PUBLIC_API_BASE_URL}/api/storage/${relativePath.split(path.sep).join("/")}`,
-    bytes: stat.size,
+    bytes,
   };
 }
 

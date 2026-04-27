@@ -1185,6 +1185,7 @@ export default function Dashboard() {
   );
   const [simcarAirId, setSimcarAirId] = useState('');
   const [simcarCarNumber, setSimcarCarNumber] = useState('');
+  const [simcarSigefParcelCode, setSimcarSigefParcelCode] = useState('');
   const [simcarClipJobId, setSimcarClipJobId] = useState<string | null>(null);
 
   // ─── SIMCAR AI Analysis State ───
@@ -1594,6 +1595,7 @@ export default function Dashboard() {
     setSimcarClipJobId(null);
     setSimcarAirId('');
     setSimcarCarNumber('');
+    setSimcarSigefParcelCode('');
     setSimcarVectorizedRunning(false);
     setSimcarVectorizedStatus(null);
     setSimcarUnifiedProgressDisplay(0);
@@ -7699,32 +7701,65 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         setSimcarCarNumber(val);
                         if (val.trim()) {
                           setSimcarClipFile(null);
+                          setSimcarSigefParcelCode('');
                         }
                       }}
-                      disabled={!!simcarClipFile}
+                      disabled={!!simcarClipFile || !!simcarSigefParcelCode.trim()}
                       placeholder="Ex: MT-5107768-XXXXXXX..."
-                      className={`w-full px-4 py-2.5 rounded-xl bg-black/30 border text-white text-sm placeholder-slate-500 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none transition-colors ${simcarClipFile ? 'border-white/5 opacity-40 cursor-not-allowed' : 'border-white/10'}`}
+                      className={`w-full px-4 py-2.5 rounded-xl bg-black/30 border text-white text-sm placeholder-slate-500 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none transition-colors ${simcarClipFile || simcarSigefParcelCode.trim() ? 'border-white/5 opacity-40 cursor-not-allowed' : 'border-white/10'}`}
                     />
                     <p className="text-[10px] text-slate-500 mt-1">
                       {simcarCarNumber.trim()
                         ? 'A geometria será buscada automaticamente no WFS da SEMA.'
-                        : 'Preencha para buscar pelo WFS. Ou envie o ZIP abaixo.'}
+                        : simcarSigefParcelCode.trim()
+                          ? 'Limpe o código SIGEF para usar o Nº do CAR.'
+                          : 'Preencha para buscar pelo WFS. Ou envie o ZIP abaixo.'}
+                    </p>
+                  </div>
+                )}
+
+                {simcarClipMode === 'auto-clip' && (
+                  <div className="mb-4">
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
+                      Código da certificação SIGEF (parcela_codigo)
+                    </label>
+                    <input
+                      type="text"
+                      value={simcarSigefParcelCode}
+                      onChange={(e) => {
+                        const val = e.target.value.trim();
+                        setSimcarSigefParcelCode(val);
+                        if (val) {
+                          setSimcarClipFile(null);
+                          setSimcarCarNumber('');
+                        }
+                      }}
+                      disabled={!!simcarClipFile || !!simcarCarNumber.trim()}
+                      placeholder="Ex: 17bd4a7d-ca00-4327-bad6-d6c28f62a5a3"
+                      className={`w-full px-4 py-2.5 rounded-xl bg-black/30 border text-white text-sm placeholder-slate-500 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none transition-colors ${simcarClipFile || simcarCarNumber.trim() ? 'border-white/5 opacity-40 cursor-not-allowed' : 'border-white/10'}`}
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      {simcarSigefParcelCode.trim()
+                        ? 'A ATP será puxada do WFS de certificações SIGEF do INCRA.'
+                        : simcarCarNumber.trim()
+                          ? 'Limpe o Nº do CAR para usar a certificação SIGEF.'
+                          : 'Informe o parcela_codigo para recortar com base na certificação SIGEF.'}
                     </p>
                   </div>
                 )}
 
                 {/* Upload Area */}
                 <div
-                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors mb-4 ${simcarCarNumber.trim() && simcarClipMode === 'auto-clip'
+                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors mb-4 ${(simcarCarNumber.trim() || simcarSigefParcelCode.trim()) && simcarClipMode === 'auto-clip'
                     ? 'border-white/5 bg-white/[0.01] opacity-40 cursor-not-allowed'
                     : simcarClipFile
                       ? 'border-emerald-500/50 bg-emerald-500/5 cursor-pointer'
                       : simcarVectorizedServerZipReady
                         ? 'border-amber-500/30 bg-amber-500/10 cursor-default'
                         : 'border-white/10 hover:border-emerald-500/30 hover:bg-white/5 cursor-pointer'
-                    }`}
+                  }`}
                   onClick={() => {
-                    if (simcarCarNumber.trim() && simcarClipMode === 'auto-clip') return;
+                    if ((simcarCarNumber.trim() || simcarSigefParcelCode.trim()) && simcarClipMode === 'auto-clip') return;
                     if (simcarVectorizedServerZipReady) return;
                     const input = document.createElement('input');
                     input.type = 'file';
@@ -7738,6 +7773,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         setSimcarClipError(null);
                         setSimcarVectorizedStatus(null);
                         setSimcarCarNumber('');
+                        setSimcarSigefParcelCode('');
                       }
                     };
                     input.click();
@@ -7745,7 +7781,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => {
                     e.preventDefault();
-                    if (simcarCarNumber.trim() && simcarClipMode === 'auto-clip') return;
+                    if ((simcarCarNumber.trim() || simcarSigefParcelCode.trim()) && simcarClipMode === 'auto-clip') return;
                     if (simcarVectorizedServerZipReady) return;
                     const file = e.dataTransfer.files[0];
                     if (file && file.name.toLowerCase().endsWith('.zip')) {
@@ -7755,13 +7791,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       setSimcarClipError(null);
                       setSimcarVectorizedStatus(null);
                       setSimcarCarNumber('');
+                      setSimcarSigefParcelCode('');
                     }
                   }}
                 >
-                  {simcarCarNumber.trim() && simcarClipMode === 'auto-clip' ? (
+                  {(simcarCarNumber.trim() || simcarSigefParcelCode.trim()) && simcarClipMode === 'auto-clip' ? (
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Upload size={28} className="text-slate-600" />
-                      <p className="text-sm text-slate-500">Upload desabilitado — usando Nº do CAR</p>
+                      <p className="text-sm text-slate-500">
+                        Upload desabilitado — usando {simcarSigefParcelCode.trim() ? 'certificação SIGEF' : 'Nº do CAR'}
+                      </p>
                       <p className="text-[10px] text-slate-600">Limpe o campo acima para voltar a enviar ZIP.</p>
                     </div>
                   ) : simcarClipFile ? (
@@ -7939,7 +7978,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 <button
                   disabled={
                     simcarClipMode === 'auto-clip'
-                      ? (!simcarClipFile && !simcarCarNumber.trim()) || simcarClipProcessing || !simcarAirId.trim() || selectedSimcarClipLayerCount === 0
+                      ? (!simcarClipFile && !simcarCarNumber.trim() && !simcarSigefParcelCode.trim()) || simcarClipProcessing || !simcarAirId.trim() || selectedSimcarClipLayerCount === 0
                       : !canRunVectorizedAnalysis || simcarVectorizedRunning || simcarAnalysisProcessing || simcarAuasProcessing
                   }
                   onClick={async () => {
@@ -7974,7 +8013,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       toast.error('Selecione um ZIP vetorizado para continuar.');
                       return;
                     }
-                    if (!simcarClipFile && !simcarCarNumber.trim()) return;
+                    if (!simcarClipFile && !simcarCarNumber.trim() && !simcarSigefParcelCode.trim()) return;
                     setSimcarClipProcessing(true);
                     clearSimcarClipProgressQueue();
                     setSimcarClipProgress(null);
@@ -7984,6 +8023,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
                     try {
                       const useCarNumber = !simcarClipFile && simcarCarNumber.trim();
+                      const useSigefParcel = !simcarClipFile && !useCarNumber && simcarSigefParcelCode.trim();
                       const base64 = simcarClipFile ? await readFileAsBase64Payload(simcarClipFile) : undefined;
                       const selectedLayers = selectedSimcarClipLayerNames;
                       const controller = new AbortController();
@@ -7997,6 +8037,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       if (useCarNumber) {
                         payload.carNumber = simcarCarNumber.trim();
                         payload.filename = `CAR_${simcarCarNumber.trim()}.zip`;
+                      } else if (useSigefParcel) {
+                        payload.sigefParcelCode = simcarSigefParcelCode.trim();
+                        payload.filename = `SIGEF_${simcarSigefParcelCode.trim()}.zip`;
                       } else {
                         payload.propertyZip = base64;
                         payload.filename = simcarClipFile!.name;
@@ -8110,7 +8153,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                         role: 'user',
                                         text: [
                                           `Solicitei um recorte SIMCAR para AIR ${simcarAirId.trim()}.`,
-                                          `Arquivo: ${simcarClipFile?.name || 'arquivo enviado'}.`,
+                                          useCarNumber
+                                            ? `Fonte do limite: Nº do CAR ${simcarCarNumber.trim()}.`
+                                            : useSigefParcel
+                                              ? `Fonte do limite: certificação SIGEF ${simcarSigefParcelCode.trim()}.`
+                                              : `Arquivo: ${simcarClipFile?.name || 'arquivo enviado'}.`,
                                           `Camadas selecionadas: ${selectedLayersLabel}.`,
                                         ].join('\n'),
                                       },
@@ -8167,7 +8214,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   }}
                   className={`w-full py-3 rounded-xl font-medium text-sm transition-all duration-300 flex items-center justify-center gap-2 ${(
                     simcarClipMode === 'auto-clip'
-                      ? (!simcarClipFile && !simcarCarNumber.trim()) || simcarClipProcessing || !simcarAirId.trim() || selectedSimcarClipLayerCount === 0
+                      ? (!simcarClipFile && !simcarCarNumber.trim() && !simcarSigefParcelCode.trim()) || simcarClipProcessing || !simcarAirId.trim() || selectedSimcarClipLayerCount === 0
                       : !canRunVectorizedAnalysis || simcarVectorizedRunning || simcarAnalysisProcessing || simcarAuasProcessing
                   )
                     ? 'bg-white/5 text-slate-500 cursor-not-allowed'

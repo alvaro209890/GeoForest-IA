@@ -2,6 +2,7 @@ import type { Express, Request, Response as ExpressResponse } from "express";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { STORAGE_ROOT } from "./local-storage";
 
 type PlainObject = Record<string, any>;
@@ -68,9 +69,99 @@ const GEOSERVER_EXTERNAL_CBRS_ROOT = path.resolve(
     "/home/server/.local/geoserver-work/data_dir/external/cbers",
 );
 const ROOT_CBRS_GROUP = "CBERS-4A-Apos_2019";
+const CBERS_OVERVIEW_LEVELS = String(
+  process.env.CBERS_OVERVIEW_LEVELS || "2 4 8 16 32 64 128",
+)
+  .split(/\s+/)
+  .map((value) => Number(value))
+  .filter((value) => Number.isInteger(value) && value > 1);
 
 function ensureDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
+}
+
+function removeStaleTempCopies(dir: string, prefix: string): void {
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix) || !entry.endsWith(".tmp")) continue;
+    const tempPath = path.join(dir, entry);
+    try {
+      const stat = fs.statSync(tempPath);
+      if (stat.mtimeMs < cutoff) fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+}
+
+function copyFileAtomic(sourcePath: string, destPath: string): number {
+  ensureDir(path.dirname(destPath));
+  const sourceStat = fs.statSync(sourcePath);
+  const tempPrefix = `.${path.basename(destPath)}.`;
+  removeStaleTempCopies(path.dirname(destPath), tempPrefix);
+  const tempPath = path.join(path.dirname(destPath), `${tempPrefix}${crypto.randomUUID()}.tmp`);
+  try {
+    fs.copyFileSync(sourcePath, tempPath);
+    const tempStat = fs.statSync(tempPath);
+    if (tempStat.size !== sourceStat.size) {
+      throw new Error(`COPY_SIZE_MISMATCH:${tempStat.size}:${sourceStat.size}`);
+    }
+    fs.renameSync(tempPath, destPath);
+    return tempStat.size;
+  } catch (error) {
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Keep the original copy error.
+    }
+    throw error;
+  }
+}
+
+async function runCommand(command: string, args: string[]): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    const keepOutput = (chunk: Buffer) => {
+      output += chunk.toString("utf8");
+      if (output.length > 6000) output = output.slice(-6000);
+    };
+    child.stdout.on("data", keepOutput);
+    child.stderr.on("data", keepOutput);
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`${command} falhou com codigo ${code}: ${output.slice(-1200)}`));
+    });
+  });
+}
+
+async function ensureExternalOverviews(tifPath: string): Promise<string | null> {
+  if (!CBERS_OVERVIEW_LEVELS.length) return null;
+  const overviewPath = `${tifPath}.ovr`;
+  const tifStat = fs.statSync(tifPath);
+  if (fs.existsSync(overviewPath)) {
+    const overviewStat = fs.statSync(overviewPath);
+    if (overviewStat.size > 0 && overviewStat.mtimeMs >= tifStat.mtimeMs) return overviewPath;
+  }
+  await runCommand("gdaladdo", [
+    "-ro",
+    "--config", "COMPRESS_OVERVIEW", "LZW",
+    "--config", "INTERLEAVE_OVERVIEW", "PIXEL",
+    "--config", "BIGTIFF_OVERVIEW", "IF_SAFER",
+    tifPath,
+    ...CBERS_OVERVIEW_LEVELS.map(String),
+  ]);
+  return fs.existsSync(overviewPath) ? overviewPath : null;
 }
 
 function writeJsonAtomic(filePath: string, data: unknown): void {
@@ -316,6 +407,16 @@ function linkForGeoserver(hdPath: string, orbit: string, year: string, storeName
     // Missing symlink is fine.
   }
   fs.symlinkSync(hdPath, target);
+  const overviewPath = `${hdPath}.ovr`;
+  const overviewTarget = `${target}.ovr`;
+  try {
+    if (fs.existsSync(overviewTarget) || fs.lstatSync(overviewTarget).isSymbolicLink()) fs.unlinkSync(overviewTarget);
+  } catch {
+    // Missing symlink is fine.
+  }
+  if (fs.existsSync(overviewPath)) {
+    fs.symlinkSync(overviewPath, overviewTarget);
+  }
   return target;
 }
 
@@ -433,8 +534,8 @@ export async function publishCbersPanToArchive(args: {
   const archiveDir = path.join(CBERS_ARCHIVE_ROOT, orbit, year);
   ensureDir(archiveDir);
   const hdPath = path.join(archiveDir, archiveFilename);
-  fs.copyFileSync(args.sourcePath, hdPath);
-  const bytes = fs.statSync(hdPath).size;
+  const bytes = copyFileAtomic(args.sourcePath, hdPath);
+  await ensureExternalOverviews(hdPath);
   const storeName = cleanLayerName(`${orbit}_${year}_${path.basename(archiveFilename, path.extname(archiveFilename))}`);
   const imageId = storeName;
 

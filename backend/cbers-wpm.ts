@@ -18,6 +18,7 @@ import {
   readDocBySegments,
   removeStoragePath,
   saveUserFileFromPath,
+  STORAGE_ROOT,
   stripUndefinedDeep,
   writeDocBySegments,
 } from "./local-storage";
@@ -143,6 +144,10 @@ const CBERS_DOWNLOAD_STALL_TIMEOUT_MS = Math.max(
   30000,
   Number(process.env.CBERS_DOWNLOAD_STALL_TIMEOUT_MS || 180000),
 );
+const CBERS_TMP_CLEANUP_MAX_AGE_MS = Math.max(
+  30 * 60 * 1000,
+  Number(process.env.CBERS_TMP_CLEANUP_MAX_AGE_MS || 2 * 60 * 60 * 1000),
+);
 const CBERS_PANSHARPEN_ESTIMATE_MS = Math.max(
   60000,
   Number(process.env.CBERS_PANSHARPEN_ESTIMATE_MS || 8 * 60 * 1000),
@@ -160,6 +165,7 @@ const GEOSERVER_PUBLIC_WMS_BASE = String(
 
 const eventSubscribers = new Map<string, Set<Response>>();
 let geoserverLayerCache: { expiresAt: number; layers: string[] } | null = null;
+let cbersTmpCleanupStarted = false;
 
 function gdalCommandEnv(): NodeJS.ProcessEnv {
   return {
@@ -195,6 +201,102 @@ function fileSizeSafe(filePath: string): number {
 
 function bytesToMb(bytes: number): string {
   return (Math.max(0, bytes) / 1024 / 1024).toFixed(1);
+}
+
+function newestMtimeMs(dir: string, depth = 0): number {
+  let newest = 0;
+  try {
+    const stat = fs.statSync(dir);
+    newest = stat.mtimeMs;
+  } catch {
+    return newest;
+  }
+  if (depth >= 3) return newest;
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return newest;
+  }
+  for (const entry of entries) {
+    const child = path.join(dir, entry.name);
+    try {
+      const stat = fs.statSync(child);
+      newest = Math.max(newest, stat.mtimeMs);
+      if (entry.isDirectory()) newest = Math.max(newest, newestMtimeMs(child, depth + 1));
+    } catch {
+      // Ignore entries that disappeared while cleaning.
+    }
+  }
+  return newest;
+}
+
+function isPersistedCbersJobActive(jobId: string): boolean {
+  const usersDir = path.join(STORAGE_ROOT, "users");
+  if (!fs.existsSync(usersDir)) return false;
+  try {
+    for (const uid of fs.readdirSync(usersDir)) {
+      const filePath = path.join(usersDir, uid, "processing_jobs", `${safeName(jobId)}.json`);
+      if (!fs.existsSync(filePath)) continue;
+      const data = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
+      if (String(data.endpoint || "") !== "/api/cbers-wpm/jobs") continue;
+      const status = String(data.status || "").toLowerCase();
+      if (status === "running" || status === "cancel_requested") return true;
+    }
+  } catch {
+    return true;
+  }
+  return false;
+}
+
+function cleanupCbersTmpRoot(reason: string): number {
+  if (!fs.existsSync(CBERS_TMP_ROOT)) return 0;
+  const now = Date.now();
+  let removed = 0;
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = fs.readdirSync(CBERS_TMP_ROOT, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const jobId = entry.name;
+    if (isPersistedCbersJobActive(jobId)) continue;
+    const dir = path.join(CBERS_TMP_ROOT, jobId);
+    const newest = newestMtimeMs(dir);
+    if (newest && now - newest < CBERS_TMP_CLEANUP_MAX_AGE_MS) continue;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed += 1;
+    } catch (error) {
+      console.warn(JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "warn",
+        event: "cbers_tmp_cleanup_failed",
+        jobId,
+        reason,
+        message: String((error as Error)?.message || error),
+      }));
+    }
+  }
+  if (removed > 0) {
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: "info",
+      event: "cbers_tmp_cleanup",
+      reason,
+      removed,
+    }));
+  }
+  return removed;
+}
+
+function startCbersTmpCleanup(): void {
+  if (cbersTmpCleanupStarted) return;
+  cbersTmpCleanupStarted = true;
+  cleanupCbersTmpRoot("startup");
+  setInterval(() => cleanupCbersTmpRoot("interval"), 30 * 60 * 1000).unref();
 }
 
 function safeName(value: unknown, fallback = "cbers_4a_wpm.tif"): string {
@@ -692,8 +794,8 @@ async function searchCbersScenes(
   const seen = new Set<string>();
 
   for (let page = 0; url && page < maxPages && scenes.length < CBERS_SEARCH_LIMIT; page += 1) {
-    const payload = await fetchJson<any>(url);
-    const features = Array.isArray(payload?.features) ? payload.features : [];
+    const payload: any = await fetchJson<any>(url);
+    const features: any[] = Array.isArray(payload?.features) ? payload.features : [];
     for (const feature of features) {
       const scene = sceneFromStacFeature(feature, options?.propertyGeometry);
       if (!scene?.id || seen.has(scene.id)) continue;
@@ -704,7 +806,7 @@ async function searchCbersScenes(
       scenes.push(attachArchiveAvailability(scene, options?.propertyGeometryHash));
       if (scenes.length >= CBERS_SEARCH_LIMIT) break;
     }
-    const nextHref = Array.isArray(payload?.links)
+    const nextHref: string = Array.isArray(payload?.links)
       ? String(payload.links.find((link: any) => String(link?.rel || "").toLowerCase() === "next")?.href || "")
       : "";
     url = nextHref ? new URL(nextHref, STAC_ROOT).toString() : null;
@@ -1641,6 +1743,8 @@ async function runCbersBatchJob(input: {
 }
 
 export function registerCbersWpmRoutes(app: Express): void {
+  startCbersTmpCleanup();
+
   app.post("/api/cbers-wpm/search", async (req: Request, res: Response) => {
     try {
       const area = parseOptionalAreaContext((req.body as any)?.propertyZip);
