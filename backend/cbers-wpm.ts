@@ -28,6 +28,11 @@ import {
   requestCancel,
   startJob,
 } from "./processing-jobs";
+import {
+  markCbersArchiveUserDeleted,
+  publishCbersPanToArchive,
+  type CbersArchiveRecord,
+} from "./cbers-archive";
 
 type CbersJobStatus = "processing" | "completed" | "failed" | "cancelled";
 
@@ -67,6 +72,10 @@ type CbersSceneJobState = {
   outputRelativePath?: string;
   outputFilename?: string;
   outputBytes?: number;
+  archive?: CbersArchiveRecord;
+  archiveImageId?: string;
+  wmsLayerName?: string;
+  wmsUrl?: string;
 };
 
 type CbersProgressPatch = {
@@ -79,6 +88,10 @@ type CbersProgressPatch = {
   outputRelativePath?: string;
   outputFilename?: string;
   outputBytes?: number;
+  archive?: CbersArchiveRecord;
+  archiveImageId?: string;
+  wmsLayerName?: string;
+  wmsUrl?: string;
   batchZipUrl?: string;
   batchZipRelativePath?: string;
   batchZipFilename?: string;
@@ -638,6 +651,14 @@ async function processCbersScene(args: {
     filename: outputName,
     sourcePath: finalTempPath,
   });
+  emitScene({ scene, estimate, stage: "publish", percent: 98, message: "Publicando GeoTIFF no acervo WMS." });
+  const archive = await publishCbersPanToArchive({
+    uid,
+    jobId,
+    itemId: args.itemId,
+    outputFilename: outputName,
+    sourcePath: finalTempPath,
+  });
 
   return {
     itemId: args.itemId,
@@ -651,6 +672,10 @@ async function processCbersScene(args: {
     outputRelativePath: stored.relativePath,
     outputFilename: outputName,
     outputBytes: stored.bytes,
+    archive,
+    archiveImageId: archive.imageId,
+    wmsLayerName: archive.wmsLayerName,
+    wmsUrl: archive.wmsPublicUrl,
   };
 }
 
@@ -755,6 +780,10 @@ async function runCbersJob(input: {
       outputRelativePath: result.outputRelativePath,
       outputFilename: result.outputFilename,
       outputBytes: result.outputBytes,
+      archive: result.archive,
+      archiveImageId: result.archiveImageId,
+      wmsLayerName: result.wmsLayerName,
+      wmsUrl: result.wmsUrl,
       completedAt: new Date().toISOString(),
       scene,
       scenes: [result],
@@ -1140,6 +1169,7 @@ export function registerCbersWpmRoutes(app: Express): void {
         removeStoragePath(String(scene?.outputRelativePath || scene?.outputUrl || ""));
       }
     }
+    markCbersArchiveUserDeleted(uid, jobId);
     deleteDocBySegments(["users", uid, "cbers_wpm_jobs", jobId]);
     res.json({ ok: true });
   });

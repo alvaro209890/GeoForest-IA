@@ -153,6 +153,8 @@ function vitePluginManusDebugCollector(): Plugin {
 export default defineConfig(({ mode }) => {
   const isProduction = mode === "production";
   const env = loadEnv(mode, process.cwd(), "");
+  const buildTarget = env.GEOFOREST_BUILD_TARGET || process.env.GEOFOREST_BUILD_TARGET || "app";
+  const isAdminBuild = buildTarget === "admin";
   const apiTarget = env.VITE_API_BASE || "http://localhost:3001";
   const plugins = [react(), tailwindcss(), jsxLocPlugin()] as Plugin[];
   if (!isProduction) {
@@ -170,9 +172,12 @@ export default defineConfig(({ mode }) => {
   envDir: path.resolve(import.meta.dirname),
   root: path.resolve(import.meta.dirname, "client"),
   build: {
-    outDir: path.resolve(import.meta.dirname, "dist/public"),
+    outDir: path.resolve(import.meta.dirname, isAdminBuild ? "dist/admin" : "dist/public"),
     emptyOutDir: true,
     rollupOptions: {
+      input: isAdminBuild
+        ? path.resolve(import.meta.dirname, "client", "admin.html")
+        : path.resolve(import.meta.dirname, "client", "index.html"),
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return;

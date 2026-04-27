@@ -38,6 +38,7 @@ import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerAuasRoutes } from "./auas-analysis";
 import { registerCbersWpmRoutes } from "./cbers-wpm";
+import { registerCbersArchiveAdminRoutes } from "./cbers-archive";
 import {
   JobCancelledError,
   finishJob,
@@ -186,6 +187,10 @@ async function startServer() {
     "http://ia-florestal.web.app",
     "https://ia-florestal.firebaseapp.com",
     "http://ia-florestal.firebaseapp.com",
+    "https://geoforest-admin.web.app",
+    "http://geoforest-admin.web.app",
+    "https://geoforest-admin.firebaseapp.com",
+    "http://geoforest-admin.firebaseapp.com",
   ].map(normalizeOrigin);
   const corsOrigins = new Set(defaultCorsOrigins);
   const corsOriginRegex = [
@@ -193,6 +198,8 @@ async function startServer() {
     /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
     /^https?:\/\/ia-florestal\.web\.app$/i,
     /^https?:\/\/ia-florestal\.firebaseapp\.com$/i,
+    /^https?:\/\/geoforest-admin\.web\.app$/i,
+    /^https?:\/\/geoforest-admin\.firebaseapp\.com$/i,
   ];
   const corsEnv = process.env.CORS_ORIGINS;
   if (corsEnv) {
@@ -426,6 +433,7 @@ async function startServer() {
   registerSimcarClipRoutes(app);
   registerAuasRoutes(app);
   registerCbersWpmRoutes(app);
+  registerCbersArchiveAdminRoutes(app);
 
   const MODEL_CATALOG = [
     {
