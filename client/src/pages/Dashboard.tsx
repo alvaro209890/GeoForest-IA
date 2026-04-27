@@ -69,6 +69,7 @@ import { auth, db } from '@/lib/firebase';
 import { handleLogout, UserProfile } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MapView } from '@/components/Map';
 import TermsOfUseDialog from '@/components/TermsOfUseDialog';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
@@ -425,6 +426,74 @@ type AuasHistoryItem = AuasTabResult & {
   jobId: string;
   inputFilename?: string;
   conversationId?: string;
+};
+
+type CbersGeoJsonGeometry = {
+  type: 'Polygon' | 'MultiPolygon';
+  coordinates: any;
+};
+
+type CbersEstimate = {
+  downloadBytes: number;
+  downloadMb: number;
+  outputBytesEstimated: number;
+  outputMbEstimated: number;
+  timeSecondsEstimated: number;
+  completeAssetSizes: boolean;
+  assetSizes: Record<string, number | null>;
+};
+
+type CbersScene = {
+  id: string;
+  datetime: string;
+  cloudCover: number | null;
+  bbox: [number, number, number, number] | null;
+  geometry?: CbersGeoJsonGeometry;
+  thumbnailUrl?: string;
+  assetKeys: string[];
+  coveragePercent?: number;
+  coversArea?: boolean;
+  estimate?: CbersEstimate;
+};
+
+type CbersJobStatus = 'processing' | 'completed' | 'failed' | 'cancelled';
+
+type CbersSceneJobState = {
+  itemId: string;
+  scene?: CbersScene | null;
+  status: CbersJobStatus;
+  stage?: string;
+  percent: number;
+  message?: string;
+  error?: string;
+  estimate?: CbersEstimate;
+  outputUrl?: string;
+  outputRelativePath?: string;
+  outputFilename?: string;
+  outputBytes?: number;
+};
+
+type CbersHistoryItem = {
+  id: string;
+  jobId: string;
+  filename: string;
+  timestamp: string;
+  status: CbersJobStatus;
+  stage?: string;
+  percent: number;
+  message?: string;
+  error?: string;
+  itemId?: string;
+  itemIds?: string[];
+  mode?: 'single' | 'batch';
+  collection?: string;
+  areaHa?: number;
+  scene?: CbersScene | null;
+  scenes?: CbersSceneJobState[];
+  outputUrl?: string;
+  outputRelativePath?: string;
+  outputFilename?: string;
+  outputBytes?: number;
 };
 
 const DEFAULT_SETTINGS: UserSettings = {
@@ -922,11 +991,136 @@ const simcarAuasVerdictClass = (verdict: NonNullable<SimcarAuasMeta['yearVerdict
   return 'border-slate-500/20 bg-slate-500/10 text-slate-300';
 };
 
+const cbersGeometryCoordinates = (geometry?: CbersGeoJsonGeometry | null): Array<Array<[number, number]>> => {
+  if (!geometry) return [];
+  if (geometry.type === 'Polygon') return geometry.coordinates as Array<Array<[number, number]>>;
+  if (geometry.type === 'MultiPolygon') {
+    return (geometry.coordinates as Array<Array<Array<[number, number]>>>).flat();
+  }
+  return [];
+};
+
+const cbersGeometryCenter = (geometry?: CbersGeoJsonGeometry | null): google.maps.LatLngLiteral => {
+  const rings = cbersGeometryCoordinates(geometry);
+  const points = rings.flat();
+  if (!points.length) return { lat: -12.5, lng: -55.5 };
+  const lng = points.reduce((acc, point) => acc + Number(point[0] || 0), 0) / points.length;
+  const lat = points.reduce((acc, point) => acc + Number(point[1] || 0), 0) / points.length;
+  return { lat, lng };
+};
+
+const cbersOutputFilename = (itemId?: string | null) => {
+  const stem = String(itemId || 'CBERS_4A_WPM')
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/\.(tif|tiff)$/i, '')
+    .replace(/_C?342(?:_PAN)?$/i, '')
+    .replace(/_PAN$/i, '') || 'CBERS_4A_WPM';
+  return `${stem}_C342_PAN.TIF`;
+};
+
+const cbersDownloadFilename = (item?: Pick<CbersHistoryItem, 'outputFilename' | 'scene' | 'itemId' | 'jobId'> | CbersSceneJobState | null) => {
+  if (!item) return cbersOutputFilename(null);
+  const explicit = 'outputFilename' in item ? item.outputFilename : undefined;
+  return explicit || cbersOutputFilename(item.scene?.id || item.itemId || ('jobId' in item ? item.jobId : null));
+};
+
+function CbersMapPreview({
+  propertyGeometry,
+  sceneGeometry,
+}: {
+  propertyGeometry?: CbersGeoJsonGeometry | null;
+  sceneGeometry?: CbersGeoJsonGeometry | null;
+}) {
+  const [mapFailed, setMapFailed] = useState(false);
+  const overlaysRef = useRef<google.maps.Polygon[]>([]);
+  const draw = useCallback((map: google.maps.Map) => {
+    overlaysRef.current.forEach((overlay) => overlay.setMap(null));
+    overlaysRef.current = [];
+    const bounds = new google.maps.LatLngBounds();
+    const addGeometry = (geometry: CbersGeoJsonGeometry | null | undefined, color: string, fillOpacity: number) => {
+      for (const ring of cbersGeometryCoordinates(geometry)) {
+        const path = ring.map(([lng, lat]) => ({ lat: Number(lat), lng: Number(lng) }));
+        if (path.length < 3) continue;
+        path.forEach((point) => bounds.extend(point));
+        const polygon = new google.maps.Polygon({
+          paths: path,
+          strokeColor: color,
+          strokeOpacity: 0.95,
+          strokeWeight: 2,
+          fillColor: color,
+          fillOpacity,
+          map,
+        });
+        overlaysRef.current.push(polygon);
+      }
+    };
+    addGeometry(sceneGeometry, '#f59e0b', 0.08);
+    addGeometry(propertyGeometry, '#22d3ee', 0.22);
+    if (!bounds.isEmpty()) map.fitBounds(bounds, 36);
+  }, [propertyGeometry, sceneGeometry]);
+
+  if (mapFailed) {
+    const rings = [
+      ...cbersGeometryCoordinates(sceneGeometry).map((ring) => ({ ring, color: '#f59e0b', fill: 'rgba(245,158,11,0.08)' })),
+      ...cbersGeometryCoordinates(propertyGeometry).map((ring) => ({ ring, color: '#22d3ee', fill: 'rgba(34,211,238,0.22)' })),
+    ];
+    const points = rings.flatMap((item) => item.ring);
+    if (!points.length) {
+      return (
+        <div className="flex h-[260px] items-center justify-center rounded-xl border border-white/10 bg-black/30 text-sm text-slate-500">
+          Mapa indisponível para esta geometria.
+        </div>
+      );
+    }
+    const xs = points.map((point) => point[0]);
+    const ys = points.map((point) => point[1]);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const width = Math.max(0.000001, maxX - minX);
+    const height = Math.max(0.000001, maxY - minY);
+    return (
+      <div className="h-[260px] overflow-hidden rounded-xl border border-white/10 bg-black/30">
+        <svg viewBox="0 0 100 100" className="h-full w-full">
+          {rings.map((item, idx) => {
+            const pointsAttr = item.ring
+              .map(([lng, lat]) => `${((lng - minX) / width) * 90 + 5},${95 - ((lat - minY) / height) * 90}`)
+              .join(' ');
+            return (
+              <polygon
+                key={`${item.color}-${idx}`}
+                points={pointsAttr}
+                fill={item.fill}
+                stroke={item.color}
+                strokeWidth="1.2"
+              />
+            );
+          })}
+        </svg>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-white/10 bg-black/30">
+      <MapView
+        className="h-[260px] w-full"
+        initialCenter={cbersGeometryCenter(propertyGeometry || sceneGeometry)}
+        initialZoom={10}
+        onMapReady={draw}
+        onLoadError={() => setMapFailed(true)}
+      />
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'auas'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'auas' | 'cbers-wpm'>('chat');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -968,6 +1162,7 @@ export default function Dashboard() {
     null
   );
   const [simcarAirId, setSimcarAirId] = useState('');
+  const [simcarCarNumber, setSimcarCarNumber] = useState('');
   const [simcarClipJobId, setSimcarClipJobId] = useState<string | null>(null);
 
   // ─── SIMCAR AI Analysis State ───
@@ -1020,6 +1215,28 @@ export default function Dashboard() {
   const auasProcessJobIdRef = useRef<string | null>(null);
   const auasFileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // ─── CBERS-4A/WPM Tab State ───
+  const [cbersFile, setCbersFile] = useState<File | null>(null);
+  const [cbersPropertyZipB64, setCbersPropertyZipB64] = useState<string | null>(null);
+  const [cbersSearching, setCbersSearching] = useState(false);
+  const [cbersScenes, setCbersScenes] = useState<CbersScene[]>([]);
+  const [cbersSelectedSceneId, setCbersSelectedSceneId] = useState<string | null>(null);
+  const [cbersSelectedSceneIds, setCbersSelectedSceneIds] = useState<string[]>([]);
+  const [cbersPreviewScene, setCbersPreviewScene] = useState<CbersScene | null>(null);
+  const [cbersDateStart, setCbersDateStart] = useState('');
+  const [cbersDateEnd, setCbersDateEnd] = useState('');
+  const [cbersSortOrder, setCbersSortOrder] = useState<'desc' | 'asc'>('desc');
+  const [cbersAreaHa, setCbersAreaHa] = useState<number | null>(null);
+  const [cbersPropertyGeometry, setCbersPropertyGeometry] = useState<CbersGeoJsonGeometry | null>(null);
+  const [cbersEstimating, setCbersEstimating] = useState(false);
+  const [cbersProcessing, setCbersProcessing] = useState(false);
+  const [cbersHistory, setCbersHistory] = useState<CbersHistoryItem[]>([]);
+  const [cbersJobId, setCbersJobId] = useState<string | null>(null);
+  const [cbersProgress, setCbersProgress] = useState<{ stage: string; percent: number; message: string } | null>(null);
+  const [cbersError, setCbersError] = useState<string | null>(null);
+  const cbersFileInputRef = useRef<HTMLInputElement | null>(null);
+  const cbersEventsAbortRef = useRef<AbortController | null>(null);
+
   const resetAuasDraft = useCallback(() => {
     auasAbortRef.current?.abort();
     auasAbortRef.current = null;
@@ -1033,6 +1250,29 @@ export default function Dashboard() {
     setAuasElapsed(0);
     setAuasError(null);
     if (auasFileInputRef.current) auasFileInputRef.current.value = '';
+  }, []);
+
+  const resetCbersDraft = useCallback(() => {
+    cbersEventsAbortRef.current?.abort();
+    cbersEventsAbortRef.current = null;
+    setCbersFile(null);
+    setCbersPropertyZipB64(null);
+    setCbersSearching(false);
+    setCbersScenes([]);
+    setCbersSelectedSceneId(null);
+    setCbersSelectedSceneIds([]);
+    setCbersPreviewScene(null);
+    setCbersDateStart('');
+    setCbersDateEnd('');
+    setCbersSortOrder('desc');
+    setCbersAreaHa(null);
+    setCbersPropertyGeometry(null);
+    setCbersEstimating(false);
+    setCbersProcessing(false);
+    setCbersJobId(null);
+    setCbersProgress(null);
+    setCbersError(null);
+    if (cbersFileInputRef.current) cbersFileInputRef.current.value = '';
   }, []);
 
   // ─── SIMCAR Agent Log: elapsed timer ───
@@ -1326,6 +1566,7 @@ export default function Dashboard() {
     setSimcarClipError(null);
     setSimcarClipJobId(null);
     setSimcarAirId('');
+    setSimcarCarNumber('');
     setSimcarVectorizedRunning(false);
     setSimcarVectorizedStatus(null);
     setSimcarUnifiedProgressDisplay(0);
@@ -1724,6 +1965,427 @@ export default function Dashboard() {
     const parsed = new Date(value);
     return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
   };
+
+  const fileToBase64Payload = useCallback((file: File) => {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        resolve(result.split(',').pop() || '');
+      };
+      reader.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
+      reader.readAsDataURL(file);
+    });
+  }, []);
+
+  const mapCbersDocToHistoryItem = useCallback((docId: string, data: any): CbersHistoryItem => {
+    const rawStatus = String(data?.status || '').trim().toLowerCase();
+    const status: CbersJobStatus =
+      rawStatus === 'completed' || rawStatus === 'failed' || rawStatus === 'cancelled'
+        ? rawStatus
+        : 'processing';
+    const scene = isPlainObject(data?.scene)
+      ? {
+        id: String(data.scene.id || ''),
+        datetime: String(data.scene.datetime || ''),
+        cloudCover: Number.isFinite(Number(data.scene.cloudCover)) ? Number(data.scene.cloudCover) : null,
+        bbox: Array.isArray(data.scene.bbox) && data.scene.bbox.length >= 4
+          ? [Number(data.scene.bbox[0]), Number(data.scene.bbox[1]), Number(data.scene.bbox[2]), Number(data.scene.bbox[3])] as [number, number, number, number]
+          : null,
+        geometry: data.scene.geometry as CbersGeoJsonGeometry | undefined,
+        thumbnailUrl: data.scene.thumbnailUrl ? String(data.scene.thumbnailUrl) : undefined,
+        assetKeys: Array.isArray(data.scene.assetKeys) ? data.scene.assetKeys.map((item: any) => String(item)) : [],
+        coveragePercent: Number.isFinite(Number(data.scene.coveragePercent)) ? Number(data.scene.coveragePercent) : undefined,
+        coversArea: typeof data.scene.coversArea === 'boolean' ? data.scene.coversArea : undefined,
+        estimate: isPlainObject(data.scene.estimate) ? data.scene.estimate as CbersEstimate : undefined,
+      }
+      : null;
+    const scenes = Array.isArray(data?.scenes)
+      ? data.scenes.map((item: any) => ({
+        itemId: String(item?.itemId || ''),
+        scene: isPlainObject(item?.scene) ? mapCbersDocToHistoryItem(`${docId}-${item.itemId || 'scene'}`, { scene: item.scene }).scene : null,
+        status: item?.status === 'completed' || item?.status === 'failed' || item?.status === 'cancelled' ? item.status : 'processing',
+        stage: item?.stage ? String(item.stage) : undefined,
+        percent: Math.max(0, Math.min(100, Math.round(Number(item?.percent || 0)))),
+        message: item?.message ? String(item.message) : undefined,
+        error: item?.error ? String(item.error) : undefined,
+        estimate: isPlainObject(item?.estimate) ? item.estimate as CbersEstimate : undefined,
+        outputUrl: item?.outputUrl ? resolveBackendUrl(String(item.outputUrl)) : undefined,
+        outputRelativePath: item?.outputRelativePath ? String(item.outputRelativePath) : undefined,
+        outputFilename: item?.outputFilename ? String(item.outputFilename) : undefined,
+        outputBytes: Number.isFinite(Number(item?.outputBytes)) ? Number(item.outputBytes) : undefined,
+      })).filter((item: CbersSceneJobState) => Boolean(item.itemId))
+      : undefined;
+    return {
+      id: String(data?.id || docId),
+      jobId: String(data?.jobId || docId),
+      filename: String(data?.filename || 'CBERS-4A/WPM'),
+      timestamp: toIsoDateFromUnknown(data?.timestamp || data?.updatedAt || data?.createdAt),
+      status,
+      stage: data?.stage ? String(data.stage) : undefined,
+      percent: Math.max(0, Math.min(100, Math.round(Number(data?.percent || 0)))),
+      message: data?.message ? String(data.message) : undefined,
+      error: data?.error ? String(data.error) : undefined,
+      itemId: data?.itemId ? String(data.itemId) : undefined,
+      itemIds: Array.isArray(data?.itemIds) ? data.itemIds.map((item: any) => String(item)) : undefined,
+      mode: data?.mode === 'batch' ? 'batch' : data?.mode === 'single' ? 'single' : undefined,
+      collection: data?.collection ? String(data.collection) : undefined,
+      areaHa: Number.isFinite(Number(data?.areaHa)) ? Number(data.areaHa) : undefined,
+      scene,
+      scenes,
+      outputUrl: data?.outputUrl ? resolveBackendUrl(String(data.outputUrl)) : undefined,
+      outputRelativePath: data?.outputRelativePath ? String(data.outputRelativePath) : undefined,
+      outputFilename: data?.outputFilename ? String(data.outputFilename) : undefined,
+      outputBytes: Number.isFinite(Number(data?.outputBytes)) ? Number(data.outputBytes) : undefined,
+    };
+  }, []);
+
+  const applyCbersJobPatch = useCallback((job: CbersHistoryItem) => {
+    setCbersHistory((prev) => {
+      const exists = prev.some((item) => item.jobId === job.jobId);
+      const next = exists
+        ? prev.map((item) => (item.jobId === job.jobId ? {
+          ...item,
+          ...job,
+          filename: job.filename === 'CBERS-4A/WPM' ? item.filename : job.filename,
+          timestamp: item.timestamp || job.timestamp,
+          itemId: job.itemId || item.itemId,
+          collection: job.collection || item.collection,
+          areaHa: job.areaHa ?? item.areaHa,
+          scene: job.scene || item.scene,
+          scenes: job.scenes || item.scenes,
+          itemIds: job.itemIds || item.itemIds,
+          mode: job.mode || item.mode,
+          outputUrl: job.outputUrl || item.outputUrl,
+          outputRelativePath: job.outputRelativePath || item.outputRelativePath,
+          outputBytes: job.outputBytes ?? item.outputBytes,
+        } : item))
+        : [job, ...prev];
+      return next.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+    });
+    setCbersJobId(job.jobId);
+    setCbersProcessing(job.status === 'processing');
+    setCbersProgress({
+      stage: job.stage || job.status,
+      percent: job.percent,
+      message: job.message || '',
+    });
+    setCbersError(job.status === 'failed' || job.status === 'cancelled' ? job.error || job.message || null : null);
+  }, []);
+
+  const connectCbersEvents = useCallback(async (jobId: string) => {
+    const normalizedJobId = String(jobId || '').trim();
+    if (!normalizedJobId) return;
+    cbersEventsAbortRef.current?.abort();
+    const controller = new AbortController();
+    cbersEventsAbortRef.current = controller;
+    try {
+      const response = await apiFetch(`/api/cbers-wpm/jobs/${encodeURIComponent(normalizedJobId)}/events`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split('\n\n');
+        buffer = chunks.pop() || '';
+        for (const chunk of chunks) {
+          const line = chunk.split('\n').find((item) => item.startsWith('data:'));
+          if (!line) continue;
+          try {
+            const evt = JSON.parse(line.slice(5).trim());
+            if (evt?.type === 'snapshot' && evt?.job) {
+              applyCbersJobPatch(mapCbersDocToHistoryItem(normalizedJobId, evt.job));
+            } else if (evt?.type === 'progress') {
+              applyCbersJobPatch(mapCbersDocToHistoryItem(normalizedJobId, evt));
+            }
+          } catch {
+            // Ignore malformed SSE frames.
+          }
+        }
+      }
+    } catch (error: any) {
+      if (error?.name !== 'AbortError') {
+        console.warn('Falha ao acompanhar eventos CBERS:', error);
+      }
+    } finally {
+      if (cbersEventsAbortRef.current === controller) cbersEventsAbortRef.current = null;
+    }
+  }, [apiFetch, applyCbersJobPatch, mapCbersDocToHistoryItem]);
+
+  const selectCbersHistoryEntry = useCallback((entry: CbersHistoryItem) => {
+    setCbersJobId(entry.jobId);
+    setCbersProcessing(entry.status === 'processing');
+    setCbersProgress({
+      stage: entry.stage || entry.status,
+      percent: entry.percent,
+      message: entry.message || '',
+    });
+    setCbersError(entry.status === 'failed' || entry.status === 'cancelled' ? entry.error || entry.message || null : null);
+    setCbersSelectedSceneId(entry.itemId || entry.scene?.id || null);
+    if (entry.status === 'processing') void connectCbersEvents(entry.jobId);
+  }, [connectCbersEvents]);
+
+  const sortCbersScenes = useCallback(
+    (scenes: CbersScene[]) => {
+      return [...scenes].sort((a, b) => {
+        const cmp = String(b.datetime || '').localeCompare(String(a.datetime || ''));
+        return cbersSortOrder === 'desc' ? cmp : -cmp;
+      });
+    },
+    [cbersSortOrder]
+  );
+
+  const cbersVisibleScenes = useMemo(() => {
+    const startMs = cbersDateStart ? new Date(`${cbersDateStart}T00:00:00`).getTime() : null;
+    const endMs = cbersDateEnd ? new Date(`${cbersDateEnd}T23:59:59`).getTime() : null;
+    return sortCbersScenes(
+      cbersScenes.filter((scene) => {
+        if (!scene.datetime) return true;
+        const sceneMs = new Date(scene.datetime).getTime();
+        if (!Number.isFinite(sceneMs)) return true;
+        if (startMs !== null && Number.isFinite(startMs) && sceneMs < startMs) return false;
+        if (endMs !== null && Number.isFinite(endMs) && sceneMs > endMs) return false;
+        return true;
+      })
+    );
+  }, [cbersDateEnd, cbersDateStart, cbersScenes, sortCbersScenes]);
+
+  const cbersSelectedScenes = useMemo(
+    () => cbersSelectedSceneIds
+      .map((id) => cbersScenes.find((scene) => scene.id === id))
+      .filter((scene): scene is CbersScene => Boolean(scene)),
+    [cbersScenes, cbersSelectedSceneIds]
+  );
+
+  const toggleCbersSceneSelection = useCallback((scene: CbersScene) => {
+    if (scene.coversArea === false) {
+      toast.error(`Cena cobre apenas ${(scene.coveragePercent ?? 0).toFixed(2)}% da área.`);
+      return;
+    }
+    setCbersSelectedSceneId(scene.id);
+    setCbersSelectedSceneIds((prev) => {
+      if (prev.includes(scene.id)) return prev.filter((id) => id !== scene.id);
+      return [...prev, scene.id];
+    });
+  }, []);
+
+  const estimateCbersScenes = useCallback(async (itemIds: string[]) => {
+    if (!cbersFile || itemIds.length === 0) return;
+    setCbersEstimating(true);
+    try {
+      const propertyZip = cbersPropertyZipB64 || await fileToBase64Payload(cbersFile);
+      setCbersPropertyZipB64(propertyZip);
+      const response = await apiFetch('/api/cbers-wpm/estimate', {
+        method: 'POST',
+        body: JSON.stringify({ propertyZip, itemIds }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || 'Falha ao estimar cenas CBERS.');
+      const estimates = Array.isArray(payload?.estimates) ? payload.estimates : [];
+      setCbersScenes((prev) => prev.map((scene) => {
+        const found = estimates.find((item: any) => String(item?.itemId || '') === scene.id);
+        if (!found) return scene;
+        return {
+          ...scene,
+          ...(isPlainObject(found.scene) ? found.scene : {}),
+          estimate: isPlainObject(found.estimate) ? found.estimate as CbersEstimate : scene.estimate,
+        } as CbersScene;
+      }));
+    } catch (error: any) {
+      toast.error(error?.message || 'Falha ao estimar cenas CBERS.');
+    } finally {
+      setCbersEstimating(false);
+    }
+  }, [apiFetch, cbersFile, cbersPropertyZipB64, fileToBase64Payload]);
+
+  useEffect(() => {
+    const missing = cbersSelectedScenes
+      .filter((scene) => scene.coversArea !== false && !scene.estimate)
+      .map((scene) => scene.id);
+    if (missing.length > 0) void estimateCbersScenes(missing);
+  }, [cbersSelectedScenes, estimateCbersScenes]);
+
+  const searchCbersScenes = useCallback(async () => {
+    if (!cbersFile) {
+      toast.error('Selecione um ZIP com o limite da área.');
+      return;
+    }
+    if (cbersDateStart && cbersDateEnd && cbersDateStart > cbersDateEnd) {
+      toast.error('A data inicial deve ser anterior ou igual à data final.');
+      return;
+    }
+    setCbersSearching(true);
+    setCbersError(null);
+    setCbersScenes([]);
+    setCbersSelectedSceneId(null);
+    try {
+      const propertyZip = await fileToBase64Payload(cbersFile);
+      setCbersPropertyZipB64(propertyZip);
+      const response = await apiFetch('/api/cbers-wpm/search', {
+        method: 'POST',
+        body: JSON.stringify({
+          propertyZip,
+          filename: cbersFile.name,
+          dateStart: cbersDateStart || undefined,
+          dateEnd: cbersDateEnd || undefined,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || 'Falha ao buscar cenas CBERS.');
+      const scenes = sortCbersScenes(Array.isArray(payload?.scenes) ? payload.scenes as CbersScene[] : []);
+      setCbersAreaHa(Number.isFinite(Number(payload?.areaHa)) ? Number(payload.areaHa) : null);
+      setCbersPropertyGeometry(isPlainObject(payload?.propertyGeometry) ? payload.propertyGeometry as CbersGeoJsonGeometry : null);
+      setCbersScenes(scenes);
+      const firstCovered = scenes.find((scene) => scene.coversArea !== false);
+      setCbersSelectedSceneId(firstCovered?.id || scenes[0]?.id || null);
+      setCbersSelectedSceneIds(firstCovered ? [firstCovered.id] : []);
+      setCbersPreviewScene(null);
+      if (!scenes.length) {
+        toast.info('Nenhuma cena CBERS-4A/WPM encontrada para essa área.');
+      }
+    } catch (error: any) {
+      const message = error?.message || 'Falha ao buscar cenas CBERS.';
+      setCbersError(message);
+      toast.error(message);
+    } finally {
+      setCbersSearching(false);
+    }
+  }, [apiFetch, cbersDateEnd, cbersDateStart, cbersFile, fileToBase64Payload, sortCbersScenes]);
+
+  const startCbersProcessing = useCallback(async (sceneIdOverride?: string) => {
+    const targetSceneIds = sceneIdOverride
+      ? [String(sceneIdOverride).trim()].filter(Boolean)
+      : cbersSelectedSceneIds.length > 0
+        ? cbersSelectedSceneIds
+        : [String(cbersSelectedSceneId || '').trim()].filter(Boolean);
+    if (!cbersFile || targetSceneIds.length === 0) {
+      toast.error('Selecione o ZIP e ao menos uma cena CBERS.');
+      return;
+    }
+    const blocked = targetSceneIds
+      .map((id) => cbersScenes.find((scene) => scene.id === id))
+      .find((scene) => scene?.coversArea === false);
+    if (blocked) {
+      toast.error(`Cena ${blocked.id} não cobre 100% da área.`);
+      return;
+    }
+    setCbersError(null);
+    setCbersProcessing(true);
+    setCbersProgress({ stage: 'queued', percent: 1, message: 'Enviando processamento CBERS ao servidor.' });
+    try {
+      const propertyZip = cbersPropertyZipB64 || await fileToBase64Payload(cbersFile);
+      setCbersPropertyZipB64(propertyZip);
+      const response = await apiFetch('/api/cbers-wpm/jobs', {
+        method: 'POST',
+        body: JSON.stringify({
+          propertyZip,
+          filename: cbersFile.name,
+          itemId: targetSceneIds[0],
+          itemIds: targetSceneIds,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || 'Falha ao iniciar processamento CBERS.');
+      const jobId = String(payload?.jobId || '').trim();
+      if (!jobId) throw new Error('Backend não retornou jobId CBERS.');
+      const scene = cbersScenes.find((item) => item.id === targetSceneIds[0]) || null;
+      const optimisticScenes: CbersSceneJobState[] = targetSceneIds.map((itemId) => ({
+        itemId,
+        scene: cbersScenes.find((item) => item.id === itemId) || null,
+        status: 'processing',
+        stage: 'queued',
+        percent: 1,
+        message: 'Aguardando processamento.',
+        estimate: cbersScenes.find((item) => item.id === itemId)?.estimate,
+      }));
+      const optimistic: CbersHistoryItem = {
+        id: jobId,
+        jobId,
+        filename: cbersFile.name,
+        timestamp: new Date().toISOString(),
+        status: 'processing',
+        stage: 'queued',
+        percent: 1,
+        message: 'Processamento CBERS enviado para o servidor.',
+        itemId: targetSceneIds[0],
+        itemIds: targetSceneIds,
+        mode: targetSceneIds.length > 1 ? 'batch' : 'single',
+        collection: 'CB4A-WPM-L4-DN-1',
+        areaHa: cbersAreaHa || undefined,
+        scene,
+        scenes: optimisticScenes,
+      };
+      applyCbersJobPatch(optimistic);
+      void connectCbersEvents(jobId);
+    } catch (error: any) {
+      const message = error?.message || 'Falha ao iniciar processamento CBERS.';
+      setCbersProcessing(false);
+      setCbersError(message);
+      toast.error(message);
+    }
+  }, [
+    apiFetch,
+    applyCbersJobPatch,
+    cbersAreaHa,
+    cbersFile,
+    cbersPropertyZipB64,
+    cbersScenes,
+    cbersSelectedSceneId,
+    cbersSelectedSceneIds,
+    connectCbersEvents,
+    fileToBase64Payload,
+  ]);
+
+  const deleteCbersJob = useCallback(async (entry: CbersHistoryItem) => {
+    if (!entry?.jobId) return;
+    try {
+      if (entry.status === 'processing') {
+        await requestProcessCancel(entry.jobId);
+      }
+      await apiFetch(`/api/cbers-wpm/jobs/${encodeURIComponent(entry.jobId)}`, { method: 'DELETE' });
+    } catch {
+      // Keep local cleanup responsive even if backend already removed it.
+    }
+    setCbersHistory((prev) => prev.filter((item) => item.jobId !== entry.jobId));
+    if (cbersJobId === entry.jobId) {
+      setCbersJobId(null);
+      setCbersProcessing(false);
+      setCbersProgress(null);
+      setCbersError(null);
+    }
+  }, [apiFetch, cbersJobId, requestProcessCancel]);
+
+  useEffect(() => {
+    if (!cbersProcessing || !cbersJobId) return;
+    let active = true;
+    const pollStatus = async () => {
+      try {
+        const response = await apiFetch(`/api/cbers-wpm/jobs/${encodeURIComponent(cbersJobId)}/status`, {
+          method: 'GET',
+        });
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (!active || !payload?.job) return;
+        applyCbersJobPatch(mapCbersDocToHistoryItem(cbersJobId, payload.job));
+      } catch {
+        // SSE remains the primary live channel; polling is only a fallback.
+      }
+    };
+    void pollStatus();
+    const interval = window.setInterval(() => {
+      void pollStatus();
+    }, 10000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [apiFetch, applyCbersJobPatch, cbersJobId, cbersProcessing, mapCbersDocToHistoryItem]);
 
   const normalizeSimcarClipSummary = useCallback((raw: any): SimcarClipSummary | null => {
     if (!raw || typeof raw !== 'object') return null;
@@ -2508,6 +3170,9 @@ export default function Dashboard() {
           setAuasHistory([]);
           setAuasJobId(null);
           setAuasResult(null);
+          setCbersHistory([]);
+          setCbersJobId(null);
+          setCbersProcessing(false);
           setLocation('/');
           return;
         }
@@ -2528,6 +3193,7 @@ export default function Dashboard() {
         setSimcarClipsRef(simcarRef);
         const auasRef = collection(db, 'users', currentUser.uid, 'auas_jobs');
         setAuasJobsRef(auasRef);
+        const cbersRef = collection(db, 'users', currentUser.uid, 'cbers_wpm_jobs');
 
         const nextSettingsRef = doc(db, 'users', currentUser.uid, 'settings', 'preferences');
         setSettingsRef(nextSettingsRef);
@@ -2679,6 +3345,24 @@ export default function Dashboard() {
           console.warn('Falha ao carregar histórico Novo CAR salvo:', error);
         }
 
+        try {
+          const cbersSnap = await getDocs(query(cbersRef, orderBy('updatedAtMs', 'desc')));
+          const cbersEntries: CbersHistoryItem[] = [];
+          cbersSnap.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            cbersEntries.push(mapCbersDocToHistoryItem(docSnap.id, data));
+          });
+          setCbersHistory(cbersEntries);
+          const runningCbers = cbersEntries.find((entry) => entry.status === 'processing');
+          if (runningCbers) {
+            selectCbersHistoryEntry(runningCbers);
+          } else if (cbersEntries.length > 0) {
+            selectCbersHistoryEntry(cbersEntries[0]);
+          }
+        } catch (error) {
+          console.warn('Falha ao carregar histórico CBERS salvo:', error);
+        }
+
         if (list.length === 0) {
           await createConversation(collRef);
         } else {
@@ -2695,7 +3379,7 @@ export default function Dashboard() {
     });
 
     return () => unsubscribe();
-  }, [mapAuasDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, selectAuasHistoryEntry, selectSimcarClipEntry, setLocation]);
+  }, [mapAuasDocToHistoryItem, mapCbersDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, selectAuasHistoryEntry, selectCbersHistoryEntry, selectSimcarClipEntry, setLocation]);
 
   useEffect(() => {
     const uid = String(userProfile?.uid || '').trim();
@@ -6104,8 +6788,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         </div>
 
         <div className="px-4 mb-4 space-y-1.5">
-          {/* ─── 3 Abas permanentes ─── */}
-          <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-white/5 border border-white/5">
+          {/* ─── Abas permanentes ─── */}
+          <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-white/5 border border-white/5">
             <button
               onClick={() => setActiveView('chat')}
               className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'chat' ? 'bg-emerald-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
@@ -6140,6 +6824,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             >
               <Layers size={15} />
               <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">Novo CAR</span>
+            </button>
+            <button
+              onClick={() => setActiveView('cbers-wpm')}
+              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'cbers-wpm' ? 'bg-cyan-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+            >
+              <Satellite size={15} />
+              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">CBERS</span>
             </button>
           </div>
 
@@ -6177,6 +6868,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </div>
             </button>
           )}
+          {activeView === 'cbers-wpm' && (
+            <button
+              onClick={() => resetCbersDraft()}
+              className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 transition-all duration-300 p-[1px] shadow-lg shadow-cyan-900/30"
+            >
+              <div className="relative flex items-center justify-center gap-2 bg-[#071618] group-hover:bg-transparent text-cyan-100 py-2.5 rounded-[11px] transition-colors">
+                <Plus size={16} />
+                <span className="font-medium block lg:hidden xl:block text-sm">Nova Imagem</span>
+              </div>
+            </button>
+          )}
 
           {/* ─── Busca (só no chat) ─── */}
           {activeView === 'chat' && (
@@ -6193,7 +6895,64 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 space-y-1 custom-scrollbar">
-          {activeView === 'auas' ? (
+          {activeView === 'cbers-wpm' ? (
+            cbersHistory.length > 0 ? (
+              cbersHistory.map((entry) => (
+                <div
+                  key={entry.id}
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${cbersJobId === entry.jobId ? 'bg-cyan-500/10 border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' : 'bg-[#071113]/60 hover:bg-[#101b1d] hover:border-cyan-500/20'}`}
+                  onClick={() => selectCbersHistoryEntry(entry)}
+                >
+                  <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${cbersJobId === entry.jobId ? 'bg-gradient-to-br from-cyan-500 to-emerald-500 text-white shadow-md shadow-cyan-900/40' : 'bg-white/5 text-slate-400 group-hover:text-cyan-300 group-hover:bg-cyan-500/10'}`}>
+                    <Satellite size={18} />
+                  </div>
+                  <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                    <p className={`text-sm truncate font-medium ${cbersJobId === entry.jobId ? 'text-cyan-100' : 'text-slate-200 group-hover:text-cyan-100'}`}>{entry.scene?.id || entry.itemId || entry.filename}</p>
+                    <div className="flex items-center gap-2 mt-1 opacity-80">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold text-cyan-300">
+                        {entry.percent}%
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
+                          ? 'text-amber-300'
+                          : entry.status === 'completed'
+                            ? 'text-emerald-300'
+                            : entry.status === 'cancelled'
+                              ? 'text-orange-300'
+                              : 'text-red-300'
+                          }`}
+                      >
+                        {entry.status === 'processing'
+                          ? 'Processando'
+                          : entry.status === 'completed'
+                            ? 'Concluído'
+                            : entry.status === 'cancelled'
+                              ? 'Cancelado'
+                              : 'Falhou'}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void deleteCbersJob(entry);
+                    }}
+                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                    title="Excluir imagem"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-6 block lg:hidden xl:block">
+                <div className="inline-flex justify-center items-center w-10 h-10 rounded-full bg-white/5 text-slate-500 mb-2">
+                  <Satellite size={16} />
+                </div>
+                <p className="text-xs text-slate-500">Nenhuma imagem CBERS.</p>
+              </div>
+            )
+          ) : activeView === 'auas' ? (
             /* ─── Novo CAR History Cards ─── */
             auasHistory.length > 0 ? (
               auasHistory.map((entry) => (
@@ -6542,7 +7301,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2 min-w-0">
               <Zap size={16} className="text-emerald-400 fill-current shrink-0" />
               <span className="font-medium text-slate-200 text-sm sm:text-base truncate">
-                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'auas' ? 'Novo CAR' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
+                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'auas' ? 'Novo CAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
               </span>
               {activeView === 'chat' && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide shrink-0 hidden sm:inline-block">
@@ -6823,15 +7582,46 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
                 </div>
 
+                {/* CAR Number Input (auto-clip only) — mutually exclusive with ZIP upload */}
+                {simcarClipMode === 'auto-clip' && (
+                  <div className="mb-4">
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
+                      Nº do CAR (dispensa o envio do polígono)
+                    </label>
+                    <input
+                      type="text"
+                      value={simcarCarNumber}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSimcarCarNumber(val);
+                        if (val.trim()) {
+                          setSimcarClipFile(null);
+                        }
+                      }}
+                      disabled={!!simcarClipFile}
+                      placeholder="Ex: MT-5107768-XXXXXXX..."
+                      className={`w-full px-4 py-2.5 rounded-xl bg-black/30 border text-white text-sm placeholder-slate-500 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none transition-colors ${simcarClipFile ? 'border-white/5 opacity-40 cursor-not-allowed' : 'border-white/10'}`}
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      {simcarCarNumber.trim()
+                        ? 'A geometria será buscada automaticamente no WFS da SEMA.'
+                        : 'Preencha para buscar pelo WFS. Ou envie o ZIP abaixo.'}
+                    </p>
+                  </div>
+                )}
+
                 {/* Upload Area */}
                 <div
-                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors mb-4 ${simcarClipFile
-                    ? 'border-emerald-500/50 bg-emerald-500/5 cursor-pointer'
-                    : simcarVectorizedServerZipReady
-                      ? 'border-amber-500/30 bg-amber-500/10 cursor-default'
-                      : 'border-white/10 hover:border-emerald-500/30 hover:bg-white/5 cursor-pointer'
+                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors mb-4 ${simcarCarNumber.trim() && simcarClipMode === 'auto-clip'
+                    ? 'border-white/5 bg-white/[0.01] opacity-40 cursor-not-allowed'
+                    : simcarClipFile
+                      ? 'border-emerald-500/50 bg-emerald-500/5 cursor-pointer'
+                      : simcarVectorizedServerZipReady
+                        ? 'border-amber-500/30 bg-amber-500/10 cursor-default'
+                        : 'border-white/10 hover:border-emerald-500/30 hover:bg-white/5 cursor-pointer'
                     }`}
                   onClick={() => {
+                    if (simcarCarNumber.trim() && simcarClipMode === 'auto-clip') return;
                     if (simcarVectorizedServerZipReady) return;
                     const input = document.createElement('input');
                     input.type = 'file';
@@ -6844,6 +7634,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         setSimcarClipSummary(null);
                         setSimcarClipError(null);
                         setSimcarVectorizedStatus(null);
+                        setSimcarCarNumber('');
                       }
                     };
                     input.click();
@@ -6851,6 +7642,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => {
                     e.preventDefault();
+                    if (simcarCarNumber.trim() && simcarClipMode === 'auto-clip') return;
                     if (simcarVectorizedServerZipReady) return;
                     const file = e.dataTransfer.files[0];
                     if (file && file.name.toLowerCase().endsWith('.zip')) {
@@ -6859,10 +7651,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       setSimcarClipSummary(null);
                       setSimcarClipError(null);
                       setSimcarVectorizedStatus(null);
+                      setSimcarCarNumber('');
                     }
                   }}
                 >
-                  {simcarClipFile ? (
+                  {simcarCarNumber.trim() && simcarClipMode === 'auto-clip' ? (
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <Upload size={28} className="text-slate-600" />
+                      <p className="text-sm text-slate-500">Upload desabilitado — usando Nº do CAR</p>
+                      <p className="text-[10px] text-slate-600">Limpe o campo acima para voltar a enviar ZIP.</p>
+                    </div>
+                  ) : simcarClipFile ? (
                     <div className="flex items-center justify-center gap-3">
                       <FileText size={24} className="text-emerald-400" />
                       <div>
@@ -7037,7 +7836,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 <button
                   disabled={
                     simcarClipMode === 'auto-clip'
-                      ? !simcarClipFile || simcarClipProcessing || !simcarAirId.trim() || selectedSimcarClipLayerCount === 0
+                      ? (!simcarClipFile && !simcarCarNumber.trim()) || simcarClipProcessing || !simcarAirId.trim() || selectedSimcarClipLayerCount === 0
                       : !canRunVectorizedAnalysis || simcarVectorizedRunning || simcarAnalysisProcessing || simcarAuasProcessing
                   }
                   onClick={async () => {
@@ -7072,7 +7871,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       toast.error('Selecione um ZIP vetorizado para continuar.');
                       return;
                     }
-                    if (!simcarClipFile) return;
+                    if (!simcarClipFile && !simcarCarNumber.trim()) return;
                     setSimcarClipProcessing(true);
                     clearSimcarClipProgressQueue();
                     setSimcarClipProgress(null);
@@ -7081,20 +7880,28 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     setSimcarClipError(null);
 
                     try {
-                      const base64 = await readFileAsBase64Payload(simcarClipFile);
+                      const useCarNumber = !simcarClipFile && simcarCarNumber.trim();
+                      const base64 = simcarClipFile ? await readFileAsBase64Payload(simcarClipFile) : undefined;
                       const selectedLayers = selectedSimcarClipLayerNames;
                       const controller = new AbortController();
                       simcarClipAbortRef.current = controller;
                       simcarClipProcessJobIdRef.current = null;
 
+                      const payload: Record<string, any> = {
+                        layerNames: selectedLayers,
+                        airIdentificacao: simcarAirId.trim(),
+                      };
+                      if (useCarNumber) {
+                        payload.carNumber = simcarCarNumber.trim();
+                        payload.filename = `CAR_${simcarCarNumber.trim()}.zip`;
+                      } else {
+                        payload.propertyZip = base64;
+                        payload.filename = simcarClipFile!.name;
+                      }
+
                       const response = await apiFetch('/api/simcar/clip', {
                         method: 'POST',
-                        body: JSON.stringify({
-                          propertyZip: base64,
-                          filename: simcarClipFile.name,
-                          layerNames: selectedLayers,
-                          airIdentificacao: simcarAirId.trim(),
-                        }),
+                        body: JSON.stringify(payload),
                         signal: controller.signal,
                       });
 
@@ -7200,7 +8007,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                         role: 'user',
                                         text: [
                                           `Solicitei um recorte SIMCAR para AIR ${simcarAirId.trim()}.`,
-                                          `Arquivo: ${simcarClipFile.name}.`,
+                                          `Arquivo: ${simcarClipFile?.name || 'arquivo enviado'}.`,
                                           `Camadas selecionadas: ${selectedLayersLabel}.`,
                                         ].join('\n'),
                                       },
@@ -7257,7 +8064,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   }}
                   className={`w-full py-3 rounded-xl font-medium text-sm transition-all duration-300 flex items-center justify-center gap-2 ${(
                     simcarClipMode === 'auto-clip'
-                      ? !simcarClipFile || simcarClipProcessing || !simcarAirId.trim() || selectedSimcarClipLayerCount === 0
+                      ? (!simcarClipFile && !simcarCarNumber.trim()) || simcarClipProcessing || !simcarAirId.trim() || selectedSimcarClipLayerCount === 0
                       : !canRunVectorizedAnalysis || simcarVectorizedRunning || simcarAnalysisProcessing || simcarAuasProcessing
                   )
                     ? 'bg-white/5 text-slate-500 cursor-not-allowed'
@@ -9159,6 +9966,492 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </>
               )}
 
+            </div>
+          </div>
+        ) : activeView === 'cbers-wpm' ? (
+          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+            <div className="max-w-6xl mx-auto space-y-5 sm:space-y-6">
+              <section className="rounded-2xl border border-cyan-500/15 bg-[#071113]/80 p-5 sm:p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-cyan-200">
+                      <Satellite size={13} />
+                      CBERS-4A WPM
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">GeoTIFF 3-4-2 com pancromática</h2>
+                    <p className="max-w-3xl text-sm text-slate-400">
+                      Envie o ZIP da área, escolha uma cena pública do STAC INPE e gere um .tif georreferenciado para uso direto no ArcMap.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    {[
+                      { label: 'Fonte', value: 'INPE STAC' },
+                      { label: 'Coleção', value: 'L4-DN' },
+                      { label: 'Saída', value: 'GeoTIFF' },
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                        <p className="text-[10px] uppercase tracking-wider text-slate-500">{item.label}</p>
+                        <p className="mt-1 text-xs font-semibold text-cyan-100">{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5">
+                <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-semibold text-white">Área de interesse</h3>
+                      <p className="text-xs text-slate-500 mt-1">ZIP com shapefile do limite a ser recortado.</p>
+                    </div>
+                    {cbersAreaHa !== null && (
+                      <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-200">
+                        {cbersAreaHa.toFixed(2)} ha
+                      </span>
+                    )}
+                  </div>
+
+                  <label className={`group relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-8 transition-all cursor-pointer ${cbersFile ? 'border-cyan-500/40 bg-cyan-500/5' : 'border-white/10 bg-white/[0.02] hover:border-cyan-500/30 hover:bg-white/[0.03]'}`}>
+                    <input
+                      ref={cbersFileInputRef}
+                      type="file"
+                      accept=".zip,application/zip"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        setCbersFile(file);
+                        setCbersPropertyZipB64(null);
+                        setCbersScenes([]);
+                        setCbersSelectedSceneId(null);
+                        setCbersSelectedSceneIds([]);
+                        setCbersPreviewScene(null);
+                        setCbersPropertyGeometry(null);
+                        setCbersError(null);
+                      }}
+                    />
+                    <div className={`rounded-xl p-3 ${cbersFile ? 'bg-cyan-500/15 text-cyan-200' : 'bg-white/5 text-slate-400 group-hover:text-cyan-300'}`}>
+                      <Upload size={22} />
+                    </div>
+                    <div className="text-center min-w-0">
+                      <p className="text-sm font-semibold text-white truncate">{cbersFile ? cbersFile.name : 'Selecionar ZIP da área'}</p>
+                      <p className="mt-1 text-xs text-slate-500">{cbersFile ? `${(cbersFile.size / 1024).toFixed(0)} KB` : 'Shapefile compactado em .zip'}</p>
+                    </div>
+                  </label>
+
+                  {cbersError && (
+                    <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200 flex items-center gap-2">
+                      <AlertTriangle size={16} />
+                      <span>{cbersError}</span>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Data inicial</label>
+                      <input
+                        type="date"
+                        value={cbersDateStart}
+                        onChange={(e) => setCbersDateStart(e.target.value)}
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Data final</label>
+                      <input
+                        type="date"
+                        value={cbersDateEnd}
+                        onChange={(e) => setCbersDateEnd(e.target.value)}
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Ordenação</label>
+                      <select
+                        value={cbersSortOrder}
+                        onChange={(e) => setCbersSortOrder(e.target.value === 'asc' ? 'asc' : 'desc')}
+                        className="w-full rounded-xl border border-white/10 bg-[#0b1412] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
+                      >
+                        <option value="desc">Mais novas primeiro</option>
+                        <option value="asc">Mais antigas primeiro</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void searchCbersScenes()}
+                      disabled={!cbersFile || cbersSearching || cbersProcessing}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {cbersSearching ? <Loader2 size={17} className="animate-spin" /> : <Search size={17} />}
+                      Buscar cenas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void startCbersProcessing()}
+                      disabled={!cbersFile || cbersSelectedSceneIds.length === 0 || cbersProcessing || cbersSelectedScenes.some((scene) => scene.coversArea === false)}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {cbersProcessing ? <Loader2 size={17} className="animate-spin" /> : <Cpu size={17} />}
+                      Gerar {cbersSelectedSceneIds.length > 1 ? `${cbersSelectedSceneIds.length} GeoTIFFs` : 'GeoTIFF'}
+                    </button>
+                  </div>
+
+                  {cbersScenes.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-white">Cenas disponíveis</h3>
+                        <span className="text-xs text-slate-500">{cbersVisibleScenes.length}/{cbersScenes.length} cena(s)</span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {cbersVisibleScenes.map((scene) => {
+                          const selected = cbersSelectedSceneIds.includes(scene.id);
+                          const date = scene.datetime ? new Date(scene.datetime).toLocaleDateString('pt-BR') : 'Sem data';
+                          const coverage = Number(scene.coveragePercent ?? 0);
+                          const blocked = scene.coversArea === false;
+                          return (
+                            <button
+                              key={scene.id}
+                              type="button"
+                              onClick={() => setCbersPreviewScene(scene)}
+                              className={`text-left rounded-xl border p-3 transition-all ${selected ? 'border-cyan-500/40 bg-cyan-500/10' : blocked ? 'border-red-500/20 bg-red-500/[0.04]' : 'border-white/10 bg-white/[0.03] hover:border-cyan-500/25 hover:bg-cyan-500/[0.04]'}`}
+                            >
+                              <div className="flex gap-3">
+                                <div className="h-16 w-16 rounded-lg border border-white/10 bg-black/30 overflow-hidden shrink-0">
+                                  {scene.thumbnailUrl ? (
+                                    <img src={scene.thumbnailUrl} alt={scene.id} className="h-full w-full object-cover" />
+                                  ) : (
+                                    <div className="h-full w-full flex items-center justify-center text-slate-600">
+                                      <Satellite size={20} />
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-semibold text-white truncate">{scene.id}</p>
+                                  <p className="mt-1 text-xs text-slate-400">{date}</p>
+                                  <p className="mt-1 text-[10px] uppercase tracking-wider text-slate-500">
+                                    {scene.cloudCover === null ? 'Nuvem n/d' : `Nuvem ${scene.cloudCover.toFixed(1)}%`}
+                                  </p>
+                                  <p className={`mt-1 text-[10px] font-semibold uppercase tracking-wider ${blocked ? 'text-red-300' : 'text-emerald-300'}`}>
+                                    Cobertura {Number.isFinite(coverage) ? coverage.toFixed(1) : '0.0'}%
+                                  </p>
+                                </div>
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleCbersSceneSelection(scene);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key !== 'Enter' && e.key !== ' ') return;
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    toggleCbersSceneSelection(scene);
+                                  }}
+                                  className={`shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border ${selected ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' : 'border-white/10 bg-white/[0.04] text-slate-500'} ${blocked ? 'opacity-40' : 'hover:text-cyan-200'}`}
+                                  title={selected ? 'Remover seleção' : 'Selecionar cena'}
+                                >
+                                  {selected ? <CheckSquare size={17} /> : <Square size={17} />}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {cbersVisibleScenes.length === 0 && (
+                        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">
+                          Nenhuma cena dentro do filtro de data atual.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {cbersSelectedScenes.length > 0 && (
+                    <div className="space-y-3 rounded-2xl border border-cyan-500/15 bg-cyan-500/[0.04] p-4">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <h3 className="text-sm font-semibold text-white">Selecionadas lado a lado</h3>
+                          <p className="text-xs text-slate-500">Cada cena gera um GeoTIFF separado no mesmo lote.</p>
+                        </div>
+                        {cbersEstimating && (
+                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-cyan-200">
+                            <Loader2 size={13} className="animate-spin" />
+                            Estimando arquivos
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {cbersSelectedScenes.map((scene) => {
+                          const estimate = scene.estimate;
+                          return (
+                            <div key={`selected-${scene.id}`} className="rounded-xl border border-white/10 bg-[#071113]/80 p-3">
+                              <div className="flex gap-3">
+                                <div className="h-20 w-24 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-black/30">
+                                  {scene.thumbnailUrl ? (
+                                    <img src={scene.thumbnailUrl} alt={scene.id} className="h-full w-full object-cover" />
+                                  ) : (
+                                    <div className="flex h-full items-center justify-center text-slate-600">
+                                      <Satellite size={22} />
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-semibold text-white">{scene.id}</p>
+                                  <p className="mt-1 text-xs text-slate-400">
+                                    {scene.datetime ? new Date(scene.datetime).toLocaleDateString('pt-BR') : 'Sem data'}
+                                  </p>
+                                  <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
+                                    <span className="rounded-md bg-white/[0.04] px-2 py-1 text-slate-300">
+                                      Download: {estimate ? `${estimate.downloadMb.toFixed(1)} MB` : 'estimando'}
+                                    </span>
+                                    <span className="rounded-md bg-white/[0.04] px-2 py-1 text-slate-300">
+                                      Saída: {estimate ? `${estimate.outputMbEstimated.toFixed(1)} MB` : 'estimando'}
+                                    </span>
+                                    <span className="rounded-md bg-white/[0.04] px-2 py-1 text-slate-300">
+                                      Tempo: {estimate ? `${Math.ceil(estimate.timeSecondsEstimated / 60)} min` : 'estimando'}
+                                    </span>
+                                    <span className={`rounded-md px-2 py-1 ${scene.coversArea === false ? 'bg-red-500/10 text-red-200' : 'bg-emerald-500/10 text-emerald-200'}`}>
+                                      Cobertura: {(scene.coveragePercent ?? 0).toFixed(1)}%
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </section>
+
+                <aside className="rounded-2xl border border-white/10 bg-[#071113]/80 p-5 sm:p-6 space-y-5">
+                  {(() => {
+                    const activeCbers = cbersJobId ? cbersHistory.find((item) => item.jobId === cbersJobId) : null;
+                    const pct = Math.max(0, Math.min(100, Math.round(Number(cbersProgress?.percent ?? activeCbers?.percent ?? 0))));
+                    const done = activeCbers?.status === 'completed';
+                    return (
+                      <>
+                        <div>
+                          <h3 className="text-base font-semibold text-white">Processamento</h3>
+                          <p className="mt-1 text-xs text-slate-500">{activeCbers?.scene?.id || activeCbers?.itemId || 'Nenhum job selecionado'}</p>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-xs">
+                            <span className="font-medium text-slate-300">{cbersProgress?.stage || activeCbers?.stage || 'Aguardando'}</span>
+                            <span className="font-bold tabular-nums text-cyan-300">{pct}%</span>
+                          </div>
+                          <div className="h-3 rounded-full bg-white/10 overflow-hidden">
+                            <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-500" style={{ width: `${pct}%` }} />
+                          </div>
+                          <p className="min-h-[2rem] text-xs leading-relaxed text-slate-400">{cbersProgress?.message || activeCbers?.message || 'Envie uma área e busque cenas para iniciar.'}</p>
+                        </div>
+                        {cbersProcessing && cbersJobId && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await requestProcessCancel(cbersJobId);
+                              setCbersProcessing(false);
+                              setCbersError('Cancelamento solicitado.');
+                            }}
+                            className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-200 hover:bg-red-500/15 transition-colors"
+                          >
+                            <X size={16} />
+                            Cancelar
+                          </button>
+                        )}
+                        {done && activeCbers?.outputUrl && (
+                          <button
+                            type="button"
+                            onClick={() => downloadSimcarZip(activeCbers.outputUrl, cbersDownloadFilename(activeCbers))}
+                            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 py-3 text-sm font-semibold text-white hover:bg-cyan-500 transition-colors"
+                          >
+                            <Download size={17} />
+                            Baixar GeoTIFF
+                          </button>
+                        )}
+                        {Array.isArray(activeCbers?.scenes) && activeCbers.scenes.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Cenas do lote</p>
+                            {activeCbers.scenes.map((sceneState) => (
+                              <div key={sceneState.itemId} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-xs font-semibold text-white">{sceneState.scene?.id || sceneState.itemId}</p>
+                                    <p className="mt-1 text-[10px] text-slate-500">{sceneState.message || sceneState.stage || sceneState.status}</p>
+                                  </div>
+                                  <span className={`text-[10px] font-semibold uppercase ${sceneState.status === 'completed' ? 'text-emerald-300' : sceneState.status === 'failed' ? 'text-red-300' : sceneState.status === 'cancelled' ? 'text-orange-300' : 'text-cyan-300'}`}>
+                                    {sceneState.percent}%
+                                  </span>
+                                </div>
+                                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                                  <div className="h-full rounded-full bg-cyan-400" style={{ width: `${Math.max(0, Math.min(100, sceneState.percent))}%` }} />
+                                </div>
+                                {sceneState.status === 'completed' && sceneState.outputUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => downloadSimcarZip(sceneState.outputUrl, cbersDownloadFilename(sceneState))}
+                                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-500"
+                                  >
+                                    <Download size={14} />
+                                    Baixar esta cena
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {activeCbers?.outputBytes && (
+                          <p className="text-center text-[10px] text-slate-500">
+                            Arquivo final: {(activeCbers.outputBytes / 1024 / 1024).toFixed(1)} MB
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
+                </aside>
+              </div>
+              {cbersPreviewScene && (() => {
+                const previewDate = cbersPreviewScene.datetime
+                  ? new Date(cbersPreviewScene.datetime).toLocaleString('pt-BR')
+                  : 'Sem data';
+                const selected = cbersSelectedSceneIds.includes(cbersPreviewScene.id);
+                const blocked = cbersPreviewScene.coversArea === false;
+                const estimate = cbersPreviewScene.estimate;
+                return (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+                    <div className="w-full max-w-5xl overflow-hidden rounded-2xl border border-white/10 bg-[#071113] shadow-2xl">
+                      <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-cyan-300">Pré-visualização da cena</p>
+                          <h3 className="truncate text-base font-semibold text-white">{cbersPreviewScene.id}</h3>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setCbersPreviewScene(null)}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-slate-300 hover:bg-white/15 hover:text-white"
+                          title="Fechar"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-0">
+                        <div className="min-h-[260px] bg-black/40">
+                          {cbersPreviewScene.thumbnailUrl ? (
+                            <img
+                              src={cbersPreviewScene.thumbnailUrl}
+                              alt={cbersPreviewScene.id}
+                              className="h-full min-h-[220px] w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-full min-h-[220px] items-center justify-center text-slate-600">
+                              <Satellite size={44} />
+                            </div>
+                          )}
+                        </div>
+                        <div className="space-y-4 p-5">
+                          <CbersMapPreview
+                            propertyGeometry={cbersPropertyGeometry}
+                            sceneGeometry={cbersPreviewScene.geometry || null}
+                          />
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                              <p className="text-[10px] uppercase tracking-wider text-slate-500">Data</p>
+                              <p className="mt-1 text-sm font-semibold text-slate-100">{previewDate}</p>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                              <p className="text-[10px] uppercase tracking-wider text-slate-500">Nuvem</p>
+                              <p className="mt-1 text-sm font-semibold text-slate-100">
+                                {cbersPreviewScene.cloudCover === null ? 'n/d' : `${cbersPreviewScene.cloudCover.toFixed(1)}%`}
+                              </p>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                              <p className="text-[10px] uppercase tracking-wider text-slate-500">Bandas</p>
+                              <p className="mt-1 text-sm font-semibold text-slate-100">3, 4, 2 + PAN</p>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                              <p className="text-[10px] uppercase tracking-wider text-slate-500">Assets</p>
+                              <p className="mt-1 text-sm font-semibold text-slate-100">{cbersPreviewScene.assetKeys.length}</p>
+                            </div>
+                            <div className={`rounded-xl border p-3 ${blocked ? 'border-red-500/20 bg-red-500/10' : 'border-emerald-500/20 bg-emerald-500/10'}`}>
+                              <p className="text-[10px] uppercase tracking-wider text-slate-400">Cobertura</p>
+                              <p className={`mt-1 text-sm font-semibold ${blocked ? 'text-red-200' : 'text-emerald-200'}`}>
+                                {(cbersPreviewScene.coveragePercent ?? 0).toFixed(2)}%
+                              </p>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                              <p className="text-[10px] uppercase tracking-wider text-slate-500">Estimativa</p>
+                              <p className="mt-1 text-sm font-semibold text-slate-100">
+                                {estimate ? `${estimate.downloadMb.toFixed(1)} MB` : cbersEstimating ? 'Calculando...' : 'Pendente'}
+                              </p>
+                            </div>
+                          </div>
+                          {estimate && (
+                            <div className="grid grid-cols-3 gap-3">
+                              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                                <p className="text-[10px] uppercase tracking-wider text-slate-500">Download</p>
+                                <p className="mt-1 text-sm font-semibold text-cyan-100">{estimate.downloadMb.toFixed(1)} MB</p>
+                              </div>
+                              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                                <p className="text-[10px] uppercase tracking-wider text-slate-500">GeoTIFF</p>
+                                <p className="mt-1 text-sm font-semibold text-cyan-100">{estimate.outputMbEstimated.toFixed(1)} MB</p>
+                              </div>
+                              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                                <p className="text-[10px] uppercase tracking-wider text-slate-500">Tempo</p>
+                                <p className="mt-1 text-sm font-semibold text-cyan-100">{Math.ceil(estimate.timeSecondsEstimated / 60)} min</p>
+                              </div>
+                            </div>
+                          )}
+                          {blocked && (
+                            <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200">
+                              Esta cena não cobre 100% do imóvel e está bloqueada para evitar GeoTIFF incompleto.
+                            </div>
+                          )}
+                          {cbersPreviewScene.bbox && (
+                            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                              <p className="text-[10px] uppercase tracking-wider text-slate-500">BBox</p>
+                              <p className="mt-1 break-all font-mono text-xs text-slate-300">
+                                {cbersPreviewScene.bbox.map((value) => value.toFixed(5)).join(', ')}
+                              </p>
+                            </div>
+                          )}
+                          <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                toggleCbersSceneSelection(cbersPreviewScene);
+                                setCbersPreviewScene(null);
+                              }}
+                              disabled={blocked}
+                              className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 py-3 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+                            >
+                              {selected ? <CheckSquare size={17} /> : <Square size={17} />}
+                              {selected ? 'Remover seleção' : 'Selecionar cena'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCbersSelectedSceneId(cbersPreviewScene.id);
+                                if (!cbersSelectedSceneIds.includes(cbersPreviewScene.id)) {
+                                  setCbersSelectedSceneIds((prev) => [...prev, cbersPreviewScene.id]);
+                                }
+                                setCbersPreviewScene(null);
+                                void startCbersProcessing(cbersPreviewScene.id);
+                              }}
+                              disabled={!cbersFile || cbersProcessing || blocked}
+                              className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                            >
+                              <Cpu size={17} />
+                              Gerar esta imagem
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         ) : activeView === 'features' ? (

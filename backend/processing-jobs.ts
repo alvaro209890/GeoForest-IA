@@ -183,6 +183,19 @@ export function markPersistedRunningJobsInterrupted(): number {
         );
       }
 
+      if (endpoint === "/api/cbers-wpm/jobs") {
+        writeDocBySegments(
+          ["users", uid, "cbers_wpm_jobs", jobId],
+          {
+            status: "failed",
+            stage: "interrupted",
+            error,
+            message: error,
+          },
+          { merge: true },
+        );
+      }
+
       count++;
     }
   }
