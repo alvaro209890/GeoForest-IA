@@ -1,4 +1,4 @@
-﻿/**
+/**
  * SIMCAR Clip — Automated clipping of SEMA-MT SIMCAR WFS layers
  * to the geometry of a user-provided property polygon.
  *
@@ -15,6 +15,7 @@ import crypto from "crypto";
 import archiver from "archiver";
 import proj4 from "proj4";
 import ExcelJS from "exceljs";
+import PDFDocument from "pdfkit";
 import sharp from "sharp";
 import { inflateRawSync } from "zlib";
 import {
@@ -7179,7 +7180,7 @@ export async function runAcAvnSatelliteAnalysis(
     };
 }
 
-function sendAcAvnComplete(res: Response, result: AcAvnAnalysisResult) {
+function sendAcAvnComplete(res: Response, result: AcAvnAnalysisResult, report?: Partial<SimcarReportArtifact>) {
     sendSSE(res, {
         type: "complete",
         percent: 100,
@@ -7190,6 +7191,7 @@ function sendAcAvnComplete(res: Response, result: AcAvnAnalysisResult) {
         satellitesUsed: result.usedSatelliteKeys,
         satellitesMissing: result.missingSatelliteKeys,
         cloudWarnings: result.cloudWarnings.length > 0 ? result.cloudWarnings : undefined,
+        ...(report || {}),
     });
 }
 
@@ -7354,6 +7356,535 @@ async function persistSimcarClipArtifacts(args: {
         writeDocBySegments(["users", uid, "simcar_clips", jobId], stripUndefinedDeep(args.patch), { merge: true });
     } catch (error) {
         console.warn("[SIMCAR CLIP] failed to persist analysis artifacts:", error);
+    }
+}
+
+const SIMCAR_REPORT_VERSION = "simcar-report-v1";
+
+type SimcarReportArtifact = {
+    reportPdfUrl: string;
+    reportPdfDownloadUrl: string;
+    reportPdfFilename: string;
+    reportPdfGeneratedAt: string;
+    reportPdfVersion: string;
+    reportPdfStatus: "ready";
+};
+
+type SimcarReportImage = { url: string; caption: string };
+
+function extractFirstAiText(messages: unknown): string {
+    if (!Array.isArray(messages)) return "";
+    const found = messages.find((item: any) => item?.role === "ai" && String(item?.text || "").trim());
+    return String((found as any)?.text || "").trim();
+}
+
+function normalizeReportImages(value: unknown): SimcarReportImage[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((item: any) => ({
+            url: String(item?.url || "").trim(),
+            caption: String(item?.caption || "").trim(),
+        }))
+        .filter((item) => item.url);
+}
+
+function reportCleanText(value: unknown, maxChars = 5000): string {
+    return String(value || "")
+        .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .replace(/\r/g, "")
+        .replace(/\*\*/g, "")
+        .replace(/^\s{0,3}#{1,6}\s*/gm, "")
+        .replace(/^\s*[-*]\s+/gm, "- ")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+        .slice(0, maxChars);
+}
+
+function breakLongPdfToken(token: string, chunkSize = 28): string {
+    if (token.length <= chunkSize) return token;
+    const chunks: string[] = [];
+    for (let i = 0; i < token.length; i += chunkSize) {
+        chunks.push(token.slice(i, i + chunkSize));
+    }
+    return chunks.join(" ");
+}
+
+function reportPdfSafeText(value: unknown, maxChars = 5000): string {
+    return reportCleanText(value, maxChars)
+        .replace(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+/gi, "[imagem incorporada]")
+        .replace(/https?:\/\/\S+/gi, (rawUrl) => {
+            const cleanUrl = rawUrl.replace(/[),.;:]+$/g, "");
+            try {
+                const parsed = new URL(cleanUrl);
+                return `[link: ${parsed.hostname}]`;
+            } catch {
+                return "[link externo]";
+            }
+        })
+        .replace(/[^\s]{42,}/g, (token) => breakLongPdfToken(token))
+        .replace(/[ \t]{2,}/g, " ")
+        .replace(/\n[ \t]+/g, "\n")
+        .trim();
+}
+
+function reportSingleLineText(value: unknown, maxChars = 120): string {
+    const clean = reportPdfSafeText(value, maxChars * 2).replace(/\s+/g, " ").trim();
+    if (clean.length <= maxChars) return clean;
+    return `${clean.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function splitPdfTextChunks(value: string, maxChunkChars = 950): string[] {
+    const chunks: string[] = [];
+    for (const paragraph of value.split(/\n{2,}/).map((item) => item.trim()).filter(Boolean)) {
+        let remaining = paragraph;
+        while (remaining.length > maxChunkChars) {
+            const splitAt = Math.max(
+                remaining.lastIndexOf(". ", maxChunkChars),
+                remaining.lastIndexOf("; ", maxChunkChars),
+                remaining.lastIndexOf(", ", maxChunkChars),
+                remaining.lastIndexOf(" ", maxChunkChars),
+            );
+            const safeSplit = splitAt > 160 ? splitAt + 1 : maxChunkChars;
+            chunks.push(remaining.slice(0, safeSplit).trim());
+            remaining = remaining.slice(safeSplit).trim();
+        }
+        if (remaining) chunks.push(remaining);
+    }
+    return chunks;
+}
+
+function reportStatusLabel(value: unknown): string {
+    const clean = String(value || "").trim().toUpperCase();
+    const labels: Record<string, string> = {
+        SIM: "Sim",
+        NAO: "Não",
+        MEDIA: "Média",
+        ALTA: "Alta",
+        BAIXA: "Baixa",
+        INCONCLUSIVO: "Inconclusivo",
+        AUAS_VALIDA: "AUAS válida",
+        AUAS_INVALIDA: "AUAS inválida",
+        AUAS_PARCIAL: "AUAS parcial",
+    };
+    return labels[clean] || (clean ? clean : "Não informado");
+}
+
+function selectPrincipalReportImages(acImages: SimcarReportImage[], auasImages: SimcarReportImage[]): SimcarReportImage[] {
+    const scoreImage = (img: SimcarReportImage) => {
+        const cap = img.caption.toLowerCase();
+        let score = 0;
+        if (/vis[aã]o geral|context/i.test(cap)) score += 5;
+        if (/auas|area consolidada|área consolidada|avn|arl/i.test(cap)) score += 3;
+        if (/spot|landsat|sentinel/i.test(cap)) score += 1;
+        return score;
+    };
+    const pick = (images: SimcarReportImage[], limit: number) =>
+        images
+            .filter((img, idx, arr) => img.url && arr.findIndex((other) => other.url === img.url) === idx)
+            .sort((a, b) => scoreImage(b) - scoreImage(a))
+            .slice(0, limit);
+    return [...pick(acImages, 4), ...pick(auasImages, 4)].slice(0, 8);
+}
+
+async function fetchReportImageBuffer(url: string): Promise<Buffer | null> {
+    const clean = toPublicApiUrl(url);
+    if (!clean) return null;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+    try {
+        const response = await fetch(clean, { signal: controller.signal });
+        if (!response.ok) return null;
+        const arr = await response.arrayBuffer();
+        return Buffer.from(arr);
+    } catch {
+        return null;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function buildSimcarReportPdfBuffer(args: {
+    jobId: string;
+    filename: string;
+    sourceMode?: string;
+    summary?: any;
+    job?: CachedJob;
+    analysisText?: string;
+    analysisMeta?: any;
+    analysisImages: SimcarReportImage[];
+    auasText?: string;
+    auasMeta?: any;
+    auasImages: SimcarReportImage[];
+}): Promise<Buffer> {
+    const selectedImages = selectPrincipalReportImages(args.analysisImages, args.auasImages);
+    const imageBuffers = await Promise.all(
+        selectedImages.map(async (img) => ({ ...img, buffer: await fetchReportImageBuffer(img.url) })),
+    );
+    const logoPath = path.resolve(__dirname, "..", "geoforest_app_logo.png");
+    const logoBuffer = fs.existsSync(logoPath) ? fs.readFileSync(logoPath) : null;
+
+    const doc = new PDFDocument({
+        size: "A4",
+        margin: 42,
+        bufferPages: true,
+        info: {
+            Title: `Laudo Técnico SIMCAR - ${args.jobId}`,
+            Author: "GeoForest IA",
+            Subject: "Relatório técnico de análise SIMCAR",
+        },
+    });
+    const chunks: Buffer[] = [];
+    const done = new Promise<Buffer>((resolve, reject) => {
+        doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+        doc.on("end", () => resolve(Buffer.concat(chunks)));
+        doc.on("error", reject);
+    });
+
+    const pageW = doc.page.width;
+    const pageH = doc.page.height;
+    const margin = 42;
+    const contentW = pageW - margin * 2;
+    
+    // Paleta de Cores
+    const colors = {
+        primary: "#059669", // Emerald 600
+        primaryLight: "#D1FAE5", // Emerald 100
+        primaryBg: "#ECFDF5", // Emerald 50
+        dark: "#0F172A", // Slate 900
+        darkText: "#1E293B", // Slate 800
+        text: "#334155", // Slate 700
+        lightText: "#64748B", // Slate 500
+        border: "#E2E8F0", // Slate 200
+        bg: "#F8FAFC" // Slate 50
+    };
+
+    const ensureSpace = (height: number) => {
+        if (doc.y + height > pageH - margin) {
+            doc.addPage();
+            doc.font("Helvetica").fillColor(colors.lightText).fontSize(8).text(`GeoForest IA | Laudo SIMCAR | Job ${reportSingleLineText(args.jobId, 44)}`, margin, 24, {
+                width: contentW,
+                align: "right",
+            });
+            doc.x = margin;
+            doc.moveDown(1.5);
+        }
+    };
+
+    const sectionTitle = (title: string) => {
+        ensureSpace(40);
+        doc.moveDown(1);
+        doc.font("Helvetica-Bold").fontSize(15).fillColor(colors.dark).text(title, margin, doc.y, { align: "left" });
+        doc.moveTo(margin, doc.y + 6).lineTo(pageW - margin, doc.y + 6).strokeColor(colors.primary).lineWidth(1.5).stroke();
+        doc.moveDown(1.2);
+        doc.x = margin;
+    };
+
+    const bodyText = (text: string, maxChars = 2800) => {
+        const clean = reportPdfSafeText(text, maxChars);
+        if (!clean) {
+            doc.font("Helvetica").fontSize(10).fillColor(colors.lightText).text("Não informado.", margin, doc.y, { width: contentW, lineGap: 4, align: 'left' });
+            doc.x = margin;
+            return;
+        }
+        for (const block of splitPdfTextChunks(clean)) {
+            doc.font("Helvetica").fontSize(10);
+            const blockHeight = doc.heightOfString(block, { width: contentW, lineGap: 3, align: "left" });
+            ensureSpace(Math.min(blockHeight + 16, pageH - margin * 2));
+            doc.font("Helvetica").fontSize(10).fillColor(colors.text).text(block, margin, doc.y, {
+                width: contentW,
+                lineGap: 3,
+                align: "left",
+            });
+            doc.x = margin;
+            doc.moveDown(0.5);
+        }
+    };
+
+    const metric = (label: string, value: string, x: number, y: number, w: number) => {
+        doc.roundedRect(x, y, w, 60, 8).fillAndStroke(colors.primaryBg, colors.primaryLight);
+        doc.font("Helvetica-Bold").fontSize(14).fillColor(colors.primary).text(reportSingleLineText(value, 24), x + 12, y + 14, { width: w - 24, align: "left" });
+        doc.font("Helvetica").fontSize(8.5).fillColor(colors.lightText).text(reportSingleLineText(label, 34), x + 12, y + 36, { width: w - 24, align: "left" });
+    };
+
+    // --- Header ---
+    doc.rect(0, 0, pageW, 180).fill(colors.dark);
+    if (logoBuffer) {
+        try {
+            doc.image(logoBuffer, margin, 40, { fit: [52, 52] });
+        } catch {
+            // Ignora a imagem se não decodificar
+        }
+    }
+    
+    doc.font("Helvetica-Bold").fontSize(26).fillColor("#FFFFFF").text("Laudo Técnico SIMCAR", margin + 70, 44, {
+        width: contentW - 70,
+        align: "left"
+    });
+    doc.font("Helvetica").fontSize(11).fillColor(colors.primaryLight).text("Relatório executivo gerado automaticamente pela GeoForest IA", margin + 70, 78, {
+        width: contentW - 70,
+        align: "left"
+    });
+    
+    doc.font("Helvetica-Bold").fontSize(13).fillColor("#FFFFFF").text(reportSingleLineText(args.filename || "Recorte SIMCAR", 130), margin, 126, {
+        width: contentW,
+        align: "left"
+    });
+    doc.font("Helvetica").fontSize(9.5).fillColor(colors.lightText).text(
+        `Job: ${reportSingleLineText(args.jobId, 44)} | Gerado em ${new Date().toLocaleString("pt-BR", { timeZone: "America/Cuiaba" })}`,
+        margin,
+        146,
+        { width: contentW, align: "left" },
+    );
+
+    // Initial Y position after header
+    doc.y = 210;
+    doc.x = margin;
+    
+    // --- Metrics Section ---
+    const summary = args.summary || {};
+    const layers = Array.isArray(summary.layers) ? summary.layers : (args.job?.layerSummaries || []);
+    const propertyAreaHa = Number(summary.propertyAreaHa || args.job?.areaHa || 0);
+    const layersWithData = Number(summary.layersWithData || layers.filter((l: any) => Number(l?.features || 0) > 0).length || 0);
+    const totalFeatures = Number(summary.totalFeaturesClipped || layers.reduce((sum: number, l: any) => sum + Number(l?.features || 0), 0));
+    const totalLayers = Number(summary.layersProcessed || layers.length || 0);
+    
+    const metricGap = 12;
+    const metricW = (contentW - metricGap * 3) / 4;
+    
+    const metricsStartY = doc.y; // Fixa a posição Y
+    metric("Área do imóvel", `${propertyAreaHa.toFixed(2)} ha`, margin, metricsStartY, metricW);
+    metric("Camadas com dados", `${layersWithData}/${totalLayers}`, margin + (metricW + metricGap), metricsStartY, metricW);
+    metric("Feições recortadas", String(totalFeatures), margin + (metricW + metricGap) * 2, metricsStartY, metricW);
+    metric("Modo de Análise", args.sourceMode === "vectorized-analysis" ? "Vetorizado" : "Recorte", margin + (metricW + metricGap) * 3, metricsStartY, metricW);
+    
+    // Restaura as coordenadas para debaixo das métricas
+    doc.x = margin;
+    doc.y = metricsStartY + 85;
+
+    // --- Resumo Executivo ---
+    const acMeta = args.analysisMeta?.globalVerdict || {};
+    const auasMeta = args.auasMeta || {};
+    sectionTitle("Resumo Executivo");
+    const executive = [
+        `A análise técnica SIMCAR foi processada com sucesso para o identificador de serviço ${args.jobId}.`,
+        `Durante o processamento, foram avaliadas ${totalLayers} camadas ambientais. Identificou-se a presença de dados sobrepostos à propriedade em ${layersWithData} camada(s), resultando no recorte e extração de ${totalFeatures} feição(ões) vetorial(is).`,
+        args.analysisText ? `Indicadores de Área Consolidada (AC): ${reportStatusLabel(acMeta.acForaShape)} para áreas fora da poligonal declarada. Indicadores de Vegetação Nativa (AVN): ${reportStatusLabel(acMeta.avnDentroShapeAntropizado)} para antropização dentro da poligonal. O nível de confiança atribuído a esta análise é ${reportStatusLabel(acMeta.confidence)}.` : "",
+        args.auasText ? `Síntese de AUAS: ${reportStatusLabel(auasMeta.finalStatus)}. Identificação de passivo ambiental: ${auasMeta.passivoAmbiental === true ? "Sim" : auasMeta.passivoAmbiental === false ? "Não" : "Não informado"}. O nível de confiança atribuído a esta análise é ${reportStatusLabel(auasMeta.confidence)}.` : "",
+    ].filter(Boolean).join("\n\n");
+    bodyText(executive, 2200);
+
+    // --- Tabela de Camadas ---
+    sectionTitle("Quantitativos por Camada");
+    const withData = layers.filter((l: any) => Number(l?.features || 0) > 0).slice(0, 20);
+    if (withData.length === 0) {
+        bodyText("Nenhuma camada ambiental estadual ou federal apresentou sobreposição com a área do imóvel analisado.", 800);
+    } else {
+        const tableStartY = doc.y;
+        
+        doc.rect(margin, tableStartY, contentW, 24).fill(colors.primary);
+        doc.font("Helvetica-Bold").fontSize(9).fillColor("#FFFFFF");
+        doc.text("Camada Ambiental", margin + 10, tableStartY + 8, { width: 180, align: "left" });
+        doc.text("Origem", margin + 200, tableStartY + 8, { width: 70, align: "left" });
+        doc.text("Feições", margin + 280, tableStartY + 8, { width: 60, align: "right" });
+        doc.text("Área (ha)", margin + 350, tableStartY + 8, { width: 70, align: "right" });
+        doc.text("% Imóvel", margin + 430, tableStartY + 8, { width: 65, align: "right" });
+        
+        let currentY = tableStartY + 24;
+        
+        withData.forEach((layer: any, idx: number) => {
+            ensureSpace(24);
+            if (doc.y < currentY) {
+                currentY = doc.y;
+                doc.rect(margin, currentY, contentW, 24).fill(colors.primary);
+                doc.font("Helvetica-Bold").fontSize(9).fillColor("#FFFFFF");
+                doc.text("Camada Ambiental", margin + 10, currentY + 8, { width: 180, align: "left" });
+                doc.text("Origem", margin + 200, currentY + 8, { width: 70, align: "left" });
+                doc.text("Feições", margin + 280, currentY + 8, { width: 60, align: "right" });
+                doc.text("Área (ha)", margin + 350, currentY + 8, { width: 70, align: "right" });
+                doc.text("% Imóvel", margin + 430, currentY + 8, { width: 65, align: "right" });
+                currentY += 24;
+            }
+            
+            if (idx % 2 === 0) doc.rect(margin, currentY, contentW, 22).fill(colors.bg);
+            else doc.rect(margin, currentY, contentW, 22).fill("#FFFFFF");
+            
+            doc.rect(margin, currentY, contentW, 22).strokeColor(colors.border).lineWidth(0.5).stroke();
+            
+            const areaHa = Number(layer.areaHa || 0);
+            const pct = propertyAreaHa > 0 && areaHa > 0 ? `${((areaHa / propertyAreaHa) * 100).toFixed(1)}%` : "-";
+            
+            doc.font("Helvetica").fontSize(8.5).fillColor(colors.darkText);
+            doc.text(reportSingleLineText(layer.name || "-", 42), margin + 10, currentY + 6, { width: 180, align: "left" });
+            doc.text(reportSingleLineText(layer.source === "property" ? "Imóvel" : "WFS", 16), margin + 200, currentY + 6, { width: 70, align: "left" });
+            doc.text(reportSingleLineText(String(Number(layer.features || 0)), 12), margin + 280, currentY + 6, { width: 60, align: "right" });
+            doc.text(areaHa > 0 ? areaHa.toFixed(2) : "-", margin + 350, currentY + 6, { width: 70, align: "right" });
+            doc.text(pct, margin + 430, currentY + 6, { width: 65, align: "right" });
+            
+            currentY += 22;
+            doc.y = currentY;
+            doc.x = margin;
+        });
+        doc.moveDown(1);
+    }
+
+    // --- Análise IA Textos ---
+    if (args.analysisText) {
+        sectionTitle("Análise de Área Consolidada e Vegetação Nativa (AC/AVN)");
+        bodyText(args.analysisText, 4000);
+    }
+    if (args.auasText) {
+        sectionTitle("Análise de Área de Uso Alternativo do Solo (AUAS)");
+        bodyText(args.auasText, 4000);
+    }
+
+    // --- Imagens ---
+    if (imageBuffers.some((img) => img.buffer)) {
+        sectionTitle("Anexo Fotográfico: Satélites e Vetores Analisados");
+        for (const img of imageBuffers) {
+            if (!img.buffer) continue;
+            ensureSpace(260);
+            const imgY = doc.y;
+            try {
+                doc.rect(margin, imgY, contentW, 200).fillAndStroke(colors.bg, colors.border);
+                doc.image(img.buffer, margin + 2, imgY + 2, { fit: [contentW - 4, 196], align: "center", valign: "center" });
+                
+                doc.y = imgY + 210;
+                doc.font("Helvetica-Oblique").fontSize(9).fillColor(colors.lightText).text(reportSingleLineText(img.caption || "Imagem de análise espacial", 150), margin, doc.y, {
+                    width: contentW,
+                    align: "center",
+                });
+                doc.moveDown(1.5);
+                doc.x = margin;
+            } catch {
+                // Ignore broken image in report.
+            }
+        }
+    }
+
+    // --- Avisos e Footer ---
+    const warnings = [
+        ...(Array.isArray(summary.warnings) ? summary.warnings : []),
+        ...(Array.isArray(args.job?.warnings) ? args.job!.warnings! : []),
+    ].filter(Boolean);
+    sectionTitle("Limitações e Observações Técnicas");
+    bodyText([
+        "Este laudo é um documento técnico de apoio gerado automaticamente por algoritmos de Inteligência Artificial e geoprocessamento. Os resultados extraídos (áreas, intersecções, validações de regras de negócio) são indicativos e devem ser rigorosamente revisados pelo Engenheiro ou Responsável Técnico antes de qualquer submissão a órgãos ambientais, tomada de decisão, ou uso como peça técnica oficial (ART). A GeoForest IA não se responsabiliza por autuações ou indeferimentos baseados no uso não revisado destes dados.",
+        warnings.length > 0 ? `Alertas emitidos durante o processamento:\n• ${warnings.slice(0, 8).join("\n• ")}` : "",
+    ].filter(Boolean).join("\n\n"), 2500);
+
+    const totalPages = doc.bufferedPageRange().count;
+    for (let i = 0; i < totalPages; i += 1) {
+        doc.switchToPage(i);
+        doc.font("Helvetica").fontSize(8).fillColor(colors.lightText).text(
+            `GeoForest IA | ${SIMCAR_REPORT_VERSION} | Página ${i + 1} de ${totalPages}`,
+            margin,
+            pageH - 28,
+            { width: contentW, align: "center" },
+        );
+    }
+
+    doc.end();
+    return done;
+}
+
+async function generateAndPersistSimcarReport(args: {
+    uid: string;
+    jobId: string;
+    contextUrl?: string;
+    outputZipUrl?: string;
+    analysisText?: string;
+    analysisImages?: SimcarReportImage[];
+    analysisMeta?: any;
+    auasText?: string;
+    auasImages?: SimcarReportImage[];
+    auasMeta?: any;
+}): Promise<SimcarReportArtifact> {
+    const uid = String(args.uid || "").trim();
+    const jobId = String(args.jobId || "").trim();
+    if (!uid || !jobId) throw new Error("Usuário e jobId são obrigatórios para gerar PDF.");
+
+    await persistSimcarClipArtifacts({
+        uid,
+        jobId,
+        patch: { reportPdfStatus: "generating", reportPdfError: null },
+    });
+
+    try {
+        const persisted = readPersistedSimcarClip(jobId) || {};
+        const job = await hydrateCachedJob(
+            jobId,
+            args.contextUrl || persisted.contextUrl || persisted.files?.contextUrl,
+            args.outputZipUrl || persisted.outputZipUrl || persisted.files?.outputZipUrl,
+        );
+        const summary = persisted.summary || (job?.layerSummaries ? {
+            propertyAreaHa: job.areaHa || 0,
+            crs: "EPSG:4674",
+            layersProcessed: job.layerSummaries.length,
+            layersWithData: job.layerSummaries.filter((l) => l.features > 0).length,
+            totalFeaturesClipped: job.layerSummaries.reduce((sum, l) => sum + Number(l.features || 0), 0),
+            processingTimeMs: 0,
+            layers: job.layerSummaries,
+            warnings: job.warnings,
+        } : null);
+        const analysisText = reportCleanText(args.analysisText || extractFirstAiText(persisted.analysisMessages), 7000);
+        const auasText = reportCleanText(args.auasText || extractFirstAiText(persisted.auasAnalysisMessages), 7000);
+        if (!analysisText && !auasText) {
+            throw new Error("Nenhuma análise IA encontrada para gerar o PDF.");
+        }
+        const reportFilename = `SIMCAR_Laudo_Tecnico_${jobId.slice(0, 8)}.pdf`;
+        const pdfBuffer = await buildSimcarReportPdfBuffer({
+            jobId,
+            filename: String(persisted.filename || persisted.title || `Recorte ${jobId.slice(0, 8)}`),
+            sourceMode: String(persisted.sourceMode || ""),
+            summary,
+            job,
+            analysisText,
+            analysisMeta: args.analysisMeta || persisted.analysisMeta,
+            analysisImages: args.analysisImages?.length ? args.analysisImages : normalizeReportImages(persisted.analysisImages),
+            auasText,
+            auasMeta: args.auasMeta || persisted.auasMeta,
+            auasImages: args.auasImages?.length ? args.auasImages : normalizeReportImages(persisted.auasAnalysisImages),
+        });
+        const generatedAt = new Date().toISOString();
+        const reportPdfUrl = await uploadRawBufferToCloudinary(
+            pdfBuffer,
+            reportFilename,
+            "application/pdf",
+            uid,
+        );
+        const artifact: SimcarReportArtifact = {
+            reportPdfUrl,
+            reportPdfDownloadUrl: reportPdfUrl,
+            reportPdfFilename: reportFilename,
+            reportPdfGeneratedAt: generatedAt,
+            reportPdfVersion: SIMCAR_REPORT_VERSION,
+            reportPdfStatus: "ready",
+        };
+        await persistSimcarClipArtifacts({
+            uid,
+            jobId,
+            patch: {
+                ...artifact,
+                reportPdfError: null,
+                files: {
+                    ...(persisted.files || {}),
+                    reportPdfUrl,
+                    reportPdfDownloadUrl: reportPdfUrl,
+                },
+            },
+        });
+        return artifact;
+    } catch (error: any) {
+        const message = String(error?.message || "Falha ao gerar PDF técnico.");
+        await persistSimcarClipArtifacts({
+            uid,
+            jobId,
+            patch: {
+                reportPdfStatus: "failed",
+                reportPdfError: message,
+            },
+        });
+        throw error;
     }
 }
 
@@ -8055,6 +8586,7 @@ export function registerSimcarClipRoutes(app: Express) {
         let chargedBrl = 0;
         let processingJobId = "";
         let sseHeartbeat: ReturnType<typeof setInterval> | null = null;
+        let reportArtifact: SimcarReportArtifact | undefined;
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
@@ -8194,6 +8726,30 @@ export function registerSimcarClipRoutes(app: Express) {
                     auasMeta: auasOutcome.auasMeta,
                 },
             });
+            let reportArtifact: SimcarReportArtifact | undefined;
+            try {
+                sendSSE(res, {
+                    type: "progress",
+                    step: "generating_report",
+                    percent: 96,
+                    message: "Gerando PDF técnico da análise...",
+                });
+                reportArtifact = await generateAndPersistSimcarReport({
+                    uid,
+                    jobId,
+                    contextUrl,
+                    outputZipUrl,
+                    auasText: auasOutcome.analysisText,
+                    auasImages: auasOutcome.images,
+                    auasMeta: auasOutcome.auasMeta,
+                });
+            } catch (reportErr: any) {
+                console.warn("[SIMCAR REPORT] AUAS report generation failed:", reportErr?.message || reportErr);
+                sendSSE(res, {
+                    type: "report_error",
+                    message: reportErr?.message || "Falha ao gerar PDF técnico.",
+                });
+            }
             finishJob({
                 jobId: processingJobId,
                 status: "completed",
@@ -8211,6 +8767,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 auasAreaHa: auasSummary?.areaHa ?? 0,
                 auasMeta: auasOutcome.auasMeta,
                 cloudWarnings: auasOutcome.cloudWarnings.length > 0 ? auasOutcome.cloudWarnings : undefined,
+                ...(reportArtifact || {}),
             });
         } catch (err: any) {
             if (err instanceof ClientAbortError) {
@@ -8309,6 +8866,7 @@ export function registerSimcarClipRoutes(app: Express) {
         let chargedBrl = 0;
         let processingJobId = "";
         let sseHeartbeat: ReturnType<typeof setInterval> | null = null;
+        let reportArtifact: SimcarReportArtifact | undefined;
         try {
             const uid = String(req.authUid || "");
             if (!uid) {
@@ -8476,6 +9034,29 @@ export function registerSimcarClipRoutes(app: Express) {
                             analysisRulesVersion: "acavn-fixed-v4",
                         },
                     });
+                    try {
+                        sendSSE(res, {
+                            type: "progress",
+                            step: "generating_report",
+                            percent: 98,
+                            message: "Gerando PDF técnico da análise...",
+                        });
+                        reportArtifact = await generateAndPersistSimcarReport({
+                            uid,
+                            jobId,
+                            contextUrl,
+                            outputZipUrl,
+                            analysisText: analysisOutcome.analysisText,
+                            analysisImages: analysisOutcome.cloudinaryUrls,
+                            analysisMeta: analysisOutcome.analysisMeta,
+                        });
+                    } catch (reportErr: any) {
+                        console.warn("[SIMCAR REPORT] AC/AVN report generation failed:", reportErr?.message || reportErr);
+                        sendSSE(res, {
+                            type: "report_error",
+                            message: reportErr?.message || "Falha ao gerar PDF técnico.",
+                        });
+                    }
                 }
             } else {
                 const imageOnlyOutcome = await processAnalysis(res, jobId, layers, false, contextUrl, outputZipUrl);
@@ -8503,7 +9084,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 },
             });
             if (analysisCompletePayload) {
-                sendAcAvnComplete(res, analysisCompletePayload);
+                sendAcAvnComplete(res, analysisCompletePayload, reportArtifact);
             }
         } catch (err: any) {
             if (err instanceof ClientAbortError) {
@@ -8841,6 +9422,36 @@ export function registerSimcarClipRoutes(app: Express) {
         }
     });
 
+    app.post("/api/simcar/clip/report", async (req: Request, res: Response) => {
+        try {
+            const uid = String(req.authUid || "");
+            if (!uid) {
+                res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+                return;
+            }
+            const { jobId, contextUrl, outputZipUrl } = req.body as {
+                jobId?: string;
+                contextUrl?: string;
+                outputZipUrl?: string;
+                force?: boolean;
+            };
+            if (!jobId) {
+                res.status(400).json({ error: "jobId é obrigatório." });
+                return;
+            }
+            const artifact = await generateAndPersistSimcarReport({
+                uid,
+                jobId,
+                contextUrl,
+                outputZipUrl,
+            });
+            res.json({ ok: true, ...artifact });
+        } catch (err: any) {
+            console.error("[SIMCAR REPORT] Error:", err);
+            res.status(500).json({ error: err.message || "Falha ao gerar PDF técnico." });
+        }
+    });
+
     // Layer list endpoint (for frontend checkbox list)
     app.get("/api/simcar/layers", (_req: Request, res: Response) => {
         res.json({
@@ -8854,12 +9465,13 @@ export function registerSimcarClipRoutes(app: Express) {
     // Delete clip endpoint: removes Cloudinary resources + cache
     app.delete("/api/simcar/clip/:jobId", async (req: Request, res: Response) => {
         const { jobId } = req.params;
-        const { imageUrls, auasImageUrls, inputZipUrl, outputZipUrl, contextUrl } = req.body as {
+        const { imageUrls, auasImageUrls, inputZipUrl, outputZipUrl, contextUrl, reportPdfUrl } = req.body as {
             imageUrls?: string[];
             auasImageUrls?: string[];
             inputZipUrl?: string;
             outputZipUrl?: string;
             contextUrl?: string;
+            reportPdfUrl?: string;
         };
 
         try {
@@ -8883,6 +9495,7 @@ export function registerSimcarClipRoutes(app: Express) {
             queueDelete(cached?.inputZipUrl || inputZipUrl, "raw");
             queueDelete(cached?.outputZipUrl || outputZipUrl, "raw");
             queueDelete(cached?.contextJsonUrl || contextUrl, "raw");
+            queueDelete(reportPdfUrl || String(readPersistedSimcarClip(jobId)?.reportPdfUrl || ""), "raw");
 
             // Delete analysis images from Cloudinary (image type)
             if (Array.isArray(imageUrls)) {

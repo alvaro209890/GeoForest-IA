@@ -249,6 +249,12 @@ type SimcarAnalysisMessage = {
   thinkingText?: string;
 };
 
+type SimcarAnalysisImage = {
+  url: string;
+  caption: string;
+  sourceLabel?: string;
+};
+
 type SimcarAcAvnAnalysisMeta = {
   globalVerdict?: {
     acForaShape?: 'SIM' | 'NAO' | 'INCONCLUSIVO' | null;
@@ -365,6 +371,13 @@ type SimcarClipHistoryItem = {
   auasAnalysisImages?: Array<{ url: string; caption: string }>;
   auasAnalysisMessages?: SimcarAnalysisMessage[];
   auasMeta?: SimcarAuasMeta;
+  reportPdfUrl?: string;
+  reportPdfDownloadUrl?: string;
+  reportPdfFilename?: string;
+  reportPdfGeneratedAt?: string;
+  reportPdfVersion?: string;
+  reportPdfStatus?: 'generating' | 'ready' | 'failed';
+  reportPdfError?: string;
   summary?: SimcarClipSummary;
   status?: 'processing' | 'completed' | 'failed' | 'cancelled';
   error?: string;
@@ -961,7 +974,7 @@ export default function Dashboard() {
   const [simcarAnalysisProcessing, setSimcarAnalysisProcessing] = useState(false);
   const [simcarAnalysisProgress, setSimcarAnalysisProgress] = useState<{ step: string; percent: number; message: string } | null>(null);
   const [simcarAgentLog, setSimcarAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
-  const [simcarAnalysisImages, setSimcarAnalysisImages] = useState<Array<{ url: string; caption: string }>>([]);
+  const [simcarAnalysisImages, setSimcarAnalysisImages] = useState<SimcarAnalysisImage[]>([]);
   const [simcarAnalysisMessages, setSimcarAnalysisMessages] = useState<SimcarAnalysisMessage[]>([]);
   const [simcarThinkingText, setSimcarThinkingText] = useState('');
   const [simcarThinkingHidden, setSimcarThinkingHidden] = useState(false);
@@ -981,7 +994,8 @@ export default function Dashboard() {
   // ─── SIMCAR AUAS Analysis State ───
   const [simcarAuasProcessing, setSimcarAuasProcessing] = useState(false);
   const [simcarAuasProgress, setSimcarAuasProgress] = useState<{ step: string; percent: number; message: string } | null>(null);
-  const [simcarAuasImages, setSimcarAuasImages] = useState<Array<{ url: string; caption: string }>>([]);
+  const [simcarAuasImages, setSimcarAuasImages] = useState<SimcarAnalysisImage[]>([]);
+  const [simcarImagePreview, setSimcarImagePreview] = useState<SimcarAnalysisImage | null>(null);
   const [simcarAuasMessages, setSimcarAuasMessages] = useState<SimcarAnalysisMessage[]>([]);
   const [simcarAuasAgentLog, setSimcarAuasAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
   const simcarAuasAbortRef = useRef<AbortController | null>(null);
@@ -1743,6 +1757,24 @@ export default function Dashboard() {
     };
   }, []);
 
+  const normalizeSimcarReportPatch = useCallback((raw: any): Partial<SimcarClipHistoryItem> => {
+    if (!raw || typeof raw !== 'object') return {};
+    const status = String(raw?.reportPdfStatus || '').trim();
+    const patch: Partial<SimcarClipHistoryItem> = {};
+    const reportPdfUrl = String(raw?.reportPdfUrl || raw?.files?.reportPdfUrl || '').trim();
+    const reportPdfDownloadUrl = String(raw?.reportPdfDownloadUrl || raw?.files?.reportPdfDownloadUrl || reportPdfUrl).trim();
+    if (reportPdfUrl) patch.reportPdfUrl = reportPdfUrl;
+    if (reportPdfDownloadUrl) patch.reportPdfDownloadUrl = reportPdfDownloadUrl;
+    if (raw?.reportPdfFilename) patch.reportPdfFilename = String(raw.reportPdfFilename);
+    if (raw?.reportPdfGeneratedAt) patch.reportPdfGeneratedAt = String(raw.reportPdfGeneratedAt);
+    if (raw?.reportPdfVersion) patch.reportPdfVersion = String(raw.reportPdfVersion);
+    if (status === 'generating' || status === 'ready' || status === 'failed') {
+      patch.reportPdfStatus = status;
+    }
+    if (raw?.reportPdfError) patch.reportPdfError = String(raw.reportPdfError);
+    return patch;
+  }, []);
+
   const normalizeAuasResultPayload = useCallback((raw: any): AuasTabResult => {
     const toNumber = (value: any) => {
       const parsed = Number(value);
@@ -2077,6 +2109,8 @@ export default function Dashboard() {
           inputZipUrl: cleanClip.inputZipUrl,
           outputZipUrl: cleanClip.outputZipUrl,
           contextUrl: cleanClip.contextUrl,
+          reportPdfUrl: cleanClip.reportPdfUrl,
+          reportPdfDownloadUrl: cleanClip.reportPdfDownloadUrl,
         },
         analysisMessageCount: cleanClip.analysisMessages?.length ?? 0,
         analysisImageCount: cleanClip.analysisImages?.length ?? 0,
@@ -2274,23 +2308,47 @@ export default function Dashboard() {
             setSimcarAnalysisProgress(null);
             setSimcarAuasProgress(null);
           }
-        } else {
-          setSimcarClipProcessing(serverRunning || !runtimeStatus);
-          setSimcarVectorizedRunning(false);
-          setSimcarVectorizedStatus(null);
-          setSimcarAnalysisProcessing(false);
-          setSimcarAuasProcessing(false);
-          setSimcarAnalysisProgress(null);
-          setSimcarAuasProgress(null);
-          setSimcarClipProgress((prev) =>
-            prev || {
-              current: 1,
-              total: Math.max(1, Number(clip.totalLayers || 1)),
-              layer: 'Processando',
-              status: 'fetching',
-            }
-          );
-        }
+	        } else {
+	          const normalizedRuntimeEndpoint = String(runtime?.serverEndpoint || '').trim().toLowerCase();
+	          const runningAcAvn = serverRunning && normalizedRuntimeEndpoint === '/api/simcar/clip/analyze';
+	          const runningAuas = serverRunning && normalizedRuntimeEndpoint === '/api/simcar/clip/analyze-auas';
+	          const runningBaseClip = serverRunning && (
+	            normalizedRuntimeEndpoint === '/api/simcar/clip' ||
+	            (!normalizedRuntimeEndpoint && !runtimeStatus)
+	          );
+	          setSimcarClipProcessing(runningBaseClip);
+	          setSimcarVectorizedRunning(false);
+	          setSimcarVectorizedStatus(null);
+	          setSimcarAnalysisProcessing(runningAcAvn);
+	          setSimcarAuasProcessing(runningAuas);
+	          setSimcarAnalysisProgress((prev) =>
+	            runningAcAvn
+	              ? {
+	                step: 'analyzing',
+	                percent: Math.max(12, Math.round(Number(prev?.percent || 35))),
+	                message: runtimeStageInfo.message || 'Análise AC/AVN em andamento no servidor...',
+	              }
+	              : null
+	          );
+	          setSimcarAuasProgress((prev) =>
+	            runningAuas
+	              ? {
+	                step: 'analyzing',
+	                percent: Math.max(60, Math.round(Number(prev?.percent || 72))),
+	                message: runtimeStageInfo.message || 'Análise AUAS em andamento no servidor...',
+	              }
+	              : null
+	          );
+	          setSimcarClipProgress((prev) => {
+	            if (!runningBaseClip) return null;
+	            return prev || {
+	              current: 1,
+	              total: Math.max(1, Number(clip.totalLayers || 1)),
+	              layer: 'Processando',
+	              status: 'fetching',
+	            };
+	          });
+	        }
         return;
       }
 
@@ -2553,6 +2611,7 @@ export default function Dashboard() {
               auasAnalysisImages: Array.isArray(data?.auasAnalysisImages) ? data.auasAnalysisImages : [],
               auasAnalysisMessages: Array.isArray(data?.auasAnalysisMessages) ? data.auasAnalysisMessages : [],
               auasMeta: isPlainObject(data?.auasMeta) ? (data.auasMeta as SimcarAuasMeta) : undefined,
+              ...normalizeSimcarReportPatch(data),
               summary:
                 summary
                 || {
@@ -2569,6 +2628,20 @@ export default function Dashboard() {
                   data?.status === 'processing' || data?.status === 'completed' || data?.status === 'failed' || data?.status === 'cancelled'
                     ? data.status
                     : undefined;
+                const sourceMode = data?.sourceMode === 'vectorized-analysis' ? 'vectorized-analysis' : data?.sourceMode;
+                const hasAcAvnResult = Array.isArray(data?.analysisMessages) && data.analysisMessages.length > 0;
+                const hasAuasResult = Array.isArray(data?.auasAnalysisMessages) && data.auasAnalysisMessages.length > 0;
+                const hasReportResult =
+                  data?.reportPdfStatus === 'ready' ||
+                  data?.reportPdfStatus === 'failed' ||
+                  Boolean(data?.reportPdfUrl || data?.files?.reportPdfUrl);
+                if (
+                  parsed === 'processing' &&
+                  sourceMode !== 'vectorized-analysis' &&
+                  (hasAcAvnResult || hasAuasResult || hasReportResult)
+                ) {
+                  return 'completed';
+                }
                 if (
                   parsed === 'completed' &&
                   data?.sourceMode === 'vectorized-analysis' &&
@@ -2622,7 +2695,7 @@ export default function Dashboard() {
     });
 
     return () => unsubscribe();
-  }, [mapAuasDocToHistoryItem, normalizeSimcarClipSummary, selectAuasHistoryEntry, selectSimcarClipEntry, setLocation]);
+  }, [mapAuasDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, selectAuasHistoryEntry, selectSimcarClipEntry, setLocation]);
 
   useEffect(() => {
     const uid = String(userProfile?.uid || '').trim();
@@ -2750,15 +2823,22 @@ export default function Dashboard() {
           patch.error = String(latest?.error || '').trim() || activeClip.error;
         } else if (latestStatus === 'completed') {
           if (normalizedLatestEndpoint === '/api/simcar/clip/analyze-auas') {
-            patch.status = hasFinalVectorizedReport ? 'completed' : activeClip.status || 'processing';
-            if (activeClip.sourceMode === 'vectorized-analysis' && hasFinalVectorizedReport) {
-              patch.processingStage = 'done';
+            if (activeClip.sourceMode === 'vectorized-analysis') {
+              patch.status = hasFinalVectorizedReport ? 'completed' : activeClip.status || 'processing';
+              if (hasFinalVectorizedReport) {
+                patch.processingStage = 'done';
+              }
+            } else {
+              patch.status = 'completed';
             }
             patch.error = undefined;
           } else if (normalizedLatestEndpoint === '/api/simcar/clip/analyze') {
             if (activeClip.sourceMode === 'vectorized-analysis' && !hasFinalVectorizedReport) {
               patch.status = 'processing';
               patch.processingStage = 'auas';
+              patch.error = undefined;
+            } else {
+              patch.status = 'completed';
               patch.error = undefined;
             }
           } else if (
@@ -3441,6 +3521,106 @@ export default function Dashboard() {
     a.click();
     document.body.removeChild(a);
   }, []);
+
+  const openSimcarPdfInNewTab = useCallback((url?: string | null) => {
+    const resolved = resolveBackendUrl(url || '');
+    if (!resolved) {
+      toast.error('Link do PDF indisponível. Gere o relatório novamente.');
+      return;
+    }
+    window.open(resolved, '_blank', 'noopener,noreferrer');
+  }, []);
+
+  const downloadSimcarAnalysisImage = useCallback((image?: SimcarAnalysisImage | null) => {
+    const resolved = resolveBackendUrl(image?.url || '');
+    if (!resolved) {
+      toast.error('Imagem indisponível para download.');
+      return;
+    }
+    const baseName = normalizeImageCaption(image?.caption || 'imagem-simcar')
+      .replace(/\s+/g, '_')
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .slice(0, 80) || 'imagem-simcar';
+    window.open(toFileProxyUrl(resolved, `${baseName}.png`, 'download'), '_blank', 'noopener,noreferrer');
+  }, []);
+
+  const openSimcarAnalysisImage = useCallback((image: SimcarAnalysisImage, sourceLabel?: string) => {
+    if (!image?.url) return;
+    setSimcarImagePreview({
+      ...image,
+      sourceLabel,
+    });
+  }, []);
+
+  const generateSimcarReportPdf = useCallback(
+    async (clip?: SimcarClipHistoryItem) => {
+      const target = clip || activeSimcarClip;
+      const jobId = String(target?.jobId || simcarClipJobId || '').trim();
+      if (!target || !jobId) {
+        toast.error('Selecione um recorte SIMCAR para gerar o PDF.');
+        return;
+      }
+      const hasAnalysis =
+        (Array.isArray(target.analysisMessages) && target.analysisMessages.length > 0) ||
+        (Array.isArray(target.auasAnalysisMessages) && target.auasAnalysisMessages.length > 0) ||
+        simcarAnalysisMessages.length > 0 ||
+        simcarAuasMessages.length > 0;
+      if (!hasAnalysis) {
+        toast.error('Execute a análise por IA antes de gerar o PDF técnico.');
+        return;
+      }
+      const generatingPatch: Partial<SimcarClipHistoryItem> = {
+        reportPdfStatus: 'generating',
+        reportPdfError: undefined,
+      };
+      setSimcarClipHistory((prev) =>
+        prev.map((item) => (item.jobId === jobId ? { ...item, ...generatingPatch } : item))
+      );
+      void patchPersistedSimcarClip(jobId, generatingPatch).catch(() => undefined);
+      try {
+        const response = await apiFetch('/api/simcar/clip/report', {
+          method: 'POST',
+          body: JSON.stringify({
+            jobId,
+            contextUrl: target.contextUrl,
+            outputZipUrl: target.outputZipUrl,
+            force: true,
+          }),
+        });
+        const payload = await readApiError(response);
+        if (!response.ok) {
+          throw new Error(payload?.error || `Erro ${response.status}`);
+        }
+        const reportPatch = normalizeSimcarReportPatch(payload);
+        setSimcarClipHistory((prev) =>
+          prev.map((item) => (item.jobId === jobId ? { ...item, ...reportPatch } : item))
+        );
+        await patchPersistedSimcarClip(jobId, reportPatch);
+        toast.success('PDF técnico gerado.');
+      } catch (err: any) {
+        const message = String(err?.message || 'Falha ao gerar PDF técnico.');
+        const failedPatch: Partial<SimcarClipHistoryItem> = {
+          reportPdfStatus: 'failed',
+          reportPdfError: message,
+        };
+        setSimcarClipHistory((prev) =>
+          prev.map((item) => (item.jobId === jobId ? { ...item, ...failedPatch } : item))
+        );
+        void patchPersistedSimcarClip(jobId, failedPatch).catch(() => undefined);
+        toast.error(message);
+      }
+    },
+    [
+      activeSimcarClip,
+      apiFetch,
+      normalizeSimcarReportPatch,
+      patchPersistedSimcarClip,
+      readApiError,
+      simcarAnalysisMessages.length,
+      simcarAuasMessages.length,
+      simcarClipJobId,
+    ]
+  );
 
   const uploadImageFile = async (file: File): Promise<string | null> => {
     const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -4130,10 +4310,14 @@ export default function Dashboard() {
                   result.images = images;
                   result.analysisMeta = analysisMeta;
 
-                  const patch: Partial<SimcarClipHistoryItem> = {
-                    analysisImages: images,
-                    analysisMeta,
-                  };
+	                  const patch: Partial<SimcarClipHistoryItem> = {
+	                    analysisImages: images,
+	                    analysisMeta,
+	                    ...(historyEntry?.sourceMode === 'vectorized-analysis'
+	                      ? {}
+	                      : { status: 'completed' as const, error: undefined }),
+	                    ...normalizeSimcarReportPatch(event),
+	                  };
                   let aiMessage: SimcarAnalysisMessage | undefined;
                   if (!imageOnly) {
                     const parsed = splitThinkContent(String(event.analysis || ''));
@@ -4228,7 +4412,17 @@ export default function Dashboard() {
                   }
 
                   result.ok = true;
-                } else if (event.type === 'billing' && event.billing) {
+	                } else if (event.type === 'report_error') {
+	                  const message = String(event.message || 'Falha ao gerar PDF técnico.');
+	                  const patch: Partial<SimcarClipHistoryItem> = {
+	                    reportPdfStatus: 'failed',
+	                    reportPdfError: message,
+	                  };
+	                  setSimcarClipHistory((prev) =>
+	                    prev.map((c) => (c.jobId === jobId ? { ...c, ...patch } : c))
+	                  );
+	                  void patchPersistedSimcarClip(jobId, patch);
+	                } else if (event.type === 'billing' && event.billing) {
                   applyBillingToWallet(event.billing as BillingResult);
                 } else if (event.type === 'error') {
                   if (event?.code === 'INSUFFICIENT_CREDITS') {
@@ -4295,6 +4489,7 @@ export default function Dashboard() {
       appendSimcarThinking,
       applyBillingToWallet,
       handleInsufficientCredits,
+      normalizeSimcarReportPatch,
       patchPersistedSimcarClip,
       readApiError,
       simcarClipHistory,
@@ -4444,11 +4639,15 @@ export default function Dashboard() {
                     message: 'Análise AUAS concluída. Finalizando...',
                   });
                   setSimcarAuasAgentLog((prev) => prev.map((s) => ({ ...s, done: true })));
-                  const patch: Partial<SimcarClipHistoryItem> = {
-                    auasAnalysisImages: images,
-                    auasAnalysisMessages: [aiMessage],
-                    auasMeta,
-                  };
+	                  const patch: Partial<SimcarClipHistoryItem> = {
+	                    auasAnalysisImages: images,
+	                    auasAnalysisMessages: [aiMessage],
+	                    auasMeta,
+	                    ...(historyEntry?.sourceMode === 'vectorized-analysis'
+	                      ? {}
+	                      : { status: 'completed' as const, error: undefined }),
+	                    ...normalizeSimcarReportPatch(event),
+	                  };
                   setSimcarClipHistory((prev) =>
                     prev.map((c) =>
                       c.jobId === jobId
@@ -4497,7 +4696,17 @@ export default function Dashboard() {
                       },
                     ]);
                   }
-                } else if (event.type === 'billing' && event.billing) {
+	                } else if (event.type === 'report_error') {
+	                  const message = String(event.message || 'Falha ao gerar PDF técnico.');
+	                  const patch: Partial<SimcarClipHistoryItem> = {
+	                    reportPdfStatus: 'failed',
+	                    reportPdfError: message,
+	                  };
+	                  setSimcarClipHistory((prev) =>
+	                    prev.map((c) => (c.jobId === jobId ? { ...c, ...patch } : c))
+	                  );
+	                  void patchPersistedSimcarClip(jobId, patch);
+	                } else if (event.type === 'billing' && event.billing) {
                   applyBillingToWallet(event.billing as BillingResult);
                 } else if (event.type === 'error') {
                   if (event?.code === 'INSUFFICIENT_CREDITS') {
@@ -4547,6 +4756,7 @@ export default function Dashboard() {
       appendSimcarEntriesToConversation,
       applyBillingToWallet,
       handleInsufficientCredits,
+      normalizeSimcarReportPatch,
       patchPersistedSimcarClip,
       readApiError,
       simcarAnalysisMessages,
@@ -5803,6 +6013,71 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         />
       )}
 
+      {simcarImagePreview && (() => {
+        const captionText = normalizeImageCaption(simcarImagePreview.caption);
+        const previewUrl = resolveBackendUrl(simcarImagePreview.url);
+        return (
+          <div
+            className="fixed inset-0 z-[140] bg-black/75 backdrop-blur-md flex items-center justify-center p-3 sm:p-6"
+            onClick={() => setSimcarImagePreview(null)}
+          >
+            <div
+              className="w-full max-w-5xl max-h-[92vh] overflow-hidden rounded-2xl border border-white/10 bg-[#0a110e] shadow-2xl flex flex-col"
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Imagem usada na análise SIMCAR"
+            >
+              <div className="flex items-start gap-3 p-4 border-b border-white/10">
+                <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-300 shrink-0">
+                  <Eye size={18} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-white truncate">{captionText}</p>
+                  {simcarImagePreview.sourceLabel && (
+                    <p className="text-[11px] text-slate-500 mt-0.5">{simcarImagePreview.sourceLabel}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => downloadSimcarAnalysisImage(simcarImagePreview)}
+                    className="h-9 px-3 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-medium transition-colors flex items-center gap-2"
+                    title="Baixar imagem"
+                  >
+                    <Download size={14} />
+                    Baixar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => window.open(previewUrl, '_blank', 'noopener,noreferrer')}
+                    className="h-9 w-9 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200 transition-colors inline-flex items-center justify-center"
+                    title="Abrir original"
+                  >
+                    <ArrowUpRight size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimcarImagePreview(null)}
+                    className="h-9 w-9 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200 transition-colors inline-flex items-center justify-center"
+                    title="Fechar"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 bg-black/30 p-3 sm:p-4 flex items-center justify-center">
+                <img
+                  src={previewUrl}
+                  alt={captionText}
+                  className="max-w-full max-h-[72vh] object-contain rounded-xl border border-white/10 bg-black"
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <aside
         className={`
           fixed lg:relative z-30 flex flex-col h-full w-[85vw] max-w-80
@@ -6044,8 +6319,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <p className="text-[10px] text-slate-500">
                       {clip.layersWithData}/{clip.totalLayers} camadas • {clip.totalFeatures} feições
                     </p>
-                    {clip.status && (
-                      <p
+	                    {clip.status && (
+	                      <p
                         className={`text-[10px] font-semibold uppercase tracking-wider mt-0.5 ${clip.status === 'processing'
                           ? 'text-amber-300'
                           : clip.status === 'completed'
@@ -6055,17 +6330,35 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               : 'text-red-300'
                           }`}
                       >
-                        {clip.status === 'processing'
-                          ? 'Processando'
-                          : clip.status === 'completed'
-                            ? 'Concluído'
-                            : clip.status === 'cancelled'
-                              ? 'Cancelado'
-                              : 'Falhou'}
-                      </p>
-                    )}
-                  </div>
-                  <button
+	                        {clip.status === 'processing'
+	                          ? 'Processando'
+	                          : clip.status === 'completed'
+	                            ? 'Concluído'
+	                            : clip.status === 'cancelled'
+	                              ? 'Cancelado'
+	                              : 'Falhou'}
+	                      </p>
+	                    )}
+	                    {clip.reportPdfStatus === 'ready' && (
+	                      <p className="text-[10px] text-cyan-300 mt-0.5 flex items-center gap-1">
+	                        <FileText size={10} /> PDF disponível
+	                      </p>
+	                    )}
+	                  </div>
+	                  {clip.reportPdfStatus === 'ready' && (clip.reportPdfDownloadUrl || clip.reportPdfUrl) && (
+	                    <button
+	                      type="button"
+	                      onClick={(e) => {
+	                        e.stopPropagation();
+	                        openSimcarPdfInNewTab(clip.reportPdfDownloadUrl || clip.reportPdfUrl);
+	                      }}
+	                      className="p-2 rounded-lg text-cyan-300 hover:text-white hover:bg-cyan-500/20 transition-colors opacity-0 group-hover:opacity-100"
+	                      title="Abrir PDF técnico em nova aba"
+	                    >
+	                      <FileDown size={14} />
+	                    </button>
+	                  )}
+	                  <button
                     onClick={async (e) => {
                       e.stopPropagation();
                       const cancelled = await cancelProcessingJobsForCard({
@@ -6097,10 +6390,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         body: JSON.stringify({
                           imageUrls,
                           auasImageUrls,
-                          inputZipUrl: clip.inputZipUrl,
-                          outputZipUrl: clip.outputZipUrl,
-                          contextUrl: clip.contextUrl,
-                        }),
+	                          inputZipUrl: clip.inputZipUrl,
+	                          outputZipUrl: clip.outputZipUrl,
+	                          contextUrl: clip.contextUrl,
+	                          reportPdfUrl: clip.reportPdfUrl || clip.reportPdfDownloadUrl,
+	                        }),
                       }).catch(() => { });
                       if (simcarClipsRef) {
                         void deleteDoc(doc(simcarClipsRef, clip.jobId)).catch(() => undefined);
@@ -7184,7 +7478,64 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </>
                     )}
 
-                    {/* Satellite Image Selection + Analysis Buttons */}
+	                    {(() => {
+	                      const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
+	                      const hasAnalysis =
+	                        simcarAnalysisMessages.length > 0 ||
+	                        simcarAuasMessages.length > 0 ||
+	                        Boolean(historyEntry?.analysisMessages?.length) ||
+	                        Boolean(historyEntry?.auasAnalysisMessages?.length);
+	                      if (!hasAnalysis) return null;
+	                      const pdfUrl = resolveBackendUrl(historyEntry?.reportPdfDownloadUrl || historyEntry?.reportPdfUrl || '');
+	                      const isGenerating = historyEntry?.reportPdfStatus === 'generating';
+	                      const failed = historyEntry?.reportPdfStatus === 'failed';
+	                      return (
+	                        <section className="bg-[#0e1216]/60 backdrop-blur-md border border-cyan-500/20 rounded-2xl p-4 sm:p-5">
+	                          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+	                            <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-300 shrink-0">
+	                              <FileText size={20} />
+	                            </div>
+	                            <div className="flex-1 min-w-0">
+	                              <h3 className="font-semibold text-white text-sm">PDF Técnico SIMCAR</h3>
+	                              <p className="text-[11px] text-slate-400">
+	                                Relatório executivo com resumo técnico, quantitativos e imagens principais da análise.
+	                              </p>
+	                              {historyEntry?.reportPdfGeneratedAt && (
+	                                <p className="text-[10px] text-slate-500 mt-1">
+	                                  Gerado em {new Date(historyEntry.reportPdfGeneratedAt).toLocaleString('pt-BR')}
+	                                </p>
+	                              )}
+	                              {failed && historyEntry?.reportPdfError && (
+	                                <p className="text-[10px] text-red-300 mt-1">{historyEntry.reportPdfError}</p>
+	                              )}
+	                            </div>
+	                            <div className="flex gap-2 w-full sm:w-auto">
+	                              {pdfUrl && (
+	                                <button
+	                                  type="button"
+	                                  onClick={() => openSimcarPdfInNewTab(pdfUrl)}
+	                                  className="flex-1 sm:flex-none px-3 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-medium transition-colors flex items-center justify-center gap-2"
+	                                >
+	                                  <Download size={14} />
+	                                  Baixar PDF
+	                                </button>
+	                              )}
+	                              <button
+	                                type="button"
+	                                onClick={() => void generateSimcarReportPdf(historyEntry)}
+	                                disabled={isGenerating}
+	                                className="flex-1 sm:flex-none px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-60 disabled:cursor-not-allowed text-slate-100 text-xs font-medium transition-colors flex items-center justify-center gap-2"
+	                              >
+	                                {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+	                                {pdfUrl ? 'Regenerar' : isGenerating ? 'Gerando...' : 'Gerar PDF'}
+	                              </button>
+	                            </div>
+	                          </div>
+	                        </section>
+	                      );
+	                    })()}
+
+	                    {/* Satellite Image Selection + Analysis Buttons */}
                     {simcarClipMode === 'auto-clip' && !simcarAnalysisProcessing && simcarAnalysisMessages.length === 0 && simcarAuasMessages.length === 0 && (
                       <section className="bg-[#0e1216]/60 backdrop-blur-md border border-white/5 rounded-2xl p-5 space-y-4">
                         {/* ZIP Download Links */}
@@ -7599,12 +7950,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     {simcarAnalysisImages.map((img, idx) => {
                                       const captionText = normalizeImageCaption(img.caption);
                                       return (
-                                        <a
+                                        <button
+                                          type="button"
                                           key={idx}
-                                          href={img.url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="group block relative rounded-xl overflow-hidden border border-white/10 cursor-zoom-in hover:border-white/20 transition-colors"
+                                          onClick={() => openSimcarAnalysisImage(img, 'Validação AC/AVN')}
+                                          className="group block relative rounded-xl overflow-hidden border border-white/10 cursor-zoom-in hover:border-white/20 transition-colors text-left"
                                         >
                                           <img
                                             src={img.url}
@@ -7614,11 +7964,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                           />
                                           <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
                                             <span className="text-[10px] text-white flex items-center gap-1">
-                                              <Eye size={10} /> Abrir
+                                              <Eye size={10} /> Ampliar
                                             </span>
                                           </div>
                                           <p className="text-[9px] text-slate-400 px-2 py-1.5 bg-black/30 truncate" title={captionText}>{captionText}</p>
-                                        </a>
+                                        </button>
                                       );
                                     })}
                                   </div>
@@ -7821,12 +8171,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                           {panel.images.map((img, idx) => {
                                             const captionText = normalizeImageCaption(img.caption);
                                             return (
-                                              <a
+                                              <button
+                                                type="button"
                                                 key={`${panel.key}-${idx}`}
-                                                href={img.url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="group block relative rounded-xl overflow-hidden border border-white/10 cursor-zoom-in hover:border-white/20 transition-colors"
+                                                onClick={() => openSimcarAnalysisImage(img, panel.title)}
+                                                className="group block relative rounded-xl overflow-hidden border border-white/10 cursor-zoom-in hover:border-white/20 transition-colors text-left"
                                               >
                                                 <img
                                                   src={img.url}
@@ -7836,11 +8185,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                                 />
                                                 <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
                                                   <span className="text-[10px] text-white flex items-center gap-1">
-                                                    <Eye size={10} /> Abrir
+                                                    <Eye size={10} /> Ampliar
                                                   </span>
                                                 </div>
                                                 <p className="text-[9px] text-slate-400 px-2 py-1.5 bg-black/30 truncate" title={captionText}>{captionText}</p>
-                                              </a>
+                                              </button>
                                             );
                                           })}
                                         </div>
@@ -7885,12 +8234,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                       {simcarAuasImages.map((img, idx) => {
                                         const captionText = normalizeImageCaption(img.caption);
                                         return (
-                                          <a
+                                          <button
+                                            type="button"
                                             key={idx}
-                                            href={img.url}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="group block relative rounded-xl overflow-hidden border border-white/10 cursor-zoom-in hover:border-white/20 transition-colors"
+                                            onClick={() => openSimcarAnalysisImage(img, 'Análise AUAS')}
+                                            className="group block relative rounded-xl overflow-hidden border border-white/10 cursor-zoom-in hover:border-white/20 transition-colors text-left"
                                           >
                                             <img
                                               src={img.url}
@@ -7900,11 +8248,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                             />
                                             <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
                                               <span className="text-[10px] text-white flex items-center gap-1">
-                                                <Eye size={10} /> Abrir
+                                                <Eye size={10} /> Ampliar
                                               </span>
                                             </div>
                                             <p className="text-[9px] text-slate-400 px-2 py-1.5 bg-black/30 truncate" title={captionText}>{captionText}</p>
-                                          </a>
+                                          </button>
                                         );
                                       })}
                                     </div>
