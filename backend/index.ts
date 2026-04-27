@@ -37,6 +37,7 @@ import {
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerAuasRoutes } from "./auas-analysis";
+import { registerCbersWpmRoutes } from "./cbers-wpm";
 import {
   JobCancelledError,
   finishJob,
@@ -282,6 +283,12 @@ async function startServer() {
       "/api/simcar/clip/analyze/chat",
       "/api/simcar/clip/report",
       "/api/auas/analyze",
+      "/api/cbers-wpm/search",
+      "/api/cbers-wpm/estimate",
+      "/api/cbers-wpm/jobs",
+      /^\/api\/cbers-wpm\/jobs\/[^/]+\/status$/,
+      /^\/api\/cbers-wpm\/jobs\/[^/]+\/events$/,
+      /^\/api\/cbers-wpm\/jobs\/[^/]+$/,
       "/api/process/cancel",
       "/api/account/bootstrap",
       "/api/me",
@@ -418,6 +425,7 @@ async function startServer() {
   registerWfsIntersectionRoutes(app);
   registerSimcarClipRoutes(app);
   registerAuasRoutes(app);
+  registerCbersWpmRoutes(app);
 
   const MODEL_CATALOG = [
     {

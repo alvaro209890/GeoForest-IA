@@ -34,6 +34,7 @@ const USER_DIRS = [
   "auas/input",
   "auas/output",
   "auas/context",
+  "cbers/output",
   "trash",
 ] as const;
 
@@ -152,7 +153,7 @@ function resolveDocPathFromSegments(segments: string[]): string | null {
   }
   const docId = parts[3];
   if (!docId) return null;
-  const allowed = new Set(["conversations", "simcar_clips", "auas_jobs", "processing_jobs"]);
+  const allowed = new Set(["conversations", "simcar_clips", "auas_jobs", "cbers_wpm_jobs", "processing_jobs"]);
   if (!allowed.has(parts[2])) return null;
   return path.join(getUserDir(uid), parts[2], `${docId}.json`);
 }
@@ -160,7 +161,7 @@ function resolveDocPathFromSegments(segments: string[]): string | null {
 function resolveCollectionDirFromSegments(segments: string[]): string | null {
   const parts = segments.filter(Boolean).map((part) => safeSegment(part));
   if (parts[0] !== "users" || !parts[1] || !parts[2]) return null;
-  const allowed = new Set(["conversations", "simcar_clips", "auas_jobs", "processing_jobs"]);
+  const allowed = new Set(["conversations", "simcar_clips", "auas_jobs", "cbers_wpm_jobs", "processing_jobs"]);
   if (!allowed.has(parts[2])) return null;
   return path.join(getUserDir(parts[1]), parts[2]);
 }
@@ -229,7 +230,8 @@ export function saveUserBuffer(args: {
     | "simcar/analysis"
     | "auas/input"
     | "auas/output"
-    | "auas/context";
+    | "auas/context"
+    | "cbers/output";
   filename: string;
   buffer: Buffer;
 }): { relativePath: string; absolutePath: string; publicUrl: string } {
@@ -243,6 +245,27 @@ export function saveUserBuffer(args: {
     relativePath,
     absolutePath,
     publicUrl: `${PUBLIC_API_BASE_URL}/api/storage/${relativePath.split(path.sep).join("/")}`,
+  };
+}
+
+export function saveUserFileFromPath(args: {
+  uid: string;
+  area: "cbers/output";
+  filename: string;
+  sourcePath: string;
+}): { relativePath: string; absolutePath: string; publicUrl: string; bytes: number } {
+  const userDir = ensureUserScaffold(args.uid);
+  const cleanName = safeSegment(args.filename) || crypto.randomUUID();
+  const relativePath = path.posix.join("users", safeSegment(args.uid), args.area, cleanName);
+  const absolutePath = path.join(userDir, args.area, cleanName);
+  ensureDir(path.dirname(absolutePath));
+  fs.copyFileSync(args.sourcePath, absolutePath);
+  const stat = fs.statSync(absolutePath);
+  return {
+    relativePath,
+    absolutePath,
+    publicUrl: `${PUBLIC_API_BASE_URL}/api/storage/${relativePath.split(path.sep).join("/")}`,
+    bytes: stat.size,
   };
 }
 

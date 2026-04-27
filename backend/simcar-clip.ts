@@ -1795,7 +1795,8 @@ function parsePersistedClipContext(raw: unknown): PersistedClipContextV1 | null 
 async function processClip(
     res: Response,
     uid: string,
-    propertyZip: Buffer,
+    propertyZip: Buffer | null,
+    carNumber: string | null,
     requestedLayers: string[] | null,
     airIdentificacao?: string,
     forcedJobId?: string,
@@ -1829,17 +1830,55 @@ async function processClip(
     const jobWarnings: string[] = [];
     let totalFeaturesClipped = 0;
 
-    // 1. Parse user shapefile
-    let userResult: ReturnType<typeof parseUserShapefile>;
-    try {
-        userResult = parseUserShapefile(propertyZip);
-    } catch (err: any) {
-        sendSSE(res, { type: "error", message: err.message || "Erro ao processar shapefile do imóvel." });
+    // 1. Get user property boundary (via ZIP or WFS CAR)
+    let userPolygon: any;
+    let userGeometry: any;
+    let areaHa: number;
+    let userWkt: string;
+
+    if (carNumber) {
+        sendSSE(res, { type: "progress", layer: "WFS", stage: "Buscando limite do CAR no SEMA WFS...", percent: 2 });
+        try {
+            const wfsUrl = buildWfsUrl({
+                service: "WFS",
+                version: "1.0.0",
+                request: "GetFeature",
+                typeName: "simcar:simcar_requerido",
+                outputFormat: "application/json",
+                CQL_FILTER: `recibo_car='${carNumber}' OR cod_car='${carNumber}' OR numero_do_car='${carNumber}'`,
+            });
+            const featureCollection = await fetchJsonWithTimeout<any>(wfsUrl, WFS_TIMEOUT_MS);
+            if (!featureCollection || !featureCollection.features || featureCollection.features.length === 0) {
+                throw new Error(`Nenhum imóvel encontrado no WFS SEMA para o CAR: ${carNumber}`);
+            }
+            const feature = featureCollection.features[0] as Feature<Polygon | MultiPolygon>;
+            const geom = normalizePolygonGeometry(feature.geometry);
+            if (!geom) throw new Error("A geometria retornada pelo WFS não é um polígono válido.");
+            userGeometry = geom;
+            userPolygon = feature;
+            areaHa = computeAreaHa(feature);
+            userWkt = polygonToWkt(userGeometry);
+            sendSSE(res, { type: "progress", layer: "WFS", stage: `CAR localizado — ${areaHa.toFixed(2)} ha`, percent: 5 });
+        } catch (err: any) {
+            sendSSE(res, { type: "error", message: err.message || "Erro ao buscar CAR no WFS da SEMA." });
+            return { ok: false, cloudinaryStoredBytes: 0 };
+        }
+    } else if (propertyZip) {
+        let userResult: ReturnType<typeof parseUserShapefile>;
+        try {
+            userResult = parseUserShapefile(propertyZip);
+        } catch (err: any) {
+            sendSSE(res, { type: "error", message: err.message || "Erro ao processar shapefile do imóvel." });
+            return { ok: false, cloudinaryStoredBytes: 0 };
+        }
+        userPolygon = userResult.polygon;
+        userGeometry = userResult.geometry;
+        areaHa = userResult.areaHa;
+        userWkt = polygonToWkt(userGeometry);
+    } else {
+        sendSSE(res, { type: "error", message: "Nenhum limite territorial fornecido (ZIP ou CAR)." });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
-
-    const { polygon: userPolygon, geometry: userGeometry, areaHa } = userResult;
-    const userWkt = polygonToWkt(userGeometry);
 
     // 2. Read template
     let templateEntries: Array<{ name: string; data: Buffer }>;
@@ -2084,9 +2123,9 @@ async function processClip(
     // Compute bbox from user polygon for WMS snapshots
     const polyCoords = userPolygon.geometry.type === "Polygon"
         ? userPolygon.geometry.coordinates[0]
-        : userPolygon.geometry.coordinates.flatMap((p) => p[0]);
-    const lngs = polyCoords.map((c) => c[0]);
-    const lats = polyCoords.map((c) => c[1]);
+        : userPolygon.geometry.coordinates.flatMap((p: number[][][]) => p[0]);
+    const lngs = polyCoords.map((c: number[]) => c[0]);
+    const lats = polyCoords.map((c: number[]) => c[1]);
     const jobBbox: [number, number, number, number] = [
         Math.min(...lngs), Math.min(...lats),
         Math.max(...lngs), Math.max(...lats),
@@ -2102,10 +2141,12 @@ async function processClip(
     try {
         sendSSE(res, { type: "progress", layer: "UPLOAD", current: total, total, status: "uploading_cloudinary" });
         const [inUrl, outUrl] = await Promise.all([
-            uploadBufferToCloudinary(propertyZip, `simcar_input_${jobId.slice(0, 8)}`, uid),
+            propertyZip
+                ? uploadBufferToCloudinary(propertyZip, `simcar_input_${jobId.slice(0, 8)}`, uid)
+                : Promise.resolve(""),
             uploadBufferToCloudinary(zipBuffer, `simcar_output_${jobId.slice(0, 8)}`, uid),
         ]);
-        inputZipUrl = inUrl;
+        inputZipUrl = inUrl || undefined;
         outputZipUrl = outUrl;
         const persistedContext: PersistedClipContextV1 = {
             version: 1,
@@ -2117,7 +2158,7 @@ async function processClip(
             layerSummaries,
             areaHa,
             clippedGeometries: mapToObjectGeometry(clippedGeometries),
-            inputZipUrl: inUrl,
+            inputZipUrl: inUrl || undefined,
             outputZipUrl: outUrl,
             warnings: dedupeWarnings(jobWarnings),
         };
@@ -2128,7 +2169,7 @@ async function processClip(
             "application/json",
             uid,
         );
-        cloudinaryStoredBytes = propertyZip.length + zipBuffer.length + contextBuffer.length;
+        cloudinaryStoredBytes = (propertyZip?.length || 0) + zipBuffer.length + contextBuffer.length;
         console.log(`[SIMCAR CLIP] Cloudinary: input=${inUrl}, output=${outUrl}, context=${contextJsonUrl}`);
     } catch (err: any) {
         console.error("[SIMCAR CLIP] Cloudinary ZIP upload error:", err.message);
@@ -8033,6 +8074,7 @@ export function registerSimcarClipRoutes(app: Express) {
         let totalChargedBrl = 0;
         let body: {
             propertyZip?: string;
+            carNumber?: string;
             filename?: string;
             layerNames?: string[];
             airIdentificacao?: string;
@@ -8053,30 +8095,33 @@ export function registerSimcarClipRoutes(app: Express) {
             }
             body = req.body as {
                 propertyZip?: string;
+                carNumber?: string;
                 filename?: string;
                 layerNames?: string[];
                 airIdentificacao?: string;
             };
 
-            if (!body.propertyZip) {
-                sendSSE(res, { type: "error", message: "Campo propertyZip (base64) é obrigatório." });
+            if (!body.propertyZip && !body.carNumber) {
+                sendSSE(res, { type: "error", message: "Campo propertyZip ou carNumber é obrigatório." });
                 res.end();
                 return;
             }
 
-            let zipBuffer: Buffer;
-            try {
-                zipBuffer = Buffer.from(body.propertyZip, "base64");
-            } catch {
-                sendSSE(res, { type: "error", message: "Base64 do ZIP inválido." });
-                res.end();
-                return;
-            }
+            let zipBuffer: Buffer | null = null;
+            if (body.propertyZip) {
+                try {
+                    zipBuffer = Buffer.from(body.propertyZip, "base64");
+                } catch {
+                    sendSSE(res, { type: "error", message: "Base64 do ZIP inválido." });
+                    res.end();
+                    return;
+                }
 
-            if (zipBuffer.length < 22) {
-                sendSSE(res, { type: "error", message: "ZIP muito pequeno para ser válido." });
-                res.end();
-                return;
+                if (zipBuffer.length < 22) {
+                    sendSSE(res, { type: "error", message: "ZIP muito pequeno para ser válido." });
+                    res.end();
+                    return;
+                }
             }
 
             const processingJob = startJob({
@@ -8102,7 +8147,7 @@ export function registerSimcarClipRoutes(app: Express) {
 
             console.log(
                 `[SIMCAR CLIP] Processing: ${body.filename || "unknown"}, ` +
-                `size=${zipBuffer.length}, layers=${body.layerNames?.length || "all"}`,
+                `size=${zipBuffer?.length || "wfs_car"}, layers=${body.layerNames?.length || "all"}`,
             );
 
             if (billingEnabled) {
@@ -8121,10 +8166,10 @@ export function registerSimcarClipRoutes(app: Express) {
                 });
 
                 storageRequestId = createRequestId("simcar_clip_storage");
-                const estimatedStorageBytes = Math.max(
+                const estimatedStorageBytes = zipBuffer ? Math.max(
                     zipBuffer.length * 3,
                     zipBuffer.length + 320_000,
-                );
+                ) : 320_000;
                 storageReserved = await estimateCloudinaryStorageReserve({
                     bytesStored: estimatedStorageBytes,
                     safetyMultiplier: 1.2,
@@ -8143,6 +8188,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 res,
                 uid,
                 zipBuffer,
+                body.carNumber || null,
                 body.layerNames || null,
                 body.airIdentificacao || undefined,
                 processingJobId || undefined,
