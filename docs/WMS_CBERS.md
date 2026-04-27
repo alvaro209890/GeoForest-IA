@@ -110,15 +110,17 @@ CBERS collection=CB4A-WPM-L4-DN-1
 Fluxo de processamento:
 
 ```text
-1. Usuario envia ZIP da area.
+1. Usuario busca cenas por ZIP/SHP ou por orbita, ponto e data.
 2. Backend busca cenas CBERS-4A/WPM no STAC do INPE.
-3. Backend baixa bandas BAND3, BAND4, BAND2 e BAND0.
-4. GDAL recorta, fusiona PAN e gera GeoTIFF final C342_PAN.
+3. Backend baixa bandas BAND3, BAND4, BAND2 e BAND0 da folha completa.
+4. GDAL fusiona PAN e gera GeoTIFF final C342_PAN da folha completa.
 5. GeoTIFF e salvo no banco local da conta.
 6. GeoTIFF tambem e copiado para o acervo permanente do HD Backup.
 7. Backend publica automaticamente o GeoTIFF no GeoServer/WMS.
 8. Para lote, o ZIP da conta e criado com todos os TIF nomeados no padrao.
 ```
+
+Regra operacional: a imagem CBERS baixada pelo usuario e publicada no WMS representa a folha completa da orbita/ponto baixada do INPE. O SHP, quando enviado, serve para busca e validacao de cobertura; ele nao recorta o GeoTIFF final.
 
 Arquivo da conta:
 
@@ -140,7 +142,7 @@ Downloads da conta mantem o padrao limpo:
 CBERS_4A_WPM_20250818_212_129_L4_C342_PAN.TIF
 ```
 
-No acervo permanente HD/WMS, recortes diferentes da mesma cena recebem sufixo curto do job para evitar sobrescrita:
+No acervo permanente HD/WMS, a folha publicada recebe sufixo curto do job para evitar sobrescrita operacional:
 
 ```text
 CBERS_4A_WPM_20260110_214_128_L4_C342_PAN_J47FA5471.TIF
@@ -267,6 +269,7 @@ curl -sS "https://wms.cursar.space/geoserver/cbers/wms?service=WMS&version=1.3.0
 backend/cbers-wpm.ts       processamento CBERS da conta
 backend/cbers-archive.ts   acervo permanente, GeoServer REST e APIs admin
 backend/index.ts           CORS, registro de rotas e servico HTTP
+.agents/WMS_LOCAL_SITE_VINCULACAO.md  vinculo WMS local, API e site
 client/src/admin/main.tsx  painel admin publico
 firebase.json              Firebase Hosting multi-site
 vite.config.ts             build separado app/admin

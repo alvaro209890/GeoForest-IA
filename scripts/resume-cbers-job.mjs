@@ -9,6 +9,8 @@ const PUBLIC_API_BASE_URL = String(process.env.PUBLIC_API_BASE_URL || process.en
 const STAC_ROOT = String(process.env.CBERS_STAC_ROOT || "https://data.inpe.br/bdc/stac/v1").replace(/\/+$/, "");
 const CBERS_COLLECTION = "CB4A-WPM-L4-DN-1";
 const REQUIRED_ASSETS = ["BAND3", "BAND4", "BAND2", "BAND0"];
+const CBERS_DOWNLOAD_RETRIES = Math.max(0, Number(process.env.CBERS_DOWNLOAD_RETRIES || 3));
+const CBERS_DOWNLOAD_RETRY_DELAY_MS = Math.max(1000, Number(process.env.CBERS_DOWNLOAD_RETRY_DELAY_MS || 3000));
 
 function arg(name, fallback = "") {
   const ix = process.argv.indexOf(`--${name}`);
@@ -19,10 +21,9 @@ const uid = arg("uid");
 const jobId = arg("job-id");
 const itemId = arg("item-id");
 const sceneDir = arg("scene-dir");
-const cutlinePath = arg("cutline");
 
-if (!uid || !jobId || !itemId || !sceneDir || !cutlinePath) {
-  console.error("Uso: resume-cbers-job.mjs --uid UID --job-id JOB --item-id ITEM --scene-dir DIR --cutline cutline.geojson");
+if (!uid || !jobId || !itemId || !sceneDir) {
+  console.error("Uso: resume-cbers-job.mjs --uid UID --job-id JOB --item-id ITEM --scene-dir DIR");
   process.exit(2);
 }
 
@@ -30,8 +31,24 @@ function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function safeSegment(value) {
   return String(value || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_");
+}
+
+function fileSizeSafe(filePath) {
+  try {
+    return fs.existsSync(filePath) ? fs.statSync(filePath).size : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function bytesToMb(bytes) {
+  return (Math.max(0, Number(bytes) || 0) / 1024 / 1024).toFixed(1);
 }
 
 function writeJsonAtomic(filePath, data) {
@@ -159,6 +176,8 @@ async function headLength(url) {
 
 async function downloadAsset(key, url, targetPath, expectedBytes, basePercent, spanPercent) {
   const partPath = `${targetPath}.part`;
+  const totalAttempts = CBERS_DOWNLOAD_RETRIES + 1;
+  let maxObservedBytes = Math.max(fileSizeSafe(targetPath), fileSizeSafe(partPath));
   if (fs.existsSync(targetPath) && expectedBytes && fs.statSync(targetPath).size === expectedBytes) {
     patchJob({ stage: "download", percent: basePercent + spanPercent, message: `${key} já estava baixada.`, scenePatch: { stage: "download", percent: Math.round(basePercent + spanPercent), message: `${key} já estava baixada.` } });
     return;
@@ -173,37 +192,98 @@ async function downloadAsset(key, url, targetPath, expectedBytes, basePercent, s
   if (expectedBytes && fs.existsSync(partPath) && fs.statSync(partPath).size > expectedBytes) {
     fs.rmSync(partPath, { force: true });
   }
+  maxObservedBytes = Math.max(maxObservedBytes, fileSizeSafe(partPath));
 
-  patchJob({ stage: "download", percent: basePercent, message: `Baixando ${key} com retomada automática.`, scenePatch: { stage: "download", percent: basePercent, message: `Baixando ${key}.` } });
-  await new Promise((resolve, reject) => {
-    const child = spawn("curl", [
-      "-L", "-C", "-", "--fail",
-      "--retry", "8", "--retry-all-errors",
-      "--connect-timeout", "20",
-      "--speed-time", "120", "--speed-limit", "1024",
-      "-sS", "-o", partPath, url,
-    ], { stdio: ["ignore", "ignore", "pipe"] });
-    let err = "";
-    const timer = setInterval(() => {
-      const got = fs.existsSync(partPath) ? fs.statSync(partPath).size : 0;
-      const pct = expectedBytes ? basePercent + Math.min(1, got / expectedBytes) * spanPercent : basePercent;
+  for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+    patchJob({
+      stage: "download",
+      percent: basePercent,
+      message: attempt === 1
+        ? `Baixando ${key} com retomada automática.`
+        : `Retomando ${key} de ${bytesToMb(maxObservedBytes)} MB. Tentativa ${attempt}/${totalAttempts}.`,
+      scenePatch: { stage: "download", percent: basePercent, message: `Baixando ${key}.` },
+    });
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: "info",
+      event: "cbers_resume_download_attempt_started",
+      jobId,
+      assetKey: key,
+      attempt,
+      totalAttempts,
+      partialBytes: maxObservedBytes,
+      expectedBytes,
+    }));
+    try {
+      await new Promise((resolve, reject) => {
+        const child = spawn("curl", [
+          "-L", "-C", "-", "--fail",
+          "--connect-timeout", "20",
+          "--speed-time", "120", "--speed-limit", "1024",
+          "-sS", "-o", partPath, url,
+        ], { stdio: ["ignore", "ignore", "pipe"] });
+        let err = "";
+        let lastObservedThisAttempt = maxObservedBytes;
+        const timer = setInterval(() => {
+          const actualBytes = fileSizeSafe(partPath);
+          if (actualBytes > maxObservedBytes) maxObservedBytes = actualBytes;
+          if (actualBytes < lastObservedThisAttempt) {
+            console.warn(JSON.stringify({
+              ts: new Date().toISOString(),
+              level: "warn",
+              event: "cbers_resume_download_progress_regressed",
+              jobId,
+              assetKey: key,
+              attempt,
+              previousBytes: lastObservedThisAttempt,
+              actualBytes,
+              keptBytes: maxObservedBytes,
+            }));
+          }
+          lastObservedThisAttempt = actualBytes;
+          const progressBytes = Math.max(actualBytes, maxObservedBytes);
+          const pct = expectedBytes ? basePercent + Math.min(1, progressBytes / expectedBytes) * spanPercent : basePercent;
+          patchJob({
+            stage: "download",
+            percent: pct,
+            message: expectedBytes
+              ? `Baixando ${key}: ${bytesToMb(progressBytes)} MB de ${bytesToMb(expectedBytes)} MB.`
+              : `Baixando ${key}: ${bytesToMb(progressBytes)} MB.`,
+            scenePatch: { stage: "download", percent: Math.round(pct), message: `Baixando ${key}.` },
+          });
+        }, 3000);
+        child.stderr.on("data", (chunk) => { err += chunk.toString("utf8"); if (err.length > 4000) err = err.slice(-4000); });
+        child.on("error", (error) => { clearInterval(timer); reject(error); });
+        child.on("close", (code) => {
+          clearInterval(timer);
+          if (code === 0) return resolve();
+          reject(new Error(`curl ${key} falhou (${code}): ${err.slice(-1000)}`));
+        });
+      });
+      break;
+    } catch (error) {
+      maxObservedBytes = Math.max(maxObservedBytes, fileSizeSafe(partPath));
+      console.warn(JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "warn",
+        event: "cbers_resume_download_attempt_failed",
+        jobId,
+        assetKey: key,
+        attempt,
+        totalAttempts,
+        partialBytes: maxObservedBytes,
+        message: String(error?.message || error),
+      }));
+      if (attempt >= totalAttempts) throw error;
       patchJob({
         stage: "download",
-        percent: pct,
-        message: expectedBytes
-          ? `Baixando ${key}: ${(got / 1024 / 1024).toFixed(1)} MB de ${(expectedBytes / 1024 / 1024).toFixed(1)} MB.`
-          : `Baixando ${key}: ${(got / 1024 / 1024).toFixed(1)} MB.`,
-        scenePatch: { stage: "download", percent: Math.round(pct), message: `Baixando ${key}.` },
+        percent: expectedBytes ? basePercent + Math.min(1, maxObservedBytes / expectedBytes) * spanPercent : basePercent,
+        message: `Conexão interrompida em ${key}. Retomando de ${bytesToMb(maxObservedBytes)} MB.`,
+        scenePatch: { stage: "download", percent: Math.round(basePercent), message: `Retomando ${key}.` },
       });
-    }, 3000);
-    child.stderr.on("data", (chunk) => { err += chunk.toString("utf8"); if (err.length > 4000) err = err.slice(-4000); });
-    child.on("error", (error) => { clearInterval(timer); reject(error); });
-    child.on("close", (code) => {
-      clearInterval(timer);
-      if (code === 0) return resolve();
-      reject(new Error(`curl ${key} falhou (${code}): ${err.slice(-1000)}`));
-    });
-  });
+      await sleep(CBERS_DOWNLOAD_RETRY_DELAY_MS);
+    }
+  }
   const saved = fs.existsSync(partPath) ? fs.statSync(partPath).size : 0;
   if (expectedBytes && saved !== expectedBytes) {
     throw new Error(`Download incompleto de ${key}: ${saved} de ${expectedBytes} bytes.`);
@@ -259,42 +339,16 @@ async function main() {
     bandPaths[step.key] = target;
   }
 
-  const clipped = {};
-  for (const step of [
-    { key: "BAND3", start: 50 },
-    { key: "BAND4", start: 55 },
-    { key: "BAND2", start: 60 },
-    { key: "BAND0", start: 65 },
-  ]) {
-    const out = path.join(sceneDir, `${step.key}_clip.tif`);
-    await run("gdalwarp", [
-      "-overwrite", "-of", "GTiff",
-      "-cutline", cutlinePath,
-      "-crop_to_cutline",
-      "-dstnodata", "0",
-      "-multi",
-      "-wo", "NUM_THREADS=ALL_CPUS",
-      bandPaths[step.key],
-      out,
-    ], {
-      stage: "clip",
-      basePercent: step.start,
-      spanPercent: 5,
-      message: `Recortando ${step.key} pela área enviada.`,
-    });
-    clipped[step.key] = out;
-  }
-
   const rawPansharpen = path.join(sceneDir, "cbers_342_pan_raw.tif");
   await run("gdal_pansharpen.py", [
-    clipped.BAND0, clipped.BAND3, clipped.BAND4, clipped.BAND2, rawPansharpen,
+    bandPaths.BAND0, bandPaths.BAND3, bandPaths.BAND4, bandPaths.BAND2, rawPansharpen,
     "-of", "GTiff", "-r", "cubic", "-spat_adjust", "intersection",
     "-co", "COMPRESS=LZW", "-co", "TILED=YES", "-co", "BIGTIFF=IF_SAFER",
   ], {
     stage: "pansharpen",
-    basePercent: 72,
-    spanPercent: 15,
-    message: "Fusionando composição 3-4-2 com a pancromática.",
+    basePercent: 50,
+    spanPercent: 37,
+    message: "Fusionando a folha completa 3-4-2 com a pancromática.",
   });
 
   const finalPath = path.join(sceneDir, "cbers_4a_wpm_342_pan.tif");
@@ -306,7 +360,7 @@ async function main() {
     stage: "geotiff",
     basePercent: 87,
     spanPercent: 8,
-    message: "Gerando GeoTIFF final para ArcMap.",
+    message: "Gerando GeoTIFF final da órbita/ponto completa para ArcMap.",
   });
 
   patchJob({ stage: "save", percent: 96, message: "Salvando GeoTIFF no banco do usuário.", scenePatch: { stage: "save", percent: 96, message: "Salvando GeoTIFF." } });
