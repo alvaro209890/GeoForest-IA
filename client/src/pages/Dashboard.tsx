@@ -1,4 +1,5 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Plus,
   Search,
@@ -1244,6 +1245,8 @@ export default function Dashboard() {
   const [cbersSelectedSceneId, setCbersSelectedSceneId] = useState<string | null>(null);
   const [cbersSelectedSceneIds, setCbersSelectedSceneIds] = useState<string[]>([]);
   const [cbersPreviewScene, setCbersPreviewScene] = useState<CbersScene | null>(null);
+  const [cbersOrbit, setCbersOrbit] = useState('');
+  const [cbersPoint, setCbersPoint] = useState('');
   const [cbersDateStart, setCbersDateStart] = useState('');
   const [cbersDateEnd, setCbersDateEnd] = useState('');
   const [cbersSortOrder, setCbersSortOrder] = useState<'desc' | 'asc'>('desc');
@@ -1284,6 +1287,8 @@ export default function Dashboard() {
     setCbersSelectedSceneId(null);
     setCbersSelectedSceneIds([]);
     setCbersPreviewScene(null);
+    setCbersOrbit('');
+    setCbersPoint('');
     setCbersDateStart('');
     setCbersDateEnd('');
     setCbersSortOrder('desc');
@@ -2207,7 +2212,7 @@ export default function Dashboard() {
 
   const toggleCbersSceneSelection = useCallback((scene: CbersScene) => {
     if (scene.wmsAvailable) {
-      toast.info('Este recorte exato já está disponível no WMS. Use a imagem publicada em vez de gerar novamente.');
+      toast.info('Esta folha já está disponível no WMS. Use a imagem publicada em vez de gerar novamente.');
       return;
     }
     if (scene.coversArea === false) {
@@ -2222,14 +2227,18 @@ export default function Dashboard() {
   }, []);
 
   const estimateCbersScenes = useCallback(async (itemIds: string[]) => {
-    if (!cbersFile || itemIds.length === 0) return;
+    if (itemIds.length === 0) return;
     setCbersEstimating(true);
     try {
-      const propertyZip = cbersPropertyZipB64 || await fileToBase64Payload(cbersFile);
-      setCbersPropertyZipB64(propertyZip);
+      const body: Record<string, unknown> = { itemIds };
+      if (cbersFile) {
+        const propertyZip = cbersPropertyZipB64 || await fileToBase64Payload(cbersFile);
+        setCbersPropertyZipB64(propertyZip);
+        body.propertyZip = propertyZip;
+      }
       const response = await apiFetch('/api/cbers-wpm/estimate', {
         method: 'POST',
-        body: JSON.stringify({ propertyZip, itemIds }),
+        body: JSON.stringify(body),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error || 'Falha ao estimar cenas CBERS.');
@@ -2258,8 +2267,11 @@ export default function Dashboard() {
   }, [cbersSelectedScenes, estimateCbersScenes]);
 
   const searchCbersScenes = useCallback(async () => {
-    if (!cbersFile) {
-      toast.error('Selecione um ZIP com o limite da área.');
+    const orbit = cbersOrbit.trim();
+    const point = cbersPoint.trim();
+    const hasDirectFilter = orbit.length > 0 && point.length > 0;
+    if (!cbersFile && !hasDirectFilter) {
+      toast.error('Selecione um ZIP/SHP ou informe órbita e ponto.');
       return;
     }
     if (cbersDateStart && cbersDateEnd && cbersDateStart > cbersDateEnd) {
@@ -2271,21 +2283,29 @@ export default function Dashboard() {
     setCbersScenes([]);
     setCbersSelectedSceneId(null);
     try {
-      const propertyZip = await fileToBase64Payload(cbersFile);
-      setCbersPropertyZipB64(propertyZip);
+      const body: Record<string, unknown> = {
+        dateStart: cbersDateStart || undefined,
+        dateEnd: cbersDateEnd || undefined,
+        orbit: orbit || undefined,
+        point: point || undefined,
+      };
+      if (cbersFile) {
+        const propertyZip = await fileToBase64Payload(cbersFile);
+        setCbersPropertyZipB64(propertyZip);
+        body.propertyZip = propertyZip;
+        body.filename = cbersFile.name;
+      } else {
+        setCbersPropertyZipB64(null);
+      }
       const response = await apiFetch('/api/cbers-wpm/search', {
         method: 'POST',
-        body: JSON.stringify({
-          propertyZip,
-          filename: cbersFile.name,
-          dateStart: cbersDateStart || undefined,
-          dateEnd: cbersDateEnd || undefined,
-        }),
+        body: JSON.stringify(body),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error || 'Falha ao buscar cenas CBERS.');
       const scenes = sortCbersScenes(Array.isArray(payload?.scenes) ? payload.scenes as CbersScene[] : []);
-      setCbersAreaHa(Number.isFinite(Number(payload?.areaHa)) ? Number(payload.areaHa) : null);
+      const nextAreaHa = Number(payload?.areaHa);
+      setCbersAreaHa(Number.isFinite(nextAreaHa) && nextAreaHa > 0 ? nextAreaHa : null);
       setCbersPropertyGeometry(isPlainObject(payload?.propertyGeometry) ? payload.propertyGeometry as CbersGeoJsonGeometry : null);
       setCbersScenes(scenes);
       const firstCovered = scenes.find((scene) => scene.coversArea !== false && !scene.wmsAvailable);
@@ -2293,7 +2313,7 @@ export default function Dashboard() {
       setCbersSelectedSceneIds(firstCovered ? [firstCovered.id] : []);
       setCbersPreviewScene(null);
       if (!scenes.length) {
-        toast.info('Nenhuma cena CBERS-4A/WPM encontrada para essa área.');
+        toast.info(hasDirectFilter ? 'Nenhuma cena CBERS-4A/WPM encontrada para essa órbita/ponto.' : 'Nenhuma cena CBERS-4A/WPM encontrada para essa área.');
       }
     } catch (error: any) {
       const message = error?.message || 'Falha ao buscar cenas CBERS.';
@@ -2302,7 +2322,7 @@ export default function Dashboard() {
     } finally {
       setCbersSearching(false);
     }
-  }, [apiFetch, cbersDateEnd, cbersDateStart, cbersFile, fileToBase64Payload, sortCbersScenes]);
+  }, [apiFetch, cbersDateEnd, cbersDateStart, cbersFile, cbersOrbit, cbersPoint, fileToBase64Payload, sortCbersScenes]);
 
   const startCbersProcessing = useCallback(async (sceneIdOverride?: string) => {
     const targetSceneIds = sceneIdOverride
@@ -2310,8 +2330,8 @@ export default function Dashboard() {
       : cbersSelectedSceneIds.length > 0
         ? cbersSelectedSceneIds
         : [String(cbersSelectedSceneId || '').trim()].filter(Boolean);
-    if (!cbersFile || targetSceneIds.length === 0) {
-      toast.error('Selecione o ZIP e ao menos uma cena CBERS.');
+    if (targetSceneIds.length === 0) {
+      toast.error('Selecione ao menos uma cena CBERS.');
       return;
     }
     const blocked = targetSceneIds
@@ -2320,7 +2340,7 @@ export default function Dashboard() {
     if (blocked) {
       toast.error(
         blocked.wmsAvailable
-          ? `O recorte da cena ${blocked.id} já está disponível no WMS. Use a imagem existente.`
+          ? `A folha da cena ${blocked.id} já está disponível no WMS. Use a imagem existente.`
           : `Cena ${blocked.id} não cobre 100% da área.`
       );
       return;
@@ -2329,16 +2349,20 @@ export default function Dashboard() {
     setCbersProcessing(true);
     setCbersProgress({ stage: 'queued', percent: 1, message: 'Enviando processamento CBERS ao servidor.' });
     try {
-      const propertyZip = cbersPropertyZipB64 || await fileToBase64Payload(cbersFile);
-      setCbersPropertyZipB64(propertyZip);
+      const filename = cbersFile?.name || `CBERS_${targetSceneIds[0] || 'ORBITA_PONTO'}`;
+      const body: Record<string, unknown> = {
+        filename,
+        itemId: targetSceneIds[0],
+        itemIds: targetSceneIds,
+      };
+      if (cbersFile) {
+        const propertyZip = cbersPropertyZipB64 || await fileToBase64Payload(cbersFile);
+        setCbersPropertyZipB64(propertyZip);
+        body.propertyZip = propertyZip;
+      }
       const response = await apiFetch('/api/cbers-wpm/jobs', {
         method: 'POST',
-        body: JSON.stringify({
-          propertyZip,
-          filename: cbersFile.name,
-          itemId: targetSceneIds[0],
-          itemIds: targetSceneIds,
-        }),
+        body: JSON.stringify(body),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error || 'Falha ao iniciar processamento CBERS.');
@@ -2357,7 +2381,7 @@ export default function Dashboard() {
       const optimistic: CbersHistoryItem = {
         id: jobId,
         jobId,
-        filename: cbersFile.name,
+        filename,
         timestamp: new Date().toISOString(),
         status: 'processing',
         stage: 'queued',
@@ -10059,7 +10083,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                     <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">GeoTIFF 3-4-2 com pancromática</h2>
                     <p className="max-w-3xl text-sm text-slate-400">
-                      Envie o ZIP da área, escolha uma cena pública do STAC INPE e gere um .tif georreferenciado para uso direto no ArcMap.
+                      Busque por ZIP/SHP ou por órbita, ponto e data, escolha uma cena pública do STAC INPE e gere a folha completa em .tif para ArcMap.
                     </p>
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-center">
@@ -10082,7 +10106,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <h3 className="text-base font-semibold text-white">Área de interesse</h3>
-                      <p className="text-xs text-slate-500 mt-1">ZIP com shapefile do limite a ser recortado.</p>
+                      <p className="text-xs text-slate-500 mt-1">Opcional: use ZIP/SHP para validar cobertura, ou filtre direto por órbita e ponto.</p>
                     </div>
                     {cbersAreaHa !== null && (
                       <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-200">
@@ -10114,7 +10138,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                     <div className="text-center min-w-0">
                       <p className="text-sm font-semibold text-white truncate">{cbersFile ? cbersFile.name : 'Selecionar ZIP da área'}</p>
-                      <p className="mt-1 text-xs text-slate-500">{cbersFile ? `${(cbersFile.size / 1024).toFixed(0)} KB` : 'Shapefile compactado em .zip'}</p>
+                      <p className="mt-1 text-xs text-slate-500">{cbersFile ? `${(cbersFile.size / 1024).toFixed(0)} KB` : 'Opcional: shapefile compactado em .zip'}</p>
                     </div>
                   </label>
 
@@ -10125,7 +10149,29 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+                    <div>
+                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Órbita</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={cbersOrbit}
+                        onChange={(e) => setCbersOrbit(e.target.value.replace(/\D+/g, '').slice(0, 3))}
+                        placeholder="213"
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Ponto</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={cbersPoint}
+                        onChange={(e) => setCbersPoint(e.target.value.replace(/\D+/g, '').slice(0, 3))}
+                        placeholder="129"
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
+                      />
+                    </div>
                     <div>
                       <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Data inicial</label>
                       <input
@@ -10161,7 +10207,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <button
                       type="button"
                       onClick={() => void searchCbersScenes()}
-                      disabled={!cbersFile || cbersSearching || cbersProcessing}
+                      disabled={(!cbersFile && (!cbersOrbit.trim() || !cbersPoint.trim())) || cbersSearching || cbersProcessing}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {cbersSearching ? <Loader2 size={17} className="animate-spin" /> : <Search size={17} />}
@@ -10170,7 +10216,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <button
                       type="button"
                       onClick={() => void startCbersProcessing()}
-                      disabled={!cbersFile || cbersSelectedSceneIds.length === 0 || cbersProcessing || cbersSelectedScenes.some((scene) => scene.coversArea === false || scene.wmsAvailable)}
+                      disabled={cbersSelectedSceneIds.length === 0 || cbersProcessing || cbersSelectedScenes.some((scene) => scene.coversArea === false || scene.wmsAvailable)}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {cbersProcessing ? <Loader2 size={17} className="animate-spin" /> : <Cpu size={17} />}
@@ -10189,6 +10235,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           const selected = cbersSelectedSceneIds.includes(scene.id);
                           const date = scene.datetime ? new Date(scene.datetime).toLocaleDateString('pt-BR') : 'Sem data';
                           const coverage = Number(scene.coveragePercent ?? 0);
+                          const hasCoverage = typeof scene.coveragePercent === 'number' && Number.isFinite(scene.coveragePercent);
                           const availableOnWms = scene.wmsAvailable && scene.wmsUrl;
                           const blocked = scene.coversArea === false || Boolean(availableOnWms);
                           return (
@@ -10214,8 +10261,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                   <p className="mt-1 text-[10px] uppercase tracking-wider text-slate-500">
                                     {scene.cloudCover === null ? 'Nuvem n/d' : `Nuvem ${scene.cloudCover.toFixed(1)}%`}
                                   </p>
-                                  <p className={`mt-1 text-[10px] font-semibold uppercase tracking-wider ${scene.coversArea === false ? 'text-red-300' : 'text-emerald-300'}`}>
-                                    Cobertura {Number.isFinite(coverage) ? coverage.toFixed(1) : '0.0'}%
+                                  <p className={`mt-1 text-[10px] font-semibold uppercase tracking-wider ${scene.coversArea === false ? 'text-red-300' : hasCoverage ? 'text-emerald-300' : 'text-cyan-300'}`}>
+                                    {hasCoverage ? `Cobertura ${coverage.toFixed(1)}%` : 'Busca por órbita/ponto'}
                                   </p>
                                   {availableOnWms && (
                                     <div className="mt-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-2">
@@ -10338,8 +10385,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     <span className="rounded-md bg-white/[0.04] px-2 py-1 text-slate-300">
                                       Tempo: {estimate ? `${Math.ceil(estimate.timeSecondsEstimated / 60)} min` : 'estimando'}
                                     </span>
-                                    <span className={`rounded-md px-2 py-1 ${scene.coversArea === false ? 'bg-red-500/10 text-red-200' : 'bg-emerald-500/10 text-emerald-200'}`}>
-                                      Cobertura: {(scene.coveragePercent ?? 0).toFixed(1)}%
+                                    <span className={`rounded-md px-2 py-1 ${scene.coversArea === false ? 'bg-red-500/10 text-red-200' : typeof scene.coveragePercent === 'number' ? 'bg-emerald-500/10 text-emerald-200' : 'bg-cyan-500/10 text-cyan-200'}`}>
+                                      {typeof scene.coveragePercent === 'number' ? `Cobertura: ${scene.coveragePercent.toFixed(1)}%` : 'Folha completa'}
                                     </span>
                                   </div>
                                 </div>
@@ -10388,6 +10435,25 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       }
                     }
 
+                    const activeStage = String(cbersProgress?.stage || activeCbers?.stage || '').toLowerCase();
+                    const stageLabelByKey: Record<string, string> = {
+                      queued: 'Na fila',
+                      geometry: 'Lendo área',
+                      scene: 'Validando cena',
+                      download: 'Baixando bandas',
+                      pansharpen: 'Fusionando folha completa',
+                      geotiff: 'Gerando GeoTIFF',
+                      save: 'Salvando arquivo',
+                      publish: 'Publicando WMS',
+                      zip: 'Compactando entrega',
+                      completed: 'Concluído',
+                      failed: 'Falhou',
+                      cancelled: 'Cancelado',
+                    };
+                    const stageLabel = stageLabelByKey[activeStage] || cbersProgress?.stage || activeCbers?.stage || 'Aguardando';
+                    const heavyServerStage = ['pansharpen', 'geotiff', 'publish'].includes(activeStage) && !done;
+                    const progressMessage = cbersProgress?.message || activeCbers?.message || 'Envie uma área e busque cenas para iniciar.';
+
                     return (
                       <>
                         <div>
@@ -10396,7 +10462,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         </div>
                         <div className="space-y-2">
                           <div className="flex justify-between text-xs items-end">
-                            <span className="font-medium text-slate-300">{cbersProgress?.stage || activeCbers?.stage || 'Aguardando'}</span>
+                            <span className="font-medium text-slate-300">{stageLabel}</span>
                             <div className="flex flex-col items-end">
                               <span className="font-bold tabular-nums text-cyan-300">{pct}%</span>
                               {timeRemainingStr && (
@@ -10407,7 +10473,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           <div className="h-3 rounded-full bg-white/10 overflow-hidden">
                             <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-500" style={{ width: `${pct}%` }} />
                           </div>
-                          <p className="min-h-[2rem] text-xs leading-relaxed text-slate-400">{cbersProgress?.message || activeCbers?.message || 'Envie uma área e busque cenas para iniciar.'}</p>
+                          {heavyServerStage && (
+                            <div className="flex items-center gap-2 rounded-lg border border-cyan-400/10 bg-cyan-400/5 px-2.5 py-1.5 text-[10px] font-medium text-cyan-100/80">
+                              <span className="h-1.5 w-1.5 rounded-full bg-cyan-300 animate-pulse" />
+                              GDAL processando no servidor; nesta etapa o avanço pode ser estimado.
+                            </div>
+                          )}
+                          <p className="min-h-[2rem] text-xs leading-relaxed text-slate-400">{progressMessage}</p>
                         </div>
                         {cbersProcessing && cbersJobId && (
                           <button
@@ -10497,9 +10569,18 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 const availableOnWms = cbersPreviewScene.wmsAvailable && cbersPreviewScene.wmsUrl;
                 const blocked = cbersPreviewScene.coversArea === false || Boolean(availableOnWms);
                 const estimate = cbersPreviewScene.estimate;
-                return (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-                    <div className="w-full max-w-5xl overflow-hidden rounded-2xl border border-white/10 bg-[#071113] shadow-2xl">
+                return createPortal(
+                  <div
+                    className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-4"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Pré-visualização da cena CBERS"
+                    onClick={() => setCbersPreviewScene(null)}
+                  >
+                    <div
+                      className="w-full max-w-5xl max-h-[94vh] overflow-y-auto overflow-x-hidden rounded-2xl border border-white/10 bg-[#071113] shadow-2xl custom-scrollbar"
+                      onClick={(event) => event.stopPropagation()}
+                    >
                       <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
                         <div className="min-w-0">
                           <p className="text-[10px] font-semibold uppercase tracking-wider text-cyan-300">Pré-visualização da cena</p>
@@ -10514,14 +10595,19 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           <X size={16} />
                         </button>
                       </div>
-                      <div className="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-0">
-                        <div className="min-h-[260px] bg-black/40">
+                      <div className="grid grid-cols-1 lg:grid-cols-[400px_minmax(0,1fr)] gap-0">
+                        <div className="relative flex min-h-[260px] items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_30%_20%,rgba(34,211,238,0.12),transparent_34%),linear-gradient(135deg,rgba(2,6,23,0.94),rgba(7,17,19,0.98))] p-3 sm:p-4">
                           {cbersPreviewScene.thumbnailUrl ? (
-                            <img
-                              src={cbersPreviewScene.thumbnailUrl}
-                              alt={cbersPreviewScene.id}
-                              className="h-full min-h-[220px] w-full object-cover"
-                            />
+                            <>
+                              <img
+                                src={cbersPreviewScene.thumbnailUrl}
+                                alt={cbersPreviewScene.id}
+                                className="max-h-[64vh] min-h-[220px] w-full rounded-xl border border-white/10 bg-black/30 object-contain shadow-2xl"
+                              />
+                              <div className="pointer-events-none absolute bottom-4 left-4 rounded-full border border-white/10 bg-black/55 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-300 backdrop-blur">
+                                Miniatura completa
+                              </div>
+                            </>
                           ) : (
                             <div className="flex h-full min-h-[220px] items-center justify-center text-slate-600">
                               <Satellite size={44} />
@@ -10552,10 +10638,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               <p className="text-[10px] uppercase tracking-wider text-slate-500">Assets</p>
                               <p className="mt-1 text-sm font-semibold text-slate-100">{cbersPreviewScene.assetKeys.length}</p>
                             </div>
-                            <div className={`rounded-xl border p-3 ${cbersPreviewScene.coversArea === false ? 'border-red-500/20 bg-red-500/10' : 'border-emerald-500/20 bg-emerald-500/10'}`}>
+                            <div className={`rounded-xl border p-3 ${cbersPreviewScene.coversArea === false ? 'border-red-500/20 bg-red-500/10' : typeof cbersPreviewScene.coveragePercent === 'number' ? 'border-emerald-500/20 bg-emerald-500/10' : 'border-cyan-500/20 bg-cyan-500/10'}`}>
                               <p className="text-[10px] uppercase tracking-wider text-slate-400">Cobertura</p>
-                              <p className={`mt-1 text-sm font-semibold ${cbersPreviewScene.coversArea === false ? 'text-red-200' : 'text-emerald-200'}`}>
-                                {(cbersPreviewScene.coveragePercent ?? 0).toFixed(2)}%
+                              <p className={`mt-1 text-sm font-semibold ${cbersPreviewScene.coversArea === false ? 'text-red-200' : typeof cbersPreviewScene.coveragePercent === 'number' ? 'text-emerald-200' : 'text-cyan-200'}`}>
+                                {typeof cbersPreviewScene.coveragePercent === 'number' ? `${cbersPreviewScene.coveragePercent.toFixed(2)}%` : 'Folha completa'}
                               </p>
                             </div>
                             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
@@ -10586,9 +10672,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               <div className="flex items-start gap-2">
                                 <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-300" />
                                 <div className="min-w-0">
-                                  <p className="font-semibold">Este recorte exato já está disponível no WMS.</p>
+                                  <p className="font-semibold">Esta folha já está disponível no WMS.</p>
                                   <p className="mt-1 text-xs text-emerald-200/80">
-                                    O mesmo recorte ja foi publicado no acervo local, inclusive quando ele foi gerado por outra conta. Use a imagem existente em vez de gerar novamente.
+                                    A mesma órbita/ponto já foi publicada no acervo local, inclusive quando ela foi gerada por outra conta. Use a imagem existente em vez de gerar novamente.
                                   </p>
                                   <a
                                     href={cbersPreviewScene.wmsUrl}
@@ -10649,7 +10735,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 setCbersPreviewScene(null);
                                 void startCbersProcessing(cbersPreviewScene.id);
                               }}
-                              disabled={!cbersFile || cbersProcessing || blocked}
+                              disabled={cbersProcessing || blocked}
                               className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
                             >
                               <Cpu size={17} />
@@ -10659,7 +10745,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </div>,
+                  document.body,
                 );
               })()}
             </div>

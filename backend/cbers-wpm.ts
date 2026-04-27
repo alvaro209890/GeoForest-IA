@@ -65,6 +65,12 @@ type CbersEstimate = {
   assetSizes: Record<string, number | null>;
 };
 
+type CbersAreaContext = {
+  geometry?: Polygon | MultiPolygon;
+  geometryHash?: string | null;
+  areaHa: number;
+};
+
 type CbersSceneJobState = {
   itemId: string;
   scene?: CbersScene | null;
@@ -125,9 +131,26 @@ const CBERS_COLLECTION = "CB4A-WPM-L4-DN-1";
 const CBERS_REQUIRED_ASSETS = ["BAND3", "BAND4", "BAND2", "BAND0"] as const;
 const CBERS_TMP_ROOT = process.env.CBERS_TMP_ROOT || "/tmp/geoforest-cbers-wpm";
 const CBERS_SEARCH_LIMIT = Math.max(1, Number(process.env.CBERS_SEARCH_LIMIT || 50));
+const CBERS_ORBIT_POINT_SEARCH_MAX_PAGES = Math.max(
+  1,
+  Number(process.env.CBERS_ORBIT_POINT_SEARCH_MAX_PAGES || 30),
+);
 const FETCH_TIMEOUT_MS = Math.max(5000, Number(process.env.CBERS_FETCH_TIMEOUT_MS || 120000));
 const CBERS_BATCH_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.CBERS_BATCH_CONCURRENCY || 2)));
-const CBERS_DOWNLOAD_RETRIES = Math.max(1, Number(process.env.CBERS_DOWNLOAD_RETRIES || 3));
+const CBERS_DOWNLOAD_RETRIES = Math.max(0, Number(process.env.CBERS_DOWNLOAD_RETRIES || 3));
+const CBERS_DOWNLOAD_RETRY_DELAY_MS = Math.max(1000, Number(process.env.CBERS_DOWNLOAD_RETRY_DELAY_MS || 3000));
+const CBERS_DOWNLOAD_STALL_TIMEOUT_MS = Math.max(
+  30000,
+  Number(process.env.CBERS_DOWNLOAD_STALL_TIMEOUT_MS || 180000),
+);
+const CBERS_PANSHARPEN_ESTIMATE_MS = Math.max(
+  60000,
+  Number(process.env.CBERS_PANSHARPEN_ESTIMATE_MS || 8 * 60 * 1000),
+);
+const CBERS_TRANSLATE_ESTIMATE_MS = Math.max(
+  30000,
+  Number(process.env.CBERS_TRANSLATE_ESTIMATE_MS || 3 * 60 * 1000),
+);
 const GEOSERVER_WORKSPACE = process.env.GEOSERVER_WORKSPACE || "cbers";
 const GEOSERVER_DATA_DIR = process.env.GEOSERVER_DATA_DIR || "/home/server/geoserver_data";
 const GEOSERVER_PUBLIC_WMS_BASE = String(
@@ -158,6 +181,22 @@ function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function fileSizeSafe(filePath: string): number {
+  try {
+    return fs.existsSync(filePath) ? fs.statSync(filePath).size : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function bytesToMb(bytes: number): string {
+  return (Math.max(0, bytes) / 1024 / 1024).toFixed(1);
+}
+
 function safeName(value: unknown, fallback = "cbers_4a_wpm.tif"): string {
   const clean = String(value || "")
     .trim()
@@ -185,6 +224,18 @@ function parseBase64Zip(raw: unknown): Buffer {
   const buffer = Buffer.from(payload, "base64");
   if (buffer.length < 22) throw new Error("ZIP da área é inválido ou muito pequeno.");
   return buffer;
+}
+
+function parseOptionalAreaContext(raw: unknown): CbersAreaContext {
+  const value = String(raw || "").trim();
+  if (!value) return { areaHa: 0 };
+  const zipBuffer = parseBase64Zip(value);
+  const parsed = parseUserShapefile(zipBuffer);
+  return {
+    geometry: parsed.geometry,
+    geometryHash: hashPropertyGeometry(parsed.geometry),
+    areaHa: parsed.areaHa,
+  };
 }
 
 function featureBbox(feature: Feature<Polygon | MultiPolygon>): [number, number, number, number] {
@@ -360,6 +411,16 @@ function parseCbersItemIdForWms(itemId: string): {
   };
 }
 
+function normalizeOrbitPointParam(raw: unknown, label: string): string | null {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  const digits = value.replace(/\D+/g, "");
+  if (!/^\d{1,3}$/.test(digits)) {
+    throw new Error(`${label} deve conter 1 a 3 dígitos.`);
+  }
+  return digits.padStart(3, "0");
+}
+
 function listLocalGeoserverLayerNames(): string[] {
   const now = Date.now();
   if (geoserverLayerCache && geoserverLayerCache.expiresAt > now) return geoserverLayerCache.layers;
@@ -484,14 +545,12 @@ function findAnyActiveArchiveForItem(itemId: string): CbersWmsAvailability | nul
 
 function findExactArchiveAvailability(
   itemId: string,
-  geometryHash?: string | null,
+  _geometryHash?: string | null,
 ): CbersWmsAvailability | null {
   const cleanItemId = String(itemId || "").trim();
-  const cleanGeometryHash = String(geometryHash || "").trim();
-  if (!cleanItemId || !cleanGeometryHash) return null;
+  if (!cleanItemId) return null;
   const archive = listCbersArchiveRecords().find((record) => (
     record.itemId === cleanItemId &&
-    record.geometryHash === cleanGeometryHash &&
     isActiveArchiveRecord(record)
   )) || null;
   return archive ? archiveAvailabilityFromRecord(archive) : null;
@@ -610,29 +669,48 @@ function normalizeDateParam(raw: unknown, endOfDay = false): string | null {
 }
 
 async function searchCbersScenes(
-  bbox: [number, number, number, number],
+  bbox: [number, number, number, number] | null,
   options?: {
     dateStart?: string | null;
     dateEnd?: string | null;
     propertyGeometry?: Polygon | MultiPolygon;
     propertyGeometryHash?: string | null;
+    orbit?: string | null;
+    point?: string | null;
   },
 ): Promise<CbersScene[]> {
-  const params = new URLSearchParams({
-    bbox: bbox.join(","),
-    limit: String(CBERS_SEARCH_LIMIT),
-  });
+  const params = new URLSearchParams({ limit: String(CBERS_SEARCH_LIMIT) });
+  if (bbox) params.set("bbox", bbox.join(","));
   if (options?.dateStart || options?.dateEnd) {
     params.set("datetime", `${options.dateStart || ".."}/${options.dateEnd || ".."}`);
   }
-  const url = `${STAC_ROOT}/collections/${encodeURIComponent(CBERS_COLLECTION)}/items?${params.toString()}`;
-  const payload = await fetchJson<any>(url);
-  const features = Array.isArray(payload?.features) ? payload.features : [];
-  return features
-    .map((feature: any) => sceneFromStacFeature(feature, options?.propertyGeometry))
-    .filter((scene: CbersScene | null): scene is CbersScene => Boolean(scene?.id))
-    .map((scene: CbersScene) => attachArchiveAvailability(scene, options?.propertyGeometryHash))
-    .sort((a: CbersScene, b: CbersScene) => String(b.datetime || "").localeCompare(String(a.datetime || "")));
+  const requestedOrbit = options?.orbit || null;
+  const requestedPoint = options?.point || null;
+  const maxPages = bbox ? 1 : CBERS_ORBIT_POINT_SEARCH_MAX_PAGES;
+  let url: string | null = `${STAC_ROOT}/collections/${encodeURIComponent(CBERS_COLLECTION)}/items?${params.toString()}`;
+  const scenes: CbersScene[] = [];
+  const seen = new Set<string>();
+
+  for (let page = 0; url && page < maxPages && scenes.length < CBERS_SEARCH_LIMIT; page += 1) {
+    const payload = await fetchJson<any>(url);
+    const features = Array.isArray(payload?.features) ? payload.features : [];
+    for (const feature of features) {
+      const scene = sceneFromStacFeature(feature, options?.propertyGeometry);
+      if (!scene?.id || seen.has(scene.id)) continue;
+      const parsed = parseCbersItemIdForWms(scene.id);
+      if (requestedOrbit && parsed?.orbit !== requestedOrbit) continue;
+      if (requestedPoint && parsed?.row !== requestedPoint) continue;
+      seen.add(scene.id);
+      scenes.push(attachArchiveAvailability(scene, options?.propertyGeometryHash));
+      if (scenes.length >= CBERS_SEARCH_LIMIT) break;
+    }
+    const nextHref = Array.isArray(payload?.links)
+      ? String(payload.links.find((link: any) => String(link?.rel || "").toLowerCase() === "next")?.href || "")
+      : "";
+    url = nextHref ? new URL(nextHref, STAC_ROOT).toString() : null;
+  }
+
+  return scenes.sort((a: CbersScene, b: CbersScene) => String(b.datetime || "").localeCompare(String(a.datetime || "")));
 }
 
 async function getStacItem(itemId: string): Promise<any> {
@@ -656,11 +734,8 @@ async function headContentLength(url: string): Promise<number | null> {
 }
 
 function estimateFallbackDownloadBytes(areaHa: number): number {
-  const areaM2 = Math.max(1, areaHa * 10000);
-  const panPixels = areaM2 / 4;
-  const multispectralBytes = panPixels * 3 * 0.2;
-  const panBytes = panPixels * 1;
-  return Math.max(20_000_000, Math.round((multispectralBytes + panBytes) * 2.5));
+  void areaHa;
+  return 3_000_000_000;
 }
 
 async function estimateSceneAssets(args: {
@@ -680,8 +755,8 @@ async function estimateSceneAssets(args: {
   const downloadBytes: number = completeAssetSizes
     ? knownBytes
     : Math.max(knownBytes, estimateFallbackDownloadBytes(args.areaHa));
-  const areaM2 = Math.max(1, args.areaHa * 10000);
-  const outputBytesEstimated = Math.max(1_000_000, Math.round((areaM2 / 4) * 3 * 0.75));
+  const panBytes = Number(assetSizes.BAND0 || 0);
+  const outputBytesEstimated = Math.max(100_000_000, Math.round((panBytes || knownBytes || downloadBytes) * 0.75));
   const downloadMb = Number((downloadBytes / 1024 / 1024).toFixed(2));
   const outputMbEstimated = Number((outputBytesEstimated / 1024 / 1024).toFixed(2));
   return {
@@ -781,6 +856,18 @@ async function downloadAsset(args: {
   }
 
   const tempPath = `${args.filePath}.part`;
+  const totalAttempts = CBERS_DOWNLOAD_RETRIES + 1;
+  let maxObservedBytes = Math.max(fileSizeSafe(args.filePath), fileSizeSafe(tempPath));
+  let maxReportedPercent = args.basePercent;
+  const percentForBytes = (bytes: number): number =>
+    expectedBytes
+      ? args.basePercent + Math.min(1, Math.max(0, bytes) / expectedBytes) * args.spanPercent
+      : args.basePercent;
+  const reportDownload = (patch: CbersProgressPatch) => {
+    const nextPercent = typeof patch.percent === "number" ? patch.percent : maxReportedPercent;
+    maxReportedPercent = Math.max(maxReportedPercent, nextPercent);
+    report({ ...patch, percent: maxReportedPercent });
+  };
 
   if (fs.existsSync(args.filePath) && expectedBytes !== null) {
     const currentSize = fs.statSync(args.filePath).size;
@@ -792,68 +879,135 @@ async function downloadAsset(args: {
   if (expectedBytes !== null && fs.existsSync(tempPath) && fs.statSync(tempPath).size > expectedBytes) {
     fs.rmSync(tempPath, { force: true });
   }
+  maxObservedBytes = Math.max(maxObservedBytes, fileSizeSafe(tempPath));
 
-  report({
-    stage: "download",
-    percent: args.basePercent,
-    message: `Baixando ${args.assetKey} com retomada automática.`,
-  });
+  for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+    throwIfCancelled(args.jobId);
+    reportDownload({
+      stage: "download",
+      percent: percentForBytes(maxObservedBytes),
+      message:
+        attempt === 1
+          ? `Baixando ${args.assetKey} com retomada automática.`
+          : `Retomando ${args.assetKey} de ${bytesToMb(maxObservedBytes)} MB. Tentativa ${attempt}/${totalAttempts}.`,
+    });
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: "info",
+      event: "cbers_download_attempt_started",
+      jobId: args.jobId,
+      assetKey: args.assetKey,
+      attempt,
+      totalAttempts,
+      partialBytes: maxObservedBytes,
+      expectedBytes,
+    }));
 
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      "curl",
-      [
-        "-L",
-        "-C", "-",
-        "--fail",
-        "--retry", String(CBERS_DOWNLOAD_RETRIES),
-        "--retry-all-errors",
-        "--connect-timeout", "20",
-        "--speed-time", "120",
-        "--speed-limit", "1024",
-        "-sS",
-        "-o", tempPath,
-        args.url,
-      ],
-      { stdio: ["ignore", "ignore", "pipe"] },
-    );
-    let output = "";
-    const progressTimer = setInterval(() => {
-      const downloaded = fs.existsSync(tempPath) ? fs.statSync(tempPath).size : 0;
-      const percent = expectedBytes
-        ? args.basePercent + Math.min(1, downloaded / expectedBytes) * args.spanPercent
-        : args.basePercent;
-      report({
-        stage: "download",
-        percent,
-        message: expectedBytes
-          ? `Baixando ${args.assetKey}: ${(downloaded / 1024 / 1024).toFixed(1)} MB de ${(expectedBytes / 1024 / 1024).toFixed(1)} MB.`
-          : `Baixando ${args.assetKey}: ${(downloaded / 1024 / 1024).toFixed(1)} MB.`,
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(
+          "curl",
+          [
+            "-L",
+            "-C", "-",
+            "--fail",
+            "--connect-timeout", "20",
+            "--speed-time", "120",
+            "--speed-limit", "1024",
+            "-sS",
+            "-o", tempPath,
+            args.url,
+          ],
+          { stdio: ["ignore", "ignore", "pipe"] },
+        );
+        let output = "";
+        let lastObservedThisAttempt = maxObservedBytes;
+        let lastGrowthAtMs = Date.now();
+        let stalledMessage = "";
+        const progressTimer = setInterval(() => {
+          const actualBytes = fileSizeSafe(tempPath);
+          if (actualBytes > maxObservedBytes) {
+            maxObservedBytes = actualBytes;
+            lastGrowthAtMs = Date.now();
+          }
+          if (actualBytes < lastObservedThisAttempt) {
+            console.warn(JSON.stringify({
+              ts: new Date().toISOString(),
+              level: "warn",
+              event: "cbers_download_progress_regressed",
+              jobId: args.jobId,
+              assetKey: args.assetKey,
+              attempt,
+              previousBytes: lastObservedThisAttempt,
+              actualBytes,
+              keptBytes: maxObservedBytes,
+            }));
+          }
+          lastObservedThisAttempt = actualBytes;
+          const progressBytes = Math.max(actualBytes, maxObservedBytes);
+          const stalledMs = Date.now() - lastGrowthAtMs;
+          reportDownload({
+            stage: "download",
+            percent: percentForBytes(progressBytes),
+            message: expectedBytes
+              ? `Baixando ${args.assetKey}: ${bytesToMb(progressBytes)} MB de ${bytesToMb(expectedBytes)} MB.`
+              : `Baixando ${args.assetKey}: ${bytesToMb(progressBytes)} MB.`,
+          });
+          if (!stalledMessage && stalledMs >= CBERS_DOWNLOAD_STALL_TIMEOUT_MS) {
+            stalledMessage = `Download de ${args.assetKey} sem avanço por ${Math.round(stalledMs / 1000)}s; reiniciando tentativa.`;
+            child.kill("SIGTERM");
+          }
+        }, 2000);
+        child.stderr.on("data", (chunk: Buffer) => {
+          output += chunk.toString("utf8");
+          if (output.length > 4000) output = output.slice(-4000);
+        });
+        child.on("error", (error) => {
+          clearInterval(progressTimer);
+          reject(error);
+        });
+        const cancelTimer = setInterval(() => {
+          if (!isCancelRequested(args.jobId)) return;
+          child.kill("SIGTERM");
+          reject(new CbersCancelError());
+        }, 1000);
+        child.on("close", (code) => {
+          clearInterval(progressTimer);
+          clearInterval(cancelTimer);
+          if (stalledMessage) {
+            reject(new Error(stalledMessage));
+            return;
+          }
+          if (code === 0) {
+            resolve();
+            return;
+          }
+          reject(new Error(`curl falhou ao baixar ${args.assetKey} (codigo ${code}): ${output.slice(-1200)}`));
+        });
       });
-    }, 2000);
-    child.stderr.on("data", (chunk: Buffer) => {
-      output += chunk.toString("utf8");
-      if (output.length > 4000) output = output.slice(-4000);
-    });
-    child.on("error", (error) => {
-      clearInterval(progressTimer);
-      reject(error);
-    });
-    const cancelTimer = setInterval(() => {
-      if (!isCancelRequested(args.jobId)) return;
-      child.kill("SIGTERM");
-      reject(new CbersCancelError());
-    }, 1000);
-    child.on("close", (code) => {
-      clearInterval(progressTimer);
-      clearInterval(cancelTimer);
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new Error(`curl falhou ao baixar ${args.assetKey} (codigo ${code}): ${output.slice(-1200)}`));
-    });
-  });
+      break;
+    } catch (error) {
+      maxObservedBytes = Math.max(maxObservedBytes, fileSizeSafe(tempPath));
+      console.warn(JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "warn",
+        event: "cbers_download_attempt_failed",
+        jobId: args.jobId,
+        assetKey: args.assetKey,
+        attempt,
+        totalAttempts,
+        partialBytes: maxObservedBytes,
+        message: String((error as Error)?.message || error),
+      }));
+      if (error instanceof CbersCancelError || attempt >= totalAttempts) throw error;
+      reportDownload({
+        stage: "download",
+        percent: percentForBytes(maxObservedBytes),
+        message: `Conexao interrompida em ${args.assetKey}. Retomando de ${bytesToMb(maxObservedBytes)} MB.`,
+      });
+      await sleep(CBERS_DOWNLOAD_RETRY_DELAY_MS);
+    }
+  }
 
   const savedBytes = fs.existsSync(tempPath) ? fs.statSync(tempPath).size : 0;
   if (expectedBytes !== null && savedBytes !== expectedBytes) {
@@ -916,6 +1070,41 @@ async function runCommand(args: {
       env: gdalCommandEnv(),
     });
     let output = "";
+    let maxReportedPercent = args.basePercent;
+    let lastInnerProgress = 0;
+    let settled = false;
+    const startedAt = Date.now();
+    let cancelTimer: ReturnType<typeof setInterval> | null = null;
+    let progressTimer: ReturnType<typeof setInterval> | null = null;
+    const estimatedDurationMs =
+      args.command === "gdal_pansharpen.py"
+        ? CBERS_PANSHARPEN_ESTIMATE_MS
+        : args.command === "gdal_translate"
+          ? CBERS_TRANSLATE_ESTIMATE_MS
+          : 0;
+    const reportCommandProgress = (innerProgress: number, message = args.message) => {
+      const boundedInner = Math.max(0, Math.min(100, innerProgress));
+      const nextPercent = Math.max(
+        maxReportedPercent,
+        args.basePercent + (boundedInner / 100) * args.spanPercent,
+      );
+      maxReportedPercent = nextPercent;
+      report({
+        stage: args.stage,
+        percent: nextPercent,
+        message,
+      });
+    };
+    const cleanup = () => {
+      if (cancelTimer) clearInterval(cancelTimer);
+      if (progressTimer) clearInterval(progressTimer);
+    };
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn();
+    };
     const handleChunk = (chunk: Buffer) => {
       const text = chunk.toString("utf8");
       output += text;
@@ -923,28 +1112,38 @@ async function runCommand(args: {
       const latest = matches.at(-1);
       if (latest) {
         const inner = Math.max(0, Math.min(100, Number(latest[1])));
-        report({
-          stage: args.stage,
-          percent: args.basePercent + (inner / 100) * args.spanPercent,
-          message: args.message,
-        });
+        lastInnerProgress = Math.max(lastInnerProgress, inner);
+        reportCommandProgress(lastInnerProgress);
       }
     };
     child.stdout.on("data", handleChunk);
     child.stderr.on("data", handleChunk);
-    child.on("error", reject);
-    const cancelTimer = setInterval(() => {
+    child.on("error", (error) => finish(() => reject(error)));
+    cancelTimer = setInterval(() => {
       if (!isCancelRequested(args.jobId)) return;
       child.kill("SIGTERM");
-      reject(new CbersCancelError());
+      finish(() => reject(new CbersCancelError()));
     }, 1000);
+    progressTimer =
+      args.spanPercent > 0 && estimatedDurationMs > 0
+        ? setInterval(() => {
+            if (settled) return;
+            const elapsedMs = Date.now() - startedAt;
+            const estimatedInner = Math.min(92, (elapsedMs / estimatedDurationMs) * 100);
+            if (estimatedInner <= lastInnerProgress) return;
+            lastInnerProgress = estimatedInner;
+            reportCommandProgress(
+              estimatedInner,
+              `${args.message} Progresso estimado enquanto o GDAL processa a folha completa.`,
+            );
+          }, 5000)
+        : null;
     child.on("close", (code) => {
-      clearInterval(cancelTimer);
       if (code === 0) {
-        resolve();
+        finish(() => resolve());
         return;
       }
-      reject(new Error(`${args.command} falhou com codigo ${code}: ${output.slice(-1200)}`));
+      finish(() => reject(new Error(`${args.command} falhou com codigo ${code}: ${output.slice(-1200)}`)));
     });
   });
 
@@ -961,8 +1160,7 @@ async function processCbersScene(args: {
   jobId: string;
   itemId: string;
   tmpDir: string;
-  cutlinePath: string;
-  propertyGeometry: Polygon | MultiPolygon;
+  propertyGeometry?: Polygon | MultiPolygon;
   propertyGeometryHash?: string | null;
   areaHa: number;
   onSceneProgress?: (patch: Partial<CbersSceneJobState>) => void;
@@ -1032,50 +1230,16 @@ async function processCbersScene(args: {
     report({ stage: "download", percent: itemPlan.start + itemPlan.span, message: `${itemPlan.key} baixada.` });
   }
 
-  const clipped: Record<string, string> = {};
-  const clipPlan = [
-    { key: "BAND3", start: 50 },
-    { key: "BAND4", start: 55 },
-    { key: "BAND2", start: 60 },
-    { key: "BAND0", start: 65 },
-  ];
-  for (const itemPlan of clipPlan) {
-    const outputPath = path.join(sceneDir, `${itemPlan.key}_clip.tif`);
-    await runCommand({
-      uid,
-      jobId,
-      command: "gdalwarp",
-      commandArgs: [
-        "-overwrite",
-        "-of", "GTiff",
-        "-cutline", args.cutlinePath,
-        "-crop_to_cutline",
-        "-dstnodata", "0",
-        "-multi",
-        "-wo", "NUM_THREADS=ALL_CPUS",
-        bandPaths[itemPlan.key],
-        outputPath,
-      ],
-      basePercent: itemPlan.start,
-      spanPercent: 5,
-      stage: "clip",
-      message: `Recortando ${itemPlan.key} pela área enviada.`,
-      onProgress: report,
-    });
-    clipped[itemPlan.key] = outputPath;
-    report({ stage: "clip", percent: itemPlan.start + 5, message: `${itemPlan.key} recortada.` });
-  }
-
   const rawPansharpenPath = path.join(sceneDir, "cbers_342_pan_raw.tif");
   await runCommand({
     uid,
     jobId,
     command: "gdal_pansharpen.py",
     commandArgs: [
-      clipped.BAND0,
-      clipped.BAND3,
-      clipped.BAND4,
-      clipped.BAND2,
+      bandPaths.BAND0,
+      bandPaths.BAND3,
+      bandPaths.BAND4,
+      bandPaths.BAND2,
       rawPansharpenPath,
       "-of", "GTiff",
       "-r", "cubic",
@@ -1084,13 +1248,13 @@ async function processCbersScene(args: {
       "-co", "TILED=YES",
       "-co", "BIGTIFF=IF_SAFER",
     ],
-    basePercent: 72,
-    spanPercent: 15,
+    basePercent: 50,
+    spanPercent: 37,
     stage: "pansharpen",
-    message: "Fusionando composição 3-4-2 com a pancromática.",
+    message: "Fusionando a folha completa 3-4-2 com a pancromática.",
     onProgress: report,
   });
-  report({ stage: "pansharpen", percent: 87, message: "Fusão pancromática concluída." });
+  report({ stage: "pansharpen", percent: 87, message: "Fusão pancromática da folha completa concluída." });
 
   const finalTempPath = path.join(sceneDir, "cbers_4a_wpm_342_pan.tif");
   await runCommand({
@@ -1111,7 +1275,7 @@ async function processCbersScene(args: {
     basePercent: 87,
     spanPercent: 8,
     stage: "geotiff",
-    message: "Gerando GeoTIFF final para ArcMap.",
+    message: "Gerando GeoTIFF final da órbita/ponto completa para ArcMap.",
     onProgress: report,
   });
   report({ stage: "save", percent: 96, message: "Salvando GeoTIFF no banco do usuário." });
@@ -1128,7 +1292,7 @@ async function processCbersScene(args: {
     uid,
     jobId,
     itemId: args.itemId,
-    geometryHash: args.propertyGeometryHash,
+    geometryHash: undefined,
     outputFilename: outputName,
     sourcePath: finalTempPath,
   });
@@ -1212,7 +1376,7 @@ async function runCbersJob(input: {
   uid: string;
   jobId: string;
   filename: string;
-  zipBuffer: Buffer;
+  area: CbersAreaContext;
   itemId: string;
 }): Promise<void> {
   const { uid, jobId } = input;
@@ -1221,28 +1385,20 @@ async function runCbersJob(input: {
 
   try {
     throwIfCancelled(jobId);
-    progress(uid, jobId, { stage: "geometry", percent: 2, message: "Lendo limite da área enviada." });
-    const parsedArea = parseUserShapefile(input.zipBuffer);
-    const propertyGeometryHash = hashPropertyGeometry(parsedArea.geometry);
-    const cutlinePath = path.join(tmpDir, "cutline.geojson");
-    fs.writeFileSync(
-      cutlinePath,
-      JSON.stringify({
-        type: "FeatureCollection",
-        features: [{ type: "Feature", properties: {}, geometry: parsedArea.geometry }],
-      }),
-      "utf8",
-    );
+    progress(uid, jobId, {
+      stage: "geometry",
+      percent: 2,
+      message: input.area.geometry ? "Lendo limite da área enviada." : "Processando por órbita/ponto sem SHP.",
+    });
 
     const result = await processCbersScene({
       uid,
       jobId,
       itemId: input.itemId,
       tmpDir,
-      cutlinePath,
-      propertyGeometry: parsedArea.geometry,
-      propertyGeometryHash,
-      areaHa: parsedArea.areaHa,
+      propertyGeometry: input.area.geometry,
+      propertyGeometryHash: input.area.geometryHash,
+      areaHa: input.area.areaHa,
     });
     const scene = result.scene || null;
 
@@ -1275,6 +1431,13 @@ async function runCbersJob(input: {
         percent: 0,
         message: "Processamento CBERS cancelado.",
         error: "cancel_requested",
+        scenes: [{
+          itemId: input.itemId,
+          status: "cancelled",
+          stage: "cancelled",
+          percent: 0,
+          message: "Cancelado.",
+        }],
       });
       finishJob({ jobId, status: "cancelled", error: "cancel_requested" });
       emitJobEvent(jobId, { type: "cancelled", jobId });
@@ -1286,6 +1449,14 @@ async function runCbersJob(input: {
       stage: "failed",
       message,
       error: message,
+      scenes: [{
+        itemId: input.itemId,
+        status: "failed",
+        stage: "failed",
+        percent: 100,
+        message: "Falha ao processar esta cena.",
+        error: message,
+      }],
     });
     finishJob({ jobId, status: "failed", error: message });
     emitJobEvent(jobId, { type: "error", jobId, message });
@@ -1303,7 +1474,7 @@ async function runCbersBatchJob(input: {
   uid: string;
   jobId: string;
   filename: string;
-  zipBuffer: Buffer;
+  area: CbersAreaContext;
   itemIds: string[];
 }): Promise<void> {
   const { uid, jobId } = input;
@@ -1336,18 +1507,12 @@ async function runCbersBatchJob(input: {
 
   try {
     throwIfCancelled(jobId);
-    progress(uid, jobId, { mode: "batch", stage: "geometry", percent: 2, message: "Lendo limite da área enviada." });
-    const parsedArea = parseUserShapefile(input.zipBuffer);
-    const propertyGeometryHash = hashPropertyGeometry(parsedArea.geometry);
-    const cutlinePath = path.join(tmpDir, "cutline.geojson");
-    fs.writeFileSync(
-      cutlinePath,
-      JSON.stringify({
-        type: "FeatureCollection",
-        features: [{ type: "Feature", properties: {}, geometry: parsedArea.geometry }],
-      }),
-      "utf8",
-    );
+    progress(uid, jobId, {
+      mode: "batch",
+      stage: "geometry",
+      percent: 2,
+      message: input.area.geometry ? "Lendo limite da área enviada." : "Processando por órbita/ponto sem SHP.",
+    });
     persistBatch({ stage: "queued", message: `${input.itemIds.length} cena(s) na fila.` });
 
     let cursor = 0;
@@ -1360,10 +1525,9 @@ async function runCbersBatchJob(input: {
             jobId,
             itemId,
             tmpDir,
-            cutlinePath,
-            propertyGeometry: parsedArea.geometry,
-            propertyGeometryHash,
-            areaHa: parsedArea.areaHa,
+            propertyGeometry: input.area.geometry,
+            propertyGeometryHash: input.area.geometryHash,
+            areaHa: input.area.areaHa,
             onSceneProgress: (patch) => {
               sceneStates.set(itemId, {
                 ...(sceneStates.get(itemId) || { itemId, status: "processing", percent: 0 }),
@@ -1479,23 +1643,31 @@ async function runCbersBatchJob(input: {
 export function registerCbersWpmRoutes(app: Express): void {
   app.post("/api/cbers-wpm/search", async (req: Request, res: Response) => {
     try {
-      const zipBuffer = parseBase64Zip((req.body as any)?.propertyZip);
-      const parsed = parseUserShapefile(zipBuffer);
-      const propertyGeometryHash = hashPropertyGeometry(parsed.geometry);
-      const bbox = featureBbox(parsed.polygon);
+      const area = parseOptionalAreaContext((req.body as any)?.propertyZip);
+      const bbox = area.geometry ? featureBbox({ type: "Feature", properties: {}, geometry: area.geometry }) : null;
       const dateStart = normalizeDateParam((req.body as any)?.dateStart, false);
       const dateEnd = normalizeDateParam((req.body as any)?.dateEnd, true);
+      const orbit = normalizeOrbitPointParam((req.body as any)?.orbit, "Órbita");
+      const point = normalizeOrbitPointParam((req.body as any)?.point ?? (req.body as any)?.row, "Ponto");
+      if (!bbox && (!orbit || !point)) {
+        res.status(400).json({ error: "Envie um ZIP/SHP ou informe órbita e ponto para buscar sem SHP." });
+        return;
+      }
       const scenes = await searchCbersScenes(bbox, {
         dateStart,
         dateEnd,
-        propertyGeometry: parsed.geometry,
-        propertyGeometryHash,
+        propertyGeometry: area.geometry,
+        propertyGeometryHash: area.geometryHash,
+        orbit,
+        point,
       });
       res.json({
         ok: true,
-        areaHa: parsed.areaHa,
+        areaHa: area.areaHa,
         bbox,
-        propertyGeometry: parsed.geometry,
+        propertyGeometry: area.geometry,
+        orbit,
+        point,
         collection: CBERS_COLLECTION,
         dateStart,
         dateEnd,
@@ -1508,9 +1680,7 @@ export function registerCbersWpmRoutes(app: Express): void {
 
   app.post("/api/cbers-wpm/estimate", async (req: Request, res: Response) => {
     try {
-      const zipBuffer = parseBase64Zip((req.body as any)?.propertyZip);
-      const parsed = parseUserShapefile(zipBuffer);
-      const propertyGeometryHash = hashPropertyGeometry(parsed.geometry);
+      const area = parseOptionalAreaContext((req.body as any)?.propertyZip);
       const rawIds = Array.isArray((req.body as any)?.itemIds)
         ? (req.body as any).itemIds
         : [(req.body as any)?.itemId];
@@ -1524,14 +1694,14 @@ export function registerCbersWpmRoutes(app: Express): void {
       const estimates = await Promise.all(
         itemIds.map(async (itemId) => {
           const item = await getStacItem(itemId);
-          const rawScene = sceneFromStacFeature(item, parsed.geometry);
-          const scene = rawScene ? attachArchiveAvailability(rawScene, propertyGeometryHash) : null;
+          const rawScene = sceneFromStacFeature(item, area.geometry);
+          const scene = rawScene ? attachArchiveAvailability(rawScene, area.geometryHash) : null;
           if (!scene) throw new Error(`Cena ${itemId} sem bandas obrigatórias.`);
-          const estimate = await estimateSceneAssets({ itemId, areaHa: parsed.areaHa, scene });
+          const estimate = await estimateSceneAssets({ itemId, areaHa: area.areaHa, scene });
           return { itemId, scene, estimate };
         }),
       );
-      res.json({ ok: true, areaHa: parsed.areaHa, estimates });
+      res.json({ ok: true, areaHa: area.areaHa, propertyGeometry: area.geometry, estimates });
     } catch (error: any) {
       res.status(400).json({ error: error?.message || "Falha ao estimar cenas CBERS." });
     }
@@ -1597,14 +1767,12 @@ export function registerCbersWpmRoutes(app: Express): void {
         res.status(400).json({ error: "itemId ou itemIds é obrigatório." });
         return;
       }
-      const zipBuffer = parseBase64Zip((req.body as any)?.propertyZip);
-      const parsed = parseUserShapefile(zipBuffer);
-      const propertyGeometryHash = hashPropertyGeometry(parsed.geometry);
-      const archivedItem = itemIds.find((itemId) => Boolean(findExactArchiveAvailability(itemId, propertyGeometryHash)));
+      const area = parseOptionalAreaContext((req.body as any)?.propertyZip);
+      const archivedItem = itemIds.find((itemId) => Boolean(findExactArchiveAvailability(itemId, area.geometryHash)));
       if (archivedItem) {
-        const archive = findExactArchiveAvailability(archivedItem, propertyGeometryHash);
+        const archive = findExactArchiveAvailability(archivedItem, area.geometryHash);
         res.status(409).json({
-          error: "Este recorte CBERS já está disponível no WMS. Use a imagem existente em vez de gerar novamente.",
+          error: "Esta folha CBERS já está disponível no WMS. Use a imagem existente em vez de gerar novamente.",
           code: "CBERS_ALREADY_AVAILABLE_WMS",
           itemId: archivedItem,
           archiveImageId: archive?.archiveImageId,
@@ -1615,11 +1783,11 @@ export function registerCbersWpmRoutes(app: Express): void {
         });
         return;
       }
-      const filename = String((req.body as any)?.filename || "area.zip").trim();
+      const filename = String((req.body as any)?.filename || "CBERS-4A/WPM").trim();
       const processingJob = startJob({
         uid,
         endpoint: "/api/cbers-wpm/jobs",
-        metadata: { itemId: itemIds[0], itemIds, filename },
+        metadata: { itemId: itemIds[0], itemIds, filename, hasPropertyGeometry: Boolean(area.geometry) },
       });
       const jobId = processingJob.jobId;
       persistCbersJob(uid, jobId, {
@@ -1631,6 +1799,8 @@ export function registerCbersWpmRoutes(app: Express): void {
         itemId: itemIds[0],
         itemIds,
         mode: itemIds.length > 1 ? "batch" : "single",
+        areaHa: area.areaHa || undefined,
+        propertyGeometry: area.geometry,
         scenes: itemIds.map((itemId) => ({
           itemId,
           status: "processing",
@@ -1643,9 +1813,9 @@ export function registerCbersWpmRoutes(app: Express): void {
       });
       res.status(202).json({ ok: true, jobId });
       if (itemIds.length > 1) {
-        void runCbersBatchJob({ uid, jobId, filename, zipBuffer, itemIds });
+        void runCbersBatchJob({ uid, jobId, filename, area, itemIds });
       } else {
-        void runCbersJob({ uid, jobId, filename, zipBuffer, itemId: itemIds[0] });
+        void runCbersJob({ uid, jobId, filename, area, itemId: itemIds[0] });
       }
     } catch (error: any) {
       res.status(400).json({ error: error?.message || "Falha ao iniciar job CBERS." });
