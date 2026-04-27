@@ -6,6 +6,25 @@ import { STORAGE_ROOT } from "./local-storage";
 
 type PlainObject = Record<string, any>;
 
+type AdminStorageFile = {
+  id: string;
+  uid: string;
+  name: string;
+  relativePath: string;
+  absolutePath?: string;
+  publicUrl?: string;
+  category: string;
+  source: "user_storage" | "cbers_archive";
+  extension: string;
+  bytes: number;
+  modifiedAt?: string;
+  createdAt?: string;
+  imageId?: string;
+  wmsPublicUrl?: string;
+  adminDeletedAt?: string;
+  userDeletedAt?: string;
+};
+
 export type CbersArchiveRecord = {
   imageId: string;
   uid: string;
@@ -471,6 +490,128 @@ function listUserProfiles(): Record<string, PlainObject> {
   return profiles;
 }
 
+function adminPublicStorageUrl(relativePath: string): string {
+  return `/api/storage/${relativePath.split(path.sep).join("/")}`;
+}
+
+function adminFileCategory(relativePath: string): string {
+  const rel = relativePath.split(path.sep).join("/").toLowerCase();
+  if (rel.includes("/attachments/images/")) return "Imagens anexadas";
+  if (rel.includes("/attachments/pdfs/")) return "PDFs anexados";
+  if (rel.includes("/simcar/output/")) return "Recortes SIMCAR";
+  if (rel.includes("/simcar/analysis/")) return "Resultados SIMCAR";
+  if (rel.includes("/simcar/input/")) return "Entradas SIMCAR";
+  if (rel.includes("/simcar/context/")) return "Contexto SIMCAR";
+  if (rel.includes("/auas/output/")) return "Resultados Novo CAR";
+  if (rel.includes("/auas/input/")) return "Entradas Novo CAR";
+  if (rel.includes("/auas/context/")) return "Contexto Novo CAR";
+  if (rel.includes("/cbers/output/")) return "CBERS conta";
+  if (rel.includes("/trash/")) return "Lixeira";
+  if (rel.endsWith(".json")) return "Historico/configuracao";
+  return "Outros arquivos";
+}
+
+function listUserIdsForAdmin(profiles: Record<string, PlainObject>, records: CbersArchiveRecord[]): string[] {
+  const usersDir = path.join(STORAGE_ROOT, "users");
+  const ids = new Set<string>(Object.keys(profiles));
+  if (fs.existsSync(usersDir)) {
+    for (const entry of fs.readdirSync(usersDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) ids.add(entry.name);
+    }
+  }
+  for (const record of records) ids.add(record.uid);
+  return [...ids].filter(Boolean).sort();
+}
+
+function listUserStorageFiles(uid: string): AdminStorageFile[] {
+  const cleanUid = safeSegment(uid);
+  const userDir = path.join(STORAGE_ROOT, "users", cleanUid);
+  if (!cleanUid || !fs.existsSync(userDir)) return [];
+  const files: AdminStorageFile[] = [];
+  const walk = (dir: string) => {
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const absolutePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(absolutePath);
+      } catch {
+        continue;
+      }
+      const relativePath = path.relative(STORAGE_ROOT, absolutePath).split(path.sep).join("/");
+      const extension = path.extname(entry.name).replace(/^\./, "").toLowerCase() || "sem_extensao";
+      files.push({
+        id: crypto.createHash("sha1").update(relativePath).digest("hex"),
+        uid: cleanUid,
+        name: entry.name,
+        relativePath,
+        absolutePath,
+        publicUrl: adminPublicStorageUrl(relativePath),
+        category: adminFileCategory(relativePath),
+        source: "user_storage",
+        extension,
+        bytes: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+        createdAt: stat.birthtime.toISOString(),
+      });
+    }
+  };
+  walk(userDir);
+  return files.sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0));
+}
+
+function cbersArchiveFileForAdmin(record: CbersArchiveRecord): AdminStorageFile | null {
+  if (record.adminDeletedAt) return null;
+  return {
+    id: `cbers_archive:${record.imageId}`,
+    uid: record.uid,
+    name: record.archiveFilename,
+    relativePath: record.hdRelativePath,
+    absolutePath: record.hdPath,
+    category: "CBERS WMS permanente",
+    source: "cbers_archive",
+    extension: path.extname(record.archiveFilename).replace(/^\./, "").toLowerCase() || "tif",
+    bytes: Number(record.bytes || 0),
+    createdAt: record.createdAt,
+    modifiedAt: record.updatedAt,
+    imageId: record.imageId,
+    wmsPublicUrl: record.wmsPublicUrl,
+    userDeletedAt: record.userDeletedAt,
+    adminDeletedAt: record.adminDeletedAt,
+  };
+}
+
+function summarizeAdminFiles(files: AdminStorageFile[]): PlainObject {
+  const byCategory: Record<string, PlainObject> = {};
+  const byExtension: Record<string, PlainObject> = {};
+  for (const file of files) {
+    const category = file.category || "Outros arquivos";
+    byCategory[category] = byCategory[category] || { category, count: 0, bytes: 0 };
+    byCategory[category].count += 1;
+    byCategory[category].bytes += Number(file.bytes || 0);
+    const extension = file.extension || "sem_extensao";
+    byExtension[extension] = byExtension[extension] || { extension, count: 0, bytes: 0 };
+    byExtension[extension].count += 1;
+    byExtension[extension].bytes += Number(file.bytes || 0);
+  }
+  return {
+    fileCount: files.length,
+    bytes: files.reduce((sum, file) => sum + Number(file.bytes || 0), 0),
+    byCategory: Object.values(byCategory).sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0)),
+    byExtension: Object.values(byExtension).sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0)),
+  };
+}
+
 async function deleteCbersArchiveRecord(imageId: string): Promise<CbersArchiveRecord | null> {
   const record = listCbersArchiveRecords().find((item) => item.imageId === safeSegment(imageId));
   if (!record || record.adminDeletedAt) return record || null;
@@ -499,6 +640,70 @@ async function deleteCbersArchiveRecord(imageId: string): Promise<CbersArchiveRe
 }
 
 export function registerCbersArchiveAdminRoutes(app: Express): void {
+  app.get("/api/admin/storage/summary", (_req: Request, res: ExpressResponse) => {
+    const profiles = listUserProfiles();
+    const records = listCbersArchiveRecords();
+    const users = listUserIdsForAdmin(profiles, records).map((uid) => {
+      const userFiles = listUserStorageFiles(uid);
+      const archiveFiles = records
+        .filter((record) => record.uid === uid)
+        .map(cbersArchiveFileForAdmin)
+        .filter((file): file is AdminStorageFile => Boolean(file));
+      const allFiles = [...userFiles, ...archiveFiles];
+      const summary = summarizeAdminFiles(allFiles);
+      const lastModifiedAt = allFiles
+        .map((file) => file.modifiedAt || file.createdAt || "")
+        .filter(Boolean)
+        .sort()
+        .at(-1) || "";
+      return {
+        uid,
+        email: profiles[uid]?.email || "",
+        fullName: profiles[uid]?.fullName || "",
+        fileCount: summary.fileCount,
+        bytes: summary.bytes,
+        lastModifiedAt,
+        byCategory: summary.byCategory,
+        byExtension: summary.byExtension,
+        cbersArchiveBytes: archiveFiles.reduce((sum, file) => sum + Number(file.bytes || 0), 0),
+        cbersArchiveCount: archiveFiles.length,
+      };
+    }).sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0));
+    const totals = summarizeAdminFiles(users.flatMap((user) => {
+      const userFiles = listUserStorageFiles(user.uid);
+      const archiveFiles = records
+        .filter((record) => record.uid === user.uid)
+        .map(cbersArchiveFileForAdmin)
+        .filter((file): file is AdminStorageFile => Boolean(file));
+      return [...userFiles, ...archiveFiles];
+    }));
+    res.json({
+      ok: true,
+      totalBytes: totals.bytes,
+      totalFiles: totals.fileCount,
+      users,
+      byCategory: totals.byCategory,
+      byExtension: totals.byExtension,
+    });
+  });
+
+  app.get("/api/admin/storage/users/:uid/files", (req: Request, res: ExpressResponse) => {
+    const uid = safeSegment(req.params.uid);
+    const records = listCbersArchiveRecords();
+    const userFiles = listUserStorageFiles(uid);
+    const archiveFiles = records
+      .filter((record) => record.uid === uid)
+      .map(cbersArchiveFileForAdmin)
+      .filter((file): file is AdminStorageFile => Boolean(file));
+    const files = [...userFiles, ...archiveFiles].sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0));
+    res.json({
+      ok: true,
+      uid,
+      ...summarizeAdminFiles(files),
+      files,
+    });
+  });
+
   app.get("/api/admin/cbers-storage/summary", (_req: Request, res: ExpressResponse) => {
     const profiles = listUserProfiles();
     const records = listCbersArchiveRecords();
