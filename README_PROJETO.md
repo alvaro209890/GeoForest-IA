@@ -32,6 +32,10 @@ Aplicação web moderna para autenticação e gestão de usuários especializado
 
 ## 🏗️ Arquitetura do Projeto
 
+Documentacao operacional complementar:
+
+- [WMS local, CBERS e acervo permanente](docs/WMS_CBERS.md)
+
 ```
 forest-eng-app/
 ├── client/
