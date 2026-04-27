@@ -106,34 +106,55 @@ export function buildWfsUrl(params: Record<string, string | number | undefined>)
   return url.toString();
 }
 
-export async function fetchTextWithTimeout(url: string, timeoutMs: number) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`WFS ${response.status}: ${text.slice(0, 220)}`);
-    }
-    return await response.text();
-  } finally {
-    clearTimeout(timer);
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function describeFetchFailure(error: any, timeoutMs: number): string {
+  if (error?.name === "AbortError") {
+    return `WFS timeout apos ${Math.round(timeoutMs / 1000)}s`;
   }
+  const cause = error?.cause;
+  const causeCode = cause?.code ? String(cause.code) : "";
+  const causeMessage = cause?.message ? String(cause.message) : "";
+  const detail = [causeCode, causeMessage].filter(Boolean).join(": ");
+  const message = String(error?.message || "falha de rede").trim();
+  return detail ? `WFS ${message} (${detail})` : `WFS ${message}`;
+}
+
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { signal: controller.signal });
+    } catch (error: any) {
+      lastError = error;
+      if (attempt < 2) await sleepMs(500);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error(describeFetchFailure(lastError, timeoutMs));
+}
+
+export async function fetchTextWithTimeout(url: string, timeoutMs: number) {
+  const response = await fetchWithTimeout(url, timeoutMs);
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`WFS ${response.status}: ${text.slice(0, 220)}`);
+  }
+  return await response.text();
 }
 
 export async function fetchJsonWithTimeout<T>(url: string, timeoutMs: number): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`WFS ${response.status}: ${text.slice(0, 220)}`);
-    }
-    return (await response.json()) as T;
-  } finally {
-    clearTimeout(timer);
+  const response = await fetchWithTimeout(url, timeoutMs);
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`WFS ${response.status}: ${text.slice(0, 220)}`);
   }
+  return (await response.json()) as T;
 }
 
 export function parseWfsLayerNamesFromCapabilities(xml: string) {
