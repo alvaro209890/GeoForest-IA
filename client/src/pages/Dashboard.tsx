@@ -494,6 +494,10 @@ type CbersHistoryItem = {
   outputRelativePath?: string;
   outputFilename?: string;
   outputBytes?: number;
+  batchZipUrl?: string;
+  batchZipRelativePath?: string;
+  batchZipFilename?: string;
+  batchZipBytes?: number;
 };
 
 const DEFAULT_SETTINGS: UserSettings = {
@@ -1024,6 +1028,11 @@ const cbersDownloadFilename = (item?: Pick<CbersHistoryItem, 'outputFilename' | 
   if (!item) return cbersOutputFilename(null);
   const explicit = 'outputFilename' in item ? item.outputFilename : undefined;
   return explicit || cbersOutputFilename(item.scene?.id || item.itemId || ('jobId' in item ? item.jobId : null));
+};
+
+const cbersBatchZipFilename = (jobId?: string | null) => {
+  const suffix = String(jobId || '').trim().slice(0, 8);
+  return `CBERS_4A_WPM_LOTE${suffix ? `_${suffix}` : ''}_C342_PAN.zip`;
 };
 
 function CbersMapPreview({
@@ -2037,6 +2046,10 @@ export default function Dashboard() {
       outputRelativePath: data?.outputRelativePath ? String(data.outputRelativePath) : undefined,
       outputFilename: data?.outputFilename ? String(data.outputFilename) : undefined,
       outputBytes: Number.isFinite(Number(data?.outputBytes)) ? Number(data.outputBytes) : undefined,
+      batchZipUrl: data?.batchZipUrl ? resolveBackendUrl(String(data.batchZipUrl)) : undefined,
+      batchZipRelativePath: data?.batchZipRelativePath ? String(data.batchZipRelativePath) : undefined,
+      batchZipFilename: data?.batchZipFilename ? String(data.batchZipFilename) : undefined,
+      batchZipBytes: Number.isFinite(Number(data?.batchZipBytes)) ? Number(data.batchZipBytes) : undefined,
     };
   }, []);
 
@@ -10271,6 +10284,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             Baixar GeoTIFF
                           </button>
                         )}
+                        {done && activeCbers?.batchZipUrl && (
+                          <button
+                            type="button"
+                            onClick={() => downloadSimcarZip(activeCbers.batchZipUrl, activeCbers.batchZipFilename || cbersBatchZipFilename(activeCbers.jobId))}
+                            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500 transition-colors"
+                          >
+                            <Download size={17} />
+                            Baixar todos em ZIP
+                          </button>
+                        )}
                         {Array.isArray(activeCbers?.scenes) && activeCbers.scenes.length > 0 && (
                           <div className="space-y-2">
                             <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Cenas do lote</p>
@@ -10305,6 +10328,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         {activeCbers?.outputBytes && (
                           <p className="text-center text-[10px] text-slate-500">
                             Arquivo final: {(activeCbers.outputBytes / 1024 / 1024).toFixed(1)} MB
+                          </p>
+                        )}
+                        {activeCbers?.batchZipBytes && (
+                          <p className="text-center text-[10px] text-slate-500">
+                            ZIP do lote: {(activeCbers.batchZipBytes / 1024 / 1024).toFixed(1)} MB
                           </p>
                         )}
                       </>
