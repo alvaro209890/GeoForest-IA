@@ -11,6 +11,7 @@ export type CbersArchiveRecord = {
   uid: string;
   jobId: string;
   itemId: string;
+  geometryHash?: string;
   orbit: string;
   year: string;
   sourceFilename: string;
@@ -404,6 +405,7 @@ export async function publishCbersPanToArchive(args: {
   uid: string;
   jobId: string;
   itemId: string;
+  geometryHash?: string | null;
   outputFilename: string;
   sourcePath: string;
 }): Promise<CbersArchiveRecord> {
@@ -431,6 +433,7 @@ export async function publishCbersPanToArchive(args: {
     uid: safeSegment(args.uid),
     jobId: safeSegment(args.jobId),
     itemId: args.itemId,
+    geometryHash: args.geometryHash || undefined,
     orbit,
     year,
     sourceFilename: args.outputFilename,
