@@ -454,6 +454,12 @@ type CbersScene = {
   coveragePercent?: number;
   coversArea?: boolean;
   estimate?: CbersEstimate;
+  wmsAvailable?: boolean;
+  wmsLayerName?: string;
+  wmsUrl?: string;
+  wmsDownloadUrl?: string;
+  archiveImageId?: string;
+  archiveFilename?: string;
 };
 
 type CbersJobStatus = 'processing' | 'completed' | 'failed' | 'cancelled';
@@ -478,6 +484,8 @@ type CbersHistoryItem = {
   jobId: string;
   filename: string;
   timestamp: string;
+  createdAt?: string;
+  updatedAt?: string;
   status: CbersJobStatus;
   stage?: string;
   percent: number;
@@ -488,12 +496,16 @@ type CbersHistoryItem = {
   mode?: 'single' | 'batch';
   collection?: string;
   areaHa?: number;
+  estimate?: CbersEstimate;
   scene?: CbersScene | null;
   scenes?: CbersSceneJobState[];
   outputUrl?: string;
   outputRelativePath?: string;
   outputFilename?: string;
   outputBytes?: number;
+  wmsLayerName?: string;
+  wmsUrl?: string;
+  wmsDownloadUrl?: string;
   batchZipUrl?: string;
   batchZipRelativePath?: string;
   batchZipFilename?: string;
@@ -1243,6 +1255,7 @@ export default function Dashboard() {
   const [cbersJobId, setCbersJobId] = useState<string | null>(null);
   const [cbersProgress, setCbersProgress] = useState<{ stage: string; percent: number; message: string } | null>(null);
   const [cbersError, setCbersError] = useState<string | null>(null);
+  const [cbersWmsDownloadingId, setCbersWmsDownloadingId] = useState<string | null>(null);
   const cbersFileInputRef = useRef<HTMLInputElement | null>(null);
   const cbersEventsAbortRef = useRef<AbortController | null>(null);
 
@@ -2007,6 +2020,12 @@ export default function Dashboard() {
         coveragePercent: Number.isFinite(Number(data.scene.coveragePercent)) ? Number(data.scene.coveragePercent) : undefined,
         coversArea: typeof data.scene.coversArea === 'boolean' ? data.scene.coversArea : undefined,
         estimate: isPlainObject(data.scene.estimate) ? data.scene.estimate as CbersEstimate : undefined,
+        wmsAvailable: Boolean(data.scene.wmsAvailable),
+        wmsLayerName: data.scene.wmsLayerName ? String(data.scene.wmsLayerName) : undefined,
+        wmsUrl: data.scene.wmsUrl ? String(data.scene.wmsUrl) : undefined,
+        wmsDownloadUrl: data.scene.wmsDownloadUrl ? String(data.scene.wmsDownloadUrl) : undefined,
+        archiveImageId: data.scene.archiveImageId ? String(data.scene.archiveImageId) : undefined,
+        archiveFilename: data.scene.archiveFilename ? String(data.scene.archiveFilename) : undefined,
       }
       : null;
     const scenes = Array.isArray(data?.scenes)
@@ -2030,6 +2049,8 @@ export default function Dashboard() {
       jobId: String(data?.jobId || docId),
       filename: String(data?.filename || 'CBERS-4A/WPM'),
       timestamp: toIsoDateFromUnknown(data?.timestamp || data?.updatedAt || data?.createdAt),
+      createdAt: data?.createdAt ? toIsoDateFromUnknown(data.createdAt) : undefined,
+      updatedAt: data?.updatedAt ? toIsoDateFromUnknown(data.updatedAt) : undefined,
       status,
       stage: data?.stage ? String(data.stage) : undefined,
       percent: Math.max(0, Math.min(100, Math.round(Number(data?.percent || 0)))),
@@ -2046,6 +2067,9 @@ export default function Dashboard() {
       outputRelativePath: data?.outputRelativePath ? String(data.outputRelativePath) : undefined,
       outputFilename: data?.outputFilename ? String(data.outputFilename) : undefined,
       outputBytes: Number.isFinite(Number(data?.outputBytes)) ? Number(data.outputBytes) : undefined,
+      wmsLayerName: data?.wmsLayerName ? String(data.wmsLayerName) : undefined,
+      wmsUrl: data?.wmsUrl ? String(data.wmsUrl) : undefined,
+      wmsDownloadUrl: data?.wmsDownloadUrl ? String(data.wmsDownloadUrl) : undefined,
       batchZipUrl: data?.batchZipUrl ? resolveBackendUrl(String(data.batchZipUrl)) : undefined,
       batchZipRelativePath: data?.batchZipRelativePath ? String(data.batchZipRelativePath) : undefined,
       batchZipFilename: data?.batchZipFilename ? String(data.batchZipFilename) : undefined,
@@ -2062,6 +2086,8 @@ export default function Dashboard() {
           ...job,
           filename: job.filename === 'CBERS-4A/WPM' ? item.filename : job.filename,
           timestamp: item.timestamp || job.timestamp,
+          createdAt: job.createdAt || item.createdAt,
+          updatedAt: job.updatedAt || item.updatedAt,
           itemId: job.itemId || item.itemId,
           collection: job.collection || item.collection,
           areaHa: job.areaHa ?? item.areaHa,
@@ -2072,6 +2098,9 @@ export default function Dashboard() {
           outputUrl: job.outputUrl || item.outputUrl,
           outputRelativePath: job.outputRelativePath || item.outputRelativePath,
           outputBytes: job.outputBytes ?? item.outputBytes,
+          wmsLayerName: job.wmsLayerName || item.wmsLayerName,
+          wmsUrl: job.wmsUrl || item.wmsUrl,
+          wmsDownloadUrl: job.wmsDownloadUrl || item.wmsDownloadUrl,
         } : item))
         : [job, ...prev];
       return next.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
@@ -2177,6 +2206,10 @@ export default function Dashboard() {
   );
 
   const toggleCbersSceneSelection = useCallback((scene: CbersScene) => {
+    if (scene.wmsAvailable) {
+      toast.info('Este recorte exato já está disponível no WMS. Use a imagem publicada em vez de gerar novamente.');
+      return;
+    }
     if (scene.coversArea === false) {
       toast.error(`Cena cobre apenas ${(scene.coveragePercent ?? 0).toFixed(2)}% da área.`);
       return;
@@ -2255,7 +2288,7 @@ export default function Dashboard() {
       setCbersAreaHa(Number.isFinite(Number(payload?.areaHa)) ? Number(payload.areaHa) : null);
       setCbersPropertyGeometry(isPlainObject(payload?.propertyGeometry) ? payload.propertyGeometry as CbersGeoJsonGeometry : null);
       setCbersScenes(scenes);
-      const firstCovered = scenes.find((scene) => scene.coversArea !== false);
+      const firstCovered = scenes.find((scene) => scene.coversArea !== false && !scene.wmsAvailable);
       setCbersSelectedSceneId(firstCovered?.id || scenes[0]?.id || null);
       setCbersSelectedSceneIds(firstCovered ? [firstCovered.id] : []);
       setCbersPreviewScene(null);
@@ -2283,9 +2316,13 @@ export default function Dashboard() {
     }
     const blocked = targetSceneIds
       .map((id) => cbersScenes.find((scene) => scene.id === id))
-      .find((scene) => scene?.coversArea === false);
+      .find((scene) => scene?.coversArea === false || scene?.wmsAvailable);
     if (blocked) {
-      toast.error(`Cena ${blocked.id} não cobre 100% da área.`);
+      toast.error(
+        blocked.wmsAvailable
+          ? `O recorte da cena ${blocked.id} já está disponível no WMS. Use a imagem existente.`
+          : `Cena ${blocked.id} não cobre 100% da área.`
+      );
       return;
     }
     setCbersError(null);
@@ -4217,6 +4254,35 @@ export default function Dashboard() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+  }, []);
+
+  const downloadCbersWmsZip = useCallback(async (scene: CbersScene) => {
+    const endpoint = scene.wmsDownloadUrl || (
+      scene.archiveImageId
+        ? `/api/cbers-wpm/wms-download?imageId=${encodeURIComponent(scene.archiveImageId)}`
+        : `/api/cbers-wpm/wms-download?itemId=${encodeURIComponent(scene.id)}`
+    );
+    const resolved = resolveBackendUrl(endpoint);
+    if (!resolved) {
+      toast.error('Link do ZIP da imagem WMS indisponível.');
+      return;
+    }
+    setCbersWmsDownloadingId(scene.id);
+    try {
+      const a = document.createElement('a');
+      a.href = resolved;
+      a.download = `${scene.archiveFilename || cbersOutputFilename(scene.id).replace(/\.(tif|tiff)$/i, '')}.zip`
+        .replace(/[^a-zA-Z0-9._-]/g, '_') || 'CBERS_4A_WPM.zip';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      toast.success('Download da imagem WMS iniciado.');
+    } catch (error: any) {
+      toast.error(error?.message || 'Falha ao baixar ZIP da imagem WMS.');
+    } finally {
+      window.setTimeout(() => setCbersWmsDownloadingId(null), 1200);
+    }
   }, []);
 
   const openSimcarPdfInNewTab = useCallback((url?: string | null) => {
@@ -10104,7 +10170,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <button
                       type="button"
                       onClick={() => void startCbersProcessing()}
-                      disabled={!cbersFile || cbersSelectedSceneIds.length === 0 || cbersProcessing || cbersSelectedScenes.some((scene) => scene.coversArea === false)}
+                      disabled={!cbersFile || cbersSelectedSceneIds.length === 0 || cbersProcessing || cbersSelectedScenes.some((scene) => scene.coversArea === false || scene.wmsAvailable)}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {cbersProcessing ? <Loader2 size={17} className="animate-spin" /> : <Cpu size={17} />}
@@ -10123,13 +10189,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           const selected = cbersSelectedSceneIds.includes(scene.id);
                           const date = scene.datetime ? new Date(scene.datetime).toLocaleDateString('pt-BR') : 'Sem data';
                           const coverage = Number(scene.coveragePercent ?? 0);
-                          const blocked = scene.coversArea === false;
+                          const availableOnWms = scene.wmsAvailable && scene.wmsUrl;
+                          const blocked = scene.coversArea === false || Boolean(availableOnWms);
                           return (
                             <button
                               key={scene.id}
                               type="button"
                               onClick={() => setCbersPreviewScene(scene)}
-                              className={`text-left rounded-xl border p-3 transition-all ${selected ? 'border-cyan-500/40 bg-cyan-500/10' : blocked ? 'border-red-500/20 bg-red-500/[0.04]' : 'border-white/10 bg-white/[0.03] hover:border-cyan-500/25 hover:bg-cyan-500/[0.04]'}`}
+                              className={`text-left rounded-xl border p-3 transition-all ${selected ? 'border-cyan-500/40 bg-cyan-500/10' : availableOnWms ? 'border-emerald-500/25 bg-emerald-500/[0.06] hover:border-emerald-400/40' : blocked ? 'border-red-500/20 bg-red-500/[0.04]' : 'border-white/10 bg-white/[0.03] hover:border-cyan-500/25 hover:bg-cyan-500/[0.04]'}`}
                             >
                               <div className="flex gap-3">
                                 <div className="h-16 w-16 rounded-lg border border-white/10 bg-black/30 overflow-hidden shrink-0">
@@ -10147,9 +10214,44 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                   <p className="mt-1 text-[10px] uppercase tracking-wider text-slate-500">
                                     {scene.cloudCover === null ? 'Nuvem n/d' : `Nuvem ${scene.cloudCover.toFixed(1)}%`}
                                   </p>
-                                  <p className={`mt-1 text-[10px] font-semibold uppercase tracking-wider ${blocked ? 'text-red-300' : 'text-emerald-300'}`}>
+                                  <p className={`mt-1 text-[10px] font-semibold uppercase tracking-wider ${scene.coversArea === false ? 'text-red-300' : 'text-emerald-300'}`}>
                                     Cobertura {Number.isFinite(coverage) ? coverage.toFixed(1) : '0.0'}%
                                   </p>
+                                  {availableOnWms && (
+                                    <div className="mt-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-2">
+                                      <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-200">
+                                        Disponível no WMS
+                                      </p>
+                                      <a
+                                        href={scene.wmsUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="mt-1 inline-flex max-w-full items-center gap-1 text-[10px] font-medium text-cyan-200 hover:text-cyan-100"
+                                      >
+                                        <ArrowUpRight size={12} />
+                                        <span className="truncate">{scene.wmsLayerName || scene.wmsUrl}</span>
+                                      </a>
+                                      <span
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void downloadCbersWmsZip(scene);
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key !== 'Enter' && e.key !== ' ') return;
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          void downloadCbersWmsZip(scene);
+                                        }}
+                                        className="mt-2 inline-flex max-w-full items-center gap-1 rounded-md border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-100 hover:bg-emerald-400/15"
+                                      >
+                                        {cbersWmsDownloadingId === scene.id ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                                        <span className="truncate">Baixar ZIP</span>
+                                      </span>
+                                    </div>
+                                  )}
                                 </div>
                                 <span
                                   role="button"
@@ -10164,8 +10266,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     e.stopPropagation();
                                     toggleCbersSceneSelection(scene);
                                   }}
-                                  className={`shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border ${selected ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' : 'border-white/10 bg-white/[0.04] text-slate-500'} ${blocked ? 'opacity-40' : 'hover:text-cyan-200'}`}
-                                  title={selected ? 'Remover seleção' : 'Selecionar cena'}
+                                  className={`shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border ${selected ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' : 'border-white/10 bg-white/[0.04] text-slate-500'} ${blocked ? 'opacity-40 cursor-not-allowed' : 'hover:text-cyan-200'}`}
+                                  title={availableOnWms ? 'Já disponível no WMS' : selected ? 'Remover seleção' : 'Selecionar cena'}
                                 >
                                   {selected ? <CheckSquare size={17} /> : <Square size={17} />}
                                 </span>
@@ -10215,6 +10317,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                   <p className="mt-1 text-xs text-slate-400">
                                     {scene.datetime ? new Date(scene.datetime).toLocaleDateString('pt-BR') : 'Sem data'}
                                   </p>
+                                  {scene.wmsAvailable && scene.wmsUrl && (
+                                    <a
+                                      href={scene.wmsUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="mt-2 inline-flex max-w-full items-center gap-1 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-200 hover:bg-emerald-500/15"
+                                    >
+                                      <ArrowUpRight size={12} />
+                                      <span className="truncate">Disponível no WMS</span>
+                                    </a>
+                                  )}
                                   <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
                                     <span className="rounded-md bg-white/[0.04] px-2 py-1 text-slate-300">
                                       Download: {estimate ? `${estimate.downloadMb.toFixed(1)} MB` : 'estimando'}
@@ -10244,6 +10357,37 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     const activeCbers = cbersJobId ? cbersHistory.find((item) => item.jobId === cbersJobId) : null;
                     const pct = Math.max(0, Math.min(100, Math.round(Number(cbersProgress?.percent ?? activeCbers?.percent ?? 0))));
                     const done = activeCbers?.status === 'completed';
+
+                    let totalEstimatedSeconds = 0;
+                    if (activeCbers?.mode === 'batch' && Array.isArray(activeCbers?.scenes)) {
+                      totalEstimatedSeconds = activeCbers.scenes.reduce((acc, s) => acc + (s.estimate?.timeSecondsEstimated || 0), 0);
+                    } else if (activeCbers?.scene?.estimate?.timeSecondsEstimated) {
+                      totalEstimatedSeconds = activeCbers.scene.estimate.timeSecondsEstimated;
+                    } else if (activeCbers?.estimate?.timeSecondsEstimated) {
+                      totalEstimatedSeconds = activeCbers.estimate.timeSecondsEstimated;
+                    }
+
+                    let timeRemainingStr = '';
+                    if (!done && pct > 0 && pct < 100 && (activeCbers?.status === 'processing' || cbersProcessing)) {
+                      let secondsRemaining = 0;
+                      if (totalEstimatedSeconds > 0) {
+                        secondsRemaining = Math.max(0, Math.round(totalEstimatedSeconds * (100 - pct) / 100));
+                      } else if (activeCbers?.createdAt || activeCbers?.timestamp) {
+                        const startedAtMs = new Date(activeCbers.createdAt || activeCbers.timestamp).getTime();
+                        const elapsedSeconds = Number.isFinite(startedAtMs)
+                          ? Math.max(0, (Date.now() - startedAtMs) / 1000)
+                          : 0;
+                        secondsRemaining = elapsedSeconds > 0 ? Math.round((elapsedSeconds * (100 - pct)) / pct) : 0;
+                      }
+                      if (secondsRemaining > 60) {
+                        timeRemainingStr = `~ ${Math.ceil(secondsRemaining / 60)} min restantes`;
+                      } else if (secondsRemaining > 0) {
+                        timeRemainingStr = `~ ${secondsRemaining} s restantes`;
+                      } else {
+                        timeRemainingStr = 'Concluindo...';
+                      }
+                    }
+
                     return (
                       <>
                         <div>
@@ -10251,9 +10395,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           <p className="mt-1 text-xs text-slate-500">{activeCbers?.scene?.id || activeCbers?.itemId || 'Nenhum job selecionado'}</p>
                         </div>
                         <div className="space-y-2">
-                          <div className="flex justify-between text-xs">
+                          <div className="flex justify-between text-xs items-end">
                             <span className="font-medium text-slate-300">{cbersProgress?.stage || activeCbers?.stage || 'Aguardando'}</span>
-                            <span className="font-bold tabular-nums text-cyan-300">{pct}%</span>
+                            <div className="flex flex-col items-end">
+                              <span className="font-bold tabular-nums text-cyan-300">{pct}%</span>
+                              {timeRemainingStr && (
+                                <span className="text-[10px] text-cyan-200/70 font-medium">{timeRemainingStr}</span>
+                              )}
+                            </div>
                           </div>
                           <div className="h-3 rounded-full bg-white/10 overflow-hidden">
                             <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-500" style={{ width: `${pct}%` }} />
@@ -10345,7 +10494,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   ? new Date(cbersPreviewScene.datetime).toLocaleString('pt-BR')
                   : 'Sem data';
                 const selected = cbersSelectedSceneIds.includes(cbersPreviewScene.id);
-                const blocked = cbersPreviewScene.coversArea === false;
+                const availableOnWms = cbersPreviewScene.wmsAvailable && cbersPreviewScene.wmsUrl;
+                const blocked = cbersPreviewScene.coversArea === false || Boolean(availableOnWms);
                 const estimate = cbersPreviewScene.estimate;
                 return (
                   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
@@ -10402,9 +10552,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               <p className="text-[10px] uppercase tracking-wider text-slate-500">Assets</p>
                               <p className="mt-1 text-sm font-semibold text-slate-100">{cbersPreviewScene.assetKeys.length}</p>
                             </div>
-                            <div className={`rounded-xl border p-3 ${blocked ? 'border-red-500/20 bg-red-500/10' : 'border-emerald-500/20 bg-emerald-500/10'}`}>
+                            <div className={`rounded-xl border p-3 ${cbersPreviewScene.coversArea === false ? 'border-red-500/20 bg-red-500/10' : 'border-emerald-500/20 bg-emerald-500/10'}`}>
                               <p className="text-[10px] uppercase tracking-wider text-slate-400">Cobertura</p>
-                              <p className={`mt-1 text-sm font-semibold ${blocked ? 'text-red-200' : 'text-emerald-200'}`}>
+                              <p className={`mt-1 text-sm font-semibold ${cbersPreviewScene.coversArea === false ? 'text-red-200' : 'text-emerald-200'}`}>
                                 {(cbersPreviewScene.coveragePercent ?? 0).toFixed(2)}%
                               </p>
                             </div>
@@ -10431,7 +10581,38 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               </div>
                             </div>
                           )}
-                          {blocked && (
+                          {availableOnWms && (
+                            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-100">
+                              <div className="flex items-start gap-2">
+                                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-300" />
+                                <div className="min-w-0">
+                                  <p className="font-semibold">Este recorte exato já está disponível no WMS.</p>
+                                  <p className="mt-1 text-xs text-emerald-200/80">
+                                    O mesmo recorte ja foi publicado no acervo local, inclusive quando ele foi gerado por outra conta. Use a imagem existente em vez de gerar novamente.
+                                  </p>
+                                  <a
+                                    href={cbersPreviewScene.wmsUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="mt-2 inline-flex max-w-full items-center gap-1 text-xs font-semibold text-cyan-100 hover:text-white"
+                                  >
+                                    <ArrowUpRight size={13} />
+                                    <span className="truncate">{cbersPreviewScene.wmsLayerName || cbersPreviewScene.wmsUrl}</span>
+                                  </a>
+                                  <button
+                                    type="button"
+                                    onClick={() => void downloadCbersWmsZip(cbersPreviewScene)}
+                                    disabled={cbersWmsDownloadingId === cbersPreviewScene.id}
+                                    className="mt-3 inline-flex items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-50 transition-colors hover:bg-emerald-400/15 disabled:opacity-60"
+                                  >
+                                    {cbersWmsDownloadingId === cbersPreviewScene.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                                    Baixar ZIP da imagem
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          {cbersPreviewScene.coversArea === false && (
                             <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200">
                               Esta cena não cobre 100% do imóvel e está bloqueada para evitar GeoTIFF incompleto.
                             </div>
@@ -10460,6 +10641,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             <button
                               type="button"
                               onClick={() => {
+                                if (availableOnWms) return;
                                 setCbersSelectedSceneId(cbersPreviewScene.id);
                                 if (!cbersSelectedSceneIds.includes(cbersPreviewScene.id)) {
                                   setCbersSelectedSceneIds((prev) => [...prev, cbersPreviewScene.id]);
