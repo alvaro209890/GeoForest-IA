@@ -7342,8 +7342,12 @@ function cqlString(value: string): string {
 
 function normalizeCarLookupValues(raw: string): string[] {
     const compact = String(raw || "").trim().replace(/\s+/g, "").toUpperCase();
+    const alnum = compact.replace(/[^A-Z0-9]/g, "");
     const withoutCarPrefix = compact.replace(/^CAR[_-]?/i, "");
-    return Array.from(new Set([compact, withoutCarPrefix].filter(Boolean)));
+    const withoutCarPrefixAlnum = withoutCarPrefix.replace(/[^A-Z0-9]/g, "");
+    return Array.from(
+        new Set([compact, alnum, withoutCarPrefix, withoutCarPrefixAlnum].filter(Boolean)),
+    );
 }
 
 function xmlDecode(value: string): string {
@@ -7421,9 +7425,11 @@ function parseGmlPosList(text: string): number[][] {
 function parseSigefGeometryFromGml(xml: string): Polygon | MultiPolygon | null {
     const featureMatch = String(xml || "").match(/<gml:featureMember\b[\s\S]*?<\/gml:featureMember>/i);
     if (!featureMatch) return null;
-    const geometryMatch = featureMatch[0].match(/<ms:msGeometry\b[^>]*>([\s\S]*?)<\/ms:msGeometry>/i);
-    if (!geometryMatch) return null;
-    const geometryXml = geometryMatch[1];
+    return parsePolygonGeometryFromGml(featureMatch[0]);
+}
+
+function parsePolygonGeometryFromGml(xml: string): Polygon | MultiPolygon | null {
+    const geometryXml = String(xml || "");
     const polygons: number[][][][] = [];
     const polygonRegex = /<gml:Polygon\b[^>]*>([\s\S]*?)<\/gml:Polygon>/gi;
     let polygonMatch: RegExpExecArray | null;
@@ -7451,6 +7457,62 @@ function parseSigefGeometryFromGml(xml: string): Polygon | MultiPolygon | null {
         return { type: "MultiPolygon", coordinates: polygons };
     }
     return null;
+}
+
+async function fetchCarBoundaryFromWfs(
+    fieldName: string,
+    fieldValue: string,
+): Promise<Feature<Polygon | MultiPolygon> | null> {
+    const cqlFilter = `${fieldName}=${cqlString(fieldValue)}`;
+    const jsonUrl = buildWfsUrl({
+        service: "WFS",
+        version: "1.0.0",
+        request: "GetFeature",
+        typeName: "Geoportal:CAR_ATP",
+        outputFormat: "application/json",
+        srsName: "EPSG:4674",
+        maxFeatures: 1,
+        CQL_FILTER: cqlFilter,
+    }, { includeAuthkey: false });
+
+    try {
+        const featureCollection = await fetchJsonWithTimeout<any>(jsonUrl, WFS_TIMEOUT_MS);
+        const feature = Array.isArray(featureCollection?.features) ? featureCollection.features[0] : null;
+        if (feature?.geometry) {
+            const geom = normalizePolygonGeometry(feature.geometry);
+            if (geom) {
+                return {
+                    type: "Feature",
+                    properties: feature.properties || {},
+                    geometry: geom,
+                };
+            }
+        }
+    } catch (error) {
+        const msg = String((error as any)?.message || "");
+        if (!/ECONNRESET|timeout|WFS \d+|Unexpected token <|not valid JSON|JSON/i.test(msg)) {
+            throw error;
+        }
+    }
+
+    const gmlUrl = buildWfsUrl({
+        service: "WFS",
+        version: "1.0.0",
+        request: "GetFeature",
+        typeName: "Geoportal:CAR_ATP",
+        srsName: "EPSG:4674",
+        maxFeatures: 1,
+        CQL_FILTER: cqlFilter,
+    }, { includeAuthkey: false });
+
+    const xml = await fetchTextWithTimeout(gmlUrl, WFS_TIMEOUT_MS);
+    const geometry = parsePolygonGeometryFromGml(xml);
+    if (!geometry) return null;
+    return {
+        type: "Feature",
+        properties: { [fieldName]: fieldValue },
+        geometry,
+    };
 }
 
 async function fetchSigefBoundaryByParcelCode(parcelCodeRaw: string): Promise<Feature<Polygon | MultiPolygon>> {
@@ -7484,38 +7546,25 @@ async function fetchCarBoundaryByNumber(carNumber: string): Promise<Feature<Poly
     const values = normalizeCarLookupValues(carNumber);
     if (!values.length) throw new Error("Número do CAR inválido.");
 
-    const cqlFilter = values
-        .flatMap((value) => [
-            `NUMEROESTADUAL=${cqlString(value)}`,
-            `CAR_FEDERAL=${cqlString(value)}`,
-            `PROTOCOLO=${cqlString(value)}`,
-        ])
-        .join(" OR ");
+    const fields = ["NUMEROESTADUAL", "CAR_FEDERAL", "PROTOCOLO"];
+    const errors: string[] = [];
 
-    const wfsUrl = buildWfsUrl({
-        service: "WFS",
-        version: "1.0.0",
-        request: "GetFeature",
-        typeName: "Geoportal:CAR_ATP",
-        outputFormat: "application/json",
-        srsName: "EPSG:4674",
-        maxFeatures: 1,
-        CQL_FILTER: cqlFilter,
-    });
-
-    const featureCollection = await fetchJsonWithTimeout<any>(wfsUrl, WFS_TIMEOUT_MS);
-    const feature = Array.isArray(featureCollection?.features) ? featureCollection.features[0] : null;
-    if (!feature) {
-        throw new Error(`Nenhum imóvel encontrado na camada CAR_ATP da SEMA para o CAR: ${values.join(" / ")}`);
+    for (const fieldName of fields) {
+        for (const value of values) {
+            try {
+                const feature = await fetchCarBoundaryFromWfs(fieldName, value);
+                if (feature) return feature;
+            } catch (error: any) {
+                const msg = String(error?.message || error || "");
+                errors.push(`${fieldName}=${value}: ${msg}`);
+            }
+        }
     }
 
-    const geom = normalizePolygonGeometry(feature.geometry);
-    if (!geom) throw new Error("A geometria retornada pelo WFS não é um polígono válido.");
-    return {
-        type: "Feature",
-        properties: feature.properties || {},
-        geometry: geom,
-    };
+    throw new Error(
+        `Nenhum imóvel encontrado na camada CAR_ATP da SEMA para o CAR: ${values.join(" / ")}.` +
+        (errors.length > 0 ? ` Detalhes: ${errors.slice(0, 3).join(" | ")}` : ""),
+    );
 }
 
 async function persistSimcarClipProcessingState(args: {

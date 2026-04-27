@@ -94,13 +94,16 @@ function sanitizeLayerNames(input: unknown): string[] {
   return out;
 }
 
-export function buildWfsUrl(params: Record<string, string | number | undefined>) {
+export function buildWfsUrl(
+  params: Record<string, string | number | undefined>,
+  options: { includeAuthkey?: boolean } = {},
+) {
   const url = new URL(WFS_BASE_URL);
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null) continue;
     url.searchParams.set(key, String(value));
   }
-  if (WFS_AUTHKEY) {
+  if (options.includeAuthkey !== false && WFS_AUTHKEY) {
     url.searchParams.set("authkey", WFS_AUTHKEY);
   }
   return url.toString();
