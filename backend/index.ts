@@ -280,6 +280,7 @@ async function startServer() {
       "/api/simcar/clip/analyze",
       "/api/simcar/clip/analyze-auas",
       "/api/simcar/clip/analyze/chat",
+      "/api/simcar/clip/report",
       "/api/auas/analyze",
       "/api/process/cancel",
       "/api/account/bootstrap",
