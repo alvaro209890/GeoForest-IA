@@ -617,7 +617,8 @@ function parseCbersItemIdForWms(itemId: string): {
 function cbersSceneMergeKey(itemId: string): string {
   const parsed = parseCbersItemIdForWms(itemId);
   if (!parsed) return normalizeLayerName(itemId);
-  return [parsed.dateCompact, parsed.orbit, parsed.row].join("_");
+  const level = parsed.level || "l4";
+  return [parsed.dateCompact, parsed.orbit, parsed.row, level].join("_");
 }
 
 function cbersAlternateLevelItemId(itemId: string, targetLevel: CbersCollectionLevel): string | null {
@@ -904,11 +905,12 @@ async function searchCbersScenes(
   const requestedOrbit = options?.orbit || null;
   const requestedPoint = options?.point || null;
   const maxPages = bbox ? 1 : CBERS_ORBIT_POINT_SEARCH_MAX_PAGES;
+  const outputLimit = CBERS_SEARCH_LIMIT * CBERS_COLLECTIONS.length;
   const byEquivalentScene = new Map<string, CbersScene>();
   const seen = new Set<string>();
   for (const collection of [...CBERS_COLLECTIONS].sort((a, b) => a.priority - b.priority)) {
     let url: string | null = `${STAC_ROOT}/collections/${encodeURIComponent(collection.collectionId)}/items?${params.toString()}`;
-    for (let page = 0; url && page < maxPages && byEquivalentScene.size < CBERS_SEARCH_LIMIT; page += 1) {
+    for (let page = 0; url && page < maxPages && byEquivalentScene.size < outputLimit; page += 1) {
       const payload: any = await fetchJson<any>(url);
       const features: any[] = Array.isArray(payload?.features) ? payload.features : [];
       for (const feature of features) {
@@ -928,7 +930,7 @@ async function searchCbersScenes(
             fallbackFromL2: collection.level === "L2",
           });
         }
-        if (byEquivalentScene.size >= CBERS_SEARCH_LIMIT) break;
+        if (byEquivalentScene.size >= outputLimit) break;
       }
       const nextHref: string = Array.isArray(payload?.links)
         ? String(payload.links.find((link: any) => String(link?.rel || "").toLowerCase() === "next")?.href || "")
