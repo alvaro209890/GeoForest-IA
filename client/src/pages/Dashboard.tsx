@@ -1275,6 +1275,7 @@ export default function Dashboard() {
   const [cbersPreviewScene, setCbersPreviewScene] = useState<CbersScene | null>(null);
   const [cbersOrbit, setCbersOrbit] = useState('');
   const [cbersPoint, setCbersPoint] = useState('');
+  const [cbersCarNumber, setCbersCarNumber] = useState('');
   const [cbersDateStart, setCbersDateStart] = useState('');
   const [cbersDateEnd, setCbersDateEnd] = useState('');
   const [cbersSortOrder, setCbersSortOrder] = useState<'desc' | 'asc'>('desc');
@@ -1317,6 +1318,7 @@ export default function Dashboard() {
     setCbersPreviewScene(null);
     setCbersOrbit('');
     setCbersPoint('');
+    setCbersCarNumber('');
     setCbersDateStart('');
     setCbersDateEnd('');
     setCbersSortOrder('desc');
@@ -2269,10 +2271,13 @@ export default function Dashboard() {
     setCbersEstimating(true);
     try {
       const body: Record<string, unknown> = { itemIds };
+      const carNumber = cbersCarNumber.trim();
       if (cbersFile) {
         const propertyZip = cbersPropertyZipB64 || await fileToBase64Payload(cbersFile);
         setCbersPropertyZipB64(propertyZip);
         body.propertyZip = propertyZip;
+      } else if (carNumber) {
+        body.carNumber = carNumber;
       }
       const response = await apiFetch('/api/cbers-wpm/estimate', {
         method: 'POST',
@@ -2295,7 +2300,7 @@ export default function Dashboard() {
     } finally {
       setCbersEstimating(false);
     }
-  }, [apiFetch, cbersFile, cbersPropertyZipB64, fileToBase64Payload]);
+  }, [apiFetch, cbersCarNumber, cbersFile, cbersPropertyZipB64, fileToBase64Payload]);
 
   useEffect(() => {
     const missing = cbersSelectedScenes
@@ -2304,12 +2309,31 @@ export default function Dashboard() {
     if (missing.length > 0) void estimateCbersScenes(missing);
   }, [cbersSelectedScenes, estimateCbersScenes]);
 
+  const applyCbersZipFile = useCallback((file: File | null) => {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      toast.error('Envie um shapefile compactado em .zip.');
+      return;
+    }
+    setCbersFile(file);
+    setCbersPropertyZipB64(null);
+    setCbersScenes([]);
+    setCbersSelectedSceneId(null);
+    setCbersSelectedSceneIds([]);
+    setCbersPreviewScene(null);
+    setCbersPropertyGeometry(null);
+    setCbersAreaHa(null);
+    setCbersError(null);
+    setCbersCarNumber('');
+  }, []);
+
   const searchCbersScenes = useCallback(async () => {
     const orbit = cbersOrbit.trim();
     const point = cbersPoint.trim();
+    const carNumber = cbersCarNumber.trim();
     const hasDirectFilter = orbit.length > 0 && point.length > 0;
-    if (!cbersFile && !hasDirectFilter) {
-      toast.error('Selecione um ZIP/SHP ou informe órbita e ponto.');
+    if (!cbersFile && !carNumber && !hasDirectFilter) {
+      toast.error('Selecione um ZIP/SHP, informe Nº do CAR estadual ou informe órbita e ponto.');
       return;
     }
     if (cbersDateStart && cbersDateEnd && cbersDateStart > cbersDateEnd) {
@@ -2332,6 +2356,10 @@ export default function Dashboard() {
         setCbersPropertyZipB64(propertyZip);
         body.propertyZip = propertyZip;
         body.filename = cbersFile.name;
+      } else if (carNumber) {
+        setCbersPropertyZipB64(null);
+        body.carNumber = carNumber;
+        body.filename = `CAR_${carNumber}.zip`;
       } else {
         setCbersPropertyZipB64(null);
       }
@@ -2351,7 +2379,7 @@ export default function Dashboard() {
       setCbersSelectedSceneIds(firstCovered ? [firstCovered.id] : []);
       setCbersPreviewScene(null);
       if (!scenes.length) {
-        toast.info(hasDirectFilter ? 'Nenhuma cena CBERS-4A/WPM encontrada para essa órbita/ponto.' : 'Nenhuma cena CBERS-4A/WPM encontrada para essa área.');
+        toast.info(hasDirectFilter && !carNumber ? 'Nenhuma cena CBERS-4A/WPM encontrada para essa órbita/ponto.' : 'Nenhuma cena CBERS-4A/WPM encontrada para essa área.');
       }
     } catch (error: any) {
       const message = error?.message || 'Falha ao buscar cenas CBERS.';
@@ -2360,7 +2388,7 @@ export default function Dashboard() {
     } finally {
       setCbersSearching(false);
     }
-  }, [apiFetch, cbersDateEnd, cbersDateStart, cbersFile, cbersOrbit, cbersPoint, fileToBase64Payload, sortCbersScenes]);
+  }, [apiFetch, cbersCarNumber, cbersDateEnd, cbersDateStart, cbersFile, cbersOrbit, cbersPoint, fileToBase64Payload, sortCbersScenes]);
 
   const startCbersProcessing = useCallback(async (sceneIdOverride?: string) => {
     const targetSceneIds = sceneIdOverride
@@ -2387,7 +2415,8 @@ export default function Dashboard() {
     setCbersProcessing(true);
     setCbersProgress({ stage: 'queued', percent: 1, message: 'Enviando processamento CBERS ao servidor.' });
     try {
-      const filename = cbersFile?.name || `CBERS_${targetSceneIds[0] || 'ORBITA_PONTO'}`;
+      const carNumber = cbersCarNumber.trim();
+      const filename = cbersFile?.name || (carNumber ? `CAR_${carNumber}.zip` : `CBERS_${targetSceneIds[0] || 'ORBITA_PONTO'}`);
       const body: Record<string, unknown> = {
         filename,
         itemId: targetSceneIds[0],
@@ -2397,6 +2426,8 @@ export default function Dashboard() {
         const propertyZip = cbersPropertyZipB64 || await fileToBase64Payload(cbersFile);
         setCbersPropertyZipB64(propertyZip);
         body.propertyZip = propertyZip;
+      } else if (carNumber) {
+        body.carNumber = carNumber;
       }
       const response = await apiFetch('/api/cbers-wpm/jobs', {
         method: 'POST',
@@ -2445,6 +2476,7 @@ export default function Dashboard() {
     apiFetch,
     applyCbersJobPatch,
     cbersAreaHa,
+    cbersCarNumber,
     cbersFile,
     cbersPropertyZipB64,
     cbersScenes,
@@ -10189,7 +10221,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <h3 className="text-base font-semibold text-white">Área de interesse</h3>
-                      <p className="text-xs text-slate-500 mt-1">Opcional: use ZIP/SHP para validar cobertura, ou filtre direto por órbita e ponto.</p>
+                      <p className="text-xs text-slate-500 mt-1">Use ZIP/SHP da ATP, Nº do CAR estadual ou filtre direto por órbita e ponto.</p>
                     </div>
                     {cbersAreaHa !== null && (
                       <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-200">
@@ -10198,31 +10230,101 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     )}
                   </div>
 
-                  <label className={`group relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-8 transition-all cursor-pointer ${cbersFile ? 'border-cyan-500/40 bg-cyan-500/5' : 'border-white/10 bg-white/[0.02] hover:border-cyan-500/30 hover:bg-white/[0.03]'}`}>
+                  <div>
+                    <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Nº do CAR estadual</label>
+                    <input
+                      type="text"
+                      value={cbersCarNumber}
+                      onChange={(e) => {
+                        const value = e.target.value.trim();
+                        setCbersCarNumber(value);
+                        if (value) {
+                          setCbersFile(null);
+                          setCbersPropertyZipB64(null);
+                          setCbersScenes([]);
+                          setCbersSelectedSceneId(null);
+                          setCbersSelectedSceneIds([]);
+                          setCbersPreviewScene(null);
+                          setCbersPropertyGeometry(null);
+                          setCbersAreaHa(null);
+                          setCbersError(null);
+                          if (cbersFileInputRef.current) cbersFileInputRef.current.value = '';
+                        }
+                      }}
+                      disabled={Boolean(cbersFile)}
+                      placeholder="Ex: MT-5107768-XXXXXXX..."
+                      className={`w-full rounded-xl border bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none placeholder-slate-600 focus:border-cyan-500/50 ${cbersFile ? 'border-white/5 opacity-40 cursor-not-allowed' : 'border-white/10'}`}
+                    />
+                    <p className="mt-1 text-[10px] text-slate-500">
+                      {cbersCarNumber.trim()
+                        ? 'A ATP será buscada automaticamente no WFS da SEMA, pelo mesmo sistema do recorte SIMCAR.'
+                        : cbersFile
+                          ? 'Remova o ZIP para buscar pelo Nº do CAR.'
+                          : 'Preencha para usar a geometria do CAR estadual sem enviar ZIP.'}
+                    </p>
+                  </div>
+
+                  <label
+                    className={`group relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-8 transition-all ${cbersCarNumber.trim()
+                      ? 'border-white/5 bg-white/[0.01] opacity-40 cursor-not-allowed'
+                      : cbersFile
+                        ? 'border-cyan-500/40 bg-cyan-500/5 cursor-pointer'
+                        : 'border-white/10 bg-white/[0.02] hover:border-cyan-500/30 hover:bg-white/[0.03] cursor-pointer'
+                      }`}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (!cbersCarNumber.trim()) e.dataTransfer.dropEffect = 'copy';
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (cbersCarNumber.trim()) return;
+                      applyCbersZipFile(e.dataTransfer.files?.[0] || null);
+                    }}
+                  >
                     <input
                       ref={cbersFileInputRef}
                       type="file"
                       accept=".zip,application/zip"
                       className="hidden"
+                      disabled={Boolean(cbersCarNumber.trim())}
                       onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        setCbersFile(file);
-                        setCbersPropertyZipB64(null);
-                        setCbersScenes([]);
-                        setCbersSelectedSceneId(null);
-                        setCbersSelectedSceneIds([]);
-                        setCbersPreviewScene(null);
-                        setCbersPropertyGeometry(null);
-                        setCbersError(null);
+                        applyCbersZipFile(e.target.files?.[0] || null);
                       }}
                     />
-                    <div className={`rounded-xl p-3 ${cbersFile ? 'bg-cyan-500/15 text-cyan-200' : 'bg-white/5 text-slate-400 group-hover:text-cyan-300'}`}>
+                    <div className={`rounded-xl p-3 ${cbersFile ? 'bg-cyan-500/15 text-cyan-200' : cbersCarNumber.trim() ? 'bg-white/5 text-slate-600' : 'bg-white/5 text-slate-400 group-hover:text-cyan-300'}`}>
                       <Upload size={22} />
                     </div>
                     <div className="text-center min-w-0">
-                      <p className="text-sm font-semibold text-white truncate">{cbersFile ? cbersFile.name : 'Selecionar ZIP da área'}</p>
-                      <p className="mt-1 text-xs text-slate-500">{cbersFile ? `${(cbersFile.size / 1024).toFixed(0)} KB` : 'Opcional: shapefile compactado em .zip'}</p>
+                      <p className="text-sm font-semibold text-white truncate">
+                        {cbersCarNumber.trim() ? 'Upload desabilitado pelo Nº do CAR' : cbersFile ? cbersFile.name : 'Arraste ou selecione o ZIP da ATP'}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {cbersFile ? `${(cbersFile.size / 1024).toFixed(0)} KB` : cbersCarNumber.trim() ? 'Limpe o CAR para enviar ZIP/SHP.' : 'Shapefile compactado em .zip'}
+                      </p>
                     </div>
+                    {cbersFile && !cbersCarNumber.trim() && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setCbersFile(null);
+                          setCbersPropertyZipB64(null);
+                          setCbersScenes([]);
+                          setCbersSelectedSceneId(null);
+                          setCbersSelectedSceneIds([]);
+                          setCbersPreviewScene(null);
+                          setCbersPropertyGeometry(null);
+                          setCbersAreaHa(null);
+                          setCbersError(null);
+                          if (cbersFileInputRef.current) cbersFileInputRef.current.value = '';
+                        }}
+                        className="absolute right-3 top-3 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-white/10 hover:text-red-300"
+                        aria-label="Remover ZIP CBERS"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
                   </label>
 
                   {cbersError && (
@@ -10290,7 +10392,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <button
                       type="button"
                       onClick={() => void searchCbersScenes()}
-                      disabled={(!cbersFile && (!cbersOrbit.trim() || !cbersPoint.trim())) || cbersSearching || cbersProcessing}
+                      disabled={(!cbersFile && !cbersCarNumber.trim() && (!cbersOrbit.trim() || !cbersPoint.trim())) || cbersSearching || cbersProcessing}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {cbersSearching ? <Loader2 size={17} className="animate-spin" /> : <Search size={17} />}

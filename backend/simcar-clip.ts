@@ -7544,7 +7544,7 @@ async function fetchSigefBoundaryByParcelCode(parcelCodeRaw: string): Promise<Fe
     };
 }
 
-async function fetchCarBoundaryByNumber(carNumber: string): Promise<Feature<Polygon | MultiPolygon>> {
+export async function fetchCarBoundaryByNumber(carNumber: string): Promise<Feature<Polygon | MultiPolygon>> {
     const values = normalizeCarLookupValues(carNumber);
     if (!values.length) throw new Error("Número do CAR inválido.");
 

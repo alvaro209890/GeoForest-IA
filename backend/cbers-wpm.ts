@@ -11,7 +11,7 @@ import {
   intersect as turfIntersect,
 } from "@turf/turf";
 import type { Feature, Geometry, MultiPolygon, Polygon } from "geojson";
-import { parseUserShapefile } from "./simcar-clip";
+import { fetchCarBoundaryByNumber, parseUserShapefile } from "./simcar-clip";
 import {
   deleteDocBySegments,
   readDocBySegments,
@@ -337,6 +337,24 @@ function parseOptionalAreaContext(raw: unknown): CbersAreaContext {
     geometryHash: hashPropertyGeometry(parsed.geometry),
     areaHa: parsed.areaHa,
   };
+}
+
+async function resolveAreaContextFromRequest(body: any): Promise<CbersAreaContext> {
+  const propertyZip = body?.propertyZip;
+  const carNumber = String(body?.carNumber || "").trim();
+  if (propertyZip && carNumber) {
+    throw new Error("Informe ZIP/SHP ou Nº do CAR estadual, não os dois ao mesmo tempo.");
+  }
+  if (carNumber) {
+    const feature = await fetchCarBoundaryByNumber(carNumber);
+    const geometry = feature.geometry;
+    return {
+      geometry,
+      geometryHash: hashPropertyGeometry(geometry),
+      areaHa: turfArea(feature) / 10000,
+    };
+  }
+  return parseOptionalAreaContext(propertyZip);
 }
 
 function featureBbox(feature: Feature<Polygon | MultiPolygon>): [number, number, number, number] {
@@ -1739,7 +1757,7 @@ export function registerCbersWpmRoutes(app: Express): void {
 
   app.post("/api/cbers-wpm/search", async (req: Request, res: Response) => {
     try {
-      const area = parseOptionalAreaContext((req.body as any)?.propertyZip);
+      const area = await resolveAreaContextFromRequest(req.body);
       const bbox = area.geometry ? featureBbox({ type: "Feature", properties: {}, geometry: area.geometry }) : null;
       const dateStart = normalizeDateParam((req.body as any)?.dateStart, false);
       const dateEnd = normalizeDateParam((req.body as any)?.dateEnd, true);
@@ -1776,7 +1794,7 @@ export function registerCbersWpmRoutes(app: Express): void {
 
   app.post("/api/cbers-wpm/estimate", async (req: Request, res: Response) => {
     try {
-      const area = parseOptionalAreaContext((req.body as any)?.propertyZip);
+      const area = await resolveAreaContextFromRequest(req.body);
       const rawIds = Array.isArray((req.body as any)?.itemIds)
         ? (req.body as any).itemIds
         : [(req.body as any)?.itemId];
@@ -1863,7 +1881,7 @@ export function registerCbersWpmRoutes(app: Express): void {
         res.status(400).json({ error: "itemId ou itemIds é obrigatório." });
         return;
       }
-      const area = parseOptionalAreaContext((req.body as any)?.propertyZip);
+      const area = await resolveAreaContextFromRequest(req.body);
       const archivedItem = itemIds.find((itemId) => Boolean(findExactArchiveAvailability(itemId, area.geometryHash)));
       if (archivedItem) {
         const archive = findExactArchiveAvailability(archivedItem, area.geometryHash);
