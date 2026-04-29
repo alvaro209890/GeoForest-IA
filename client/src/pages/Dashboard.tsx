@@ -1278,6 +1278,7 @@ export default function Dashboard() {
   const [cbersCarNumber, setCbersCarNumber] = useState('');
   const [cbersDateStart, setCbersDateStart] = useState('');
   const [cbersDateEnd, setCbersDateEnd] = useState('');
+  const [cbersMaxCloudCover, setCbersMaxCloudCover] = useState('');
   const [cbersSortOrder, setCbersSortOrder] = useState<'desc' | 'asc'>('desc');
   const [cbersAreaHa, setCbersAreaHa] = useState<number | null>(null);
   const [cbersPropertyGeometry, setCbersPropertyGeometry] = useState<CbersGeoJsonGeometry | null>(null);
@@ -1321,6 +1322,7 @@ export default function Dashboard() {
     setCbersCarNumber('');
     setCbersDateStart('');
     setCbersDateEnd('');
+    setCbersMaxCloudCover('');
     setCbersSortOrder('desc');
     setCbersAreaHa(null);
     setCbersPropertyGeometry(null);
@@ -2231,17 +2233,36 @@ export default function Dashboard() {
   const cbersVisibleScenes = useMemo(() => {
     const startMs = cbersDateStart ? new Date(`${cbersDateStart}T00:00:00`).getTime() : null;
     const endMs = cbersDateEnd ? new Date(`${cbersDateEnd}T23:59:59`).getTime() : null;
+    const maxCloud = cbersMaxCloudCover.trim() ? Number(cbersMaxCloudCover) : null;
     return sortCbersScenes(
       cbersScenes.filter((scene) => {
-        if (!scene.datetime) return true;
-        const sceneMs = new Date(scene.datetime).getTime();
-        if (!Number.isFinite(sceneMs)) return true;
-        if (startMs !== null && Number.isFinite(startMs) && sceneMs < startMs) return false;
-        if (endMs !== null && Number.isFinite(endMs) && sceneMs > endMs) return false;
+        if (maxCloud !== null && Number.isFinite(maxCloud)) {
+          if (scene.cloudCover === null) return false;
+          if (scene.cloudCover > maxCloud) return false;
+        }
+        if (scene.datetime) {
+          const sceneMs = new Date(scene.datetime).getTime();
+          if (Number.isFinite(sceneMs)) {
+            if (startMs !== null && Number.isFinite(startMs) && sceneMs < startMs) return false;
+            if (endMs !== null && Number.isFinite(endMs) && sceneMs > endMs) return false;
+          }
+        }
         return true;
       })
     );
-  }, [cbersDateEnd, cbersDateStart, cbersScenes, sortCbersScenes]);
+  }, [cbersDateEnd, cbersDateStart, cbersMaxCloudCover, cbersScenes, sortCbersScenes]);
+
+  useEffect(() => {
+    if (cbersScenes.length === 0) return;
+    const visibleIds = new Set(cbersVisibleScenes.map((scene) => scene.id));
+    setCbersSelectedSceneIds((prev) => {
+      const next = prev.filter((id) => visibleIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+    if (cbersSelectedSceneId && !visibleIds.has(cbersSelectedSceneId)) {
+      setCbersSelectedSceneId(cbersVisibleScenes[0]?.id || null);
+    }
+  }, [cbersScenes.length, cbersSelectedSceneId, cbersVisibleScenes]);
 
   const cbersSelectedScenes = useMemo(
     () => cbersSelectedSceneIds
@@ -2374,7 +2395,14 @@ export default function Dashboard() {
       setCbersAreaHa(Number.isFinite(nextAreaHa) && nextAreaHa > 0 ? nextAreaHa : null);
       setCbersPropertyGeometry(isPlainObject(payload?.propertyGeometry) ? payload.propertyGeometry as CbersGeoJsonGeometry : null);
       setCbersScenes(scenes);
-      const firstCovered = scenes.find((scene) => scene.coversArea !== false && !scene.wmsAvailable);
+      const maxCloud = cbersMaxCloudCover.trim() ? Number(cbersMaxCloudCover) : null;
+      const firstCovered = scenes.find((scene) => {
+        if (scene.coversArea === false || scene.wmsAvailable) return false;
+        if (maxCloud !== null && Number.isFinite(maxCloud)) {
+          return scene.cloudCover !== null && scene.cloudCover <= maxCloud;
+        }
+        return true;
+      });
       setCbersSelectedSceneId(firstCovered?.id || scenes[0]?.id || null);
       setCbersSelectedSceneIds(firstCovered ? [firstCovered.id] : []);
       setCbersPreviewScene(null);
@@ -2388,7 +2416,7 @@ export default function Dashboard() {
     } finally {
       setCbersSearching(false);
     }
-  }, [apiFetch, cbersCarNumber, cbersDateEnd, cbersDateStart, cbersFile, cbersOrbit, cbersPoint, fileToBase64Payload, sortCbersScenes]);
+  }, [apiFetch, cbersCarNumber, cbersDateEnd, cbersDateStart, cbersFile, cbersMaxCloudCover, cbersOrbit, cbersPoint, fileToBase64Payload, sortCbersScenes]);
 
   const startCbersProcessing = useCallback(async (sceneIdOverride?: string) => {
     const targetSceneIds = sceneIdOverride
@@ -10334,7 +10362,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
                     <div>
                       <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Órbita</label>
                       <input
@@ -10355,6 +10383,28 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         onChange={(e) => setCbersPoint(e.target.value.replace(/\D+/g, '').slice(0, 3))}
                         placeholder="129"
                         className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Nuvem máx.</label>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value={cbersMaxCloudCover}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === '') {
+                            setCbersMaxCloudCover('');
+                            return;
+                          }
+                          const numeric = Math.max(0, Math.min(100, Number(value)));
+                          setCbersMaxCloudCover(Number.isFinite(numeric) ? String(numeric) : '');
+                        }}
+                        placeholder="100"
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none placeholder-slate-600 focus:border-cyan-500/50"
                       />
                     </div>
                     <div>
