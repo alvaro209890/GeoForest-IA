@@ -52,7 +52,7 @@ const DEFAULT_WFS_AUTHKEY = "541085de-9a2e-454e-bdba-eb3d57a2f492";
 export const WFS_BASE_URL = process.env.WFS_BASE_URL || DEFAULT_WFS_BASE_URL;
 export const WFS_AUTHKEY =
   process.env.WFS_AUTHKEY || process.env.SEMA_WMS_AUTHKEY || DEFAULT_WFS_AUTHKEY;
-export const WFS_TIMEOUT_MS = Number(process.env.WFS_TIMEOUT_MS ?? "25000");
+export const WFS_TIMEOUT_MS = Number(process.env.WFS_TIMEOUT_MS ?? "60000");
 export const WFS_PAGE_SIZE = Number(process.env.WFS_PAGE_SIZE ?? "2000");
 const WFS_MAX_FEATURES_PER_LAYER = Number(
   process.env.WFS_MAX_FEATURES_PER_LAYER ?? "50000",

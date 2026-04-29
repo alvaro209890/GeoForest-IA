@@ -827,12 +827,12 @@ function AdminApp() {
 
       <section className="mx-auto max-w-7xl px-5 py-5">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-5">
-          <TabsList className="border border-white/15 bg-[#10241d] p-1 text-slate-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
-            <TabsTrigger value="storage" className="gap-2 text-slate-300 hover:bg-white/5 hover:text-white data-[state=active]:bg-cyan-400 data-[state=active]:text-[#04110e] data-[state=active]:shadow-sm">
+          <TabsList className="border border-cyan-400/25 bg-[#07100d] p-1 text-slate-100 shadow-[0_12px_30px_rgba(0,0,0,0.25),inset_0_1px_0_rgba(255,255,255,0.08)]">
+            <TabsTrigger value="storage" className="gap-2 text-slate-100 hover:bg-white/10 hover:text-white data-[state=active]:bg-cyan-300 data-[state=active]:text-[#03120f] data-[state=active]:shadow-sm">
               <Database size={16} />
               Armazenamento
             </TabsTrigger>
-            <TabsTrigger value="server" className="gap-2 text-slate-300 hover:bg-white/5 hover:text-white data-[state=active]:bg-cyan-400 data-[state=active]:text-[#04110e] data-[state=active]:shadow-sm">
+            <TabsTrigger value="server" className="gap-2 text-slate-100 hover:bg-white/10 hover:text-white data-[state=active]:bg-cyan-300 data-[state=active]:text-[#03120f] data-[state=active]:shadow-sm">
               <Server size={16} />
               Servidor
             </TabsTrigger>
