@@ -2778,8 +2778,16 @@ async function startServer() {
     process.env.NODE_ENV === "production"
       ? path.resolve(__dirname, "public")
       : path.resolve(__dirname, "..", "dist", "public");
+  const adminStaticPath =
+    process.env.NODE_ENV === "production"
+      ? path.resolve(__dirname, "admin")
+      : path.resolve(__dirname, "..", "dist", "admin");
 
+  app.use("/assets", express.static(path.join(adminStaticPath, "assets")));
   app.use(express.static(staticPath));
+  app.get(["/admin", "/admin/", "/admin/*"], (_req, res) => {
+    res.sendFile(path.join(adminStaticPath, "admin.html"));
+  });
 
   // Handle client-side routing - serve index.html for all routes
   app.get("*", (_req, res) => {
