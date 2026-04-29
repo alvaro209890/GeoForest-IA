@@ -14,10 +14,8 @@ import type { Feature, Geometry, MultiPolygon, Polygon } from "geojson";
 import { parseUserShapefile } from "./simcar-clip";
 import {
   deleteDocBySegments,
-  getAbsoluteStoragePath,
   readDocBySegments,
   removeStoragePath,
-  saveUserFileFromPath,
   STORAGE_ROOT,
   stripUndefinedDeep,
   writeDocBySegments,
@@ -32,6 +30,7 @@ import {
   listCbersArchiveRecords,
   markCbersArchiveUserDeleted,
   publishCbersPanToArchive,
+  saveCbersArchiveAsset,
   type CbersArchiveRecord,
 } from "./cbers-archive";
 
@@ -1380,15 +1379,9 @@ async function processCbersScene(args: {
     message: "Gerando GeoTIFF final da órbita/ponto completa para ArcMap.",
     onProgress: report,
   });
-  report({ stage: "save", percent: 96, message: "Salvando GeoTIFF no banco do usuário." });
+  report({ stage: "save", percent: 96, message: "Salvando GeoTIFF no raster compartilhado." });
 
   const outputName = cbersOutputFilename(scene.id || args.itemId);
-  const stored = saveUserFileFromPath({
-    uid,
-    area: "cbers/output",
-    filename: outputName,
-    sourcePath: finalTempPath,
-  });
   report({ stage: "publish", percent: 98, message: "Publicando GeoTIFF no acervo WMS." });
   const archive = await publishCbersPanToArchive({
     uid,
@@ -1407,10 +1400,10 @@ async function processCbersScene(args: {
     percent: 100,
     message: "GeoTIFF concluído.",
     estimate,
-    outputUrl: stored.publicUrl,
-    outputRelativePath: stored.relativePath,
+    outputUrl: archive.publicUrl,
+    outputRelativePath: archive.publicUrl,
     outputFilename: outputName,
-    outputBytes: stored.bytes,
+    outputBytes: archive.bytes,
     archive,
     archiveImageId: archive.imageId,
     wmsLayerName: archive.wmsLayerName,
@@ -1432,9 +1425,9 @@ async function createCbersBatchZip(args: {
   fileCount: number;
 } | null> {
   const entries = args.scenes
-    .filter((scene) => scene.status === "completed" && scene.outputRelativePath)
+    .filter((scene) => scene.status === "completed" && scene.archive?.hdPath)
     .map((scene) => {
-      const absolutePath = getAbsoluteStoragePath(String(scene.outputRelativePath));
+      const absolutePath = String(scene.archive?.hdPath || "");
       return {
         absolutePath,
         name: scene.outputFilename || cbersOutputFilename(scene.scene?.id || scene.itemId),
@@ -1459,9 +1452,8 @@ async function createCbersBatchZip(args: {
   });
 
   if (!fs.existsSync(tempZipPath)) return null;
-  const stored = saveUserFileFromPath({
-    uid: args.uid,
-    area: "cbers/output",
+  const stored = saveCbersArchiveAsset({
+    subdir: path.join("jobs", args.jobId),
     filename,
     sourcePath: tempZipPath,
   });
@@ -1504,7 +1496,7 @@ async function runCbersJob(input: {
     });
     const scene = result.scene || null;
 
-    progress(uid, jobId, { stage: "save", percent: 96, message: "Salvando GeoTIFF no banco do usuário." });
+    progress(uid, jobId, { stage: "save", percent: 96, message: "Salvando GeoTIFF no raster compartilhado." });
     progress(uid, jobId, {
       status: "completed",
       stage: "completed",
@@ -1979,11 +1971,10 @@ export function registerCbersWpmRoutes(app: Express): void {
       return;
     }
     requestCancel(jobId, uid);
-    removeStoragePath(String(data.outputRelativePath || data.outputUrl || ""));
     removeStoragePath(String(data.batchZipRelativePath || data.batchZipUrl || ""));
     if (Array.isArray(data.scenes)) {
       for (const scene of data.scenes) {
-        removeStoragePath(String(scene?.outputRelativePath || scene?.outputUrl || ""));
+        removeStoragePath(String(scene?.batchZipRelativePath || scene?.batchZipUrl || ""));
       }
     }
     markCbersArchiveUserDeleted(uid, jobId);

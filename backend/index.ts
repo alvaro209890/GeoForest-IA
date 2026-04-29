@@ -38,7 +38,7 @@ import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerAuasRoutes } from "./auas-analysis";
 import { registerCbersWpmRoutes } from "./cbers-wpm";
-import { registerCbersArchiveAdminRoutes } from "./cbers-archive";
+import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-archive";
 import {
   JobCancelledError,
   finishJob,
@@ -309,6 +309,7 @@ async function startServer() {
   );
   app.use(["/api/upload-image", "/api/upload-file"], attachOptionalAuth);
   app.use("/api/storage", express.static(STORAGE_ROOT));
+  app.use("/api/raster", express.static(CBERS_ARCHIVE_ROOT));
 
   app.post("/api/account/bootstrap", async (req, res) => {
     const uid = String(req.authUid || "").trim();

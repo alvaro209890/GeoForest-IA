@@ -15,7 +15,7 @@ type AdminStorageFile = {
   absolutePath?: string;
   publicUrl?: string;
   category: string;
-  source: "user_storage" | "cbers_archive";
+  source: "user_storage" | "raster_archive";
   extension: string;
   bytes: number;
   modifiedAt?: string;
@@ -39,6 +39,7 @@ export type CbersArchiveRecord = {
   hdRelativePath: string;
   hdPath: string;
   bytes: number;
+  publicUrl: string;
   wmsLayerName: string;
   wmsStoreName: string;
   wmsPublicUrl: string;
@@ -49,7 +50,7 @@ export type CbersArchiveRecord = {
   adminDeleteError?: string;
 };
 
-const CBERS_ARCHIVE_ROOT = path.resolve(
+export const CBERS_ARCHIVE_ROOT = path.resolve(
   process.env.CBERS_ARCHIVE_ROOT || "/media/server/HD Backup/RASTER/CBERS_4A",
 );
 const CBERS_ARCHIVE_INDEX_DIR = path.join(STORAGE_ROOT, "cbers_archive", "images");
@@ -122,6 +123,32 @@ function copyFileAtomic(sourcePath: string, destPath: string): number {
     }
     throw error;
   }
+}
+
+export function cbersArchivePublicUrl(relativePath: string): string {
+  return `/api/raster/${relativePath.split(path.sep).join("/")}`;
+}
+
+export function saveCbersArchiveAsset(args: {
+  subdir?: string;
+  filename: string;
+  sourcePath: string;
+}): { relativePath: string; absolutePath: string; publicUrl: string; bytes: number } {
+  const subdirParts = String(args.subdir || "")
+    .split(/[\\/]+/)
+    .map((part) => safeSegment(part))
+    .filter(Boolean);
+  const cleanName = safeSegment(args.filename) || crypto.randomUUID();
+  const absoluteDir = path.join(CBERS_ARCHIVE_ROOT, ...subdirParts);
+  const absolutePath = path.join(absoluteDir, cleanName);
+  const bytes = copyFileAtomic(args.sourcePath, absolutePath);
+  const relativePath = path.relative(CBERS_ARCHIVE_ROOT, absolutePath).split(path.sep).join("/");
+  return {
+    relativePath,
+    absolutePath,
+    publicUrl: cbersArchivePublicUrl(relativePath),
+    bytes,
+  };
 }
 
 async function runCommand(command: string, args: string[]): Promise<void> {
@@ -531,17 +558,18 @@ export async function publishCbersPanToArchive(args: {
 }): Promise<CbersArchiveRecord> {
   const { orbit, year } = parseCbersItemId(args.itemId);
   const archiveFilename = withJobSuffix(args.outputFilename, args.jobId);
-  const archiveDir = path.join(CBERS_ARCHIVE_ROOT, orbit, year);
-  ensureDir(archiveDir);
-  const hdPath = path.join(archiveDir, archiveFilename);
-  const bytes = copyFileAtomic(args.sourcePath, hdPath);
-  await ensureExternalOverviews(hdPath);
+  const stored = saveCbersArchiveAsset({
+    subdir: path.join(orbit, year),
+    filename: archiveFilename,
+    sourcePath: args.sourcePath,
+  });
+  await ensureExternalOverviews(stored.absolutePath);
   const storeName = cleanLayerName(`${orbit}_${year}_${path.basename(archiveFilename, path.extname(archiveFilename))}`);
   const imageId = storeName;
 
   await publishGeoTiff({
     storeName,
-    hdPath,
+    hdPath: stored.absolutePath,
     orbit,
     year,
     title: path.basename(archiveFilename, path.extname(archiveFilename)),
@@ -558,9 +586,10 @@ export async function publishCbersPanToArchive(args: {
     year,
     sourceFilename: args.outputFilename,
     archiveFilename,
-    hdRelativePath: path.relative(CBERS_ARCHIVE_ROOT, hdPath).split(path.sep).join("/"),
-    hdPath,
-    bytes,
+    hdRelativePath: stored.relativePath,
+    hdPath: stored.absolutePath,
+    bytes: stored.bytes,
+    publicUrl: stored.publicUrl,
     wmsLayerName: `${GEOSERVER_WORKSPACE}:${storeName}`,
     wmsStoreName: storeName,
     wmsPublicUrl:
@@ -606,7 +635,7 @@ function adminFileCategory(relativePath: string): string {
   if (rel.includes("/auas/output/")) return "Resultados Novo CAR";
   if (rel.includes("/auas/input/")) return "Entradas Novo CAR";
   if (rel.includes("/auas/context/")) return "Contexto Novo CAR";
-  if (rel.includes("/cbers/output/")) return "CBERS conta";
+  if (rel.includes("/cbers/output/")) return "CBERS legado";
   if (rel.includes("/trash/")) return "Lixeira";
   if (rel.endsWith(".json")) return "Historico/configuracao";
   return "Outros arquivos";
@@ -679,8 +708,9 @@ function cbersArchiveFileForAdmin(record: CbersArchiveRecord): AdminStorageFile 
     name: record.archiveFilename,
     relativePath: record.hdRelativePath,
     absolutePath: record.hdPath,
-    category: "CBERS WMS permanente",
-    source: "cbers_archive",
+    publicUrl: record.publicUrl,
+    category: "Raster compartilhado",
+    source: "raster_archive",
     extension: path.extname(record.archiveFilename).replace(/^\./, "").toLowerCase() || "tif",
     bytes: Number(record.bytes || 0),
     createdAt: record.createdAt,
@@ -695,6 +725,7 @@ function cbersArchiveFileForAdmin(record: CbersArchiveRecord): AdminStorageFile 
 function summarizeAdminFiles(files: AdminStorageFile[]): PlainObject {
   const byCategory: Record<string, PlainObject> = {};
   const byExtension: Record<string, PlainObject> = {};
+  const bySource: Record<string, PlainObject> = {};
   for (const file of files) {
     const category = file.category || "Outros arquivos";
     byCategory[category] = byCategory[category] || { category, count: 0, bytes: 0 };
@@ -704,12 +735,17 @@ function summarizeAdminFiles(files: AdminStorageFile[]): PlainObject {
     byExtension[extension] = byExtension[extension] || { extension, count: 0, bytes: 0 };
     byExtension[extension].count += 1;
     byExtension[extension].bytes += Number(file.bytes || 0);
+    const source = file.source || "user_storage";
+    bySource[source] = bySource[source] || { source, count: 0, bytes: 0 };
+    bySource[source].count += 1;
+    bySource[source].bytes += Number(file.bytes || 0);
   }
   return {
     fileCount: files.length,
     bytes: files.reduce((sum, file) => sum + Number(file.bytes || 0), 0),
     byCategory: Object.values(byCategory).sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0)),
     byExtension: Object.values(byExtension).sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0)),
+    bySource: Object.values(bySource).sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0)),
   };
 }
 
@@ -752,6 +788,10 @@ export function registerCbersArchiveAdminRoutes(app: Express): void {
         .filter((file): file is AdminStorageFile => Boolean(file));
       const allFiles = [...userFiles, ...archiveFiles];
       const summary = summarizeAdminFiles(allFiles);
+      const userStorageBytes = userFiles.reduce((sum, file) => sum + Number(file.bytes || 0), 0);
+      const userStorageCount = userFiles.length;
+      const sharedRasterBytes = archiveFiles.reduce((sum, file) => sum + Number(file.bytes || 0), 0);
+      const sharedRasterCount = archiveFiles.length;
       const lastModifiedAt = allFiles
         .map((file) => file.modifiedAt || file.createdAt || "")
         .filter(Boolean)
@@ -763,11 +803,14 @@ export function registerCbersArchiveAdminRoutes(app: Express): void {
         fullName: profiles[uid]?.fullName || "",
         fileCount: summary.fileCount,
         bytes: summary.bytes,
+        userStorageBytes,
+        userStorageCount,
+        sharedRasterBytes,
+        sharedRasterCount,
         lastModifiedAt,
         byCategory: summary.byCategory,
         byExtension: summary.byExtension,
-        cbersArchiveBytes: archiveFiles.reduce((sum, file) => sum + Number(file.bytes || 0), 0),
-        cbersArchiveCount: archiveFiles.length,
+        bySource: summary.bySource,
       };
     }).sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0));
     const totals = summarizeAdminFiles(users.flatMap((user) => {
@@ -778,6 +821,8 @@ export function registerCbersArchiveAdminRoutes(app: Express): void {
         .filter((file): file is AdminStorageFile => Boolean(file));
       return [...userFiles, ...archiveFiles];
     }));
+    const userStorageTotalBytes = users.reduce((sum, user) => sum + Number(user.userStorageBytes || 0), 0);
+    const sharedRasterTotalBytes = users.reduce((sum, user) => sum + Number(user.sharedRasterBytes || 0), 0);
     res.json({
       ok: true,
       totalBytes: totals.bytes,
@@ -785,6 +830,11 @@ export function registerCbersArchiveAdminRoutes(app: Express): void {
       users,
       byCategory: totals.byCategory,
       byExtension: totals.byExtension,
+      bySource: totals.bySource,
+      userStorageBytes: userStorageTotalBytes,
+      sharedRasterBytes: sharedRasterTotalBytes,
+      userStorageFiles: users.reduce((sum, user) => sum + Number(user.userStorageCount || 0), 0),
+      sharedRasterFiles: users.reduce((sum, user) => sum + Number(user.sharedRasterCount || 0), 0),
     });
   });
 
