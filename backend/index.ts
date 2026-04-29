@@ -1,4 +1,7 @@
 ﻿import express from "express";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import { createServer } from "http";
 import path from "path";
 import crypto from "crypto";
@@ -111,6 +114,208 @@ function materializeServerTimestamps(value: any): any {
     );
   }
   return value;
+}
+
+type ServerStorageMetric = {
+  device: string;
+  kind: "ssd" | "hd";
+  model?: string;
+  mountpoint: string;
+  totalBytes: number;
+  usedBytes: number;
+  freeBytes: number;
+  usagePercent: number;
+};
+
+type TemperatureReading = {
+  label: string;
+  valueC: number;
+};
+
+function runCommandText(command: string, args: string[]): string | null {
+  try {
+    return execFileSync(command, args, {
+      encoding: "utf8",
+      timeout: 2000,
+      maxBuffer: 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    return null;
+  }
+}
+
+function readCpuTotals(): { idle: number; total: number } | null {
+  try {
+    const line = fs
+      .readFileSync("/proc/stat", "utf8")
+      .split("\n")
+      .find((entry) => entry.startsWith("cpu "));
+    if (!line) return null;
+    const parts = line.trim().split(/\s+/).slice(1).map((value) => Number(value) || 0);
+    if (parts.length < 4) return null;
+    const idle = (parts[3] || 0) + (parts[4] || 0);
+    const total = parts.reduce((sum, value) => sum + value, 0);
+    return { idle, total };
+  } catch {
+    return null;
+  }
+}
+
+async function sampleCpuUsagePercent(): Promise<number | null> {
+  const start = readCpuTotals();
+  if (!start) return null;
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  const end = readCpuTotals();
+  if (!end) return null;
+  const totalDelta = end.total - start.total;
+  const idleDelta = end.idle - start.idle;
+  if (totalDelta <= 0) return null;
+  return Number((((totalDelta - idleDelta) / totalDelta) * 100).toFixed(1));
+}
+
+function parseTemperatureReadings(raw: string | null): {
+  available: boolean;
+  cpuPackageC: number | null;
+  hottestCoreC: number | null;
+  readings: TemperatureReading[];
+} {
+  if (!raw) {
+    return { available: false, cpuPackageC: null, hottestCoreC: null, readings: [] };
+  }
+
+  const readings: TemperatureReading[] = [];
+  for (const line of raw.split("\n")) {
+    const match = line.match(/^\s*([^:]+):\s*\+?(-?\d+(?:\.\d+)?)°C/i);
+    if (!match) continue;
+    readings.push({
+      label: String(match[1] || "").trim(),
+      valueC: Number(match[2] || 0),
+    });
+  }
+
+  if (!readings.length) {
+    return { available: false, cpuPackageC: null, hottestCoreC: null, readings: [] };
+  }
+
+  const cpuPackage = readings.find((item) => /package id/i.test(item.label)) || null;
+  const coreReadings = readings.filter((item) => /^core\s+\d+/i.test(item.label));
+  const hottestCore = coreReadings.reduce<number | null>(
+    (current, item) => (current === null || item.valueC > current ? item.valueC : current),
+    null,
+  );
+
+  return {
+    available: true,
+    cpuPackageC: cpuPackage?.valueC ?? null,
+    hottestCoreC: hottestCore,
+    readings,
+  };
+}
+
+function collectMountedChildren(device: any): any[] {
+  const nodes: any[] = [];
+  if (device?.mountpoint) nodes.push(device);
+  for (const child of Array.isArray(device?.children) ? device.children : []) {
+    nodes.push(...collectMountedChildren(child));
+  }
+  return nodes;
+}
+
+function parseStorageMetrics(): ServerStorageMetric[] {
+  const lsblkRaw = runCommandText("lsblk", ["-J", "-b", "-o", "NAME,PATH,ROTA,TYPE,SIZE,MOUNTPOINT,MODEL"]);
+  const dfRaw = runCommandText("df", ["-B1", "--output=source,size,used,avail,pcent,target"]);
+  if (!lsblkRaw || !dfRaw) return [];
+
+  let lsblkPayload: any;
+  try {
+    lsblkPayload = JSON.parse(lsblkRaw);
+  } catch {
+    return [];
+  }
+
+  const dfByMount = new Map<
+    string,
+    { filesystem: string; totalBytes: number; usedBytes: number; freeBytes: number; usagePercent: number }
+  >();
+
+  for (const line of dfRaw.split("\n").slice(1)) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 6) continue;
+    const filesystem = parts[0];
+    const totalBytes = Number(parts[1] || 0);
+    const usedBytes = Number(parts[2] || 0);
+    const freeBytes = Number(parts[3] || 0);
+    const usagePercent = Number(String(parts[4] || "").replace(/[^\d.]/g, "")) || 0;
+    const mountpoint = parts.slice(5).join(" ");
+    if (!mountpoint) continue;
+    dfByMount.set(mountpoint, { filesystem, totalBytes, usedBytes, freeBytes, usagePercent });
+  }
+
+  const devices = Array.isArray(lsblkPayload?.blockdevices) ? lsblkPayload.blockdevices : [];
+  const metrics: ServerStorageMetric[] = [];
+
+  for (const disk of devices) {
+    if (String(disk?.type || "") !== "disk") continue;
+    const kind: "ssd" | "hd" = Number(disk?.rota) === 0 ? "ssd" : "hd";
+    const model = String(disk?.model || "").trim() || undefined;
+    for (const mounted of collectMountedChildren(disk)) {
+      const mountpoint = String(mounted?.mountpoint || "").trim();
+      if (!mountpoint) continue;
+      const dfStats = dfByMount.get(mountpoint);
+      if (!dfStats) continue;
+      metrics.push({
+        device: String(dfStats.filesystem || mounted?.path || mounted?.name || "").trim(),
+        kind,
+        model,
+        mountpoint,
+        totalBytes: dfStats.totalBytes,
+        usedBytes: dfStats.usedBytes,
+        freeBytes: dfStats.freeBytes,
+        usagePercent: dfStats.usagePercent,
+      });
+    }
+  }
+
+  const priority = (item: ServerStorageMetric) => {
+    if (item.mountpoint === "/") return 0;
+    if (item.mountpoint === "/media/server/HD Backup") return 1;
+    return 2;
+  };
+
+  return metrics.sort((a, b) => {
+    const priorityDiff = priority(a) - priority(b);
+    if (priorityDiff !== 0) return priorityDiff;
+    return a.mountpoint.localeCompare(b.mountpoint);
+  });
+}
+
+function parseProcesses(): {
+  totalVisible: number;
+  top: Array<{ pid: number; command: string; cpuPercent: number; memPercent: number }>;
+} {
+  const raw = runCommandText("ps", ["-eo", "pid=,comm=,pcpu=,pmem=", "--sort=-pcpu"]);
+  if (!raw) return { totalVisible: 0, top: [] };
+
+  const rows = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split(/\s+/);
+      return {
+        pid: Number(parts[0] || 0),
+        command: String(parts[1] || "").trim(),
+        cpuPercent: Number(parts[2] || 0),
+        memPercent: Number(parts[3] || 0),
+      };
+    })
+    .filter((item) => item.pid > 0 && item.command);
+
+  return {
+    totalVisible: rows.length,
+    top: rows.slice(0, 12),
+  };
 }
 
 async function startServer() {
@@ -2354,6 +2559,45 @@ async function startServer() {
       } else {
         if (!res.writableEnded && !(res as any).destroyed) res.end();
       }
+    }
+  });
+
+  app.get("/api/admin/server/metrics", async (_req, res) => {
+    try {
+      const cpuInfo = os.cpus();
+      const totalBytes = os.totalmem();
+      const freeBytes = os.freemem();
+      const usedBytes = Math.max(0, totalBytes - freeBytes);
+      const cpuUsagePercent = await sampleCpuUsagePercent();
+      const temperature = parseTemperatureReadings(runCommandText("sensors", []));
+
+      res.json({
+        ok: true,
+        updatedAt: new Date().toISOString(),
+        host: {
+          hostname: os.hostname(),
+          platform: os.platform(),
+          release: os.release(),
+          uptimeSec: os.uptime(),
+        },
+        cpu: {
+          model: String(cpuInfo[0]?.model || "").trim(),
+          cores: cpuInfo.length,
+          loadAvg: os.loadavg().map((value) => Number(value.toFixed(2))),
+          usagePercent: cpuUsagePercent,
+        },
+        memory: {
+          totalBytes,
+          usedBytes,
+          freeBytes,
+          usagePercent: totalBytes > 0 ? Number(((usedBytes / totalBytes) * 100).toFixed(1)) : 0,
+        },
+        temperature,
+        storage: parseStorageMetrics(),
+        processes: parseProcesses(),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Falha ao coletar metricas do servidor." });
     }
   });
 
