@@ -89,6 +89,19 @@ type SummaryPayload = {
 };
 
 const CHART_COLORS = ["#22d3ee", "#34d399", "#a78bfa", "#fbbf24", "#fb7185", "#60a5fa", "#f97316"];
+const RESERVED_USER_STORAGE_NAMES = new Set([
+  "attachments",
+  "auas",
+  "auas_jobs",
+  "cbers",
+  "cbers_wpm_jobs",
+  "conversations",
+  "processing_jobs",
+  "settings",
+  "simcar",
+  "simcar_clips",
+  "trash",
+]);
 
 function apiBase(): string {
   return String(import.meta.env.VITE_API_BASE || "").replace(/\/+$/, "");
@@ -156,6 +169,12 @@ function shortLabel(value: string, size = 16): string {
   const text = String(value || "").trim();
   if (text.length <= size) return text || "-";
   return `${text.slice(0, Math.max(1, size - 1))}…`;
+}
+
+function isAdminUserSummary(item: UserSummary): boolean {
+  const uid = String(item?.uid || "").trim();
+  if (!uid || RESERVED_USER_STORAGE_NAMES.has(uid)) return false;
+  return Boolean(item.email || item.fullName || Number(item.sharedRasterBytes || 0) > 0 || Number(item.fileCount || 0) > 0);
 }
 
 async function fetchJson(path: string): Promise<any> {
@@ -400,12 +419,12 @@ function AdminApp() {
             : [],
         };
       }
-      const nextUsers = Array.isArray(payload?.users) ? payload.users : [];
+      const nextUsers = (Array.isArray(payload?.users) ? payload.users : []).filter(isAdminUserSummary);
       setUsers(nextUsers);
       setStorageCategories(Array.isArray(payload?.byCategory) ? payload.byCategory : []);
       setStorageSources(Array.isArray(payload?.bySource) ? payload.bySource : []);
       setStorageExtensions(Array.isArray(payload?.byExtension) ? payload.byExtension : []);
-      setSelectedUid((current) => current || nextUsers[0]?.uid || "");
+      setSelectedUid((current) => (nextUsers.some((user) => user.uid === current) ? current : nextUsers[0]?.uid || ""));
     } catch (err: any) {
       setError(String(err?.message || err));
     } finally {

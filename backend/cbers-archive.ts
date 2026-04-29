@@ -70,6 +70,19 @@ const GEOSERVER_EXTERNAL_CBRS_ROOT = path.resolve(
     "/home/server/.local/geoserver-work/data_dir/external/cbers",
 );
 const ROOT_CBRS_GROUP = "CBERS-4A-Apos_2019";
+const RESERVED_USER_STORAGE_NAMES = new Set([
+  "attachments",
+  "auas",
+  "auas_jobs",
+  "cbers",
+  "cbers_wpm_jobs",
+  "conversations",
+  "processing_jobs",
+  "settings",
+  "simcar",
+  "simcar_clips",
+  "trash",
+]);
 const CBERS_OVERVIEW_LEVELS = String(
   process.env.CBERS_OVERVIEW_LEVELS || "2 4 8 16 32 64 128",
 )
@@ -213,6 +226,13 @@ function safeSegment(value: unknown): string {
     .replace(/[^a-zA-Z0-9._-]/g, "_")
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "");
+}
+
+function isAdminUserIdCandidate(uid: string): boolean {
+  const clean = safeSegment(uid);
+  if (!clean || clean !== uid) return false;
+  if (RESERVED_USER_STORAGE_NAMES.has(clean)) return false;
+  return true;
 }
 
 function cleanLayerName(value: string): string {
@@ -613,9 +633,14 @@ function listUserProfiles(): Record<string, PlainObject> {
   const usersDir = path.join(STORAGE_ROOT, "users");
   if (!fs.existsSync(usersDir)) return {};
   const profiles: Record<string, PlainObject> = {};
-  for (const uid of fs.readdirSync(usersDir)) {
+  for (const entry of fs.readdirSync(usersDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const uid = entry.name;
+    if (!isAdminUserIdCandidate(uid)) continue;
     const profilePath = path.join(usersDir, uid, "profile.json");
-    profiles[uid] = readJsonSafe<PlainObject>(profilePath, { uid });
+    if (!fs.existsSync(profilePath)) continue;
+    const profile = readJsonSafe<PlainObject>(profilePath, { uid });
+    profiles[uid] = { ...profile, uid: String(profile.uid || uid) };
   }
   return profiles;
 }
@@ -643,13 +668,16 @@ function adminFileCategory(relativePath: string): string {
 
 function listUserIdsForAdmin(profiles: Record<string, PlainObject>, records: CbersArchiveRecord[]): string[] {
   const usersDir = path.join(STORAGE_ROOT, "users");
-  const ids = new Set<string>(Object.keys(profiles));
+  const ids = new Set<string>(Object.keys(profiles).filter(isAdminUserIdCandidate));
   if (fs.existsSync(usersDir)) {
     for (const entry of fs.readdirSync(usersDir, { withFileTypes: true })) {
-      if (entry.isDirectory()) ids.add(entry.name);
+      if (!entry.isDirectory() || !isAdminUserIdCandidate(entry.name)) continue;
+      if (fs.existsSync(path.join(usersDir, entry.name, "profile.json"))) ids.add(entry.name);
     }
   }
-  for (const record of records) ids.add(record.uid);
+  for (const record of records) {
+    if (isAdminUserIdCandidate(record.uid)) ids.add(record.uid);
+  }
   return [...ids].filter(Boolean).sort();
 }
 
