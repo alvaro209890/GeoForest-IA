@@ -31,6 +31,7 @@ export type CbersArchiveRecord = {
   uid: string;
   jobId: string;
   itemId: string;
+  level?: "L4" | "L2";
   geometryHash?: string;
   orbit: string;
   year: string;
@@ -256,6 +257,23 @@ function parseCbersItemId(itemId: string): { orbit: string; year: string } {
   const match = String(itemId || "").match(/(20\d{2})\d{4}[_-](\d{3})[_-](\d{3})/);
   if (!match) throw new Error(`Item CBERS sem data/orbita valida: ${itemId}`);
   return { year: match[1], orbit: `${match[2]}_${match[3]}` };
+}
+
+function parseCbersItemLevel(itemId: string): "L4" | "L2" | null {
+  const match = String(itemId || "").match(/[_-](L[24])(?:$|[_-])/i);
+  const level = match?.[1]?.toUpperCase();
+  return level === "L4" || level === "L2" ? level : null;
+}
+
+function ensureCbersLevelInFilename(filename: string, level?: string | null): string {
+  const cleanLevel = String(level || "").toUpperCase();
+  if (cleanLevel !== "L4" && cleanLevel !== "L2") return filename;
+  const ext = path.extname(filename) || ".TIF";
+  let stem = filename.slice(0, filename.length - ext.length);
+  stem = /[_-]L[24]$/i.test(stem)
+    ? stem.replace(/([_-])L[24]$/i, `$1${cleanLevel}`)
+    : `${stem}_${cleanLevel}`;
+  return `${stem}${ext}`;
 }
 
 function withJobSuffix(filename: string, jobId: string): string {
@@ -572,12 +590,15 @@ export async function publishCbersPanToArchive(args: {
   uid: string;
   jobId: string;
   itemId: string;
+  level?: "L4" | "L2" | string | null;
   geometryHash?: string | null;
   outputFilename: string;
   sourcePath: string;
 }): Promise<CbersArchiveRecord> {
   const { orbit, year } = parseCbersItemId(args.itemId);
-  const archiveFilename = withJobSuffix(args.outputFilename, args.jobId);
+  const level = args.level === "L4" || args.level === "L2" ? args.level : parseCbersItemLevel(args.itemId);
+  const outputFilename = ensureCbersLevelInFilename(args.outputFilename, level);
+  const archiveFilename = withJobSuffix(outputFilename, args.jobId);
   const stored = saveCbersArchiveAsset({
     subdir: path.join(orbit, year),
     filename: archiveFilename,
@@ -601,10 +622,11 @@ export async function publishCbersPanToArchive(args: {
     uid: safeSegment(args.uid),
     jobId: safeSegment(args.jobId),
     itemId: args.itemId,
+    level: level || undefined,
     geometryHash: args.geometryHash || undefined,
     orbit,
     year,
-    sourceFilename: args.outputFilename,
+    sourceFilename: outputFilename,
     archiveFilename,
     hdRelativePath: stored.relativePath,
     hdPath: stored.absolutePath,

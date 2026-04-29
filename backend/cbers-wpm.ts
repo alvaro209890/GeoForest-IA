@@ -382,11 +382,17 @@ function inferCbersCollection(itemId: string, collectionId?: string | null): Cbe
   return level ? cbersCollectionByLevel(level) : cbersCollectionByLevel("L4");
 }
 
-function cbersOutputFilename(itemId: string): string {
-  const stem = safeName(itemId, "CBERS_4A_WPM")
+function cbersOutputFilename(itemId: string, level?: CbersCollectionLevel | null): string {
+  const desiredLevel = level || cbersLevelFromItemId(itemId);
+  let stem = safeName(itemId, "CBERS_4A_WPM")
     .replace(/\.(tif|tiff)$/i, "")
     .replace(/_C?342(?:_PAN)?$/i, "")
     .replace(/_PAN$/i, "");
+  if (desiredLevel) {
+    stem = /[_-]L[24]$/i.test(stem)
+      ? stem.replace(/([_-])L[24]$/i, `$1${desiredLevel}`)
+      : `${stem}_${desiredLevel}`;
+  }
   return `${stem}_C342_PAN.TIF`;
 }
 
@@ -1797,7 +1803,7 @@ async function processCbersScene(args: {
     message: "Gerando GeoTIFF final da órbita/ponto completa para ArcMap.",
     onProgress: report,
   });
-  const outputName = cbersOutputFilename(scene.id || args.itemId);
+  const outputName = cbersOutputFilename(scene.id || args.itemId, collection.level);
   const alignment = await validateAndCorrectCbersAlignment({
     uid,
     jobId,
@@ -1868,6 +1874,7 @@ async function processCbersScene(args: {
     geometryHash: undefined,
     outputFilename: outputName,
     sourcePath: publishSourcePath,
+    level: collection.level,
   });
 
   return {
