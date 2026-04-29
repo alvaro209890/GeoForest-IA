@@ -1,0 +1,19 @@
+{
+  "name": "GeoForest Admin",
+  "short_name": "GF Admin",
+  "icons": [
+    {
+      "src": "/favicon-admin-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-admin-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "theme_color": "#0f766e",
+  "background_color": "#071a1a",
+  "display": "standalone"
+}
