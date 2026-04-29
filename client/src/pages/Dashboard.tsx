@@ -1292,6 +1292,7 @@ export default function Dashboard() {
   const [cbersDateStart, setCbersDateStart] = useState('');
   const [cbersDateEnd, setCbersDateEnd] = useState('');
   const [cbersMaxCloudCover, setCbersMaxCloudCover] = useState('');
+  const [cbersLevelFilter, setCbersLevelFilter] = useState<'all' | 'L4' | 'L2'>('all');
   const [cbersSortOrder, setCbersSortOrder] = useState<'desc' | 'asc'>('desc');
   const [cbersAreaHa, setCbersAreaHa] = useState<number | null>(null);
   const [cbersPropertyGeometry, setCbersPropertyGeometry] = useState<CbersGeoJsonGeometry | null>(null);
@@ -1336,6 +1337,7 @@ export default function Dashboard() {
     setCbersDateStart('');
     setCbersDateEnd('');
     setCbersMaxCloudCover('');
+    setCbersLevelFilter('all');
     setCbersSortOrder('desc');
     setCbersAreaHa(null);
     setCbersPropertyGeometry(null);
@@ -2260,6 +2262,7 @@ export default function Dashboard() {
     const maxCloud = cbersMaxCloudCover.trim() ? Number(cbersMaxCloudCover) : null;
     return sortCbersScenes(
       cbersScenes.filter((scene) => {
+        if (cbersLevelFilter !== 'all' && scene.level !== cbersLevelFilter) return false;
         if (maxCloud !== null && Number.isFinite(maxCloud)) {
           if (scene.cloudCover === null) return false;
           if (scene.cloudCover > maxCloud) return false;
@@ -2274,7 +2277,7 @@ export default function Dashboard() {
         return true;
       })
     );
-  }, [cbersDateEnd, cbersDateStart, cbersMaxCloudCover, cbersScenes, sortCbersScenes]);
+  }, [cbersDateEnd, cbersDateStart, cbersLevelFilter, cbersMaxCloudCover, cbersScenes, sortCbersScenes]);
 
   useEffect(() => {
     if (cbersScenes.length === 0) return;
@@ -2421,6 +2424,7 @@ export default function Dashboard() {
       setCbersScenes(scenes);
       const maxCloud = cbersMaxCloudCover.trim() ? Number(cbersMaxCloudCover) : null;
       const firstCovered = scenes.find((scene) => {
+        if (cbersLevelFilter !== 'all' && scene.level !== cbersLevelFilter) return false;
         if (scene.coversArea === false || scene.wmsAvailable) return false;
         if (maxCloud !== null && Number.isFinite(maxCloud)) {
           return scene.cloudCover !== null && scene.cloudCover <= maxCloud;
@@ -2440,7 +2444,7 @@ export default function Dashboard() {
     } finally {
       setCbersSearching(false);
     }
-  }, [apiFetch, cbersCarNumber, cbersDateEnd, cbersDateStart, cbersFile, cbersMaxCloudCover, cbersOrbit, cbersPoint, fileToBase64Payload, sortCbersScenes]);
+  }, [apiFetch, cbersCarNumber, cbersDateEnd, cbersDateStart, cbersFile, cbersLevelFilter, cbersMaxCloudCover, cbersOrbit, cbersPoint, fileToBase64Payload, sortCbersScenes]);
 
   const startCbersProcessing = useCallback(async (sceneIdOverride?: string) => {
     const targetSceneIds = sceneIdOverride
@@ -10386,79 +10390,121 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-                    <div>
-                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Órbita</label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={cbersOrbit}
-                        onChange={(e) => setCbersOrbit(e.target.value.replace(/\D+/g, '').slice(0, 3))}
-                        placeholder="213"
-                        className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Ponto</label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={cbersPoint}
-                        onChange={(e) => setCbersPoint(e.target.value.replace(/\D+/g, '').slice(0, 3))}
-                        placeholder="129"
-                        className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Nuvem máx.</label>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        max="100"
-                        step="1"
-                        value={cbersMaxCloudCover}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          if (value === '') {
-                            setCbersMaxCloudCover('');
-                            return;
-                          }
-                          const numeric = Math.max(0, Math.min(100, Number(value)));
-                          setCbersMaxCloudCover(Number.isFinite(numeric) ? String(numeric) : '');
+                  <div className="rounded-2xl border border-cyan-500/10 bg-[#071113]/70 p-3 sm:p-4 space-y-4">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-cyan-300">Filtros da busca</p>
+                        <p className="text-xs text-slate-500">Combine órbita/ponto, nível, nuvem e período sem perder a seleção da área.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCbersOrbit('');
+                          setCbersPoint('');
+                          setCbersDateStart('');
+                          setCbersDateEnd('');
+                          setCbersMaxCloudCover('');
+                          setCbersLevelFilter('all');
+                          setCbersSortOrder('desc');
                         }}
-                        placeholder="100"
-                        className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none placeholder-slate-600 focus:border-cyan-500/50"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Data inicial</label>
-                      <input
-                        type="date"
-                        value={cbersDateStart}
-                        onChange={(e) => setCbersDateStart(e.target.value)}
-                        className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Data final</label>
-                      <input
-                        type="date"
-                        value={cbersDateEnd}
-                        onChange={(e) => setCbersDateEnd(e.target.value)}
-                        className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Ordenação</label>
-                      <select
-                        value={cbersSortOrder}
-                        onChange={(e) => setCbersSortOrder(e.target.value === 'asc' ? 'asc' : 'desc')}
-                        className="w-full rounded-xl border border-white/10 bg-[#0b1412] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
+                        className="self-start rounded-lg border border-white/10 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 transition-colors hover:bg-white/5 hover:text-white sm:self-auto"
                       >
-                        <option value="desc">Mais novas primeiro</option>
-                        <option value="asc">Mais antigas primeiro</option>
-                      </select>
+                        Limpar filtros
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
+                      <div className="md:col-span-3 lg:col-span-2">
+                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Órbita</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={cbersOrbit}
+                          onChange={(e) => setCbersOrbit(e.target.value.replace(/\D+/g, '').slice(0, 3))}
+                          placeholder="213"
+                          className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
+                        />
+                      </div>
+                      <div className="md:col-span-3 lg:col-span-2">
+                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Ponto</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={cbersPoint}
+                          onChange={(e) => setCbersPoint(e.target.value.replace(/\D+/g, '').slice(0, 3))}
+                          placeholder="129"
+                          className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
+                        />
+                      </div>
+                      <div className="md:col-span-6 lg:col-span-3">
+                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Nível CBERS</label>
+                        <div className="grid grid-cols-3 rounded-xl border border-white/10 bg-white/[0.04] p-1">
+                          {[
+                            { value: 'all', label: 'L4 + L2' },
+                            { value: 'L4', label: 'Só L4' },
+                            { value: 'L2', label: 'Só L2' },
+                          ].map((item) => (
+                            <button
+                              key={item.value}
+                              type="button"
+                              onClick={() => setCbersLevelFilter(item.value as 'all' | 'L4' | 'L2')}
+                              className={`rounded-lg px-2 py-2 text-[11px] font-semibold transition-colors ${cbersLevelFilter === item.value ? 'bg-cyan-400 text-[#04110e]' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}
+                            >
+                              {item.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="md:col-span-4 lg:col-span-2">
+                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Nuvem máx.</label>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          min="0"
+                          max="100"
+                          step="1"
+                          value={cbersMaxCloudCover}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setCbersMaxCloudCover('');
+                              return;
+                            }
+                            const numeric = Math.max(0, Math.min(100, Number(value)));
+                            setCbersMaxCloudCover(Number.isFinite(numeric) ? String(numeric) : '');
+                          }}
+                          placeholder="100"
+                          className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none placeholder-slate-600 focus:border-cyan-500/50"
+                        />
+                      </div>
+                      <div className="md:col-span-4 lg:col-span-3">
+                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Ordenação</label>
+                        <select
+                          value={cbersSortOrder}
+                          onChange={(e) => setCbersSortOrder(e.target.value === 'asc' ? 'asc' : 'desc')}
+                          className="w-full rounded-xl border border-white/10 bg-[#0b1412] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
+                        >
+                          <option value="desc">Mais novas primeiro</option>
+                          <option value="asc">Mais antigas primeiro</option>
+                        </select>
+                      </div>
+                      <div className="md:col-span-6">
+                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Período</label>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <input
+                            type="date"
+                            value={cbersDateStart}
+                            onChange={(e) => setCbersDateStart(e.target.value)}
+                            className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
+                          />
+                          <input
+                            type="date"
+                            value={cbersDateEnd}
+                            onChange={(e) => setCbersDateEnd(e.target.value)}
+                            className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
 
