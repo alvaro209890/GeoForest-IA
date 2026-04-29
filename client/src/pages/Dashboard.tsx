@@ -10811,6 +10811,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               setManualSection={setManualSection}
               onGoChat={() => setActiveView('chat')}
               onGoSimcar={() => setActiveView('simcar-clip')}
+              onGoAuas={() => setActiveView('auas')}
+              onGoCbers={() => setActiveView('cbers-wpm')}
             />
           </Suspense>
         ) : (

@@ -101,6 +101,8 @@ const SIGEF_WFS_BASE_URL =
     "http://acervofundiario.incra.gov.br/i3geo/ogc.php?tema=certificada_sigef_particular_mt";
 const SIGEF_WFS_TYPENAME = "certificada_sigef_particular_mt";
 const SIGEF_WFS_FILTER_PARAM = "map_layer_certificada_sigef_particular_mt_filter";
+const SEMA_CAR_REQUIRED_WFS_LAYER =
+    process.env.SEMA_CAR_REQUIRED_WFS_LAYER || "Geoportal:MVW_REQUERIMENTO_ATP";
 const WFS_MAX_FEATURES = 50000;
 const CACHE_TTL_MS = 15 * 60 * 1000;    // 15 minutes
 const CACHE_MAX_JOBS = 10;
@@ -7468,12 +7470,12 @@ async function fetchCarBoundaryFromWfs(
         service: "WFS",
         version: "1.0.0",
         request: "GetFeature",
-        typeName: "Geoportal:CAR_ATP",
+        typeName: SEMA_CAR_REQUIRED_WFS_LAYER,
         outputFormat: "application/json",
         srsName: "EPSG:4674",
         maxFeatures: 1,
         CQL_FILTER: cqlFilter,
-    }, { includeAuthkey: false });
+    });
 
     try {
         const featureCollection = await fetchJsonWithTimeout<any>(jsonUrl, WFS_TIMEOUT_MS);
@@ -7499,11 +7501,11 @@ async function fetchCarBoundaryFromWfs(
         service: "WFS",
         version: "1.0.0",
         request: "GetFeature",
-        typeName: "Geoportal:CAR_ATP",
+        typeName: SEMA_CAR_REQUIRED_WFS_LAYER,
         srsName: "EPSG:4674",
         maxFeatures: 1,
         CQL_FILTER: cqlFilter,
-    }, { includeAuthkey: false });
+    });
 
     const xml = await fetchTextWithTimeout(gmlUrl, WFS_TIMEOUT_MS);
     const geometry = parsePolygonGeometryFromGml(xml);
@@ -7546,7 +7548,7 @@ async function fetchCarBoundaryByNumber(carNumber: string): Promise<Feature<Poly
     const values = normalizeCarLookupValues(carNumber);
     if (!values.length) throw new Error("Número do CAR inválido.");
 
-    const fields = ["NUMEROESTADUAL", "CAR_FEDERAL", "PROTOCOLO"];
+    const fields = ["NUMEROESTADUAL", "CODIGO_CAR_FEDERAL", "PROTOCOLO"];
     const errors: string[] = [];
 
     for (const fieldName of fields) {
@@ -7562,7 +7564,7 @@ async function fetchCarBoundaryByNumber(carNumber: string): Promise<Feature<Poly
     }
 
     throw new Error(
-        `Nenhum imóvel encontrado na camada CAR_ATP da SEMA para o CAR: ${values.join(" / ")}.` +
+        `Nenhum imóvel encontrado na camada CAR requerido da SEMA (${SEMA_CAR_REQUIRED_WFS_LAYER}) para o CAR: ${values.join(" / ")}.` +
         (errors.length > 0 ? ` Detalhes: ${errors.slice(0, 3).join(" | ")}` : ""),
     );
 }

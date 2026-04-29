@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Brain,
+  Camera,
   CheckCircle2,
   ChevronDown,
   Clock,
@@ -23,6 +24,8 @@ type FeaturesManualProps = {
   setManualSection: React.Dispatch<React.SetStateAction<string | null>>;
   onGoChat: () => void;
   onGoSimcar: () => void;
+  onGoAuas: () => void;
+  onGoCbers: () => void;
 };
 
 export default function FeaturesManual({
@@ -30,6 +33,8 @@ export default function FeaturesManual({
   setManualSection,
   onGoChat,
   onGoSimcar,
+  onGoAuas,
+  onGoCbers,
 }: FeaturesManualProps) {
   return (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
@@ -61,13 +66,14 @@ export default function FeaturesManual({
               </section>
 
               {/* ═══ Quick Nav ═══ */}
-              <nav className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4 xl:grid-cols-8">
+              <nav className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4 xl:grid-cols-5">
                 {[
                   { id: 'chat', icon: Brain, label: 'Assistente IA', color: 'emerald' },
                   { id: 'simcar', icon: Scissors, label: 'Recorte SIMCAR', color: 'purple' },
                   { id: 'analysis', icon: Satellite, label: 'Análise por IA', color: 'amber' },
                   { id: 'map', icon: Globe, label: 'Mapa WMS', color: 'blue' },
                   { id: 'novo-car', icon: Layers, label: 'Novo CAR', color: 'amber' },
+                  { id: 'cbers', icon: Camera, label: 'CBERS-4A', color: 'cyan' },
                   { id: 'billing', icon: Wallet, label: 'Créditos', color: 'emerald' },
                   { id: 'security', icon: ShieldCheck, label: 'Segurança', color: 'red' },
                   { id: 'faq', icon: HelpCircle, label: 'FAQ', color: 'slate' },
@@ -512,12 +518,91 @@ export default function FeaturesManual({
                         <li className="flex items-start gap-2"><ArrowRight size={12} className="text-blue-400 mt-1 shrink-0" />A conversa relacionada recebe resumo técnico automático para manter rastreabilidade.</li>
                       </ul>
                     </div>
+
+                    <button onClick={() => onGoAuas()} className="flex items-center gap-2 text-sm font-medium text-amber-400 hover:text-amber-300 transition-colors">
+                      Ir para Novo CAR <ArrowRight size={14} />
+                    </button>
                   </div>
                 )}
               </section>
 
               {/* ═══════════════════════════════════════════════════════════════
-                   SECTION 6 — CRÉDITOS E COBRANÇA
+                   SECTION 6 — CBERS-4A / WPM
+                 ═══════════════════════════════════════════════════════════════ */}
+              <section id="manual-cbers" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
+                <button
+                  onClick={() => setManualSection(manualSection === 'cbers' ? null : 'cbers')}
+                  className="w-full flex items-center justify-between p-4 sm:p-6 text-left hover:bg-white/5 transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-400"><Camera size={22} /></div>
+                    <div>
+                      <h2 className="font-semibold text-lg text-slate-200">6. Gerador CBERS-4A / WPM</h2>
+                      <p className="text-xs text-slate-500 mt-0.5">Fusão pancromática e geração de GeoTIFF em alta resolução (2m)</p>
+                    </div>
+                  </div>
+                  <ChevronDown size={18} className={`text-slate-500 transition-transform duration-200 ${manualSection === 'cbers' ? 'rotate-180' : ''}`} />
+                </button>
+                {manualSection === 'cbers' && (
+                  <div className="px-4 sm:px-6 pb-4 sm:pb-6 space-y-4 sm:space-y-6 border-t border-white/5 pt-4 sm:pt-5">
+                    <div>
+                      <h4 className="text-sm font-semibold text-slate-300 mb-3"><span className="text-cyan-400">O que faz</span></h4>
+                      <p className="text-sm text-slate-400 leading-relaxed">
+                        A aba <strong className="text-slate-300">CBERS-4A WPM</strong> consulta o catálogo STAC oficial do INPE e realiza a fusão pancromática (pansharpening) das bandas para gerar uma imagem <strong className="text-slate-300">GeoTIFF colorida com 2 metros de resolução espacial</strong>. As imagens geradas ficam disponíveis no acervo para uso no ArcMap/QGIS e publicadas no Web Map Service (WMS) da GeoForest.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2"><MousePointerClick size={14} className="text-cyan-400" /> Passo a passo</h4>
+                      <ol className="space-y-3 text-sm text-slate-400">
+                        <li className="flex gap-3">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-500/15 text-cyan-400 flex items-center justify-center text-xs font-bold">1</span>
+                          <span>Na barra lateral, selecione a aba <strong className="text-slate-300">CBERS-4A WPM</strong>.</span>
+                        </li>
+                        <li className="flex gap-3">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-500/15 text-cyan-400 flex items-center justify-center text-xs font-bold">2</span>
+                          <span>Envie o <strong className="text-slate-300">shapefile (.zip)</strong> do imóvel ou busque diretamente por <strong className="text-slate-300">Órbita/Ponto</strong>. Utilize o filtro de datas se desejar restringir a busca.</span>
+                        </li>
+                        <li className="flex gap-3">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-500/15 text-cyan-400 flex items-center justify-center text-xs font-bold">3</span>
+                          <span>No painel de resultados, analise as cenas disponíveis. Se enviar um shapefile, o sistema calcula automaticamente a <strong className="text-slate-300">% de Cobertura</strong>; cenas que não cobrem 100% da área ficarão bloqueadas.</span>
+                        </li>
+                        <li className="flex gap-3">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-500/15 text-cyan-400 flex items-center justify-center text-xs font-bold">4</span>
+                          <span>Selecione as cenas desejadas e acompanhe a estimativa de download, espaço de disco e tempo. Clique em <strong className="text-slate-300">Gerar Lote</strong> para iniciar.</span>
+                        </li>
+                        <li className="flex gap-3">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-cyan-500/15 text-cyan-400 flex items-center justify-center text-xs font-bold">5</span>
+                          <span>O servidor fará o download das bandas (0, 2, 3, 4), fusão pancromática e compressão. Ao concluir, faça o download do arquivo <strong className="text-slate-300">GeoTIFF (.tif)</strong> no histórico.</span>
+                        </li>
+                      </ol>
+                    </div>
+
+                    <div className="rounded-xl border border-cyan-500/10 bg-cyan-500/5 p-4">
+                      <h4 className="text-sm font-semibold text-cyan-400 mb-2 flex items-center gap-2"><Globe size={14} /> Integração WMS</h4>
+                      <ul className="space-y-1.5 text-sm text-slate-400">
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-cyan-500 mt-1 shrink-0" />Os GeoTIFFs gerados são copiados automaticamente para o acervo permanente e disponibilizados no <strong>GeoServer interno</strong>.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-cyan-500 mt-1 shrink-0" />Na aba <strong className="text-slate-300">Mapa</strong>, você poderá visualizar a cena CBERS-4A como uma camada interativa junto com os dados do SIMCAR.</li>
+                      </ul>
+                    </div>
+
+                    <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-4">
+                      <h4 className="text-sm font-semibold text-amber-400 mb-2 flex items-center gap-2"><AlertTriangle size={14} /> Atenção</h4>
+                      <ul className="space-y-1.5 text-sm text-slate-400">
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />O arquivo GeoTIFF gerado representa a <strong>folha completa</strong> da Órbita/Ponto do INPE; ele <strong>não é recortado</strong> pela geometria da propriedade para manter a integridade visual da cena.</li>
+                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />Cenas em lote são baixadas em um único arquivo `.zip`.</li>
+                      </ul>
+                    </div>
+
+                    <button onClick={() => onGoCbers()} className="flex items-center gap-2 text-sm font-medium text-cyan-400 hover:text-cyan-300 transition-colors">
+                      Ir para Gerador CBERS-4A <ArrowRight size={14} />
+                    </button>
+                  </div>
+                )}
+              </section>
+
+              {/* ═══════════════════════════════════════════════════════════════
+                   SECTION 7 — CRÉDITOS E COBRANÇA
                  ═══════════════════════════════════════════════════════════════ */}
               <section id="manual-billing" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
@@ -527,7 +612,7 @@ export default function FeaturesManual({
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400"><Wallet size={22} /></div>
                     <div>
-                      <h2 className="font-semibold text-lg text-slate-200">6. Créditos e Cobrança por Uso</h2>
+                      <h2 className="font-semibold text-lg text-slate-200">7. Créditos e Cobrança por Uso</h2>
                       <p className="text-xs text-slate-500 mt-0.5">Saldo, recarga, extrato, consumo por modelo e bloqueio por saldo insuficiente</p>
                     </div>
                   </div>
@@ -579,7 +664,7 @@ export default function FeaturesManual({
               </section>
 
               {/* ═══════════════════════════════════════════════════════════════
-                   SECTION 7 — SEGURANÇA, CONTA E TERMOS
+                   SECTION 8 — SEGURANÇA, CONTA E TERMOS
                  ═══════════════════════════════════════════════════════════════ */}
               <section id="manual-security" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
@@ -589,7 +674,7 @@ export default function FeaturesManual({
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-red-500/10 text-red-400"><ShieldCheck size={22} /></div>
                     <div>
-                      <h2 className="font-semibold text-lg text-slate-200">7. Segurança, Conta e Termos de Uso</h2>
+                      <h2 className="font-semibold text-lg text-slate-200">8. Segurança, Conta e Termos de Uso</h2>
                       <p className="text-xs text-slate-500 mt-0.5">Controle de acesso, recuperação de senha e conformidade de uso</p>
                     </div>
                   </div>
@@ -632,7 +717,7 @@ export default function FeaturesManual({
               </section>
 
               {/* ═══════════════════════════════════════════════════════════════
-                   SECTION 8 — FAQ
+                   SECTION 9 — FAQ
                  ═══════════════════════════════════════════════════════════════ */}
               <section id="manual-faq" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
@@ -642,7 +727,7 @@ export default function FeaturesManual({
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-slate-500/10 text-slate-400"><HelpCircle size={22} /></div>
                     <div>
-                      <h2 className="font-semibold text-lg text-slate-200">8. Perguntas Frequentes</h2>
+                      <h2 className="font-semibold text-lg text-slate-200">9. Perguntas Frequentes</h2>
                       <p className="text-xs text-slate-500 mt-0.5">Dúvidas comuns sobre a plataforma</p>
                     </div>
                   </div>
@@ -670,6 +755,14 @@ export default function FeaturesManual({
                       {
                         q: 'Posso analisar imagens de satélite sem fazer o recorte primeiro?',
                         a: 'Sim, no modo Vetorizado com IA. Nesse modo você envia um ZIP já vetorizado (com os shapes) e executa a análise completa sem recorte WFS.',
+                      },
+                      {
+                        q: 'Como funciona a geração de imagem CBERS-4A?',
+                        a: 'A ferramenta baixa as bandas vermelha, verde, azul e pancromática (resolução de 2m) diretamente do catálogo STAC do INPE, e executa uma fusão (pansharpening) no servidor, gerando um GeoTIFF colorido para uso no ArcMap/QGIS.',
+                      },
+                      {
+                        q: 'Por que o GeoTIFF do CBERS não vem recortado pela minha propriedade?',
+                        a: 'Para preservar a integridade visual da cena e viabilizar a reutilização por múltiplos analistas, a plataforma gera a folha completa original. O recorte e as composições devem ser feitos no software SIG de sua preferência.',
                       },
                       {
                         q: 'Por que a análise com múltiplos satélites pode falhar?',
