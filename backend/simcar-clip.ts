@@ -101,7 +101,7 @@ const SIGEF_WFS_BASE_URL =
     "https://acervofundiario.incra.gov.br/i3geo/ogc.php?tema=certificada_sigef_particular_mt";
 const SIGEF_WFS_TYPENAME = "certificada_sigef_particular_mt";
 const SIGEF_WFS_FILTER_PARAM = "map_layer_certificada_sigef_particular_mt_filter";
-const SIGEF_WFS_TIMEOUT_MS = Number(process.env.SIGEF_WFS_TIMEOUT_MS || Math.max(WFS_TIMEOUT_MS, 90000));
+const SIGEF_WFS_TIMEOUT_MS = Number(process.env.SIGEF_WFS_TIMEOUT_MS || Math.max(WFS_TIMEOUT_MS, 120000));
 const SEMA_CAR_REQUIRED_WFS_LAYER =
     process.env.SEMA_CAR_REQUIRED_WFS_LAYER || "Geoportal:MVW_REQUERIMENTO_ATP";
 const WFS_MAX_FEATURES = 50000;

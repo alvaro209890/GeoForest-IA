@@ -446,6 +446,8 @@ type CbersEstimate = {
 
 type CbersScene = {
   id: string;
+  collectionId?: string;
+  level?: 'L4' | 'L2';
   datetime: string;
   cloudCover: number | null;
   bbox: [number, number, number, number] | null;
@@ -461,12 +463,17 @@ type CbersScene = {
   wmsDownloadUrl?: string;
   archiveImageId?: string;
   archiveFilename?: string;
+  fallbackFromL2?: boolean;
+  alignmentStatus?: 'not_checked' | 'reference_missing' | 'aligned' | 'corrected' | 'failed_private';
+  alignmentWarning?: string;
 };
 
 type CbersJobStatus = 'processing' | 'completed' | 'failed' | 'cancelled';
 
 type CbersSceneJobState = {
   itemId: string;
+  collectionId?: string;
+  level?: 'L4' | 'L2';
   scene?: CbersScene | null;
   status: CbersJobStatus;
   stage?: string;
@@ -483,6 +490,8 @@ type CbersSceneJobState = {
   wmsLayerName?: string;
   wmsUrl?: string;
   wmsDownloadUrl?: string;
+  alignmentStatus?: 'not_checked' | 'reference_missing' | 'aligned' | 'corrected' | 'failed_private';
+  alignmentWarning?: string;
 };
 
 type CbersHistoryItem = {
@@ -514,6 +523,8 @@ type CbersHistoryItem = {
   wmsLayerName?: string;
   wmsUrl?: string;
   wmsDownloadUrl?: string;
+  alignmentStatus?: 'not_checked' | 'reference_missing' | 'aligned' | 'corrected' | 'failed_private';
+  alignmentWarning?: string;
   batchZipUrl?: string;
   batchZipRelativePath?: string;
   batchZipFilename?: string;
@@ -1059,10 +1070,12 @@ const cbersArchiveZipFilename = (item?: Pick<CbersHistoryItem, 'outputFilename' 
   return `${stem}.zip`;
 };
 
-const cbersArchiveZipUrl = (item?: Pick<CbersHistoryItem, 'archiveImageId' | 'scene' | 'itemId' | 'wmsDownloadUrl'> | CbersSceneJobState | null) => {
+const cbersArchiveZipUrl = (item?: Pick<CbersHistoryItem, 'archiveImageId' | 'scene' | 'itemId' | 'wmsDownloadUrl' | 'outputUrl' | 'alignmentStatus'> | CbersSceneJobState | null) => {
   if (!item) return '';
+  if ('outputUrl' in item && item.outputUrl && item.alignmentStatus === 'failed_private') return item.outputUrl;
   if ('wmsDownloadUrl' in item && item.wmsDownloadUrl) return item.wmsDownloadUrl;
   if (item.scene?.wmsDownloadUrl) return item.scene.wmsDownloadUrl;
+  if (item.scene?.alignmentStatus === 'failed_private') return '';
   const archiveImageId = ('archiveImageId' in item ? item.archiveImageId : undefined) || item.scene?.archiveImageId;
   if (archiveImageId) return `/api/cbers-wpm/wms-download?imageId=${encodeURIComponent(archiveImageId)}`;
   const itemId = item.scene?.id || item.itemId;
@@ -2047,6 +2060,8 @@ export default function Dashboard() {
     const scene = isPlainObject(data?.scene)
       ? {
         id: String(data.scene.id || ''),
+        collectionId: data.scene.collectionId ? String(data.scene.collectionId) : undefined,
+        level: data.scene.level === 'L2' || data.scene.level === 'L4' ? data.scene.level : undefined,
         datetime: String(data.scene.datetime || ''),
         cloudCover: Number.isFinite(Number(data.scene.cloudCover)) ? Number(data.scene.cloudCover) : null,
         bbox: Array.isArray(data.scene.bbox) && data.scene.bbox.length >= 4
@@ -2064,11 +2079,16 @@ export default function Dashboard() {
         wmsDownloadUrl: data.scene.wmsDownloadUrl ? String(data.scene.wmsDownloadUrl) : undefined,
         archiveImageId: data.scene.archiveImageId ? String(data.scene.archiveImageId) : undefined,
         archiveFilename: data.scene.archiveFilename ? String(data.scene.archiveFilename) : undefined,
+        fallbackFromL2: Boolean(data.scene.fallbackFromL2),
+        alignmentStatus: data.scene.alignmentStatus ? String(data.scene.alignmentStatus) as CbersScene['alignmentStatus'] : undefined,
+        alignmentWarning: data.scene.alignmentWarning ? String(data.scene.alignmentWarning) : undefined,
       }
       : null;
     const scenes = Array.isArray(data?.scenes)
       ? data.scenes.map((item: any) => ({
         itemId: String(item?.itemId || ''),
+        collectionId: item?.collectionId ? String(item.collectionId) : undefined,
+        level: item?.level === 'L2' || item?.level === 'L4' ? item.level : undefined,
         scene: isPlainObject(item?.scene) ? mapCbersDocToHistoryItem(`${docId}-${item.itemId || 'scene'}`, { scene: item.scene }).scene : null,
         status: item?.status === 'completed' || item?.status === 'failed' || item?.status === 'cancelled' ? item.status : 'processing',
         stage: item?.stage ? String(item.stage) : undefined,
@@ -2085,6 +2105,8 @@ export default function Dashboard() {
         wmsLayerName: item?.wmsLayerName ? String(item.wmsLayerName) : undefined,
         wmsUrl: item?.wmsUrl ? String(item.wmsUrl) : undefined,
         wmsDownloadUrl: item?.wmsDownloadUrl ? String(item.wmsDownloadUrl) : undefined,
+        alignmentStatus: item?.alignmentStatus ? String(item.alignmentStatus) as CbersSceneJobState['alignmentStatus'] : undefined,
+        alignmentWarning: item?.alignmentWarning ? String(item.alignmentWarning) : undefined,
       })).filter((item: CbersSceneJobState) => Boolean(item.itemId))
       : undefined;
     return {
@@ -2115,6 +2137,8 @@ export default function Dashboard() {
       wmsLayerName: data?.wmsLayerName ? String(data.wmsLayerName) : undefined,
       wmsUrl: data?.wmsUrl ? String(data.wmsUrl) : undefined,
       wmsDownloadUrl: data?.wmsDownloadUrl ? String(data.wmsDownloadUrl) : undefined,
+      alignmentStatus: data?.alignmentStatus ? String(data.alignmentStatus) as CbersHistoryItem['alignmentStatus'] : undefined,
+      alignmentWarning: data?.alignmentWarning ? String(data.alignmentWarning) : undefined,
       batchZipUrl: data?.batchZipUrl ? resolveBackendUrl(String(data.batchZipUrl)) : undefined,
       batchZipRelativePath: data?.batchZipRelativePath ? String(data.batchZipRelativePath) : undefined,
       batchZipFilename: data?.batchZipFilename ? String(data.batchZipFilename) : undefined,
@@ -10232,7 +10256,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className="grid grid-cols-3 gap-2 text-center">
                     {[
                       { label: 'Fonte', value: 'INPE STAC' },
-                      { label: 'Coleção', value: 'L4-DN' },
+                      { label: 'Coleção', value: 'L4/L2-DN' },
                       { label: 'Saída', value: 'GeoTIFF' },
                     ].map((item) => (
                       <div key={item.label} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
@@ -10492,7 +10516,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 </div>
                                 <div className="min-w-0 flex-1">
                                   <p className="text-sm font-semibold text-white truncate">{scene.id}</p>
-                                  <p className="mt-1 text-xs text-slate-400">{date}</p>
+                                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                    <p className="text-xs text-slate-400">{date}</p>
+                                    {scene.level && (
+                                      <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${scene.level === 'L4' ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-amber-400/25 bg-amber-400/10 text-amber-200'}`}>
+                                        {scene.level}{scene.fallbackFromL2 ? ' fallback' : ''}
+                                      </span>
+                                    )}
+                                  </div>
                                   <p className="mt-1 text-[10px] uppercase tracking-wider text-slate-500">
                                     {scene.cloudCover === null ? 'Nuvem n/d' : `Nuvem ${scene.cloudCover.toFixed(1)}%`}
                                   </p>
@@ -10532,6 +10563,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                         {cbersWmsDownloadingId === scene.id ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
                                         <span className="truncate">Baixar ZIP</span>
                                       </span>
+                                    </div>
+                                  )}
+                                  {scene.alignmentStatus === 'failed_private' && (
+                                    <div className="mt-2 rounded-lg border border-amber-500/25 bg-amber-500/10 p-2">
+                                      <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-200">Apenas download privado</p>
+                                      <p className="mt-1 text-[10px] text-amber-100/80">{scene.alignmentWarning || 'Imagem com aviso de deslocamento; sem publicação WMS.'}</p>
                                     </div>
                                   )}
                                 </div>
@@ -10679,8 +10716,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       download: 'Baixando bandas',
                       pansharpen: 'Fusionando folha completa',
                       geotiff: 'Gerando GeoTIFF',
+                      alignment_check: 'Analisando deslocamento',
+                      alignment_correction: 'Corrigindo deslocamento',
                       save: 'Salvando arquivo',
                       publish: 'Publicando WMS',
+                      private_zip: 'Gerando ZIP privado',
                       zip: 'Compactando entrega',
                       completed: 'Concluído',
                       failed: 'Falhou',
@@ -10717,6 +10757,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           )}
                           <p className="min-h-[2rem] text-xs leading-relaxed text-slate-400">{progressMessage}</p>
                         </div>
+                        {activeCbers?.alignmentStatus === 'failed_private' && (
+                          <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-100">
+                            <p className="font-semibold uppercase tracking-wider text-amber-200">Aviso de deslocamento</p>
+                            <p className="mt-1">{activeCbers.alignmentWarning || 'A correção automática não validou a imagem. O arquivo está disponível apenas para este usuário e não foi publicado no WMS.'}</p>
+                          </div>
+                        )}
                         {cbersProcessing && cbersJobId && (
                           <button
                             type="button"
@@ -10759,6 +10805,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0">
                                     <p className="truncate text-xs font-semibold text-white">{sceneState.scene?.id || sceneState.itemId}</p>
+                                    {sceneState.level || sceneState.scene?.level ? (
+                                      <p className="mt-0.5 text-[10px] font-semibold text-cyan-200">{sceneState.level || sceneState.scene?.level}</p>
+                                    ) : null}
                                     <p className="mt-1 text-[10px] text-slate-500">{sceneState.message || sceneState.stage || sceneState.status}</p>
                                   </div>
                                   <span className={`text-[10px] font-semibold uppercase ${sceneState.status === 'completed' ? 'text-emerald-300' : sceneState.status === 'failed' ? 'text-red-300' : sceneState.status === 'cancelled' ? 'text-orange-300' : 'text-cyan-300'}`}>
@@ -10777,6 +10826,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     <Download size={14} />
                                     Baixar cena em ZIP
                                   </button>
+                                )}
+                                {sceneState.alignmentStatus === 'failed_private' && (
+                                  <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/10 p-2 text-[10px] text-amber-100">
+                                    {sceneState.alignmentWarning || 'Cena disponível apenas como ZIP privado; não publicada no WMS.'}
+                                  </p>
                                 )}
                               </div>
                             ))}
@@ -10871,8 +10925,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               <p className="mt-1 text-sm font-semibold text-slate-100">3, 4, 2 + PAN</p>
                             </div>
                             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                              <p className="text-[10px] uppercase tracking-wider text-slate-500">Assets</p>
-                              <p className="mt-1 text-sm font-semibold text-slate-100">{cbersPreviewScene.assetKeys.length}</p>
+                              <p className="text-[10px] uppercase tracking-wider text-slate-500">Nível</p>
+                              <p className={`mt-1 text-sm font-semibold ${cbersPreviewScene.level === 'L2' ? 'text-amber-200' : 'text-emerald-200'}`}>
+                                {cbersPreviewScene.level || 'L4'}{cbersPreviewScene.fallbackFromL2 ? ' fallback' : ''}
+                              </p>
                             </div>
                             <div className={`rounded-xl border p-3 ${cbersPreviewScene.coversArea === false ? 'border-red-500/20 bg-red-500/10' : typeof cbersPreviewScene.coveragePercent === 'number' ? 'border-emerald-500/20 bg-emerald-500/10' : 'border-cyan-500/20 bg-cyan-500/10'}`}>
                               <p className="text-[10px] uppercase tracking-wider text-slate-400">Cobertura</p>
@@ -10901,6 +10957,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 <p className="text-[10px] uppercase tracking-wider text-slate-500">Tempo</p>
                                 <p className="mt-1 text-sm font-semibold text-cyan-100">{Math.ceil(estimate.timeSecondsEstimated / 60)} min</p>
                               </div>
+                            </div>
+                          )}
+                          {cbersPreviewScene.alignmentStatus === 'failed_private' && (
+                            <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+                              <p className="font-semibold">Imagem com aviso de deslocamento</p>
+                              <p className="mt-1 text-xs text-amber-100/80">
+                                {cbersPreviewScene.alignmentWarning || 'Esta imagem fica disponível apenas para download do usuário e não é publicada no WMS.'}
+                              </p>
                             </div>
                           )}
                           {availableOnWms && (

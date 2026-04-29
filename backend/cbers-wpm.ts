@@ -16,6 +16,7 @@ import {
   deleteDocBySegments,
   readDocBySegments,
   removeStoragePath,
+  saveUserFileFromPath,
   STORAGE_ROOT,
   stripUndefinedDeep,
   writeDocBySegments,
@@ -35,9 +36,34 @@ import {
 } from "./cbers-archive";
 
 type CbersJobStatus = "processing" | "completed" | "failed" | "cancelled";
+type CbersCollectionLevel = "L4" | "L2";
+type CbersAlignmentStatus =
+  | "not_checked"
+  | "reference_missing"
+  | "aligned"
+  | "corrected"
+  | "failed_private";
+
+type CbersCollectionConfig = {
+  level: CbersCollectionLevel;
+  collectionId: string;
+  priority: number;
+};
+
+type CbersAlignmentResult = {
+  status: CbersAlignmentStatus;
+  warning?: string;
+  reference?: string;
+  offsetXM?: number;
+  offsetYM?: number;
+  offsetMeters?: number;
+  correctedPath?: string;
+};
 
 type CbersScene = {
   id: string;
+  collectionId?: string;
+  level?: CbersCollectionLevel;
   datetime: string;
   cloudCover: number | null;
   bbox: [number, number, number, number] | null;
@@ -53,6 +79,9 @@ type CbersScene = {
   wmsDownloadUrl?: string;
   archiveImageId?: string;
   archiveFilename?: string;
+  fallbackFromL2?: boolean;
+  alignmentStatus?: CbersAlignmentStatus;
+  alignmentWarning?: string;
 };
 
 type CbersEstimate = {
@@ -73,6 +102,8 @@ type CbersAreaContext = {
 
 type CbersSceneJobState = {
   itemId: string;
+  collectionId?: string;
+  level?: CbersCollectionLevel;
   scene?: CbersScene | null;
   status: CbersJobStatus;
   stage?: string;
@@ -89,6 +120,9 @@ type CbersSceneJobState = {
   wmsLayerName?: string;
   wmsUrl?: string;
   wmsDownloadUrl?: string;
+  alignmentStatus?: CbersAlignmentStatus;
+  alignmentWarning?: string;
+  alignment?: CbersAlignmentResult;
 };
 
 type CbersProgressPatch = {
@@ -106,6 +140,9 @@ type CbersProgressPatch = {
   wmsLayerName?: string;
   wmsUrl?: string;
   wmsDownloadUrl?: string;
+  alignmentStatus?: CbersAlignmentStatus;
+  alignmentWarning?: string;
+  alignment?: CbersAlignmentResult;
   batchZipUrl?: string;
   batchZipRelativePath?: string;
   batchZipFilename?: string;
@@ -127,7 +164,18 @@ class CbersCancelError extends Error {
 const STAC_ROOT = String(
   process.env.CBERS_STAC_ROOT || "https://data.inpe.br/bdc/stac/v1",
 ).replace(/\/+$/, "");
-const CBERS_COLLECTION = "CB4A-WPM-L4-DN-1";
+const CBERS_COLLECTIONS: CbersCollectionConfig[] = [
+  {
+    level: "L4",
+    collectionId: process.env.CBERS_COLLECTION_L4 || "CB4A-WPM-L4-DN-1",
+    priority: 1,
+  },
+  {
+    level: "L2",
+    collectionId: process.env.CBERS_COLLECTION_L2 || "CB4A-WPM-L2-DN-1",
+    priority: 2,
+  },
+];
 const CBERS_REQUIRED_ASSETS = ["BAND3", "BAND4", "BAND2", "BAND0"] as const;
 const CBERS_TMP_ROOT = process.env.CBERS_TMP_ROOT || "/tmp/geoforest-cbers-wpm";
 const CBERS_SEARCH_LIMIT = Math.max(1, Number(process.env.CBERS_SEARCH_LIMIT || 50));
@@ -154,6 +202,11 @@ const CBERS_PANSHARPEN_ESTIMATE_MS = Math.max(
 const CBERS_TRANSLATE_ESTIMATE_MS = Math.max(
   30000,
   Number(process.env.CBERS_TRANSLATE_ESTIMATE_MS || 3 * 60 * 1000),
+);
+const CBERS_ALIGNMENT_TOLERANCE_M = Math.max(0.1, Number(process.env.CBERS_ALIGNMENT_TOLERANCE_M || 10));
+const CBERS_ALIGNMENT_MAX_CORRECTION_M = Math.max(
+  CBERS_ALIGNMENT_TOLERANCE_M,
+  Number(process.env.CBERS_ALIGNMENT_MAX_CORRECTION_M || 300),
 );
 const GEOSERVER_WORKSPACE = process.env.GEOSERVER_WORKSPACE || "cbers";
 const GEOSERVER_DATA_DIR = process.env.GEOSERVER_DATA_DIR || "/home/server/geoserver_data";
@@ -306,6 +359,29 @@ function safeName(value: unknown, fallback = "cbers_4a_wpm.tif"): string {
   return clean || fallback;
 }
 
+function cbersCollectionByLevel(level: CbersCollectionLevel): CbersCollectionConfig {
+  return CBERS_COLLECTIONS.find((collection) => collection.level === level) || CBERS_COLLECTIONS[0];
+}
+
+function cbersCollectionById(collectionId?: string | null): CbersCollectionConfig | null {
+  const clean = String(collectionId || "").trim();
+  if (!clean) return null;
+  return CBERS_COLLECTIONS.find((collection) => collection.collectionId === clean) || null;
+}
+
+function cbersLevelFromItemId(itemId: string): CbersCollectionLevel | null {
+  const match = String(itemId || "").match(/[_-](L[24])(?:$|[_-])/i);
+  const level = match?.[1]?.toUpperCase();
+  return level === "L2" || level === "L4" ? level : null;
+}
+
+function inferCbersCollection(itemId: string, collectionId?: string | null): CbersCollectionConfig {
+  const explicit = cbersCollectionById(collectionId);
+  if (explicit) return explicit;
+  const level = cbersLevelFromItemId(itemId);
+  return level ? cbersCollectionByLevel(level) : cbersCollectionByLevel("L4");
+}
+
 function cbersOutputFilename(itemId: string): string {
   const stem = safeName(itemId, "CBERS_4A_WPM")
     .replace(/\.(tif|tiff)$/i, "")
@@ -446,10 +522,16 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   }
 }
 
-function sceneFromStacFeature(feature: any, propertyGeometry?: Polygon | MultiPolygon): CbersScene | null {
+function sceneFromStacFeature(
+  feature: any,
+  propertyGeometry?: Polygon | MultiPolygon,
+  collection?: CbersCollectionConfig,
+): CbersScene | null {
   const assets = feature?.assets && typeof feature.assets === "object" ? feature.assets : {};
   const assetKeys = Object.keys(assets);
   if (!CBERS_REQUIRED_ASSETS.every((key) => Boolean(assets[key]?.href))) return null;
+  const id = String(feature?.id || "").trim();
+  const resolvedCollection = collection || inferCbersCollection(id, feature?.collection);
   const bbox = Array.isArray(feature?.bbox) && feature.bbox.length >= 4
     ? [
       Number(feature.bbox[0]),
@@ -463,7 +545,9 @@ function sceneFromStacFeature(feature: any, propertyGeometry?: Polygon | MultiPo
     ? computeSceneCoverage(propertyGeometry, geometry)
     : { coveragePercent: undefined, coversArea: undefined };
   return {
-    id: String(feature?.id || "").trim(),
+    id,
+    collectionId: resolvedCollection.collectionId,
+    level: resolvedCollection.level,
     datetime: String(feature?.properties?.datetime || feature?.properties?.start_datetime || "").trim(),
     cloudCover: Number.isFinite(Number(feature?.properties?.["eo:cloud_cover"]))
       ? Number(feature.properties["eo:cloud_cover"])
@@ -528,6 +612,20 @@ function parseCbersItemIdForWms(itemId: string): {
     row: match[3],
     level: match[4]?.toLowerCase(),
   };
+}
+
+function cbersSceneMergeKey(itemId: string): string {
+  const parsed = parseCbersItemIdForWms(itemId);
+  if (!parsed) return normalizeLayerName(itemId);
+  return [parsed.dateCompact, parsed.orbit, parsed.row].join("_");
+}
+
+function cbersAlternateLevelItemId(itemId: string, targetLevel: CbersCollectionLevel): string | null {
+  const parsed = parseCbersItemIdForWms(itemId);
+  if (!parsed) return null;
+  const pattern = /([_-])L[24](?=$|[_-])/i;
+  if (pattern.test(itemId)) return itemId.replace(pattern, `$1${targetLevel}`);
+  return null;
 }
 
 function normalizeOrbitPointParam(raw: unknown, label: string): string | null {
@@ -806,35 +904,59 @@ async function searchCbersScenes(
   const requestedOrbit = options?.orbit || null;
   const requestedPoint = options?.point || null;
   const maxPages = bbox ? 1 : CBERS_ORBIT_POINT_SEARCH_MAX_PAGES;
-  let url: string | null = `${STAC_ROOT}/collections/${encodeURIComponent(CBERS_COLLECTION)}/items?${params.toString()}`;
-  const scenes: CbersScene[] = [];
+  const byEquivalentScene = new Map<string, CbersScene>();
   const seen = new Set<string>();
-
-  for (let page = 0; url && page < maxPages && scenes.length < CBERS_SEARCH_LIMIT; page += 1) {
-    const payload: any = await fetchJson<any>(url);
-    const features: any[] = Array.isArray(payload?.features) ? payload.features : [];
-    for (const feature of features) {
-      const scene = sceneFromStacFeature(feature, options?.propertyGeometry);
-      if (!scene?.id || seen.has(scene.id)) continue;
-      const parsed = parseCbersItemIdForWms(scene.id);
-      if (requestedOrbit && parsed?.orbit !== requestedOrbit) continue;
-      if (requestedPoint && parsed?.row !== requestedPoint) continue;
-      seen.add(scene.id);
-      scenes.push(attachArchiveAvailability(scene, options?.propertyGeometryHash));
-      if (scenes.length >= CBERS_SEARCH_LIMIT) break;
+  for (const collection of [...CBERS_COLLECTIONS].sort((a, b) => a.priority - b.priority)) {
+    let url: string | null = `${STAC_ROOT}/collections/${encodeURIComponent(collection.collectionId)}/items?${params.toString()}`;
+    for (let page = 0; url && page < maxPages && byEquivalentScene.size < CBERS_SEARCH_LIMIT; page += 1) {
+      const payload: any = await fetchJson<any>(url);
+      const features: any[] = Array.isArray(payload?.features) ? payload.features : [];
+      for (const feature of features) {
+        const scene = sceneFromStacFeature(feature, options?.propertyGeometry, collection);
+        if (!scene?.id || seen.has(scene.id)) continue;
+        const parsed = parseCbersItemIdForWms(scene.id);
+        if (requestedOrbit && parsed?.orbit !== requestedOrbit) continue;
+        if (requestedPoint && parsed?.row !== requestedPoint) continue;
+        seen.add(scene.id);
+        const next = attachArchiveAvailability(scene, options?.propertyGeometryHash);
+        const key = cbersSceneMergeKey(next.id);
+        const current = byEquivalentScene.get(key);
+        const currentPriority = current ? inferCbersCollection(current.id, current.collectionId).priority : Number.POSITIVE_INFINITY;
+        if (!current || collection.priority < currentPriority) {
+          byEquivalentScene.set(key, {
+            ...next,
+            fallbackFromL2: collection.level === "L2",
+          });
+        }
+        if (byEquivalentScene.size >= CBERS_SEARCH_LIMIT) break;
+      }
+      const nextHref: string = Array.isArray(payload?.links)
+        ? String(payload.links.find((link: any) => String(link?.rel || "").toLowerCase() === "next")?.href || "")
+        : "";
+      url = nextHref ? new URL(nextHref, STAC_ROOT).toString() : null;
     }
-    const nextHref: string = Array.isArray(payload?.links)
-      ? String(payload.links.find((link: any) => String(link?.rel || "").toLowerCase() === "next")?.href || "")
-      : "";
-    url = nextHref ? new URL(nextHref, STAC_ROOT).toString() : null;
   }
 
+  const scenes = [...byEquivalentScene.values()];
   return scenes.sort((a: CbersScene, b: CbersScene) => String(b.datetime || "").localeCompare(String(a.datetime || "")));
 }
 
-async function getStacItem(itemId: string): Promise<any> {
-  const url = `${STAC_ROOT}/collections/${encodeURIComponent(CBERS_COLLECTION)}/items/${encodeURIComponent(itemId)}`;
-  return fetchJson<any>(url);
+async function getStacItem(itemId: string, collectionId?: string | null): Promise<{ item: any; collection: CbersCollectionConfig }> {
+  const first = inferCbersCollection(itemId, collectionId);
+  const candidates = [
+    first,
+    ...CBERS_COLLECTIONS.filter((collection) => collection.collectionId !== first.collectionId),
+  ];
+  let lastError: unknown = null;
+  for (const collection of candidates) {
+    const url = `${STAC_ROOT}/collections/${encodeURIComponent(collection.collectionId)}/items/${encodeURIComponent(itemId)}`;
+    try {
+      return { item: await fetchJson<any>(url), collection };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`Cena ${itemId} não encontrada no STAC CBERS.`);
 }
 
 async function headContentLength(url: string): Promise<number | null> {
@@ -859,10 +981,11 @@ function estimateFallbackDownloadBytes(areaHa: number): number {
 
 async function estimateSceneAssets(args: {
   itemId: string;
+  collectionId?: string | null;
   areaHa: number;
   scene?: CbersScene | null;
 }): Promise<CbersEstimate> {
-  const item = await getStacItem(args.itemId);
+  const { item } = await getStacItem(args.itemId, args.collectionId || args.scene?.collectionId);
   const assets = item.assets || {};
   const assetSizes: Record<string, number | null> = {};
   for (const key of CBERS_REQUIRED_ASSETS) {
@@ -1274,10 +1397,283 @@ async function runCommand(args: {
   });
 }
 
+async function runCommandCapture(command: string, commandArgs: string[], jobId: string): Promise<string> {
+  throwIfCancelled(jobId);
+  return new Promise<string>((resolve, reject) => {
+    const child = spawn(command, commandArgs, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: gdalCommandEnv(),
+    });
+    let output = "";
+    let errorOutput = "";
+    const keepOutput = (chunk: Buffer, target: "out" | "err") => {
+      if (target === "out") output += chunk.toString("utf8");
+      else errorOutput += chunk.toString("utf8");
+      if (output.length > 2_000_000) output = output.slice(-2_000_000);
+      if (errorOutput.length > 8000) errorOutput = errorOutput.slice(-8000);
+    };
+    const cancelTimer = setInterval(() => {
+      if (!isCancelRequested(jobId)) return;
+      child.kill("SIGTERM");
+      reject(new CbersCancelError());
+    }, 1000);
+    child.stdout.on("data", (chunk) => keepOutput(chunk, "out"));
+    child.stderr.on("data", (chunk) => keepOutput(chunk, "err"));
+    child.on("error", (error) => {
+      clearInterval(cancelTimer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearInterval(cancelTimer);
+      if (code === 0) resolve(output);
+      else reject(new Error(`${command} falhou com codigo ${code}: ${errorOutput.slice(-1200)}`));
+    });
+  });
+}
+
+type RasterBoundsInfo = {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  width: number;
+  height: number;
+  projection?: string;
+};
+
+function boundsFromGdalInfoJson(info: any): RasterBoundsInfo | null {
+  const size = Array.isArray(info?.size) ? info.size : [];
+  const width = Number(size[0]);
+  const height = Number(size[1]);
+  const corners = info?.cornerCoordinates || {};
+  const ul = Array.isArray(corners.upperLeft) ? corners.upperLeft : null;
+  const lr = Array.isArray(corners.lowerRight) ? corners.lowerRight : null;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || !ul || !lr) return null;
+  const minX = Math.min(Number(ul[0]), Number(lr[0]));
+  const maxX = Math.max(Number(ul[0]), Number(lr[0]));
+  const minY = Math.min(Number(ul[1]), Number(lr[1]));
+  const maxY = Math.max(Number(ul[1]), Number(lr[1]));
+  if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null;
+  return {
+    minX,
+    minY,
+    maxX,
+    maxY,
+    width,
+    height,
+    projection: String(info?.coordinateSystem?.wkt || info?.coordinateSystem?.dataAxisToSRSAxisMapping || ""),
+  };
+}
+
+async function readRasterBoundsInfo(rasterPath: string, jobId: string): Promise<RasterBoundsInfo | null> {
+  const output = await runCommandCapture("gdalinfo", ["-json", rasterPath], jobId);
+  try {
+    return boundsFromGdalInfoJson(JSON.parse(output));
+  } catch {
+    return null;
+  }
+}
+
+function cbersOffsetMeters(candidate: RasterBoundsInfo, reference: RasterBoundsInfo): {
+  offsetXM: number;
+  offsetYM: number;
+  offsetMeters: number;
+} {
+  const candidateCenterX = (candidate.minX + candidate.maxX) / 2;
+  const candidateCenterY = (candidate.minY + candidate.maxY) / 2;
+  const referenceCenterX = (reference.minX + reference.maxX) / 2;
+  const referenceCenterY = (reference.minY + reference.maxY) / 2;
+  const offsetXM = referenceCenterX - candidateCenterX;
+  const offsetYM = referenceCenterY - candidateCenterY;
+  return {
+    offsetXM: Number(offsetXM.toFixed(3)),
+    offsetYM: Number(offsetYM.toFixed(3)),
+    offsetMeters: Number(Math.hypot(offsetXM, offsetYM).toFixed(3)),
+  };
+}
+
+async function findTrustedCbersReference(scene: CbersScene): Promise<{ path: string; label: string } | null> {
+  const parsed = parseCbersItemIdForWms(scene.id);
+  if (!parsed) return null;
+  const activeRecords = listCbersArchiveRecords().filter(isActiveArchiveRecord);
+  const archiveReference = activeRecords.find((record) => {
+    if (record.itemId === scene.id) return false;
+    const other = parseCbersItemIdForWms(record.itemId);
+    return other?.orbit === parsed.orbit && other?.row === parsed.row && other?.level !== "l2";
+  }) || activeRecords.find((record) => {
+    if (record.itemId === scene.id) return false;
+    const other = parseCbersItemIdForWms(record.itemId);
+    return other?.orbit === parsed.orbit && other?.row === parsed.row;
+  });
+  if (archiveReference?.hdPath && fs.existsSync(archiveReference.hdPath)) {
+    return { path: archiveReference.hdPath, label: `arquivo:${archiveReference.itemId}` };
+  }
+  if (scene.level === "L2") {
+    const l4ItemId = cbersAlternateLevelItemId(scene.id, "L4");
+    if (l4ItemId) {
+      try {
+        const { item } = await getStacItem(l4ItemId, cbersCollectionByLevel("L4").collectionId);
+        const href = String(item?.assets?.BAND0?.href || "");
+        if (href) return { path: href, label: `stac:${l4ItemId}:BAND0` };
+      } catch {
+        // L4 may not exist for this date/orbit/point; fall back to private delivery.
+      }
+    }
+  }
+  return null;
+}
+
+async function validateAndCorrectCbersAlignment(args: {
+  uid: string;
+  jobId: string;
+  scene: CbersScene;
+  item: any;
+  sourcePath: string;
+  sceneDir: string;
+  onProgress: (patch: CbersProgressPatch) => void;
+}): Promise<CbersAlignmentResult> {
+  args.onProgress({
+    stage: "alignment_check",
+    percent: 96,
+    message: "Analisando deslocamento da imagem antes de publicar.",
+  });
+  void args.item;
+  const reference = await findTrustedCbersReference(args.scene);
+  if (!reference) {
+    return {
+      status: "reference_missing",
+      warning: "Sem imagem L4/arquivo confiável para validar deslocamento; a cena será entregue apenas ao usuário e não será publicada no WMS.",
+    };
+  }
+  const candidateInfo = await readRasterBoundsInfo(args.sourcePath, args.jobId);
+  const referenceInfo = await readRasterBoundsInfo(reference.path, args.jobId);
+  if (!candidateInfo || !referenceInfo) {
+    return {
+      status: "failed_private",
+      reference: reference.label,
+      warning: "Não foi possível ler o georreferenciamento para validar deslocamento; a cena não será publicada no WMS.",
+    };
+  }
+  const offset = cbersOffsetMeters(candidateInfo, referenceInfo);
+  if (offset.offsetMeters <= CBERS_ALIGNMENT_TOLERANCE_M) {
+    return { status: "aligned", reference: reference.label, ...offset };
+  }
+  if (offset.offsetMeters > CBERS_ALIGNMENT_MAX_CORRECTION_M) {
+    return {
+      status: "failed_private",
+      reference: reference.label,
+      ...offset,
+      warning: `Deslocamento estimado de ${offset.offsetMeters.toFixed(1)} m excede o limite automático.`,
+    };
+  }
+
+  args.onProgress({
+    stage: "alignment_correction",
+    percent: 97,
+    message: `Deslocamento estimado de ${offset.offsetMeters.toFixed(1)} m; corrigindo georreferenciamento.`,
+  });
+  const correctedPath = path.join(args.sceneDir, "cbers_4a_wpm_342_pan_aligned.tif");
+  await runCommand({
+    uid: args.uid,
+    jobId: args.jobId,
+    command: "gdal_translate",
+    commandArgs: [
+      "-of", "GTiff",
+      "-a_ullr",
+      String(referenceInfo.minX),
+      String(referenceInfo.maxY),
+      String(referenceInfo.maxX),
+      String(referenceInfo.minY),
+      "-co", "COMPRESS=LZW",
+      "-co", "TILED=YES",
+      "-co", "BIGTIFF=IF_SAFER",
+      args.sourcePath,
+      correctedPath,
+    ],
+    basePercent: 97,
+    spanPercent: 1,
+    stage: "alignment_correction",
+    message: "Aplicando correção de deslocamento por translação.",
+    onProgress: args.onProgress,
+  });
+  const correctedInfo = await readRasterBoundsInfo(correctedPath, args.jobId);
+  if (!correctedInfo) {
+    return {
+      status: "failed_private",
+      reference: reference.label,
+      ...offset,
+      warning: "A correção foi executada, mas a revalidação do GeoTIFF falhou.",
+    };
+  }
+  const correctedOffset = cbersOffsetMeters(correctedInfo, referenceInfo);
+  if (correctedOffset.offsetMeters <= CBERS_ALIGNMENT_TOLERANCE_M) {
+    return {
+      status: "corrected",
+      reference: reference.label,
+      ...correctedOffset,
+      correctedPath,
+      warning: `Correção aplicada. Deslocamento final estimado: ${correctedOffset.offsetMeters.toFixed(1)} m.`,
+    };
+  }
+  return {
+    status: "failed_private",
+    reference: reference.label,
+    ...correctedOffset,
+    warning: `Correção automática não validou a imagem. Deslocamento final estimado: ${correctedOffset.offsetMeters.toFixed(1)} m.`,
+  };
+}
+
+async function createPrivateCbersZip(args: {
+  uid: string;
+  jobId: string;
+  scene: CbersScene;
+  sourcePath: string;
+  outputFilename: string;
+  sceneDir: string;
+  alignment: CbersAlignmentResult;
+}): Promise<{ url: string; relativePath: string; filename: string; bytes: number }> {
+  const zipFilename = safeName(`${path.basename(args.outputFilename, path.extname(args.outputFilename))}_DESLOCADA_${args.jobId.slice(0, 8)}.zip`);
+  const tempZipPath = path.join(args.sceneDir, zipFilename);
+  const output = fs.createWriteStream(tempZipPath);
+  const archive = archiver("zip", { zlib: { level: 0 } });
+  await new Promise<void>((resolve, reject) => {
+    output.on("close", resolve);
+    output.on("error", reject);
+    archive.on("error", reject);
+    archive.pipe(output);
+    archive.file(args.sourcePath, { name: args.outputFilename });
+    archive.append(
+      [
+        "AVISO: imagem CBERS entregue apenas ao usuario.",
+        "Motivo: nao foi possivel validar/corrigir automaticamente o deslocamento para publicacao WMS.",
+        `Cena: ${args.scene.id}`,
+        `Status: ${args.alignment.status}`,
+        args.alignment.warning ? `Diagnostico: ${args.alignment.warning}` : "",
+        args.alignment.offsetMeters !== undefined ? `Deslocamento estimado: ${args.alignment.offsetMeters} m` : "",
+      ].filter(Boolean).join("\n"),
+      { name: "AVISO_DESLOCAMENTO.txt" },
+    );
+    void archive.finalize().catch(reject);
+  });
+  const stored = saveUserFileFromPath({
+    uid: args.uid,
+    area: "cbers/output",
+    filename: zipFilename,
+    sourcePath: tempZipPath,
+  });
+  return {
+    url: stored.publicUrl,
+    relativePath: stored.relativePath,
+    filename: zipFilename,
+    bytes: stored.bytes,
+  };
+}
+
 async function processCbersScene(args: {
   uid: string;
   jobId: string;
   itemId: string;
+  collectionId?: string | null;
   tmpDir: string;
   propertyGeometry?: Polygon | MultiPolygon;
   propertyGeometryHash?: string | null;
@@ -1294,6 +1690,8 @@ async function processCbersScene(args: {
   const report = (patch: CbersProgressPatch) => {
     args.onSceneProgress?.({
       itemId: args.itemId,
+      collectionId: currentScene?.collectionId || args.collectionId || undefined,
+      level: currentScene?.level,
       status: "processing",
       ...patch,
       scene: currentScene,
@@ -1311,14 +1709,14 @@ async function processCbersScene(args: {
 
   throwIfCancelled(jobId);
   report({ stage: "scene", percent: 5, message: "Carregando metadados da cena." });
-  const item = await getStacItem(args.itemId);
-  currentScene = sceneFromStacFeature(item, args.propertyGeometry);
+  const { item, collection } = await getStacItem(args.itemId, args.collectionId);
+  currentScene = sceneFromStacFeature(item, args.propertyGeometry, collection);
   const scene = currentScene;
   if (!scene) throw new Error("Cena STAC sem as bandas obrigatórias BAND3, BAND4, BAND2 e BAND0.");
   if (scene.coversArea === false) {
     throw new Error(`Cena ${scene.id} cobre apenas ${scene.coveragePercent ?? 0}% da área.`);
   }
-  currentEstimate = await estimateSceneAssets({ itemId: args.itemId, areaHa: args.areaHa, scene });
+  currentEstimate = await estimateSceneAssets({ itemId: args.itemId, collectionId: collection.collectionId, areaHa: args.areaHa, scene });
   const estimate = currentEstimate;
   report({ stage: "scene", percent: 7, message: `Cena selecionada: ${scene.id}.` });
 
@@ -1397,9 +1795,69 @@ async function processCbersScene(args: {
     message: "Gerando GeoTIFF final da órbita/ponto completa para ArcMap.",
     onProgress: report,
   });
-  report({ stage: "save", percent: 96, message: "Salvando GeoTIFF no raster compartilhado." });
-
   const outputName = cbersOutputFilename(scene.id || args.itemId);
+  const alignment = await validateAndCorrectCbersAlignment({
+    uid,
+    jobId,
+    scene,
+    item,
+    sourcePath: finalTempPath,
+    sceneDir,
+    onProgress: report,
+  });
+  const publishSourcePath = alignment.correctedPath || finalTempPath;
+  const alignmentWarning = alignment.warning;
+
+  if (alignment.status === "failed_private" || alignment.status === "reference_missing") {
+    report({
+      stage: "private_zip",
+      percent: 99,
+      message: "Imagem não validada para WMS; gerando ZIP privado com aviso de deslocamento.",
+      alignmentStatus: "failed_private",
+      alignmentWarning,
+      alignment,
+    });
+    const privateZip = await createPrivateCbersZip({
+      uid,
+      jobId,
+      scene,
+      sourcePath: publishSourcePath,
+      outputFilename: outputName,
+      sceneDir,
+      alignment: {
+        ...alignment,
+        status: "failed_private",
+        warning: alignment.warning || "Imagem entregue apenas ao usuário por falta de validação de deslocamento.",
+      },
+    });
+    return {
+      itemId: args.itemId,
+      collectionId: collection.collectionId,
+      level: collection.level,
+      scene: {
+        ...scene,
+        alignmentStatus: "failed_private",
+        alignmentWarning: alignment.warning,
+      },
+      status: "completed",
+      stage: "completed",
+      percent: 100,
+      message: "GeoTIFF concluído com aviso de deslocamento. Disponível apenas para este usuário; não publicado no WMS.",
+      estimate,
+      outputUrl: privateZip.url,
+      outputRelativePath: privateZip.relativePath,
+      outputFilename: privateZip.filename,
+      outputBytes: privateZip.bytes,
+      alignmentStatus: "failed_private",
+      alignmentWarning: alignment.warning,
+      alignment: {
+        ...alignment,
+        status: "failed_private",
+      },
+    };
+  }
+
+  report({ stage: "save", percent: 98, message: "Salvando GeoTIFF no raster compartilhado." });
   report({ stage: "publish", percent: 98, message: "Publicando GeoTIFF no acervo WMS." });
   const archive = await publishCbersPanToArchive({
     uid,
@@ -1407,12 +1865,18 @@ async function processCbersScene(args: {
     itemId: args.itemId,
     geometryHash: undefined,
     outputFilename: outputName,
-    sourcePath: finalTempPath,
+    sourcePath: publishSourcePath,
   });
 
   return {
     itemId: args.itemId,
-    scene,
+    collectionId: collection.collectionId,
+    level: collection.level,
+    scene: {
+      ...scene,
+      alignmentStatus: alignment.status,
+      alignmentWarning,
+    },
     status: "completed",
     stage: "completed",
     percent: 100,
@@ -1427,6 +1891,9 @@ async function processCbersScene(args: {
     wmsLayerName: archive.wmsLayerName,
     wmsUrl: archive.wmsPublicUrl,
     wmsDownloadUrl: wmsDownloadPathForArchiveImage(archive.imageId),
+    alignmentStatus: alignment.status,
+    alignmentWarning,
+    alignment,
   };
 }
 
@@ -1514,12 +1981,16 @@ async function runCbersJob(input: {
     });
     const scene = result.scene || null;
 
-    progress(uid, jobId, { stage: "save", percent: 96, message: "Salvando GeoTIFF no raster compartilhado." });
+    if (result.archive) {
+      progress(uid, jobId, { stage: "save", percent: 96, message: "Salvando GeoTIFF no raster compartilhado." });
+    }
     progress(uid, jobId, {
       status: "completed",
       stage: "completed",
       percent: 100,
-      message: "GeoTIFF CBERS-4A/WPM concluído.",
+      message: result.alignmentStatus === "failed_private"
+        ? "GeoTIFF CBERS-4A/WPM concluído com aviso de deslocamento; download privado liberado sem WMS."
+        : "GeoTIFF CBERS-4A/WPM concluído.",
       outputUrl: result.outputUrl,
       outputRelativePath: result.outputRelativePath,
       outputFilename: result.outputFilename,
@@ -1529,6 +2000,9 @@ async function runCbersJob(input: {
       wmsLayerName: result.wmsLayerName,
       wmsUrl: result.wmsUrl,
       wmsDownloadUrl: result.wmsDownloadUrl,
+      alignmentStatus: result.alignmentStatus,
+      alignmentWarning: result.alignmentWarning,
+      alignment: result.alignment,
       completedAt: new Date().toISOString(),
       scene,
       scenes: [result],
@@ -1782,7 +2256,7 @@ export function registerCbersWpmRoutes(app: Express): void {
         propertyGeometry: area.geometry,
         orbit,
         point,
-        collection: CBERS_COLLECTION,
+        collections: CBERS_COLLECTIONS.map(({ level, collectionId }) => ({ level, collectionId })),
         dateStart,
         dateEnd,
         scenes,
@@ -1807,11 +2281,11 @@ export function registerCbersWpmRoutes(app: Express): void {
       }
       const estimates = await Promise.all(
         itemIds.map(async (itemId) => {
-          const item = await getStacItem(itemId);
-          const rawScene = sceneFromStacFeature(item, area.geometry);
+          const { item, collection } = await getStacItem(itemId);
+          const rawScene = sceneFromStacFeature(item, area.geometry, collection);
           const scene = rawScene ? attachArchiveAvailability(rawScene, area.geometryHash) : null;
           if (!scene) throw new Error(`Cena ${itemId} sem bandas obrigatórias.`);
-          const estimate = await estimateSceneAssets({ itemId, areaHa: area.areaHa, scene });
+          const estimate = await estimateSceneAssets({ itemId, collectionId: collection.collectionId, areaHa: area.areaHa, scene });
           return { itemId, scene, estimate };
         }),
       );
@@ -1917,12 +2391,14 @@ export function registerCbersWpmRoutes(app: Express): void {
         propertyGeometry: area.geometry,
         scenes: itemIds.map((itemId) => ({
           itemId,
+          collectionId: inferCbersCollection(itemId).collectionId,
+          level: inferCbersCollection(itemId).level,
           status: "processing",
           stage: "queued",
           percent: 1,
           message: "Aguardando processamento.",
         })),
-        collection: CBERS_COLLECTION,
+        collections: CBERS_COLLECTIONS.map(({ level, collectionId }) => ({ level, collectionId })),
         createdAt: new Date().toISOString(),
       });
       res.status(202).json({ ok: true, jobId });
@@ -1989,9 +2465,11 @@ export function registerCbersWpmRoutes(app: Express): void {
       return;
     }
     requestCancel(jobId, uid);
+    removeStoragePath(String(data.outputRelativePath || data.outputUrl || ""));
     removeStoragePath(String(data.batchZipRelativePath || data.batchZipUrl || ""));
     if (Array.isArray(data.scenes)) {
       for (const scene of data.scenes) {
+        removeStoragePath(String(scene?.outputRelativePath || scene?.outputUrl || ""));
         removeStoragePath(String(scene?.batchZipRelativePath || scene?.batchZipUrl || ""));
       }
     }
