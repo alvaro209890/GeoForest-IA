@@ -478,6 +478,11 @@ type CbersSceneJobState = {
   outputRelativePath?: string;
   outputFilename?: string;
   outputBytes?: number;
+  archiveImageId?: string;
+  archiveFilename?: string;
+  wmsLayerName?: string;
+  wmsUrl?: string;
+  wmsDownloadUrl?: string;
 };
 
 type CbersHistoryItem = {
@@ -504,6 +509,8 @@ type CbersHistoryItem = {
   outputRelativePath?: string;
   outputFilename?: string;
   outputBytes?: number;
+  archiveImageId?: string;
+  archiveFilename?: string;
   wmsLayerName?: string;
   wmsUrl?: string;
   wmsDownloadUrl?: string;
@@ -1041,6 +1048,26 @@ const cbersDownloadFilename = (item?: Pick<CbersHistoryItem, 'outputFilename' | 
   if (!item) return cbersOutputFilename(null);
   const explicit = 'outputFilename' in item ? item.outputFilename : undefined;
   return explicit || cbersOutputFilename(item.scene?.id || item.itemId || ('jobId' in item ? item.jobId : null));
+};
+
+const cbersArchiveZipFilename = (item?: Pick<CbersHistoryItem, 'outputFilename' | 'archiveFilename' | 'scene' | 'itemId' | 'jobId'> | CbersSceneJobState | null) => {
+  if (!item) return 'CBERS_4A_WPM.zip';
+  const explicit = ('archiveFilename' in item ? item.archiveFilename : undefined) || item.scene?.archiveFilename || cbersDownloadFilename(item);
+  const stem = String(explicit || cbersOutputFilename(item.scene?.id || item.itemId || ('jobId' in item ? item.jobId : null)))
+    .replace(/\.(tif|tiff|zip)$/i, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '_') || 'CBERS_4A_WPM';
+  return `${stem}.zip`;
+};
+
+const cbersArchiveZipUrl = (item?: Pick<CbersHistoryItem, 'archiveImageId' | 'scene' | 'itemId' | 'wmsDownloadUrl'> | CbersSceneJobState | null) => {
+  if (!item) return '';
+  if ('wmsDownloadUrl' in item && item.wmsDownloadUrl) return item.wmsDownloadUrl;
+  if (item.scene?.wmsDownloadUrl) return item.scene.wmsDownloadUrl;
+  const archiveImageId = ('archiveImageId' in item ? item.archiveImageId : undefined) || item.scene?.archiveImageId;
+  if (archiveImageId) return `/api/cbers-wpm/wms-download?imageId=${encodeURIComponent(archiveImageId)}`;
+  const itemId = item.scene?.id || item.itemId;
+  if (itemId) return `/api/cbers-wpm/wms-download?itemId=${encodeURIComponent(itemId)}`;
+  return '';
 };
 
 const cbersBatchZipFilename = (jobId?: string | null) => {
@@ -2049,6 +2076,11 @@ export default function Dashboard() {
         outputRelativePath: item?.outputRelativePath ? String(item.outputRelativePath) : undefined,
         outputFilename: item?.outputFilename ? String(item.outputFilename) : undefined,
         outputBytes: Number.isFinite(Number(item?.outputBytes)) ? Number(item.outputBytes) : undefined,
+        archiveImageId: item?.archiveImageId ? String(item.archiveImageId) : undefined,
+        archiveFilename: item?.archive?.archiveFilename ? String(item.archive.archiveFilename) : item?.archiveFilename ? String(item.archiveFilename) : undefined,
+        wmsLayerName: item?.wmsLayerName ? String(item.wmsLayerName) : undefined,
+        wmsUrl: item?.wmsUrl ? String(item.wmsUrl) : undefined,
+        wmsDownloadUrl: item?.wmsDownloadUrl ? String(item.wmsDownloadUrl) : undefined,
       })).filter((item: CbersSceneJobState) => Boolean(item.itemId))
       : undefined;
     return {
@@ -2074,6 +2106,8 @@ export default function Dashboard() {
       outputRelativePath: data?.outputRelativePath ? String(data.outputRelativePath) : undefined,
       outputFilename: data?.outputFilename ? String(data.outputFilename) : undefined,
       outputBytes: Number.isFinite(Number(data?.outputBytes)) ? Number(data.outputBytes) : undefined,
+      archiveImageId: data?.archiveImageId ? String(data.archiveImageId) : undefined,
+      archiveFilename: data?.archive?.archiveFilename ? String(data.archive.archiveFilename) : data?.archiveFilename ? String(data.archiveFilename) : undefined,
       wmsLayerName: data?.wmsLayerName ? String(data.wmsLayerName) : undefined,
       wmsUrl: data?.wmsUrl ? String(data.wmsUrl) : undefined,
       wmsDownloadUrl: data?.wmsDownloadUrl ? String(data.wmsDownloadUrl) : undefined,
@@ -2105,6 +2139,8 @@ export default function Dashboard() {
           outputUrl: job.outputUrl || item.outputUrl,
           outputRelativePath: job.outputRelativePath || item.outputRelativePath,
           outputBytes: job.outputBytes ?? item.outputBytes,
+          archiveImageId: job.archiveImageId || item.archiveImageId,
+          archiveFilename: job.archiveFilename || item.archiveFilename,
           wmsLayerName: job.wmsLayerName || item.wmsLayerName,
           wmsUrl: job.wmsUrl || item.wmsUrl,
           wmsDownloadUrl: job.wmsDownloadUrl || item.wmsDownloadUrl,
@@ -10451,6 +10487,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     const activeCbers = cbersJobId ? cbersHistory.find((item) => item.jobId === cbersJobId) : null;
                     const pct = Math.max(0, Math.min(100, Math.round(Number(cbersProgress?.percent ?? activeCbers?.percent ?? 0))));
                     const done = activeCbers?.status === 'completed';
+                    const activeCbersZipUrl = cbersArchiveZipUrl(activeCbers);
 
                     let totalEstimatedSeconds = 0;
                     if (activeCbers?.mode === 'batch' && Array.isArray(activeCbers?.scenes)) {
@@ -10542,14 +10579,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             Cancelar
                           </button>
                         )}
-                        {done && activeCbers?.outputUrl && (
+                        {done && activeCbersZipUrl && (
                           <button
                             type="button"
-                            onClick={() => downloadSimcarZip(activeCbers.outputUrl, cbersDownloadFilename(activeCbers))}
+                            onClick={() => downloadSimcarZip(activeCbersZipUrl, cbersArchiveZipFilename(activeCbers))}
                             className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 py-3 text-sm font-semibold text-white hover:bg-cyan-500 transition-colors"
                           >
                             <Download size={17} />
-                            Baixar GeoTIFF
+                            Baixar cena em ZIP
                           </button>
                         )}
                         {done && activeCbers?.batchZipUrl && (
@@ -10579,14 +10616,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
                                   <div className="h-full rounded-full bg-cyan-400" style={{ width: `${Math.max(0, Math.min(100, sceneState.percent))}%` }} />
                                 </div>
-                                {sceneState.status === 'completed' && sceneState.outputUrl && (
+                                {sceneState.status === 'completed' && cbersArchiveZipUrl(sceneState) && (
                                   <button
                                     type="button"
-                                    onClick={() => downloadSimcarZip(sceneState.outputUrl, cbersDownloadFilename(sceneState))}
+                                    onClick={() => downloadSimcarZip(cbersArchiveZipUrl(sceneState), cbersArchiveZipFilename(sceneState))}
                                     className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-500"
                                   >
                                     <Download size={14} />
-                                    Baixar esta cena
+                                    Baixar cena em ZIP
                                   </button>
                                 )}
                               </div>
