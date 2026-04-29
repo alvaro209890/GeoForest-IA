@@ -98,9 +98,10 @@ const SIMCAR_LOCAL_SHAPES_ROOT =
     "/media/server/HD Backup/VETOR/CAR_Digital/current/datasets/simcar_digital";
 const SIGEF_WFS_BASE_URL =
     process.env.SIGEF_WFS_BASE_URL ||
-    "http://acervofundiario.incra.gov.br/i3geo/ogc.php?tema=certificada_sigef_particular_mt";
+    "https://acervofundiario.incra.gov.br/i3geo/ogc.php?tema=certificada_sigef_particular_mt";
 const SIGEF_WFS_TYPENAME = "certificada_sigef_particular_mt";
 const SIGEF_WFS_FILTER_PARAM = "map_layer_certificada_sigef_particular_mt_filter";
+const SIGEF_WFS_TIMEOUT_MS = Number(process.env.SIGEF_WFS_TIMEOUT_MS || Math.max(WFS_TIMEOUT_MS, 90000));
 const SEMA_CAR_REQUIRED_WFS_LAYER =
     process.env.SEMA_CAR_REQUIRED_WFS_LAYER || "Geoportal:MVW_REQUERIMENTO_ATP";
 const WFS_MAX_FEATURES = 50000;
@@ -1845,7 +1846,7 @@ async function processClip(
     let userWkt: string;
 
     if (sigefParcelCode) {
-        sendSSE(res, { type: "progress", layer: "SIGEF", stage: "Buscando parcela certificada no WFS do INCRA...", percent: 2 });
+        sendSSE(res, { type: "progress", layer: "SIGEF", stage: `Buscando parcela certificada no WFS do INCRA (pode levar até ${Math.round(SIGEF_WFS_TIMEOUT_MS / 1000)}s)...`, percent: 2 });
         try {
             const feature = await fetchSigefBoundaryByParcelCode(sigefParcelCode);
             userGeometry = feature.geometry;
@@ -7370,7 +7371,7 @@ function buildSigefI3geoFilter(parcelCode: string): string {
     return `(('[parcela_codigo]'='${safeValue}'))`;
 }
 
-function buildSigefWfsUrl(parcelCode: string): string {
+function buildSigefWfsUrl(parcelCode: string, options: { includePropertyName?: boolean } = {}): string {
     const url = new URL(SIGEF_WFS_BASE_URL);
     url.searchParams.set(SIGEF_WFS_FILTER_PARAM, buildSigefI3geoFilter(parcelCode));
     url.searchParams.set("SERVICE", "WFS");
@@ -7378,7 +7379,9 @@ function buildSigefWfsUrl(parcelCode: string): string {
     url.searchParams.set("REQUEST", "GetFeature");
     url.searchParams.set("TYPENAME", SIGEF_WFS_TYPENAME);
     url.searchParams.set("MAXFEATURES", "1");
-    url.searchParams.set("propertyName", "msGeometry,parcela_codigo");
+    if (options.includePropertyName !== false) {
+        url.searchParams.set("propertyName", "msGeometry,parcela_codigo");
+    }
     return url.toString();
 }
 
@@ -7521,8 +7524,30 @@ async function fetchSigefBoundaryByParcelCode(parcelCodeRaw: string): Promise<Fe
     const parcelCode = normalizeSigefParcelCode(parcelCodeRaw);
     if (!parcelCode) throw new Error("Código da parcela SIGEF inválido.");
 
-    const wfsUrl = buildSigefWfsUrl(parcelCode);
-    const xml = await fetchTextWithTimeout(wfsUrl, WFS_TIMEOUT_MS);
+    const errors: string[] = [];
+    let xml = "";
+    for (const includePropertyName of [true, false]) {
+        const wfsUrl = buildSigefWfsUrl(parcelCode, { includePropertyName });
+        try {
+            xml = await fetchTextWithTimeout(wfsUrl, SIGEF_WFS_TIMEOUT_MS);
+            break;
+        } catch (error: any) {
+            errors.push(String(error?.message || error || "falha desconhecida"));
+        }
+    }
+    if (!xml) {
+        throw new Error(
+            `Não foi possível consultar o WFS do SIGEF/INCRA para a parcela ${parcelCode}. ` +
+            `O serviço externo não respondeu dentro de ${Math.round(SIGEF_WFS_TIMEOUT_MS / 1000)}s. ` +
+            `Detalhes: ${errors.slice(0, 2).join(" | ")}`,
+        );
+    }
+    if (/<(?:ServiceExceptionReport|ows:ExceptionReport)\b/i.test(xml)) {
+        const detail = xmlDecode(
+            xml.match(/<(?:ServiceException|ows:ExceptionText)\b[^>]*>([\s\S]*?)<\/(?:ServiceException|ows:ExceptionText)>/i)?.[1] || "",
+        ).replace(/\s+/g, " ").trim();
+        throw new Error(detail || "O WFS do SIGEF/INCRA retornou erro ao consultar a parcela.");
+    }
     if (!/<gml:featureMember\b/i.test(xml)) {
         throw new Error(`Nenhuma certificação SIGEF encontrada para parcela_codigo: ${parcelCode}`);
     }
@@ -7530,7 +7555,7 @@ async function fetchSigefBoundaryByParcelCode(parcelCodeRaw: string): Promise<Fe
     const returnedCode = xmlDecode(
         xml.match(/<ms:parcela_codigo\b[^>]*>([\s\S]*?)<\/ms:parcela_codigo>/i)?.[1] || "",
     ).trim();
-    if (returnedCode !== parcelCode) {
+    if (returnedCode.toLowerCase() !== parcelCode.toLowerCase()) {
         throw new Error(`O WFS do SIGEF não retornou a parcela solicitada (${parcelCode}).`);
     }
 
