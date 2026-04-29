@@ -827,12 +827,12 @@ function AdminApp() {
 
       <section className="mx-auto max-w-7xl px-5 py-5">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-5">
-          <TabsList className="border border-white/10 bg-white/[0.03] p-1">
-            <TabsTrigger value="storage" className="gap-2 data-[state=active]:bg-[#07100d] data-[state=active]:text-slate-100">
+          <TabsList className="border border-white/15 bg-[#10241d] p-1 text-slate-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+            <TabsTrigger value="storage" className="gap-2 text-slate-300 hover:bg-white/5 hover:text-white data-[state=active]:bg-cyan-400 data-[state=active]:text-[#04110e] data-[state=active]:shadow-sm">
               <Database size={16} />
               Armazenamento
             </TabsTrigger>
-            <TabsTrigger value="server" className="gap-2 data-[state=active]:bg-[#07100d] data-[state=active]:text-slate-100">
+            <TabsTrigger value="server" className="gap-2 text-slate-300 hover:bg-white/5 hover:text-white data-[state=active]:bg-cyan-400 data-[state=active]:text-[#04110e] data-[state=active]:shadow-sm">
               <Server size={16} />
               Servidor
             </TabsTrigger>
