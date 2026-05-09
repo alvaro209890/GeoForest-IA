@@ -1,6 +1,7 @@
 /**
  * Binary Shapefile writer (.shp, .shx, .dbf).
- * Supports Polygon (type 5) shapefiles — MultiPolygons are flattened into multi-part Polygon records.
+ * Supports Polygon (type 5) and Point (type 1) / MultiPoint (type 8) shapefiles.
+ * MultiPolygons are flattened into multi-part Polygon records.
  */
 
 /* ─── Types ──────────────────────────────────────────────────── */
@@ -13,7 +14,9 @@ export type DbfFieldDef = {
 };
 
 export type ShpRecord = {
-    rings: number[][][];                 // outer + holes, each ring is [[x,y],...]
+    type: "polygon" | "point" | "multipoint";
+    rings: number[][][];                 // polygon only: outer + holes, each ring is [[x,y],...]
+    coordinates?: Array<[number, number]>; // point/multipoint: array of [x,y] coords
     attributes: Record<string, string | number | null>;
 };
 
@@ -52,6 +55,74 @@ function writeShpHeader(buf: Buffer, fileLengthWords: number, shapeType: number,
     buf.writeDoubleLE(bbox[2], 52);  // xMax
     buf.writeDoubleLE(bbox[3], 60);  // yMax
     // zMin, zMax, mMin, mMax = 0 (no Z/M)
+}
+
+export type PointShpRecord = {
+    coordinates: [number, number];   // [x, y]
+    attributes: Record<string, string | number | null>;
+};
+
+export function buildPointShpAndShx(
+    records: PointShpRecord[],
+    shapeType: number = 1, // 1=Point, 11=PointZ, 21=PointM
+): { shp: Buffer; shx: Buffer } {
+    const pointShapeType = 1; // Always Point (type 1)
+
+    if (!records.length) {
+        const shp = Buffer.alloc(100, 0);
+        writeShpHeader(shp, 50, pointShapeType, [0, 0, 0, 0]);
+        const shx = Buffer.alloc(100, 0);
+        writeShpHeader(shx, 50, pointShapeType, [0, 0, 0, 0]);
+        return { shp, shx };
+    }
+
+    // Content per record: shapeType(4) + X(8) + Y(8) = 20 bytes
+    const recordContentBytes = 4 + 8 + 8;
+    let totalContentBytes = 0;
+    let gxMin = Infinity, gyMin = Infinity, gxMax = -Infinity, gyMax = -Infinity;
+
+    for (const rec of records) {
+        const [x, y] = rec.coordinates;
+        if (x < gxMin) gxMin = x;
+        if (y < gyMin) gyMin = y;
+        if (x > gxMax) gxMax = x;
+        if (y > gyMax) gyMax = y;
+        totalContentBytes += 8 + recordContentBytes; // 8 = record header
+    }
+
+    const shpFileLengthWords = (100 + totalContentBytes) / 2;
+    const shp = Buffer.alloc(100 + totalContentBytes, 0);
+    writeShpHeader(shp, shpFileLengthWords, pointShapeType, [gxMin, gyMin, gxMax, gyMax]);
+
+    const shxFileLengthWords = (100 + records.length * 8) / 2;
+    const shx = Buffer.alloc(100 + records.length * 8, 0);
+    writeShpHeader(shx, shxFileLengthWords, pointShapeType, [gxMin, gyMin, gxMax, gyMax]);
+
+    let shpOffset = 100;
+    let shxOffset = 100;
+
+    for (let i = 0; i < records.length; i++) {
+        const [x, y] = records[i].coordinates;
+        const contentLenWords = recordContentBytes / 2;
+
+        // SHX entry
+        shx.writeInt32BE(shpOffset / 2, shxOffset);
+        shx.writeInt32BE(contentLenWords, shxOffset + 4);
+        shxOffset += 8;
+
+        // Record header
+        shp.writeInt32BE(i + 1, shpOffset);
+        shp.writeInt32BE(contentLenWords, shpOffset + 4);
+        shpOffset += 8;
+
+        // Shape type + X + Y
+        shp.writeInt32LE(pointShapeType, shpOffset);
+        shp.writeDoubleLE(x, shpOffset + 4);
+        shp.writeDoubleLE(y, shpOffset + 12);
+        shpOffset += 20;
+    }
+
+    return { shp, shx };
 }
 
 export function buildShpAndShx(
@@ -268,20 +339,51 @@ export function buildDbfBuffer(
  * Convert a GeoJSON Polygon or MultiPolygon geometry to ShpRecord rings.
  * Coordinates must already be in the target CRS.
  */
-export function geojsonToShpRings(
-    geometry: { type: string; coordinates: number[][][] | number[][][][] },
-): number[][][] {
-    if (geometry.type === "Polygon") {
-        return ensureClosedRings(geometry.coordinates as number[][][]);
+/**
+ * Calcula a área com sinal de um anel (2D) usando shoelace.
+ * Positiva = CW (horário), Negativa = CCW (anti-horário).
+ */
+function ringSignedArea(ring: number[][]): number {
+    let area = 0;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        area += ring[i][0] * ring[j][1] - ring[j][0] * ring[i][1];
     }
-    if (geometry.type === "MultiPolygon") {
-        const allRings: number[][][] = [];
-        for (const poly of geometry.coordinates as number[][][][]) {
-            allRings.push(...ensureClosedRings(poly));
+    return area / 2;
+}
+
+/**
+ * Garante que anéis exteriores tenham orientação CW e interiores (buracos) tenham CCW,
+ * conforme especificação ESRI Shapefile.
+ */
+function enforceShapefileRingOrientation(rings: number[][][]): number[][][] {
+    if (rings.length === 0) return rings;
+    const oriented: number[][][] = [];
+
+    for (let i = 0; i < rings.length; i++) {
+        const ring = rings[i];
+        if (ring.length < 4) {
+            oriented.push(ring);
+            continue;
         }
-        return allRings;
+        const signedArea = ringSignedArea(ring);
+        if (i === 0) {
+            // Primeiro anel = exterior → deve ser CW (positivo)
+            if (signedArea < 0) {
+                oriented.push([...ring].reverse());
+            } else {
+                oriented.push(ring);
+            }
+        } else {
+            // Anéis seguintes = buracos → devem ser CCW (negativo)
+            if (signedArea > 0) {
+                oriented.push([...ring].reverse());
+            } else {
+                oriented.push(ring);
+            }
+        }
     }
-    return [];
+
+    return oriented;
 }
 
 function ensureClosedRings(rings: number[][][]): number[][][] {
@@ -294,4 +396,48 @@ function ensureClosedRings(rings: number[][][]): number[][][] {
         }
         return ring;
     });
+}
+
+/**
+ * Converte GeoJSON Polygon ou MultiPolygon para array de grupos de rings,
+ * onde cada grupo representa UM polígono independente (não buracos).
+ *
+ * Antes: MultiPolygon era achatado num array único de rings, tratando
+ * o segundo polígono como buraco do primeiro → shapefile inválido.
+ *
+ * Agora: retorna um array de { rings }, um por polígono.
+ * Isto permite que buildShpAndShx crie registros separados.
+ */
+export function geojsonToPolyRecords(
+    geometry: { type: string; coordinates: number[][][] | number[][][][] },
+): Array<{ rings: number[][][] }> {
+    if (geometry.type === "Polygon") {
+        const rings = enforceShapefileRingOrientation(ensureClosedRings(geometry.coordinates as number[][][]));
+        return [{ rings }];
+    }
+    if (geometry.type === "MultiPolygon") {
+        const records: Array<{ rings: number[][][] }> = [];
+        for (const poly of geometry.coordinates as number[][][][]) {
+            const rings = enforceShapefileRingOrientation(ensureClosedRings(poly));
+            if (rings.length > 0) {
+                records.push({ rings });
+            }
+        }
+        return records;
+    }
+    return [];
+}
+
+/**
+ * @deprecated Use geojsonToPolyRecords em vez desta função.
+ * Mantida para compatibilidade, mas retorna array vazio.
+ */
+export function geojsonToShpRings(
+    geometry: { type: string; coordinates: number[][][] | number[][][][] },
+): number[][][] {
+    const records = geojsonToPolyRecords(geometry);
+    if (records.length === 0) return [];
+    // Para compatibilidade com código existente que espera um array único
+    // (ex: clipe local que usa um feature por vez)
+    return records[0].rings;
 }

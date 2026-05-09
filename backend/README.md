@@ -1,59 +1,96 @@
-# Backend (Render/Deploy)
+# Backend — GeoForest IA
 
-## Variaveis de ambiente obrigatorias (Render)
-GROQ_API_KEY=SEU_TOKEN_GROQ
-CLOUDINARY_API_KEY=SEU_API_KEY
-CLOUDINARY_API_SECRET=SEU_API_SECRET
+## Infraestrutura
 
-## Variaveis opcionais (Render)
-CLOUDINARY_FOLDER=geoforest
-KEEP_ALIVE_URL=https://SEU_SERVICO.onrender.com/api/health
-KEEP_ALIVE_INTERVAL_MS=300000
-SEMA_WMS_BASE_URL=https://geo.sema.mt.gov.br/geoserver/ows
-SEMA_WMS_AUTHKEY=SEU_AUTHKEY_SEMA
-GEMINI_API_KEY=SEU_TOKEN_GEMINI
-SIMCAR_REQUIRE_GEMINI=true
-GEMINI_API_BASE=https://generativelanguage.googleapis.com/v1beta
-GEMINI_VISION_MODELS=gemini-2.5-flash,gemini-3-flash,gemini-3-pro
-GEMINI_TEXT_SYNTHESIS_MODELS=gemini-3-pro,gemini-3-flash,gemini-2.5-pro
-GEMINI_IMAGE_SHARE=0.75
+O backend roda em servidor local e é exposto via Cloudflare Tunnel:
+
+```
+https://geoforest-api.cursar.space → Cloudflare Tunnel → localhost:3001
+```
+
+## Variáveis de Ambiente
+
+### Obrigatórias
+- `GROQ_API_KEY` — Chave API Groq para chamar o LLM
+- `CLOUDINARY_API_KEY` — API Key do Cloudinary
+- `CLOUDINARY_API_SECRET` — API Secret do Cloudinary
+
+### Opcionais
+- `CLOUDINARY_FOLDER` — Pasta de destino no Cloudinary (default: geoforest)
+- `SEMA_WMS_BASE_URL` — URL base do WMS SEMA-MT
+- `SEMA_WMS_AUTHKEY` — Auth key do WMS SEMA
+- `GEMINI_API_KEY` — Chave Gemini (obrigatória se `SIMCAR_REQUIRE_GEMINI=true`)
+- `SIMCAR_REQUIRE_GEMINI` — Se `true`, análise de recorte falha sem Gemini
+- `SIMCAR_LOCAL_SHAPES_ROOT` — Pasta com shapes locais SIMCAR
+- `GEMINI_API_BASE` — Endpoint base Gemini API
+- `GEMINI_VISION_MODELS` — Modelos de visão (separados por `,`, `;` ou quebra de linha)
+- `GEMINI_TEXT_SYNTHESIS_MODELS` — Modelos para síntese textual
+- `GEMINI_IMAGE_SHARE` — Proporção de imagens no prompt combinado (0.55–0.95)
 
 ## Endpoints
-- POST /api/chat
-  - body: { messages: [{ role: "system|user|assistant", content: "..." }], model?: "..." }
-- GET /api/models
-  - resposta: { models: [...], defaultModel: "..." }
-- GET /api/map/capabilities
-  - resposta: { serviceTitle, layers: [{ name, title, crs, inferredYear, group }], defaultLayer }
-- POST /api/map/snapshot
-  - body: { layerName, bbox:[minX,minY,maxX,maxY], crs, width, height, format }
-  - resposta: { dataUrl, mimeType, sourceUrl, mapContext }
-- POST /api/geometry/bbox
-  - body: { dataUrl, filename }
-  - aceita: `.kml` e `.zip` (shapefile com `.shp`)
-  - resposta: { bbox:[minX,minY,maxX,maxY], crs, source }
-- POST /api/upload-image
-  - body: { dataUrl: "data:image/png;base64,...", filename?: "arquivo.png" }
-- GET /api/health
-- GET /api/runtime/version
-- GET /api/simcar/gemini/config
-  - opcional: `?probe=1` para testar cada modelo Gemini configurado
 
-## O que cada variavel faz
-- GROQ_API_KEY: chave da Groq para chamar o modelo. Obrigatoria.
-- CLOUDINARY_API_KEY: api key do Cloudinary. Obrigatoria.
-- CLOUDINARY_API_SECRET: api secret do Cloudinary. Obrigatoria.
-- CLOUDINARY_FOLDER: pasta de destino no Cloudinary. Opcional.
-- KEEP_ALIVE_URL: URL que o backend pinga periodicamente para nao dormir (use /api/health). Opcional.
-- KEEP_ALIVE_INTERVAL_MS: intervalo do keep-alive em ms (ex: 300000 = 5 min). Opcional.
-- GEMINI_API_KEY: chave da API Gemini usada na analise de recorte. Obrigatoria quando `SIMCAR_REQUIRE_GEMINI=true`.
-- SIMCAR_REQUIRE_GEMINI: se `true`, a analise de recorte falha quando Gemini falhar ou estiver sem chave.
-- GEMINI_API_BASE: endpoint base da API Gemini.
-- GEMINI_VISION_MODELS: lista de modelos Gemini de visao (aceita separador por virgula, `;` ou quebra de linha).
-- GEMINI_TEXT_SYNTHESIS_MODELS: lista de modelos Gemini para sintese textual no recorte.
-- GEMINI_IMAGE_SHARE: proporcao das imagens enviadas ao Gemini na analise combinada (0.55 a 0.95).
+### Chat
+- `POST /api/chat` — Chat streaming
+  - body: `{ messages: [{ role: "system|user|assistant", content: "..." }], model?: "..." }`
+- `GET /api/models` — Lista modelos disponíveis
 
-## Observacoes
-- Nao coloque chaves no codigo.
-- Ative keep-alive no Render apontando para /api/health.
-- Confirme os IDs dos modelos no painel da Groq.
+### Mapa
+- `GET /api/map/capabilities` — Capabilities do WMS SEMA-MT (cache)
+  - resposta: `{ serviceTitle, layers: [...], defaultLayer }`
+- `POST /api/map/snapshot` — Snapshot de mapa
+  - body: `{ layerName, bbox, crs, width, height, format }`
+
+### Geometria
+- `POST /api/geometry/bbox` — Extrai bbox de arquivo
+  - Aceita: `.kml` e `.zip` (shapefile .shp)
+  - resposta: `{ bbox, crs, source }`
+
+### SIMCAR Clip
+- `POST /api/simcar/clip` — Recorte SIMCAR (SSE)
+- `GET /api/simcar/clip/download/:jobId` — Download ZIP
+- `POST /api/simcar/clip/analyze` — Análise IA do recorte (SSE)
+- `POST /api/simcar/clip/analyze-auas` — Análise AUAS (SSE)
+- `POST /api/simcar/clip/import-vectorized` — Importa ZIP pré-vetorizado
+- `GET /api/simcar/gemini/config` — Config Gemini (+ `?probe=1`)
+
+### CBERS
+- `POST /api/cbers/search` — Busca cenas no STAC INPE
+- `POST /api/cbers/download` — Download + processamento
+- `GET /api/cbers/images` — Imagens da conta
+- `DELETE /api/cbers/images/:id` — Remove da conta
+
+### CBERS Archive
+- `GET /api/admin/cbers-storage/summary` — Resumo do acervo
+- `GET /api/admin/cbers-storage/users/:uid/images` — Imagens por user
+- `DELETE /api/admin/cbers-storage/images/:imageId` — Exclusão definitiva
+
+### Upload
+- `POST /api/upload-image` — Upload imagem (Cloudinary)
+  - body: `{ dataUrl: "data:image/png;base64,...", filename?: "arquivo.png" }`
+- `POST /api/upload-file` — Upload PDF
+- `GET /api/file-proxy` — Proxy de arquivos
+- `GET /api/storage/*` — Leitura de documentos
+
+### Sistema
+- `GET /api/health` — Health check
+- `GET /api/runtime/version` — Versão
+- `GET /api/server/metrics` — Métricas da máquina
+
+## Serviços
+
+```bash
+# Reiniciar
+systemctl --user restart geoforest-backend.service
+
+# Logs
+journalctl --user -u geoforest-backend.service -n 50 -f
+
+# Verificar health
+curl -sS https://geoforest-api.cursar.space/api/health
+```
+
+## Observações
+
+- Não colocar chaves no código.
+- Use `tsx` para desenvolvimento: `npm run dev:server`
+- O backend detecta ambiente via `NODE_ENV`
