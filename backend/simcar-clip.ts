@@ -54,8 +54,10 @@ import {
 import {
     parseDbfSchema,
     buildShpAndShx,
+    buildPointShpAndShx,
     buildDbfBuffer,
     geojsonToShpRings,
+    geojsonToPolyRecords,
     type DbfFieldDef,
     type ShpRecord,
 } from "./shapefile-writer";
@@ -974,7 +976,32 @@ function readLocalSimcarClipFeatures(
                                 userPolygon,
                             );
                             for (const intersection of intersections) {
-                                clipped.push(intersection);
+                                if (intersection.kind === "polygon") {
+                                    clipped.push({
+                                        geometry: intersection.geometry,
+                                        properties: intersection.properties,
+                                    });
+                                } else if (intersection.kind === "point") {
+                                    // Points from local layers: convert to polygons via tiny buffer for pipeline compatibility
+                                    for (const coord of intersection.pointCoords) {
+                                        const ptFeature = {
+                                            type: "Feature" as const,
+                                            properties: {} as Record<string, unknown>,
+                                            geometry: { type: "Point" as const, coordinates: coord },
+                                        };
+                                        try {
+                                            const buffered = turfBuffer(ptFeature as any, 0.5, { units: "meters" });
+                                            if (buffered?.geometry) {
+                                                clipped.push({
+                                                    geometry: buffered.geometry,
+                                                    properties: intersection.properties,
+                                                });
+                                            }
+                                        } catch {
+                                            // Skip
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1314,27 +1341,144 @@ async function fetchWfsClipFeatures(
 
 /* ─── Feature Clipping ───────────────────────────────────────── */
 
+function isPointOrMultiPoint(
+    geometry: Geometry | null | undefined,
+): geometry is Geometry & { type: "Point" | "MultiPoint" } {
+    if (!geometry) return false;
+    return geometry.type === "Point" || geometry.type === "MultiPoint";
+}
+
+/**
+ * Checks if a Point feature is inside the given polygon.
+ * Avoids importing boolean-point-in-polygon directly.
+ */
+function pointInsidePolygon(
+    coord: [number, number],
+    polygon: Feature<Polygon | MultiPolygon>,
+): boolean {
+    const { geometry } = polygon;
+    if (!geometry) return false;
+
+    const [x, y] = coord;
+
+    function pointInRing(
+        point: [number, number],
+        ring: Array<[number, number] | number[]>,
+    ): boolean {
+        let inside = false;
+        const [px, py] = point;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            const xi = ring[i][0], yi = ring[i][1];
+            const xj = ring[j][0], yj = ring[j][1];
+            if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
+    function pointInPolygonGeo(
+        point: [number, number],
+        coords: any,
+    ): boolean {
+        // Exterior ring
+        const outerRing = coords[0];
+        if (!outerRing || !outerRing.length) return false;
+        if (!pointInRing(point, outerRing)) return false;
+
+        // Interior rings (holes)
+        for (let h = 1; h < coords.length; h++) {
+            if (pointInRing(point, coords[h])) return false;
+        }
+        return true;
+    }
+
+    if (geometry.type === "Polygon") {
+        return pointInPolygonGeo(coord, (geometry as Polygon).coordinates);
+    }
+
+    // MultiPolygon
+    for (const polyCoords of (geometry as MultiPolygon).coordinates) {
+        if (pointInPolygonGeo(coord, polyCoords)) return true;
+    }
+    return false;
+}
+
+/**
+ * Extract point coordinates from Point/MultiPoint geometry.
+ * Returns null if geometry is not a point type.
+ */
+function extractPointCoords(geometry: Geometry): Array<[number, number]> | null {
+    if (geometry.type === "Point") {
+        return [(geometry as any).coordinates as [number, number]];
+    }
+    if (geometry.type === "MultiPoint") {
+        return (geometry as any).coordinates as Array<[number, number]>;
+    }
+    return null;
+}
+
+type ClippedPolygonResult = {
+    kind: "polygon";
+    geometry: Geometry;
+    properties: Record<string, unknown>;
+};
+
+type ClippedPointResult = {
+    kind: "point";
+    pointCoords: Array<[number, number]>;
+    properties: Record<string, unknown>;
+};
+
+type ClipResult = ClippedPolygonResult | ClippedPointResult;
+
 function clipFeaturesToPolygon(
     features: WfsFeature[],
     userPolygon: Feature<Polygon | MultiPolygon>,
-): Array<{ geometry: Geometry; properties: Record<string, unknown> }> {
-    const clipped: Array<{ geometry: Geometry; properties: Record<string, unknown> }> = [];
+): ClipResult[] {
+    const clipped: ClipResult[] = [];
 
     for (const feature of features) {
-        const polygonLike = toPolygonOrMultiFeature(feature.geometry);
-        if (!polygonLike) continue;
+        if (!feature.geometry) continue;
 
-        try {
-            const fc = turfFeatureCollection([userPolygon, polygonLike]) as FeatureCollection<Polygon | MultiPolygon>;
-            const intersection = turfIntersect(fc);
-            if (intersection && intersection.geometry) {
-                clipped.push({
-                    geometry: intersection.geometry,
-                    properties: feature.properties,
-                });
+        // Caso 1: geometria poligonal — faz interseção normal
+        const polygonLike = toPolygonOrMultiFeature(feature.geometry);
+        if (polygonLike) {
+            try {
+                const fc = turfFeatureCollection([userPolygon, polygonLike]) as FeatureCollection<Polygon | MultiPolygon>;
+                const intersection = turfIntersect(fc);
+                if (intersection && intersection.geometry) {
+                    clipped.push({
+                        kind: "polygon",
+                        geometry: intersection.geometry,
+                        properties: feature.properties,
+                    });
+                }
+            } catch {
+                // Skip features that fail intersection
             }
-        } catch {
-            // Skip features that fail intersection
+            continue;
+        }
+
+        // Caso 2: geometria de ponto (ex: nascentes) — verifica se está dentro do polígono
+        if (!isPointOrMultiPoint(feature.geometry)) continue;
+
+        const coords = extractPointCoords(feature.geometry);
+        if (!coords || !coords.length) continue;
+
+        const insideCoords: Array<[number, number]> = [];
+        for (const coord of coords) {
+            if (pointInsidePolygon(coord, userPolygon)) {
+                insideCoords.push(coord);
+            }
+        }
+
+        if (insideCoords.length > 0) {
+            clipped.push({
+                kind: "point",
+                pointCoords: insideCoords,
+                properties: feature.properties,
+            });
         }
     }
 
@@ -1397,6 +1541,7 @@ function mapAttributes(
 async function buildOutputZip(
     templateEntries: Array<{ name: string; data: Buffer }>,
     clippedLayers: Map<string, { records: ShpRecord[]; fieldDefs: DbfFieldDef[] }>,
+    clippedPointLayers: Map<string, { records: Array<{ coordinates: [number, number]; attributes: Record<string, string | number | null> }>; fieldDefs: DbfFieldDef[] }>,
     prjBuffers: Map<string, Buffer>,
     xlsxBuffer?: Buffer,
 ): Promise<Buffer> {
@@ -1408,35 +1553,30 @@ async function buildOutputZip(
         archive.on("error", reject);
         archive.on("end", () => resolve(Buffer.concat(chunks)));
 
-        // Determine which layers have generated data
-        const generatedLayers = new Set<string>();
-        for (const [layerName] of clippedLayers) {
-            generatedLayers.add(layerName.toUpperCase());
+        // Find directory prefix helper
+        function getDirPrefix(upper: string): string {
+            for (const entry of templateEntries) {
+                const entryBase = path.basename(entry.name, path.extname(entry.name)).toUpperCase();
+                if (entryBase === upper) {
+                    const dir = path.dirname(entry.name);
+                    return dir === "." ? "" : `${dir}/`;
+                }
+            }
+            return "";
         }
 
-        // Add template entries, replacing .shp/.shx/.dbf for layers with data
         const handledFiles = new Set<string>();
 
+        // Add polygon layers (original behavior)
         for (const [layerName, layerData] of clippedLayers) {
             const upper = layerName.toUpperCase();
+            const prefix = getDirPrefix(upper);
             const { shp, shx } = buildShpAndShx(layerData.records, 5);
             const dbf = buildDbfBuffer(
                 layerData.records.map((r) => r.attributes),
                 layerData.fieldDefs,
             );
 
-            // Find the directory prefix from template
-            let dirPrefix = "";
-            for (const entry of templateEntries) {
-                const entryBase = path.basename(entry.name, path.extname(entry.name)).toUpperCase();
-                if (entryBase === upper) {
-                    dirPrefix = path.dirname(entry.name);
-                    if (dirPrefix === ".") dirPrefix = "";
-                    break;
-                }
-            }
-
-            const prefix = dirPrefix ? `${dirPrefix}/` : "";
             archive.append(shp, { name: `${prefix}${upper}.shp` });
             archive.append(shx, { name: `${prefix}${upper}.shx` });
             archive.append(dbf, { name: `${prefix}${upper}.dbf` });
@@ -1444,7 +1584,36 @@ async function buildOutputZip(
             handledFiles.add(`${prefix}${upper}.shx`.toLowerCase());
             handledFiles.add(`${prefix}${upper}.dbf`.toLowerCase());
 
-            // .prj from template
+            const prjBuf = prjBuffers.get(upper);
+            if (prjBuf) {
+                archive.append(prjBuf, { name: `${prefix}${upper}.prj` });
+                handledFiles.add(`${prefix}${upper}.prj`.toLowerCase());
+            }
+        }
+
+        // Add point layers (ex: NASCENTE)
+        for (const [layerName, layerData] of clippedPointLayers) {
+            const upper = layerName.toUpperCase();
+            const prefix = getDirPrefix(upper);
+
+            const pointRecords = layerData.records.map((r) => ({
+                coordinates: r.coordinates,
+                attributes: r.attributes,
+            }));
+
+            const { shp, shx } = buildPointShpAndShx(pointRecords, 1);
+            const dbf = buildDbfBuffer(
+                layerData.records.map((r) => r.attributes),
+                layerData.fieldDefs,
+            );
+
+            archive.append(shp, { name: `${prefix}${upper}.shp` });
+            archive.append(shx, { name: `${prefix}${upper}.shx` });
+            archive.append(dbf, { name: `${prefix}${upper}.dbf` });
+            handledFiles.add(`${prefix}${upper}.shp`.toLowerCase());
+            handledFiles.add(`${prefix}${upper}.shx`.toLowerCase());
+            handledFiles.add(`${prefix}${upper}.dbf`.toLowerCase());
+
             const prjBuf = prjBuffers.get(upper);
             if (prjBuf) {
                 archive.append(prjBuf, { name: `${prefix}${upper}.prj` });
@@ -1454,7 +1623,7 @@ async function buildOutputZip(
 
         // Add remaining template files that haven't been replaced
         for (const entry of templateEntries) {
-            if (entry.name.endsWith("/")) continue; // skip directories
+            if (entry.name.endsWith("/")) continue;
             if (handledFiles.has(entry.name.toLowerCase())) continue;
             archive.append(entry.data, { name: entry.name });
         }
@@ -1933,6 +2102,7 @@ async function processClip(
 
     // 5. Process each layer
     const clippedLayers = new Map<string, { records: ShpRecord[]; fieldDefs: DbfFieldDef[] }>();
+    const clippedPointLayers = new Map<string, { records: Array<{ coordinates: [number, number]; attributes: Record<string, string | number | null> }>; fieldDefs: DbfFieldDef[] }>();
     const clippedGeometries = new Map<string, Geometry[]>();
 
     for (let i = 0; i < layerNames.length; i++) {
@@ -2062,41 +2232,61 @@ async function processClip(
         ];
 
         const records: ShpRecord[] = [];
+        const pointRecords: Array<{ coordinates: [number, number]; attributes: Record<string, string | number | null> }> = [];
         let layerAreaHa = 0;
 
         for (const feat of clipped) {
-            const rings = geojsonToShpRings(feat.geometry as any);
-            if (!rings.length) continue;
+            if (feat.kind === "polygon") {
+                // Usa geojsonToPolyRecords para tratar MultiPolygon corretamente:
+                // cada polígono vira um ShpRecord separado (não buracos)
+                const polyRecords = geojsonToPolyRecords(feat.geometry as any);
+                if (!polyRecords.length) continue;
 
-            const attributes = mapAttributes(feat.properties, fieldDefs);
-            records.push({ rings, attributes });
+                const attributes = mapAttributes(feat.properties, fieldDefs);
 
-            try {
-                const geom = normalizePolygonGeometry(feat.geometry);
-                if (geom) {
-                    const f = geom.type === "Polygon"
-                        ? turfPolygon(geom.coordinates)
-                        : turfMultiPolygon(geom.coordinates);
-                    layerAreaHa += turfArea(f) / 10000;
+                for (const polyRec of polyRecords) {
+                    records.push({ type: "polygon", rings: polyRec.rings, attributes });
                 }
-            } catch {
-                // Ignore area calculation errors
+
+                try {
+                    const geom = normalizePolygonGeometry(feat.geometry);
+                    if (geom) {
+                        const f = geom.type === "Polygon"
+                            ? turfPolygon(geom.coordinates)
+                            : turfMultiPolygon(geom.coordinates);
+                        layerAreaHa += turfArea(f) / 10000;
+                    }
+                } catch {
+                    // Ignore area calculation errors
+                }
+            } else if (feat.kind === "point") {
+                const attributes = mapAttributes(feat.properties, fieldDefs);
+                for (const coord of feat.pointCoords) {
+                    pointRecords.push({ coordinates: coord, attributes: { ...attributes } });
+                }
             }
         }
 
-        if (records.length > 0) {
+        const hasPolygons = records.length > 0;
+        const hasPoints = pointRecords.length > 0;
+
+        if (hasPolygons) {
             clippedLayers.set(layerName, { records, fieldDefs });
         }
+        if (hasPoints) {
+            // Store points separately with a flag so buildOutputZip can handle them
+            clippedPointLayers.set(layerName, { records: pointRecords, fieldDefs });
+        }
 
-        // Store clipped GeoJSON geometries for AI analysis rendering
+        // Store clipped geometries for AI analysis rendering
         const geoJsonGeoms = clipped
-            .map((f) => f.geometry)
-            .filter((g): g is Geometry => !!g);
+            .filter((f): f is ClippedPolygonResult => f.kind === "polygon")
+            .map((f) => f.geometry);
         if (geoJsonGeoms.length > 0) {
             clippedGeometries.set(layerName, geoJsonGeoms);
         }
 
-        totalFeaturesClipped += records.length;
+        totalFeaturesClipped += records.length + pointRecords.length;
         const summary = appendLayerWarning({
             name: layerName,
             source: "wfs",
@@ -2127,7 +2317,7 @@ async function processClip(
 
     let zipBuffer: Buffer;
     try {
-        zipBuffer = await buildOutputZip(templateEntries, clippedLayers, prjBuffers, xlsxBuffer);
+        zipBuffer = await buildOutputZip(templateEntries, clippedLayers, clippedPointLayers, prjBuffers, xlsxBuffer);
     } catch (err: any) {
         sendSSE(res, { type: "error", message: `Erro ao montar ZIP: ${err.message}` });
         return { ok: false, cloudinaryStoredBytes: 0 };
