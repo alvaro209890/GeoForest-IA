@@ -1660,6 +1660,10 @@ function applyLayerAttributeRules(
         setMappedAttribute(attributes, targetFields, "IDENTIFIC", recordNumber);
     }
 
+    if (layerName === "RESERVATORIO_ARTIFICIAL") {
+        setMappedAttribute(attributes, targetFields, "FAIXA_APP", 30);
+    }
+
     return attributes;
 }
 
