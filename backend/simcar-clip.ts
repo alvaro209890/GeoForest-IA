@@ -524,6 +524,7 @@ const RIVER_CLIP_LAYERS = new Set([
     "RIO_200_A_600",
     "RIO_ACIMA_600",
 ]);
+const SPRING_LAYER_NAME = "NASCENTE";
 const RIVER_CLIP_EXTENSION_METERS = Number(process.env.SIMCAR_RIVER_CLIP_EXTENSION_METERS || 500);
 
 type LocalSimcarLayerSource = {
@@ -1489,6 +1490,13 @@ function pointInsidePolygon(
     }
 }
 
+function pointInsideAnyPolygon(
+    coord: [number, number],
+    polygons: Array<Feature<Polygon | MultiPolygon>>,
+): boolean {
+    return polygons.some((polygon) => pointInsidePolygon(coord, polygon));
+}
+
 /**
  * Extract point coordinates from Point/MultiPoint geometry.
  * Returns null if geometry is not a point type.
@@ -1520,8 +1528,12 @@ type ClipResult = ClippedPolygonResult | ClippedPointResult;
 function clipFeaturesToPolygon(
     features: WfsFeature[],
     userPolygon: Feature<Polygon | MultiPolygon>,
+    options: { pointClipPolygons?: Array<Feature<Polygon | MultiPolygon>> } = {},
 ): ClipResult[] {
     const clipped: ClipResult[] = [];
+    const pointClipPolygons = options.pointClipPolygons?.length
+        ? options.pointClipPolygons
+        : [userPolygon];
 
     for (const feature of features) {
         if (!feature.geometry) continue;
@@ -1553,7 +1565,7 @@ function clipFeaturesToPolygon(
 
         const insideCoords: Array<[number, number]> = [];
         for (const coord of coords) {
-            if (pointInsidePolygon(coord, userPolygon)) {
+            if (pointInsideAnyPolygon(coord, pointClipPolygons)) {
                 insideCoords.push(coord);
             }
         }
@@ -1933,6 +1945,21 @@ function unionPolygonGeometries(geometries: Geometry[] | undefined): Feature<Pol
     return unionPolygonFeatures(polygonFeatures);
 }
 
+function getClippedRiverFeatures(
+    clippedGeometries: Map<string, Geometry[]>,
+): Array<Feature<Polygon | MultiPolygon>> {
+    const features: Array<Feature<Polygon | MultiPolygon>> = [];
+    for (const layerName of RIVER_CLIP_LAYERS) {
+        const geometries = clippedGeometries.get(layerName);
+        if (!geometries?.length) continue;
+        for (const geometry of geometries) {
+            const feature = toPolygonOrMultiFeature(geometry);
+            if (feature) features.push(feature);
+        }
+    }
+    return features;
+}
+
 function computeAreaHa(feature: Feature<Polygon | MultiPolygon> | null | undefined): number {
     if (!feature) return 0;
     try {
@@ -2298,6 +2325,8 @@ async function processClip(
         // River layers are queried by BBOX because large buffered polygons can make
         // GeoServer reject INTERSECTS WKT with HTTP 400; local clipping keeps the configured margin.
         const isRiverLayer = RIVER_CLIP_LAYERS.has(layerName);
+        const isSpringLayer = layerName === SPRING_LAYER_NAME;
+        const clippedRiverFeatures = isSpringLayer ? getClippedRiverFeatures(clippedGeometries) : [];
         const clipBoundary = isRiverLayer
             ? riverClipBoundary.polygon
             : userPolygon;
@@ -2333,7 +2362,7 @@ async function processClip(
 
         let wfsFetch: WfsClipFetchResult;
         try {
-            wfsFetch = isRiverLayer
+            wfsFetch = isRiverLayer || isSpringLayer
                 ? await fetchWfsBboxFeatures(wfsTypeName, featureBbox(riverClipBoundary.polygon), "EPSG:4674")
                 : await fetchWfsClipFeatures(wfsTypeName, clipWkt, "EPSG:4674");
         } catch (err: any) {
@@ -2361,7 +2390,11 @@ async function processClip(
             continue;
         }
 
-        const clipped = clipFeaturesToPolygon(wfsFeatures, clipBoundary);
+        const clipped = clipFeaturesToPolygon(wfsFeatures, clipBoundary, {
+            pointClipPolygons: isSpringLayer && clippedRiverFeatures.length > 0
+                ? [userPolygon, ...clippedRiverFeatures]
+                : undefined,
+        });
         throwIfClientDisconnected(res);
 
         if (!clipped.length) {
