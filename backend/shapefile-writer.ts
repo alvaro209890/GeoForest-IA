@@ -352,38 +352,88 @@ function ringSignedArea(ring: number[][]): number {
 }
 
 /**
- * Garante que anéis exteriores tenham orientação CW e interiores (buracos) tenham CCW,
- * conforme especificação ESRI Shapefile.
+ * Teste ponto-em-anel por ray casting. Um ponto na borda conta como dentro
+ * para estabilizar a classificacao de aneis encostados.
  */
-function enforceShapefileRingOrientation(rings: number[][][]): number[][][] {
-    if (rings.length === 0) return rings;
-    const oriented: number[][][] = [];
+function pointInRing(point: number[], ring: number[][]): boolean {
+    const [x, y] = point;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || ring.length < 4) return false;
 
-    for (let i = 0; i < rings.length; i++) {
-        const ring = rings[i];
-        if (ring.length < 4) {
-            oriented.push(ring);
-            continue;
-        }
-        const signedArea = ringSignedArea(ring);
-        if (i === 0) {
-            // Primeiro anel = exterior → deve ser CW (positivo)
-            if (signedArea < 0) {
-                oriented.push([...ring].reverse());
-            } else {
-                oriented.push(ring);
-            }
-        } else {
-            // Anéis seguintes = buracos → devem ser CCW (negativo)
-            if (signedArea > 0) {
-                oriented.push([...ring].reverse());
-            } else {
-                oriented.push(ring);
-            }
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const [xi, yi] = ring[i];
+        const [xj, yj] = ring[j];
+        if (![xi, yi, xj, yj].every(Number.isFinite)) continue;
+
+        const dx = xj - xi;
+        const dy = yj - yi;
+        const cross = (x - xi) * dy - (y - yi) * dx;
+        const onSegment =
+            Math.abs(cross) <= 1e-12 &&
+            x >= Math.min(xi, xj) - 1e-12 &&
+            x <= Math.max(xi, xj) + 1e-12 &&
+            y >= Math.min(yi, yj) - 1e-12 &&
+            y <= Math.max(yi, yj) + 1e-12;
+        if (onSegment) return true;
+
+        const intersects = (yi > y) !== (yj > y);
+        if (intersects) {
+            const atX = xi + ((y - yi) * dx) / dy;
+            if (x < atX) inside = !inside;
         }
     }
 
-    return oriented;
+    return inside;
+}
+
+function ringRepresentativePoint(ring: number[][]): number[] | null {
+    if (ring.length < 4) return null;
+    const lastIndex = ring.length - 1;
+    for (let i = 0; i < lastIndex; i += 1) {
+        const point = ring[i];
+        if (point?.every(Number.isFinite)) return point;
+    }
+    return null;
+}
+
+function ringNestingDepth(ring: number[][], ringIndex: number, rings: number[][][]): number {
+    const point = ringRepresentativePoint(ring);
+    if (!point) return 0;
+
+    const ringArea = Math.abs(ringSignedArea(ring));
+    let depth = 0;
+    for (let i = 0; i < rings.length; i += 1) {
+        if (i === ringIndex) continue;
+        const candidate = rings[i];
+        const candidateArea = Math.abs(ringSignedArea(candidate));
+        if (candidateArea <= ringArea + 1e-18) continue;
+        if (pointInRing(point, candidate)) depth += 1;
+    }
+    return depth;
+}
+
+/**
+ * Garante a orientação esperada pelo ESRI Shapefile: shells em CW e buracos
+ * em CCW. Algumas camadas do WFS (especialmente AREA_UMIDA) chegam apos o
+ * intersect com varios aneis externos no mesmo Polygon; por isso a decisao
+ * precisa ser por profundidade espacial, nao pela posicao do anel no array.
+ */
+function enforceShapefileRingOrientation(rings: number[][][]): number[][][] {
+    if (rings.length === 0) return rings;
+
+    return rings.map((ring, index) => {
+        if (ring.length < 4) return ring;
+        const signedArea = ringSignedArea(ring);
+        if (Math.abs(signedArea) <= 1e-18) return ring;
+
+        const depth = ringNestingDepth(ring, index, rings);
+        const shouldBeClockwise = depth % 2 === 0;
+        const isClockwise = signedArea > 0;
+        if (isClockwise !== shouldBeClockwise) {
+            return [...ring].reverse();
+        }
+        return ring;
+    });
 }
 
 function ensureClosedRings(rings: number[][][]): number[][][] {
