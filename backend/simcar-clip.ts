@@ -516,7 +516,7 @@ const TEMPLATE_LAYERS = [
 /** Layers that receive the property polygon directly (no WFS query). */
 const DIRECT_COPY_LAYERS = new Set(["AIR", "ATP"]);
 
-/** River layers are clipped with a small margin beyond the property boundary. */
+/** River layers are fetched and clipped with a small margin beyond the property boundary. */
 const RIVER_CLIP_LAYERS = new Set([
     "RIO_ATE_10",
     "RIO_10_A_50",
@@ -524,7 +524,7 @@ const RIVER_CLIP_LAYERS = new Set([
     "RIO_200_A_600",
     "RIO_ACIMA_600",
 ]);
-const RIVER_CLIP_EXTENSION_METERS = Number(process.env.SIMCAR_RIVER_CLIP_EXTENSION_METERS || 70);
+const RIVER_CLIP_EXTENSION_METERS = Number(process.env.SIMCAR_RIVER_CLIP_EXTENSION_METERS || 500);
 
 type LocalSimcarLayerSource = {
     zipPath: string;
@@ -1303,6 +1303,115 @@ async function fetchWfsClipFeatures(
                 !usedFallback
             ) {
                 // Retry without startIndex
+                usedFallback = true;
+                const fallbackCount = Math.min(WFS_MAX_FEATURES, WFS_PAGE_SIZE);
+                const fallbackUrl = buildWfsUrl({
+                    service: "WFS",
+                    version: "2.0.0",
+                    request: "GetFeature",
+                    typeNames: wfsLayerName,
+                    outputFormat: "application/json",
+                    srsName,
+                    count: fallbackCount,
+                    CQL_FILTER: cqlFilter,
+                });
+                page = await fetchJsonWithTimeout<any>(fallbackUrl, WFS_TIMEOUT_MS);
+                partial = numberMatched !== null ? numberMatched > fallbackCount : true;
+                warnings.push(
+                    numberMatched !== null && numberMatched > fallbackCount
+                        ? `WFS sem paginacao com startIndex para esta camada; total estimado ${numberMatched} feicoes, calculo limitado a ${fallbackCount}.`
+                        : `WFS sem paginacao com startIndex para esta camada; resultado limitado a ate ${fallbackCount} feicoes.`,
+                );
+            } else {
+                throw error;
+            }
+        }
+
+        const features = Array.isArray(page?.features) ? page.features : [];
+        if (!features.length) break;
+
+        for (const f of features) {
+            allFeatures.push({
+                geometry: f.geometry || null,
+                properties: f.properties || {},
+            });
+        }
+
+        startIndex += features.length;
+        if (usedFallback) break;
+        if (features.length < pageSize) break;
+    }
+
+    if (allFeatures.length >= WFS_MAX_FEATURES && (numberMatched === null || numberMatched > allFeatures.length)) {
+        partial = true;
+        warnings.push(`Limite de ${WFS_MAX_FEATURES} feicoes atingido; resultado parcial.`);
+    }
+
+    return {
+        features: allFeatures,
+        warnings: dedupeWarnings(warnings),
+        partial,
+    };
+}
+
+function cqlNumber(value: number): string {
+    return Number(value.toFixed(8)).toString();
+}
+
+async function fetchWfsBboxFeatures(
+    wfsLayerName: string,
+    bbox: [number, number, number, number],
+    srsName: string = "EPSG:4674",
+): Promise<WfsClipFetchResult> {
+    const geometryField = await getGeometryFieldForLayer(wfsLayerName);
+    const [minX, minY, maxX, maxY] = bbox.map(cqlNumber);
+    const cqlFilter = `BBOX(${geometryField},${minX},${minY},${maxX},${maxY})`;
+    const allFeatures: WfsFeature[] = [];
+    const warnings: string[] = [];
+    let startIndex = 0;
+    let usedFallback = false;
+    let partial = false;
+
+    let numberMatched: number | null = null;
+    try {
+        const hitsUrl = buildWfsUrl({
+            service: "WFS",
+            version: "2.0.0",
+            request: "GetFeature",
+            typeNames: wfsLayerName,
+            resultType: "hits",
+            CQL_FILTER: cqlFilter,
+        });
+        numberMatched = parseNumberMatched(await fetchTextWithTimeout(hitsUrl, WFS_TIMEOUT_MS));
+    } catch {
+        // Keep going without total count.
+    }
+
+    while (allFeatures.length < WFS_MAX_FEATURES) {
+        const pageSize = Math.min(WFS_PAGE_SIZE, WFS_MAX_FEATURES - allFeatures.length);
+        if (pageSize <= 0) break;
+
+        const url = buildWfsUrl({
+            service: "WFS",
+            version: "2.0.0",
+            request: "GetFeature",
+            typeNames: wfsLayerName,
+            outputFormat: "application/json",
+            srsName,
+            startIndex: usedFallback ? undefined : startIndex,
+            count: pageSize,
+            CQL_FILTER: cqlFilter,
+        });
+
+        let page: any;
+        try {
+            page = await fetchJsonWithTimeout<any>(url, WFS_TIMEOUT_MS);
+        } catch (error: any) {
+            const msg = String(error?.message || "");
+            if (
+                (/natural order without a primary key/i.test(msg) || /WFS 400/i.test(msg)) &&
+                !usedFallback
+            ) {
                 usedFallback = true;
                 const fallbackCount = Math.min(WFS_MAX_FEATURES, WFS_PAGE_SIZE);
                 const fallbackUrl = buildWfsUrl({
@@ -2185,11 +2294,14 @@ async function processClip(
             continue;
         }
 
-        // Category 2: SEMA-MT WFS query + local clip
-        const clipBoundary = RIVER_CLIP_LAYERS.has(layerName)
+        // Category 2: SEMA-MT WFS query + local clip.
+        // River layers are queried by BBOX because large buffered polygons can make
+        // GeoServer reject INTERSECTS WKT with HTTP 400; local clipping keeps the configured margin.
+        const isRiverLayer = RIVER_CLIP_LAYERS.has(layerName);
+        const clipBoundary = isRiverLayer
             ? riverClipBoundary.polygon
             : userPolygon;
-        const clipWkt = RIVER_CLIP_LAYERS.has(layerName)
+        const clipWkt = isRiverLayer
             ? riverClipBoundary.wkt
             : userWkt;
         const wfsTypeName = layerMapping.get(layerName);
@@ -2221,7 +2333,9 @@ async function processClip(
 
         let wfsFetch: WfsClipFetchResult;
         try {
-            wfsFetch = await fetchWfsClipFeatures(wfsTypeName, clipWkt, "EPSG:4674");
+            wfsFetch = isRiverLayer
+                ? await fetchWfsBboxFeatures(wfsTypeName, featureBbox(riverClipBoundary.polygon), "EPSG:4674")
+                : await fetchWfsClipFeatures(wfsTypeName, clipWkt, "EPSG:4674");
         } catch (err: any) {
             if (err instanceof ClientAbortError) throw err;
             console.error(`[SIMCAR CLIP] WFS fetch error for ${layerName}:`, err.message);
