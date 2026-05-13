@@ -1208,6 +1208,7 @@ export default function Dashboard() {
   const [simcarClipMode, setSimcarClipMode] = useState<'auto-clip' | 'vectorized-analysis'>('auto-clip');
   const [simcarClipLayers, setSimcarClipLayers] = useState<Array<{ name: string; category: string; selected: boolean }>>([]);
   const [simcarClipProcessing, setSimcarClipProcessing] = useState(false);
+  const [simcarClipCanceling, setSimcarClipCanceling] = useState(false);
   const [simcarVectorizedRunning, setSimcarVectorizedRunning] = useState(false);
   const [simcarVectorizedStatus, setSimcarVectorizedStatus] = useState<{
     stage: 'importing' | 'acavn' | 'auas' | 'done' | 'error';
@@ -1219,6 +1220,7 @@ export default function Dashboard() {
   const [simcarClipError, setSimcarClipError] = useState<string | null>(null);
   const simcarClipAbortRef = useRef<AbortController | null>(null);
   const simcarClipProcessJobIdRef = useRef<string | null>(null);
+  const simcarClipCancelRequestedRef = useRef(false);
   const simcarClipProgressFlushTimerRef = useRef<number | null>(null);
   const simcarClipProgressPendingRef = useRef<{ current: number; total: number; layer: string; status: string } | null>(
     null
@@ -1627,11 +1629,13 @@ export default function Dashboard() {
     simcarAnalysisAbortRef.current = null;
     simcarAuasAbortRef.current = null;
     simcarClipProcessJobIdRef.current = null;
+    simcarClipCancelRequestedRef.current = false;
     simcarAnalysisProcessJobIdRef.current = null;
     simcarAuasProcessJobIdRef.current = null;
     simcarVectorizedResumeInFlightRef.current = null;
     setSimcarServerRuntimeState(null);
     setSimcarClipMode(nextMode);
+    setSimcarClipCanceling(false);
     setSimcarClipFile(null);
     setSimcarClipProcessing(false);
     setSimcarClipProgress(null);
@@ -8137,6 +8141,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     }
                     if (!simcarClipFile && !simcarCarNumber.trim() && !simcarSigefParcelCode.trim()) return;
                     setSimcarClipProcessing(true);
+                    setSimcarClipCanceling(false);
+                    simcarClipCancelRequestedRef.current = false;
                     clearSimcarClipProgressQueue();
                     setSimcarClipProgress(null);
                     setSimcarClipDownloadUrl(null);
@@ -8199,6 +8205,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 if (streamJobId) {
                                   simcarClipProcessJobIdRef.current = streamJobId;
                                   setSimcarClipJobId(streamJobId);
+                                  if (simcarClipCancelRequestedRef.current) {
+                                    void requestProcessCancel(streamJobId);
+                                  }
                                   const placeholder: SimcarClipHistoryItem = {
                                     id: streamJobId,
                                     timestamp: new Date().toISOString(),
@@ -8313,6 +8322,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 if (activeJobId) {
                                   markSimcarClipStatus(activeJobId, 'failed', eventMessage);
                                 }
+                              } else if (event.type === 'cancelled') {
+                                const activeJobId = String(
+                                  (typeof event.jobId === 'string' && event.jobId) || simcarClipProcessJobIdRef.current || ''
+                                ).trim();
+                                if (activeJobId) {
+                                  markSimcarClipStatus(activeJobId, 'cancelled', String(event.message || 'Cancelamento solicitado pelo usuário.'));
+                                }
+                                setSimcarClipError(null);
                               }
                             } catch { }
                           }
@@ -8326,12 +8343,19 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         if (activeJobId) {
                           markSimcarClipStatus(activeJobId, 'failed', errorMessage);
                         }
+                      } else if (simcarClipCancelRequestedRef.current) {
+                        const activeJobId = String(simcarClipProcessJobIdRef.current || '').trim();
+                        if (activeJobId) {
+                          markSimcarClipStatus(activeJobId, 'cancelled', 'Cancelamento solicitado pelo usuário.');
+                        }
                       }
                     } finally {
                       clearSimcarClipProgressQueue();
                       setSimcarClipProcessing(false);
+                      setSimcarClipCanceling(false);
                       simcarClipAbortRef.current = null;
                       simcarClipProcessJobIdRef.current = null;
+                      simcarClipCancelRequestedRef.current = false;
                     }
                   }}
                   className={`w-full py-3 rounded-xl font-medium text-sm transition-all duration-300 flex items-center justify-center gap-2 ${(
@@ -8359,17 +8383,33 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 {/* Cancel Button */}
                 {simcarClipProcessing && (
                   <button
+                    type="button"
+                    disabled={simcarClipCanceling}
                     onClick={async () => {
-                      await requestProcessCancel(simcarClipProcessJobIdRef.current);
-                      simcarClipProcessJobIdRef.current = null;
+                      if (simcarClipCanceling) return;
+                      simcarClipCancelRequestedRef.current = true;
+                      setSimcarClipCanceling(true);
+                      const activeJobId = String(simcarClipProcessJobIdRef.current || '').trim();
+                      const cancelAccepted = activeJobId ? await requestProcessCancel(activeJobId) : false;
                       simcarClipAbortRef.current?.abort();
                       clearSimcarClipProgressQueue();
                       setSimcarClipProcessing(false);
-                      toast.info('Cancelamento solicitado. Cobrança proporcional aplicada.');
+                      if (activeJobId) {
+                        markSimcarClipStatus(activeJobId, 'cancelled', 'Cancelamento solicitado pelo usuário.');
+                      }
+                      if (activeJobId && !cancelAccepted) {
+                        toast.warning('A conexão foi interrompida, mas o servidor não confirmou o cancelamento. Vou atualizar o status automaticamente.');
+                      } else {
+                        toast.info('Cancelamento solicitado. Cobrança proporcional aplicada.');
+                      }
                     }}
-                    className="w-full mt-2 py-2 rounded-xl border border-red-500/20 text-red-400 text-sm hover:bg-red-500/10 transition-colors"
+                    className={`w-full mt-2 py-2 rounded-xl border border-red-500/20 text-sm transition-colors ${
+                      simcarClipCanceling
+                        ? 'text-red-300/60 bg-red-500/5 cursor-wait'
+                        : 'text-red-400 hover:bg-red-500/10'
+                    }`}
                   >
-                    Cancelar
+                    {simcarClipCanceling ? 'Cancelando...' : 'Cancelar'}
                   </button>
                 )}
               </section>
