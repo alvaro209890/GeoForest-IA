@@ -1,0 +1,24 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Modern Geometric Tree / Leaf Hybrid -->
+  <path d="M256 80C256 80 120 200 120 320C120 380 160 420 256 440C352 420 392 380 392 320C392 200 256 80 256 80Z" fill="white" fill-opacity="0.2"/>
+  
+  <!-- Central Axis (Tech Style) -->
+  <rect x="250" y="140" width="12" height="260" rx="6" fill="white" fill-opacity="0.9"/>
+  
+  <!-- Symmetric Leaves / Data Points -->
+  <path d="M256 180L340 240V260L256 200V180Z" fill="white" fill-opacity="1"/>
+  <path d="M256 180L172 240V260L256 200V180Z" fill="white" fill-opacity="1"/>
+  
+  <path d="M256 260L320 310V325L256 275V260Z" fill="white" fill-opacity="0.8"/>
+  <path d="M256 260L192 310V325L256 275V260Z" fill="white" fill-opacity="0.8"/>
+  
+  <path d="M256 330L300 365V375L256 340V330Z" fill="white" fill-opacity="0.6"/>
+  <path d="M256 330L212 365V375L256 340V330Z" fill="white" fill-opacity="0.6"/>
+
+  <!-- AI Nodes -->
+  <circle cx="340" cy="250" r="12" fill="#10B981" stroke="white" stroke-width="4"/>
+  <circle cx="172" cy="250" r="12" fill="#10B981" stroke="white" stroke-width="4"/>
+  <circle cx="320" cy="317" r="10" fill="#10B981" stroke="white" stroke-width="3"/>
+  <circle cx="192" cy="317" r="10" fill="#10B981" stroke="white" stroke-width="3"/>
+  <circle cx="256" cy="140" r="14" fill="#10B981" stroke="white" stroke-width="4"/>
+</svg>

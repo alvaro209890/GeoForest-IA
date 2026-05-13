@@ -270,8 +270,8 @@ function ensureCbersLevelInFilename(filename: string, level?: string | null): st
   if (cleanLevel !== "L4" && cleanLevel !== "L2") return filename;
   const ext = path.extname(filename) || ".TIF";
   let stem = filename.slice(0, filename.length - ext.length);
-  stem = /[_-]L[24]$/i.test(stem)
-    ? stem.replace(/([_-])L[24]$/i, `$1${cleanLevel}`)
+  stem = /[_-]L[24](?=$|[_-])/i.test(stem)
+    ? stem.replace(/([_-])L[24](?=$|[_-])/i, `$1${cleanLevel}`)
     : `${stem}_${cleanLevel}`;
   return `${stem}${ext}`;
 }
