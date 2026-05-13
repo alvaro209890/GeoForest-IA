@@ -516,6 +516,16 @@ const TEMPLATE_LAYERS = [
 /** Layers that receive the property polygon directly (no WFS query). */
 const DIRECT_COPY_LAYERS = new Set(["AIR", "ATP"]);
 
+/** River layers are clipped with a small margin beyond the property boundary. */
+const RIVER_CLIP_LAYERS = new Set([
+    "RIO_ATE_10",
+    "RIO_10_A_50",
+    "RIO_50_A_200",
+    "RIO_200_A_600",
+    "RIO_ACIMA_600",
+]);
+const RIVER_CLIP_EXTENSION_METERS = Number(process.env.SIMCAR_RIVER_CLIP_EXTENSION_METERS || 70);
+
 type LocalSimcarLayerSource = {
     zipPath: string;
     storeName: string;
@@ -748,6 +758,9 @@ function throwIfClientDisconnected(res: Response): void {
     const jobId = String((res as any).__processingJobId || "").trim();
     if (jobId && isCancelRequested(jobId)) {
         throw new ClientAbortError("Cancelamento solicitado pelo usuário.");
+    }
+    if (isSseConnectionClosed(res)) {
+        throw new ClientAbortError("Cliente desconectou durante o processamento.");
     }
 }
 
@@ -1820,6 +1833,52 @@ function computeAreaHa(feature: Feature<Polygon | MultiPolygon> | null | undefin
     }
 }
 
+function buildExpandedClipBoundary(
+    feature: Feature<Polygon | MultiPolygon>,
+    distanceMeters: number,
+): {
+    polygon: Feature<Polygon | MultiPolygon>;
+    wkt: string;
+    distanceMeters: number;
+} {
+    const fallbackGeometry = normalizePolygonGeometry(feature.geometry);
+    if (!fallbackGeometry) {
+        throw new Error("Geometria do imóvel não pôde ser validada para recorte.");
+    }
+
+    if (!Number.isFinite(distanceMeters) || distanceMeters <= 0) {
+        return {
+            polygon: feature,
+            wkt: polygonToWkt(fallbackGeometry),
+            distanceMeters: 0,
+        };
+    }
+
+    try {
+        const buffered = turfBuffer(feature, distanceMeters, { units: "meters" });
+        const bufferedGeometry = normalizePolygonGeometry(buffered?.geometry);
+        if (bufferedGeometry) {
+            return {
+                polygon: {
+                    type: "Feature",
+                    properties: {},
+                    geometry: bufferedGeometry,
+                },
+                wkt: polygonToWkt(bufferedGeometry),
+                distanceMeters,
+            };
+        }
+    } catch (error) {
+        console.warn("[SIMCAR CLIP] Falha ao criar buffer de recorte para rios:", error);
+    }
+
+    return {
+        polygon: feature,
+        wkt: polygonToWkt(fallbackGeometry),
+        distanceMeters: 0,
+    };
+}
+
 function inspectPropertyLayerConsistency(
     clippedGeometries: Map<string, Geometry[]>,
 ): {
@@ -1970,6 +2029,7 @@ async function processClip(
     const layerSummaries: LayerSummary[] = [];
     const jobWarnings: string[] = [];
     let totalFeaturesClipped = 0;
+    throwIfClientDisconnected(res);
 
     // 1. Get user property boundary (via ZIP or WFS CAR)
     let userPolygon: any;
@@ -2029,6 +2089,14 @@ async function processClip(
         sendSSE(res, { type: "error", message: "Nenhum limite territorial fornecido (ZIP ou CAR)." });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
+    throwIfClientDisconnected(res);
+
+    const riverClipBoundary = buildExpandedClipBoundary(userPolygon, RIVER_CLIP_EXTENSION_METERS);
+    if (riverClipBoundary.distanceMeters > 0) {
+        console.log(
+            `[SIMCAR CLIP] River layers will use property boundary expanded by ${riverClipBoundary.distanceMeters}m.`,
+        );
+    }
 
     // 2. Read template
     let templateEntries: Array<{ name: string; data: Buffer }>;
@@ -2049,6 +2117,7 @@ async function processClip(
             prjBuffers.set(base, entry.data);
         }
     }
+    throwIfClientDisconnected(res);
 
     // 4. SEMA-MT WFS GetCapabilities -> discover layer mapping
     let layerMapping = new Map<string, string>();
@@ -2062,6 +2131,7 @@ async function processClip(
         sendSSE(res, { type: "error", message: "Serviço WFS da SEMA-MT indisponível." });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
+    throwIfClientDisconnected(res);
 
     // 5. Process each layer
     const clippedLayers = new Map<string, { records: ShpRecord[]; fieldDefs: DbfFieldDef[] }>();
@@ -2069,6 +2139,7 @@ async function processClip(
     const clippedGeometries = new Map<string, Geometry[]>();
 
     for (let i = 0; i < layerNames.length; i++) {
+        throwIfClientDisconnected(res);
         const layerName = layerNames[i];
         const current = i + 1;
 
@@ -2110,10 +2181,17 @@ async function processClip(
                 features: 1,
             });
             totalFeaturesClipped += 1;
+            throwIfClientDisconnected(res);
             continue;
         }
 
         // Category 2: SEMA-MT WFS query + local clip
+        const clipBoundary = RIVER_CLIP_LAYERS.has(layerName)
+            ? riverClipBoundary.polygon
+            : userPolygon;
+        const clipWkt = RIVER_CLIP_LAYERS.has(layerName)
+            ? riverClipBoundary.wkt
+            : userWkt;
         const wfsTypeName = layerMapping.get(layerName);
         if (!wfsTypeName) {
             sendSSE(res, {
@@ -2143,8 +2221,9 @@ async function processClip(
 
         let wfsFetch: WfsClipFetchResult;
         try {
-            wfsFetch = await fetchWfsClipFeatures(wfsTypeName, userWkt, "EPSG:4674");
+            wfsFetch = await fetchWfsClipFeatures(wfsTypeName, clipWkt, "EPSG:4674");
         } catch (err: any) {
+            if (err instanceof ClientAbortError) throw err;
             console.error(`[SIMCAR CLIP] WFS fetch error for ${layerName}:`, err.message);
             layerSummaries.push({
                 name: layerName,
@@ -2154,6 +2233,7 @@ async function processClip(
             });
             continue;
         }
+        throwIfClientDisconnected(res);
 
         const wfsFeatures = wfsFetch.features;
         if (!wfsFeatures.length) {
@@ -2167,7 +2247,8 @@ async function processClip(
             continue;
         }
 
-        const clipped = clipFeaturesToPolygon(wfsFeatures, userPolygon);
+        const clipped = clipFeaturesToPolygon(wfsFeatures, clipBoundary);
+        throwIfClientDisconnected(res);
 
         if (!clipped.length) {
             const summary = appendLayerWarning({
@@ -2198,7 +2279,9 @@ async function processClip(
         const pointRecords: Array<{ coordinates: [number, number]; attributes: Record<string, string | number | null> }> = [];
         let layerAreaHa = 0;
 
-        for (const feat of clipped) {
+        for (let featIndex = 0; featIndex < clipped.length; featIndex += 1) {
+            if (featIndex % 50 === 0) throwIfClientDisconnected(res);
+            const feat = clipped[featIndex];
             if (feat.kind === "polygon") {
                 // Usa geojsonToPolyRecords para tratar MultiPolygon corretamente:
                 // cada polígono vira um ShpRecord separado (não buracos)
@@ -2259,7 +2342,9 @@ async function processClip(
         }, wfsFetch.warnings, wfsFetch.partial);
         if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);
         layerSummaries.push(summary);
+        throwIfClientDisconnected(res);
     }
+    throwIfClientDisconnected(res);
 
     // 6. Build output ZIP
     sendSSE(res, {
@@ -2278,6 +2363,7 @@ async function processClip(
         console.error("[SIMCAR CLIP] XLSX build error:", err.message);
         // Non-fatal: continue without XLSX
     }
+    throwIfClientDisconnected(res);
 
     let zipBuffer: Buffer;
     try {
@@ -2286,6 +2372,7 @@ async function processClip(
         sendSSE(res, { type: "error", message: `Erro ao montar ZIP: ${err.message}` });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
+    throwIfClientDisconnected(res);
 
     // 7. Cache the result (including geometry for AI analysis)
     const jobId = String(forcedJobId || "").trim() || crypto.randomUUID();
@@ -8765,6 +8852,7 @@ export function registerSimcarClipRoutes(app: Express) {
                         error: "cancel_requested",
                     });
                 }
+                sendSSE(res, { type: "cancelled", message: "Cancelamento solicitado. Processamento interrompido." });
                 return;
             }
             if (billingUid && operationReserved > 0 && operationRequestId) {
