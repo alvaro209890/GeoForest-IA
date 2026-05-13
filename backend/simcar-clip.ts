@@ -1633,6 +1633,36 @@ function mapAttributes(
     return mapped;
 }
 
+function setMappedAttribute(
+    attributes: Record<string, string | number | null>,
+    targetFields: DbfFieldDef[],
+    fieldName: string,
+    value: string | number | null,
+): void {
+    const field = targetFields.find((item) => item.name.toLowerCase() === fieldName.toLowerCase());
+    if (!field) return;
+    attributes[field.name] = value;
+}
+
+function applyLayerAttributeRules(
+    layerName: string,
+    attributes: Record<string, string | number | null>,
+    targetFields: DbfFieldDef[],
+    recordNumber: number,
+): Record<string, string | number | null> {
+    if (layerName === "AVN") {
+        setMappedAttribute(attributes, targetFields, "SITUACAO", "P");
+    }
+
+    if (layerName === "ARL") {
+        setMappedAttribute(attributes, targetFields, "AVERBACAO", "NA");
+        setMappedAttribute(attributes, targetFields, "SITUACAO", "P");
+        setMappedAttribute(attributes, targetFields, "IDENTIFIC", recordNumber);
+    }
+
+    return attributes;
+}
+
 /* ─── ZIP Output Builder ─────────────────────────────────────── */
 
 async function buildOutputZip(
@@ -2435,9 +2465,13 @@ async function processClip(
                 const polyRecords = geojsonToPolyRecords(feat.geometry as any);
                 if (!polyRecords.length) continue;
 
-                const attributes = mapAttributes(feat.properties, fieldDefs);
-
                 for (const polyRec of polyRecords) {
+                    const attributes = applyLayerAttributeRules(
+                        layerName,
+                        mapAttributes(feat.properties, fieldDefs),
+                        fieldDefs,
+                        records.length + 1,
+                    );
                     records.push({ type: "polygon", rings: polyRec.rings, attributes });
                 }
 
@@ -2453,8 +2487,13 @@ async function processClip(
                     // Ignore area calculation errors
                 }
             } else if (feat.kind === "point") {
-                const attributes = mapAttributes(feat.properties, fieldDefs);
                 for (const coord of feat.pointCoords) {
+                    const attributes = applyLayerAttributeRules(
+                        layerName,
+                        mapAttributes(feat.properties, fieldDefs),
+                        fieldDefs,
+                        pointRecords.length + 1,
+                    );
                     pointRecords.push({ coordinates: coord, attributes: { ...attributes } });
                 }
             }
