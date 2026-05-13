@@ -47,9 +47,9 @@ export default function FeaturesManual({
                 <div className="relative flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-6">
                   <div className="p-2 sm:p-3 rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700 shadow-xl shadow-emerald-900/40 shrink-0">
                     <img
-                      src="/geoforest_app_logo.png"
+                      src="/logo-no-bg.svg"
                       alt="GeoForest IA"
-                      className="h-10 w-10 sm:h-12 sm:w-12 rounded-xl object-contain"
+                      className="h-10 w-10 sm:h-12 sm:w-12 object-contain"
                     />
                   </div>
                   <div>

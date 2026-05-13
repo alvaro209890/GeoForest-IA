@@ -196,9 +196,9 @@ export default function Auth() {
             <div className="inline-flex items-center gap-3 mb-6">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center p-1">
                 <img
-                  src="/geoforest_app_logo.png"
+                  src="/logo-no-bg.svg"
                   alt="GeoForest IA"
-                  className="w-full h-full object-contain rounded-xl"
+                  className="w-full h-full object-contain"
                 />
               </div>
               <div>
@@ -215,9 +215,9 @@ export default function Auth() {
             <div className="lg:hidden text-center mb-4 sm:mb-6 flex flex-col items-center gap-2 sm:gap-3">
               <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center p-1">
                 <img
-                  src="/geoforest_app_logo.png"
+                  src="/logo-no-bg.svg"
                   alt="GeoForest IA"
-                  className="w-full h-full object-contain rounded-xl"
+                  className="w-full h-full object-contain"
                 />
               </div>
               <h1 className="text-2xl sm:text-3xl font-bold text-white">GeoForest IA</h1>

@@ -20,10 +20,12 @@ import sharp from "sharp";
 import { inflateRawSync } from "zlib";
 import {
     area as turfArea,
+    booleanPointInPolygon as turfBooleanPointInPolygon,
     featureCollection as turfFeatureCollection,
     intersect as turfIntersect,
     polygon as turfPolygon,
     multiPolygon as turfMultiPolygon,
+    point as turfPoint,
     union as turfUnion,
     buffer as turfBuffer,
 } from "@turf/turf";
@@ -1350,58 +1352,19 @@ function isPointOrMultiPoint(
 
 /**
  * Checks if a Point feature is inside the given polygon.
- * Avoids importing boolean-point-in-polygon directly.
+ * Boundary points count as inside for clipping purposes.
  */
 function pointInsidePolygon(
     coord: [number, number],
     polygon: Feature<Polygon | MultiPolygon>,
 ): boolean {
-    const { geometry } = polygon;
-    if (!geometry) return false;
-
     const [x, y] = coord;
-
-    function pointInRing(
-        point: [number, number],
-        ring: Array<[number, number] | number[]>,
-    ): boolean {
-        let inside = false;
-        const [px, py] = point;
-        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-            const xi = ring[i][0], yi = ring[i][1];
-            const xj = ring[j][0], yj = ring[j][1];
-            if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
-                inside = !inside;
-            }
-        }
-        return inside;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !polygon.geometry) return false;
+    try {
+        return turfBooleanPointInPolygon(turfPoint(coord), polygon, { ignoreBoundary: false });
+    } catch {
+        return false;
     }
-
-    function pointInPolygonGeo(
-        point: [number, number],
-        coords: any,
-    ): boolean {
-        // Exterior ring
-        const outerRing = coords[0];
-        if (!outerRing || !outerRing.length) return false;
-        if (!pointInRing(point, outerRing)) return false;
-
-        // Interior rings (holes)
-        for (let h = 1; h < coords.length; h++) {
-            if (pointInRing(point, coords[h])) return false;
-        }
-        return true;
-    }
-
-    if (geometry.type === "Polygon") {
-        return pointInPolygonGeo(coord, (geometry as Polygon).coordinates);
-    }
-
-    // MultiPolygon
-    for (const polyCoords of (geometry as MultiPolygon).coordinates) {
-        if (pointInPolygonGeo(coord, polyCoords)) return true;
-    }
-    return false;
 }
 
 /**
@@ -2137,7 +2100,7 @@ async function processClip(
             }
 
             clippedLayers.set(layerName, {
-                records: [{ rings, attributes }],
+                records: [{ type: "polygon", rings, attributes }],
                 fieldDefs,
             });
 
@@ -2287,10 +2250,11 @@ async function processClip(
         }
 
         totalFeaturesClipped += records.length + pointRecords.length;
+        const featureCount = records.length + pointRecords.length;
         const summary = appendLayerWarning({
             name: layerName,
             source: "wfs",
-            features: records.length,
+            features: featureCount,
             areaHa: Number(layerAreaHa.toFixed(4)),
         }, wfsFetch.warnings, wfsFetch.partial);
         if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);

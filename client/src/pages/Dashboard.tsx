@@ -6690,11 +6690,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               >
                 {msg.role === 'ai' ? (
                   <img
-                    src="/geoforest_app_logo.png"
+                    src="/logo-no-bg.svg"
                     alt="GeoForest IA"
-                    className="h-6 w-6 rounded-full object-cover"
-                  />
-                ) : (
+                    className="h-6 w-6 object-contain"
+                  />                ) : (
                   <User size={14} className="text-slate-300" />
                 )}
               </div>
@@ -7004,11 +7003,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="absolute inset-0 bg-emerald-500 blur opacity-40 group-hover:opacity-60 transition-opacity rounded-lg"></div>
             <div className="relative bg-gradient-to-br from-emerald-400 to-green-600 p-1.5 rounded-xl shadow-lg shadow-emerald-900/50">
               <img
-                src="/geoforest_app_logo.png"
+                src="/logo-no-bg.svg"
                 alt="GeoForest IA"
-                className="h-8 w-8 rounded-lg object-contain"
-              />
-            </div>
+                className="h-8 w-8 object-contain"
+              />            </div>
           </div>
           <div className="flex flex-col xl:flex lg:hidden overflow-hidden">
             <span className="font-bold text-base sm:text-lg tracking-tight text-white">GeoForest IA</span>

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import archiver from "archiver";
+import proj4 from "proj4";
 import {
   area as turfArea,
   bboxPolygon,
@@ -208,6 +209,25 @@ const CBERS_ALIGNMENT_MAX_CORRECTION_M = Math.max(
   CBERS_ALIGNMENT_TOLERANCE_M,
   Number(process.env.CBERS_ALIGNMENT_MAX_CORRECTION_M || 300),
 );
+const CBERS_ALIGNMENT_MAX_L2_TRANSLATION_M = Math.max(
+  CBERS_ALIGNMENT_MAX_CORRECTION_M,
+  Number(process.env.CBERS_ALIGNMENT_MAX_L2_TRANSLATION_M || 50000),
+);
+const CBERS_ALIGNMENT_ALLOW_L2_LARGE_TRANSLATION =
+  String(process.env.CBERS_ALIGNMENT_ALLOW_L2_LARGE_TRANSLATION || "").toLowerCase() === "true";
+const CBERS_ALIGNMENT_GRID_SIZE_TOLERANCE_M = Math.max(
+  2,
+  Number(process.env.CBERS_ALIGNMENT_GRID_SIZE_TOLERANCE_M || 1000),
+);
+const CBERS_ALIGNMENT_FOOTPRINT_INLIER_TOLERANCE_M = Math.max(
+  10,
+  Number(process.env.CBERS_ALIGNMENT_FOOTPRINT_INLIER_TOLERANCE_M || 150),
+);
+const CBERS_ALIGNMENT_FOOTPRINT_MAX_RMS_M = Math.max(
+  1,
+  Number(process.env.CBERS_ALIGNMENT_FOOTPRINT_MAX_RMS_M || 75),
+);
+const CBERS_UTM_22S_PROJ = "+proj=utm +zone=22 +south +datum=WGS84 +units=m +no_defs";
 const GEOSERVER_WORKSPACE = process.env.GEOSERVER_WORKSPACE || "cbers";
 const GEOSERVER_DATA_DIR = process.env.GEOSERVER_DATA_DIR || "/home/server/geoserver_data";
 const GEOSERVER_PUBLIC_WMS_BASE = String(
@@ -1446,7 +1466,32 @@ type RasterBoundsInfo = {
   maxY: number;
   width: number;
   height: number;
+  pixelSizeX: number;
+  pixelSizeY: number;
+  epsg?: number;
   projection?: string;
+};
+
+type CbersTrustedReference = {
+  path: string;
+  label: string;
+  itemId?: string;
+  geometry?: Polygon | MultiPolygon;
+};
+
+type FootprintGcp = {
+  index: number;
+  pixel: number;
+  line: number;
+  x: number;
+  y: number;
+};
+
+type FootprintAffineCorrection = {
+  gcps: FootprintGcp[];
+  rmsMeters: number;
+  maxErrorMeters: number;
+  inlierCount: number;
 };
 
 function boundsFromGdalInfoJson(info: any): RasterBoundsInfo | null {
@@ -1456,12 +1501,21 @@ function boundsFromGdalInfoJson(info: any): RasterBoundsInfo | null {
   const corners = info?.cornerCoordinates || {};
   const ul = Array.isArray(corners.upperLeft) ? corners.upperLeft : null;
   const lr = Array.isArray(corners.lowerRight) ? corners.lowerRight : null;
-  if (!Number.isFinite(width) || !Number.isFinite(height) || !ul || !lr) return null;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0 || !ul || !lr) return null;
   const minX = Math.min(Number(ul[0]), Number(lr[0]));
   const maxX = Math.max(Number(ul[0]), Number(lr[0]));
   const minY = Math.min(Number(ul[1]), Number(lr[1]));
   const maxY = Math.max(Number(ul[1]), Number(lr[1]));
   if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null;
+  const geoTransform = Array.isArray(info?.geoTransform) ? info.geoTransform.map((value: unknown) => Number(value)) : [];
+  const pixelSizeX = Number.isFinite(geoTransform[1]) && geoTransform[1] !== 0
+    ? Math.abs(geoTransform[1])
+    : Math.abs((maxX - minX) / width);
+  const pixelSizeY = Number.isFinite(geoTransform[5]) && geoTransform[5] !== 0
+    ? Math.abs(geoTransform[5])
+    : Math.abs((maxY - minY) / height);
+  if (![pixelSizeX, pixelSizeY].every(Number.isFinite)) return null;
+  const epsg = Number(info?.stac?.["proj:epsg"]);
   return {
     minX,
     minY,
@@ -1469,7 +1523,10 @@ function boundsFromGdalInfoJson(info: any): RasterBoundsInfo | null {
     maxY,
     width,
     height,
-    projection: String(info?.coordinateSystem?.wkt || info?.coordinateSystem?.dataAxisToSRSAxisMapping || ""),
+    pixelSizeX,
+    pixelSizeY,
+    epsg: Number.isFinite(epsg) ? epsg : undefined,
+    projection: String(info?.coordinateSystem?.wkt || ""),
   };
 }
 
@@ -1500,7 +1557,266 @@ function cbersOffsetMeters(candidate: RasterBoundsInfo, reference: RasterBoundsI
   };
 }
 
-async function findTrustedCbersReference(scene: CbersScene): Promise<{ path: string; label: string } | null> {
+function rasterSpanX(info: RasterBoundsInfo): number {
+  return Math.abs(info.maxX - info.minX);
+}
+
+function rasterSpanY(info: RasterBoundsInfo): number {
+  return Math.abs(info.maxY - info.minY);
+}
+
+function sameRasterCrs(candidate: RasterBoundsInfo, reference: RasterBoundsInfo): boolean {
+  if (candidate.epsg && reference.epsg) return candidate.epsg === reference.epsg;
+  return Boolean(candidate.projection && reference.projection && candidate.projection === reference.projection);
+}
+
+function isL2LargeTranslationSafe(scene: CbersScene, candidate: RasterBoundsInfo, reference: RasterBoundsInfo): boolean {
+  if (scene.level !== "L2") return false;
+  // L2 can differ from L4 by rotation/shear. Keep large L2 shifts private unless explicitly enabled.
+  if (!CBERS_ALIGNMENT_ALLOW_L2_LARGE_TRANSLATION) return false;
+  if (!sameRasterCrs(candidate, reference)) return false;
+  const gridSizeDelta = Math.max(
+    Math.abs(rasterSpanX(candidate) - rasterSpanX(reference)),
+    Math.abs(rasterSpanY(candidate) - rasterSpanY(reference)),
+  );
+  return gridSizeDelta <= CBERS_ALIGNMENT_GRID_SIZE_TOLERANCE_M;
+}
+
+function cbersAlignmentCorrectionLimit(scene: CbersScene, candidate: RasterBoundsInfo, reference: RasterBoundsInfo): {
+  maxMeters: number;
+  largeL2Translation: boolean;
+} {
+  const largeL2Translation = isL2LargeTranslationSafe(scene, candidate, reference);
+  return {
+    maxMeters: largeL2Translation ? CBERS_ALIGNMENT_MAX_L2_TRANSLATION_M : CBERS_ALIGNMENT_MAX_CORRECTION_M,
+    largeL2Translation,
+  };
+}
+
+function translateRasterBounds(candidate: RasterBoundsInfo, offset: { offsetXM: number; offsetYM: number }) {
+  return {
+    minX: candidate.minX + offset.offsetXM,
+    minY: candidate.minY + offset.offsetYM,
+    maxX: candidate.maxX + offset.offsetXM,
+    maxY: candidate.maxY + offset.offsetYM,
+  };
+}
+
+function cbersReferenceAssetHref(item: any): { key: string; href: string } | null {
+  const assets = item?.assets || {};
+  // The reference only needs reliable georeferencing; a multispectral L4 band is enough
+  // and avoids requiring a generated pansharpened reference.
+  for (const key of ["BAND3", "BAND4", "BAND2", "BAND1", "BAND0"]) {
+    const href = String(assets[key]?.href || "");
+    if (href) return { key, href };
+  }
+  return null;
+}
+
+function dateDistanceMs(a: string, b: string): number {
+  const ta = new Date(a).getTime();
+  const tb = new Date(b).getTime();
+  if (!Number.isFinite(ta) || !Number.isFinite(tb)) return Number.POSITIVE_INFINITY;
+  return Math.abs(ta - tb);
+}
+
+function stacGeometryFromItem(item: any): Polygon | MultiPolygon | undefined {
+  const bbox = Array.isArray(item?.bbox) && item.bbox.length >= 4
+    ? [Number(item.bbox[0]), Number(item.bbox[1]), Number(item.bbox[2]), Number(item.bbox[3])] as [number, number, number, number]
+    : null;
+  return normalizeStacGeometry(item?.geometry, bbox);
+}
+
+async function getStacGeometryForItem(itemId: string, collectionId?: string | null): Promise<Polygon | MultiPolygon | undefined> {
+  const { item } = await getStacItem(itemId, collectionId);
+  return stacGeometryFromItem(item);
+}
+
+function outerRingCoordinates(geometry?: Polygon | MultiPolygon | null): number[][] {
+  const ring = geometry?.type === "Polygon"
+    ? geometry.coordinates[0]
+    : geometry?.type === "MultiPolygon"
+      ? geometry.coordinates[0]?.[0]
+      : null;
+  if (!Array.isArray(ring)) return [];
+  const cleaned = ring
+    .map((coord) => [Number(coord[0]), Number(coord[1])])
+    .filter((coord) => coord.every(Number.isFinite));
+  if (cleaned.length > 1) {
+    const first = cleaned[0];
+    const last = cleaned[cleaned.length - 1];
+    if (Math.abs(first[0] - last[0]) < 1e-10 && Math.abs(first[1] - last[1]) < 1e-10) cleaned.pop();
+  }
+  return cleaned;
+}
+
+function projectLonLatToCbersUtm(coord: number[]): { x: number; y: number } {
+  const [x, y] = proj4("EPSG:4326", CBERS_UTM_22S_PROJ, [coord[0], coord[1]]) as [number, number];
+  return { x, y };
+}
+
+function sourcePixelFromProjected(info: RasterBoundsInfo, point: { x: number; y: number }): { pixel: number; line: number } {
+  return {
+    pixel: (point.x - info.minX) / info.pixelSizeX,
+    line: (info.maxY - point.y) / info.pixelSizeY,
+  };
+}
+
+function solveLinearSystem(matrix: number[][], rhs: number[]): number[] | null {
+  const n = rhs.length;
+  const a = matrix.map((row, idx) => [...row, rhs[idx]]);
+  for (let col = 0; col < n; col += 1) {
+    let pivot = col;
+    for (let row = col + 1; row < n; row += 1) {
+      if (Math.abs(a[row][col]) > Math.abs(a[pivot][col])) pivot = row;
+    }
+    if (Math.abs(a[pivot][col]) < 1e-10) return null;
+    if (pivot !== col) [a[pivot], a[col]] = [a[col], a[pivot]];
+    const divisor = a[col][col];
+    for (let k = col; k <= n; k += 1) a[col][k] /= divisor;
+    for (let row = 0; row < n; row += 1) {
+      if (row === col) continue;
+      const factor = a[row][col];
+      for (let k = col; k <= n; k += 1) a[row][k] -= factor * a[col][k];
+    }
+  }
+  return a.map((row) => row[n]);
+}
+
+function solveAffineFromPairs(pairs: Array<{ source: { x: number; y: number }; target: { x: number; y: number } }>): number[] | null {
+  const normal = Array.from({ length: 6 }, () => Array.from({ length: 6 }, () => 0));
+  const rhs = Array.from({ length: 6 }, () => 0);
+  const addRow = (row: number[], value: number) => {
+    for (let i = 0; i < 6; i += 1) {
+      rhs[i] += row[i] * value;
+      for (let j = 0; j < 6; j += 1) normal[i][j] += row[i] * row[j];
+    }
+  };
+  for (const pair of pairs) {
+    const { x, y } = pair.source;
+    addRow([x, y, 1, 0, 0, 0], pair.target.x);
+    addRow([0, 0, 0, x, y, 1], pair.target.y);
+  }
+  return solveLinearSystem(normal, rhs);
+}
+
+function applyAffine(coef: number[], point: { x: number; y: number }): { x: number; y: number } {
+  return {
+    x: coef[0] * point.x + coef[1] * point.y + coef[2],
+    y: coef[3] * point.x + coef[4] * point.y + coef[5],
+  };
+}
+
+function distanceMeters(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function selectFootprintAffineCorrection(args: {
+  candidateGeometry?: Polygon | MultiPolygon;
+  referenceGeometry?: Polygon | MultiPolygon;
+  candidateInfo: RasterBoundsInfo;
+}): FootprintAffineCorrection | null {
+  const candidateRing = outerRingCoordinates(args.candidateGeometry);
+  const referenceRing = outerRingCoordinates(args.referenceGeometry);
+  const count = Math.min(candidateRing.length, referenceRing.length);
+  if (count < 4) return null;
+  const points = Array.from({ length: count }, (_unused, index) => {
+    const source = projectLonLatToCbersUtm(candidateRing[index]);
+    const target = projectLonLatToCbersUtm(referenceRing[index]);
+    const pixelLine = sourcePixelFromProjected(args.candidateInfo, source);
+    return {
+      index,
+      source,
+      target,
+      pixel: pixelLine.pixel,
+      line: pixelLine.line,
+    };
+  }).filter((point) => (
+    [point.source.x, point.source.y, point.target.x, point.target.y, point.pixel, point.line].every(Number.isFinite)
+  ));
+  if (points.length < 4) return null;
+
+  let best: FootprintAffineCorrection | null = null;
+  for (let a = 0; a < points.length - 3; a += 1) {
+    for (let b = a + 1; b < points.length - 2; b += 1) {
+      for (let c = b + 1; c < points.length - 1; c += 1) {
+        for (let d = c + 1; d < points.length; d += 1) {
+          const selected = [points[a], points[b], points[c], points[d]];
+          const coef = solveAffineFromPairs(selected);
+          if (!coef) continue;
+          const residuals = points.map((point) => ({
+            point,
+            residual: distanceMeters(applyAffine(coef, point.source), point.target),
+          }));
+          const inliers = residuals.filter((item) => item.residual <= CBERS_ALIGNMENT_FOOTPRINT_INLIER_TOLERANCE_M);
+          if (inliers.length < 4) continue;
+          const rmsMeters = Math.sqrt(inliers.reduce((sum, item) => sum + item.residual ** 2, 0) / inliers.length);
+          const maxErrorMeters = Math.max(...inliers.map((item) => item.residual));
+          const selectedMax = Math.max(...residuals.filter((item) => selected.includes(item.point)).map((item) => item.residual));
+          if (rmsMeters > CBERS_ALIGNMENT_FOOTPRINT_MAX_RMS_M || selectedMax > CBERS_ALIGNMENT_FOOTPRINT_INLIER_TOLERANCE_M) {
+            continue;
+          }
+          const candidate: FootprintAffineCorrection = {
+            gcps: selected.map((point) => ({
+              index: point.index,
+              pixel: point.pixel,
+              line: point.line,
+              x: point.target.x,
+              y: point.target.y,
+            })),
+            rmsMeters,
+            maxErrorMeters,
+            inlierCount: inliers.length,
+          };
+          const better =
+            !best ||
+            candidate.inlierCount > best.inlierCount ||
+            (candidate.inlierCount === best.inlierCount && candidate.rmsMeters < best.rmsMeters);
+          if (better) best = candidate;
+        }
+      }
+    }
+  }
+  return best;
+}
+
+async function findAnyStacL4ReferenceForOrbitPoint(scene: CbersScene): Promise<CbersTrustedReference | null> {
+  const parsed = parseCbersItemIdForWms(scene.id);
+  if (!parsed) return null;
+  const collection = cbersCollectionByLevel("L4");
+  const params = new URLSearchParams({ limit: String(CBERS_SEARCH_LIMIT) });
+  if (scene.bbox) params.set("bbox", scene.bbox.join(","));
+  let url: string | null = `${STAC_ROOT}/collections/${encodeURIComponent(collection.collectionId)}/items?${params.toString()}`;
+  let best: { itemId: string; assetKey: string; href: string; datetime: string; geometry?: Polygon | MultiPolygon } | null = null;
+
+  for (let page = 0; url && page < CBERS_ORBIT_POINT_SEARCH_MAX_PAGES; page += 1) {
+    const payload: any = await fetchJson<any>(url);
+    const features: any[] = Array.isArray(payload?.features) ? payload.features : [];
+    for (const feature of features) {
+      const itemId = String(feature?.id || "").trim();
+      if (!itemId || itemId === scene.id) continue;
+      const other = parseCbersItemIdForWms(itemId);
+      if (other?.orbit !== parsed.orbit || other?.row !== parsed.row) continue;
+      const asset = cbersReferenceAssetHref(feature);
+      if (!asset) continue;
+      const datetime = String(feature?.properties?.datetime || feature?.properties?.start_datetime || "").trim();
+      if (
+        !best ||
+        dateDistanceMs(datetime, scene.datetime) < dateDistanceMs(best.datetime, scene.datetime)
+      ) {
+        best = { itemId, assetKey: asset.key, href: asset.href, datetime, geometry: stacGeometryFromItem(feature) };
+      }
+    }
+    const nextHref: string = Array.isArray(payload?.links)
+      ? String(payload.links.find((link: any) => String(link?.rel || "").toLowerCase() === "next")?.href || "")
+      : "";
+    url = nextHref ? new URL(nextHref, STAC_ROOT).toString() : null;
+  }
+
+  return best ? { path: best.href, label: `stac-any-l4:${best.itemId}:${best.assetKey}`, itemId: best.itemId, geometry: best.geometry } : null;
+}
+
+async function findTrustedCbersReference(scene: CbersScene): Promise<CbersTrustedReference | null> {
   const parsed = parseCbersItemIdForWms(scene.id);
   if (!parsed) return null;
   const activeRecords = listCbersArchiveRecords().filter(isActiveArchiveRecord);
@@ -1514,21 +1830,159 @@ async function findTrustedCbersReference(scene: CbersScene): Promise<{ path: str
     return other?.orbit === parsed.orbit && other?.row === parsed.row;
   });
   if (archiveReference?.hdPath && fs.existsSync(archiveReference.hdPath)) {
-    return { path: archiveReference.hdPath, label: `arquivo:${archiveReference.itemId}` };
+    let geometry: Polygon | MultiPolygon | undefined;
+    try {
+      geometry = await getStacGeometryForItem(archiveReference.itemId);
+    } catch {
+      // Archived rasters can still validate small translations without STAC geometry.
+    }
+    return {
+      path: archiveReference.hdPath,
+      label: `arquivo:${archiveReference.itemId}`,
+      itemId: archiveReference.itemId,
+      geometry,
+    };
   }
   if (scene.level === "L2") {
     const l4ItemId = cbersAlternateLevelItemId(scene.id, "L4");
     if (l4ItemId) {
       try {
         const { item } = await getStacItem(l4ItemId, cbersCollectionByLevel("L4").collectionId);
-        const href = String(item?.assets?.BAND0?.href || "");
-        if (href) return { path: href, label: `stac:${l4ItemId}:BAND0` };
+        const asset = cbersReferenceAssetHref(item);
+        if (asset) {
+          return {
+            path: asset.href,
+            label: `stac:${l4ItemId}:${asset.key}`,
+            itemId: l4ItemId,
+            geometry: stacGeometryFromItem(item),
+          };
+        }
       } catch {
-        // L4 may not exist for this date/orbit/point; fall back to private delivery.
+        // L4 may not exist for this date/orbit/point; try any L4 from the same orbit/point.
       }
+      const anyL4Reference = await findAnyStacL4ReferenceForOrbitPoint(scene);
+      if (anyL4Reference) return anyL4Reference;
     }
   }
   return null;
+}
+
+async function correctCbersAlignmentByFootprint(args: {
+  uid: string;
+  jobId: string;
+  scene: CbersScene;
+  sourcePath: string;
+  sceneDir: string;
+  candidateInfo: RasterBoundsInfo;
+  referenceInfo: RasterBoundsInfo;
+  reference: CbersTrustedReference;
+  offset: { offsetXM: number; offsetYM: number; offsetMeters: number };
+  onProgress: (patch: CbersProgressPatch) => void;
+}): Promise<CbersAlignmentResult | null> {
+  if (args.scene.level !== "L2") return null;
+  const correction = selectFootprintAffineCorrection({
+    candidateGeometry: args.scene.geometry,
+    referenceGeometry: args.reference.geometry,
+    candidateInfo: args.candidateInfo,
+  });
+  if (!correction) return null;
+
+  args.onProgress({
+    stage: "alignment_correction",
+    percent: 97,
+    message:
+      `Deslocamento L2 de ${args.offset.offsetMeters.toFixed(1)} m; ` +
+      "corrigindo por pontos de controle da footprint L2/L4.",
+  });
+
+  const vrtPath = path.join(args.sceneDir, "cbers_4a_wpm_342_pan_footprint_gcps.vrt");
+  const correctedPath = path.join(args.sceneDir, "cbers_4a_wpm_342_pan_footprint_aligned.tif");
+  const gcpArgs = correction.gcps.flatMap((gcp) => [
+    "-gcp",
+    gcp.pixel.toFixed(3),
+    gcp.line.toFixed(3),
+    gcp.x.toFixed(3),
+    gcp.y.toFixed(3),
+  ]);
+
+  await runCommand({
+    uid: args.uid,
+    jobId: args.jobId,
+    command: "gdal_translate",
+    commandArgs: [
+      "-of", "VRT",
+      "-a_srs", "EPSG:32722",
+      ...gcpArgs,
+      args.sourcePath,
+      vrtPath,
+    ],
+    basePercent: 97,
+    spanPercent: 0.2,
+    stage: "alignment_correction",
+    message: "Criando pontos de controle da footprint L2/L4.",
+    onProgress: args.onProgress,
+  });
+
+  await runCommand({
+    uid: args.uid,
+    jobId: args.jobId,
+    command: "gdalwarp",
+    commandArgs: [
+      "-overwrite",
+      "-order", "1",
+      "-r", "cubic",
+      "-t_srs", "EPSG:32722",
+      "-tr", String(args.candidateInfo.pixelSizeX), String(args.candidateInfo.pixelSizeY),
+      "-dstnodata", "0",
+      "-multi",
+      "-wo", "NUM_THREADS=ALL_CPUS",
+      "-co", "COMPRESS=LZW",
+      "-co", "TILED=YES",
+      "-co", "BIGTIFF=IF_SAFER",
+      vrtPath,
+      correctedPath,
+    ],
+    basePercent: 97.2,
+    spanPercent: 0.8,
+    stage: "alignment_correction",
+    message: "Aplicando correção afim por footprint L2/L4.",
+    onProgress: args.onProgress,
+  });
+
+  const correctedInfo = await readRasterBoundsInfo(correctedPath, args.jobId);
+  if (!correctedInfo) {
+    return {
+      status: "failed_private",
+      reference: args.reference.label,
+      ...args.offset,
+      warning: "A correção por footprint foi executada, mas a revalidação do GeoTIFF falhou.",
+    };
+  }
+
+  const correctedOffset = cbersOffsetMeters(correctedInfo, args.referenceInfo);
+  if (correctedOffset.offsetMeters <= CBERS_ALIGNMENT_TOLERANCE_M) {
+    return {
+      status: "corrected",
+      reference: args.reference.label,
+      ...correctedOffset,
+      correctedPath,
+      warning:
+        `Correção L2 aplicada por GCP/footprint afim usando ${args.reference.label}; ` +
+        `residual ${correction.rmsMeters.toFixed(1)} m, máximo ${correction.maxErrorMeters.toFixed(1)} m ` +
+        `em ${correction.inlierCount} pontos. Deslocamento final estimado: ` +
+        `${correctedOffset.offsetMeters.toFixed(1)} m.`,
+    };
+  }
+
+  return {
+    status: "failed_private",
+    reference: args.reference.label,
+    ...correctedOffset,
+    warning:
+      "Correção L2 por footprint não validou a imagem. " +
+      `Residual dos pontos: ${correction.rmsMeters.toFixed(1)} m; ` +
+      `deslocamento final estimado: ${correctedOffset.offsetMeters.toFixed(1)} m.`,
+  };
 }
 
 async function validateAndCorrectCbersAlignment(args: {
@@ -1566,12 +2020,30 @@ async function validateAndCorrectCbersAlignment(args: {
   if (offset.offsetMeters <= CBERS_ALIGNMENT_TOLERANCE_M) {
     return { status: "aligned", reference: reference.label, ...offset };
   }
-  if (offset.offsetMeters > CBERS_ALIGNMENT_MAX_CORRECTION_M) {
+  const correctionLimit = cbersAlignmentCorrectionLimit(args.scene, candidateInfo, referenceInfo);
+  if (args.scene.level === "L2" && offset.offsetMeters > CBERS_ALIGNMENT_MAX_CORRECTION_M) {
+    const footprintCorrection = await correctCbersAlignmentByFootprint({
+      uid: args.uid,
+      jobId: args.jobId,
+      scene: args.scene,
+      sourcePath: args.sourcePath,
+      sceneDir: args.sceneDir,
+      candidateInfo,
+      referenceInfo,
+      reference,
+      offset,
+      onProgress: args.onProgress,
+    });
+    if (footprintCorrection) return footprintCorrection;
+  }
+  if (offset.offsetMeters > correctionLimit.maxMeters) {
     return {
       status: "failed_private",
       reference: reference.label,
       ...offset,
-      warning: `Deslocamento estimado de ${offset.offsetMeters.toFixed(1)} m excede o limite automático.`,
+      warning:
+        `Deslocamento estimado de ${offset.offsetMeters.toFixed(1)} m excede o limite automático de ` +
+        `${correctionLimit.maxMeters.toFixed(0)} m.`,
     };
   }
 
@@ -1581,6 +2053,7 @@ async function validateAndCorrectCbersAlignment(args: {
     message: `Deslocamento estimado de ${offset.offsetMeters.toFixed(1)} m; corrigindo georreferenciamento.`,
   });
   const correctedPath = path.join(args.sceneDir, "cbers_4a_wpm_342_pan_aligned.tif");
+  const translatedBounds = translateRasterBounds(candidateInfo, offset);
   await runCommand({
     uid: args.uid,
     jobId: args.jobId,
@@ -1588,10 +2061,10 @@ async function validateAndCorrectCbersAlignment(args: {
     commandArgs: [
       "-of", "GTiff",
       "-a_ullr",
-      String(referenceInfo.minX),
-      String(referenceInfo.maxY),
-      String(referenceInfo.maxX),
-      String(referenceInfo.minY),
+      String(translatedBounds.minX),
+      String(translatedBounds.maxY),
+      String(translatedBounds.maxX),
+      String(translatedBounds.minY),
       "-co", "COMPRESS=LZW",
       "-co", "TILED=YES",
       "-co", "BIGTIFF=IF_SAFER",
@@ -1620,7 +2093,9 @@ async function validateAndCorrectCbersAlignment(args: {
       reference: reference.label,
       ...correctedOffset,
       correctedPath,
-      warning: `Correção aplicada. Deslocamento final estimado: ${correctedOffset.offsetMeters.toFixed(1)} m.`,
+      warning:
+        `${correctionLimit.largeL2Translation ? "Correção L2 aplicada" : "Correção aplicada"} por translação de ` +
+        `${offset.offsetMeters.toFixed(1)} m. Deslocamento final estimado: ${correctedOffset.offsetMeters.toFixed(1)} m.`,
     };
   }
   return {

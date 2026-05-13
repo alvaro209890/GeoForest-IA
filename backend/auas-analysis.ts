@@ -894,7 +894,7 @@ function buildLayerBuffers(
     if (attribs["ID"] !== undefined) attribs["ID"] = 1;
     Object.assign(attribs, extraAttribs);
 
-    const record: ShpRecord = { rings, attributes: attribs };
+    const record: ShpRecord = { type: "polygon", rings, attributes: attribs };
     const { shp, shx } = buildShpAndShx([record]);
     const dbfBuffer = buildDbfBuffer([attribs], fieldDefs);
     const prjBuf = prjForLayer(templateEntries, layerName);
