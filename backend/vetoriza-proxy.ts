@@ -100,6 +100,22 @@ async function cadastroVetoriza(creds: VetorizaCredentials): Promise<string | nu
   return null;
 }
 
+async function bridgeLoginVetoriza(creds: VetorizaCredentials): Promise<string | null> {
+  const response = await fetch(`${VETORIZA_API_BASE}/auth/geoforest-bridge`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "X-GeoForest-Bridge-Secret": VETORIZA_BRIDGE_SECRET,
+    },
+    body: JSON.stringify(creds),
+  });
+  if (!response.ok) {
+    throw new Error(await readUpstreamText(response));
+  }
+  return cookiePairFromResponse(response);
+}
+
 async function ensureVetorizaSession(req: Request, force = false): Promise<string> {
   const uid = String(req.authUid || "").trim();
   if (!uid) throw new Error("Usuário GeoForest não autenticado.");
@@ -116,6 +132,9 @@ async function ensureVetorizaSession(req: Request, force = false): Promise<strin
   if (!cookie) {
     await cadastroVetoriza(creds);
     cookie = await loginVetoriza(creds);
+  }
+  if (!cookie) {
+    cookie = await bridgeLoginVetoriza(creds);
   }
 
   if (!cookie) {
