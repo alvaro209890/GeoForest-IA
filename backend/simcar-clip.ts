@@ -58,8 +58,8 @@ import {
     buildShpAndShx,
     buildPointShpAndShx,
     buildDbfBuffer,
-    geojsonToShpRings,
     geojsonToPolyRecords,
+    geojsonToShpRecords,
     type DbfFieldDef,
     type ShpRecord,
 } from "./shapefile-writer";
@@ -2323,7 +2323,6 @@ async function processClip(
                 status: "copying_property",
             });
 
-            const rings = geojsonToShpRings(userGeometry);
             const fieldDefs = templateSchemas.get(layerName) || [
                 { name: "ID", type: "N" as const, length: 10, decimals: 0 },
             ];
@@ -2340,17 +2339,28 @@ async function processClip(
                 attributes["IDENTIFIC"] = airIdentificacao;
             }
 
+            const records = geojsonToShpRecords(userGeometry, attributes);
+            if (!records.length) {
+                layerSummaries.push({
+                    name: layerName,
+                    source: "property",
+                    features: 0,
+                    warning: "Geometria do imóvel não pôde ser convertida para shapefile.",
+                });
+                continue;
+            }
+
             clippedLayers.set(layerName, {
-                records: [{ type: "polygon", rings, attributes }],
+                records,
                 fieldDefs,
             });
 
             layerSummaries.push({
                 name: layerName,
                 source: "property",
-                features: 1,
+                features: records.length,
             });
-            totalFeaturesClipped += 1;
+            totalFeaturesClipped += records.length;
             throwIfClientDisconnected(res);
             continue;
         }
