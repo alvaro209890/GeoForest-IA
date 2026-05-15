@@ -222,9 +222,23 @@ Sistema interno de cobrança:
 **Correção:**
 - Nova função `geojsonToPolyRecords` — retorna um array de `{ rings }` por polígono
 - Função `enforceShapefileRingOrientation` — garante orientação ESRI (exterior CW, buracos CCW)
-- Pipeline usa `geojsonToPolyRecords` em vez de `geojsonToShpRings`
+- Pipeline usa `geojsonToPolyRecords` em vez de `geojsonToShpRings` nas camadas recortadas por WFS
 
 **Arquivos:** `backend/shapefile-writer.ts`, `backend/simcar-clip.ts`
+
+### v3 — AIR/ATP com múltiplos polígonos no SHP de propriedade (2026-05-15)
+**Problema:** No fluxo de cópia direta (`AIR` e `ATP`), um shapefile de propriedade com mais de um polígono podia gerar saída incompleta/corrompida, porque o caminho antigo convertia a geometria do imóvel para rings em vez de registros shapefile separados.
+
+**Correção:**
+- Nova função `geojsonToShpRecords` em `backend/shapefile-writer.ts`
+- `AIR` e `ATP` agora geram **um registro shapefile por polígono** quando a entrada é `MultiPolygon`
+- O campo `IDENTIFIC` da `AIR` é preenchido com o mesmo valor em todos os registros gerados
+- `ATP` não mistura polígonos independentes no mesmo registro, evitando corrupção de multipart/rings em GIS
+- Testes de regressão em `backend/shapefile-writer.test.ts`
+
+**Documentação:** [`docs/SIMCAR_MULTIPOLYGON_AIR_ATP.md`](docs/SIMCAR_MULTIPOLYGON_AIR_ATP.md)
+
+**Arquivos:** `backend/shapefile-writer.ts`, `backend/simcar-clip.ts`, `backend/shapefile-writer.test.ts`
 
 ---
 
@@ -276,7 +290,7 @@ const TEMPLATE_LAYERS = [
 
 **⚠️ NASCENTE:** Camada de **pontos** no WFS SEMA-MT. Recorte por ray-casting, escrita como ShapeType 1.
 
-**⚠️ MultiPolygons:** Cada polígono vira um registro separado no shapefile (registro multi-part apenas para buracos reais). Orientação corrigida automaticamente (ESRI spec).
+**⚠️ MultiPolygons:** Cada polígono vira um registro separado no shapefile (registro multi-part apenas para buracos reais). Orientação corrigida automaticamente (ESRI spec). Para `AIR`/`ATP`, isso também vale para o shapefile de propriedade importado: se a entrada tiver múltiplos polígonos, todos são preservados como registros separados; em `AIR`, o mesmo `IDENTIFIC` informado pelo usuário é repetido em todos. Detalhes em [`docs/SIMCAR_MULTIPOLYGON_AIR_ATP.md`](docs/SIMCAR_MULTIPOLYGON_AIR_ATP.md).
 
 ---
 

@@ -478,6 +478,17 @@ export function geojsonToPolyRecords(
     return [];
 }
 
+export function geojsonToShpRecords(
+    geometry: { type: string; coordinates: number[][][] | number[][][][] },
+    attributes: Record<string, string | number | null>,
+): ShpRecord[] {
+    return geojsonToPolyRecords(geometry).map(({ rings }) => ({
+        type: "polygon",
+        rings,
+        attributes: { ...attributes },
+    }));
+}
+
 /**
  * @deprecated Use geojsonToPolyRecords em vez desta função.
  * Mantida para compatibilidade, mas retorna array vazio.
