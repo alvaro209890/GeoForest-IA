@@ -8,7 +8,6 @@ const FIREBASE_ID_TOKEN = String(process.env.FIREBASE_ID_TOKEN || "").trim();
 const ATP_ZIP = path.resolve(process.env.ATP_ZIP || "atp.zip");
 const AIR_ID = String(process.env.AIR_ID || "ATP_TEST").trim();
 const RUN_SIMCAR = process.env.RUN_SIMCAR !== "0";
-const RUN_NOVO_CAR = process.env.RUN_NOVO_CAR !== "0";
 const RUN_VECTORIZED = process.env.RUN_VECTORIZED === "1";
 const AC_AVN_LAYERS = String(
   process.env.AC_AVN_LAYERS || "landsat5_2006,landsat5_2007,spot_2008,landsat5_2008",
@@ -222,32 +221,6 @@ async function runVectorized(clipComplete, acAvnComplete) {
   };
 }
 
-async function runNovoCar(propertyZip) {
-  const events = await postSse(
-    "/api/auas/analyze",
-    { propertyZip, filename: path.basename(ATP_ZIP) },
-    "Novo CAR AUAS",
-  );
-  await writeJson("events-novo-car.json", events);
-  const resultEvent = lastEvent(events, "result");
-  const data = resultEvent?.data || {};
-  await writeJson("novo-car.json", data);
-  await writeText("novo-car.md", data.analysis || "");
-  return {
-    jobId: resultEvent?.jobId,
-    propertyAreaHa: data.propertyAreaHa,
-    acAreaHa: data.acAreaHa,
-    auasAreaHa: data.auasAreaHa,
-    avnAreaHa: data.avnAreaHa,
-    auasOpeningDate: data.auasOpeningDate,
-    auasOpeningSource: data.auasOpeningSource,
-    analysisRulesVersion: data.analysisRulesVersion,
-    analysisMeta: data.analysisMeta,
-    analysisLength: String(data.analysis || "").length,
-    imageCount: Array.isArray(data.images) ? data.images.length : 0,
-  };
-}
-
 async function main() {
   if (!FIREBASE_ID_TOKEN) {
     throw new Error("Defina FIREBASE_ID_TOKEN com um token Firebase válido antes de rodar a avaliação real.");
@@ -263,7 +236,6 @@ async function main() {
     atpZip: ATP_ZIP,
     airId: AIR_ID,
     simcar: RUN_SIMCAR ? await runSimcar(propertyZip) : { skipped: "RUN_SIMCAR=0" },
-    novoCar: RUN_NOVO_CAR ? await runNovoCar(propertyZip) : { skipped: "RUN_NOVO_CAR=0" },
     finishedAt: new Date().toISOString(),
     logDir,
   };

@@ -114,7 +114,6 @@ GeoForest-IA/
 │   ├── index.ts               # Servidor Express (2.851 linhas)
 │   ├── simcar-clip.ts         # Recorte SIMCAR + análise IA (9.920 linhas)
 │   ├── cbers-wpm.ts           # CBERS-4A WPM (2.964 linhas)
-│   ├── auas-analysis.ts       # Análise AUAS (1.648 linhas)
 │   ├── knowledge-base.ts      # RAG base conhecimento (1.064 linhas)
 │   ├── cbers-archive.ts       # Acervo permanente CBERS (963 linhas)
 │   ├── wfs-intersection.ts    # Interseção WFS (660 linhas)
@@ -175,11 +174,6 @@ Pipeline completo de download/processamento de imagens CBERS-4A WPM via STAC INP
 3. Fusão PAN (pansharpening) via GDAL → GeoTIFF C342_PAN
 4. Publicação automática no GeoServer local
 5. Cópia para acervo permanente no HD Backup
-
-### `auas-analysis.ts` (Análise AUAS)
-Pipeline de análise de Uso Alternativo do Solo:
-- Visão Gemini para interpretação de imagens
-- Síntese textual + geração de shapefiles e PDF
 
 ### `knowledge-base.ts` (RAG)
 Sistema de busca semântica na base de conhecimento em Markdown:

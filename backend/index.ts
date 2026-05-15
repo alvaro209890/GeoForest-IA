@@ -39,9 +39,9 @@ import {
 } from "./geo-utils";
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
-import { registerAuasRoutes } from "./auas-analysis";
 import { registerCbersWpmRoutes } from "./cbers-wpm";
 import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-archive";
+import { registerVetorizaProxyRoutes } from "./vetoriza-proxy";
 import {
   JobCancelledError,
   finishJob,
@@ -494,7 +494,6 @@ async function startServer() {
       "/api/simcar/clip/analyze-auas",
       "/api/simcar/clip/analyze/chat",
       "/api/simcar/clip/report",
-      "/api/auas/analyze",
       "/api/cbers-wpm/search",
       "/api/cbers-wpm/estimate",
       "/api/cbers-wpm/jobs",
@@ -512,6 +511,7 @@ async function startServer() {
     ],
     requireAuth,
   );
+  registerVetorizaProxyRoutes(app);
   app.use(["/api/upload-image", "/api/upload-file"], attachOptionalAuth);
   app.use("/api/storage", express.static(STORAGE_ROOT));
   app.use("/api/raster", express.static(CBERS_ARCHIVE_ROOT));
@@ -637,7 +637,6 @@ async function startServer() {
 
   registerWfsIntersectionRoutes(app);
   registerSimcarClipRoutes(app);
-  registerAuasRoutes(app);
   registerCbersWpmRoutes(app);
   registerCbersArchiveAdminRoutes(app);
 

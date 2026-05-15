@@ -76,6 +76,7 @@ import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
+const VetorizaMatPanel = lazy(() => import('@/components/VetorizaMatPanel'));
 type DocumentReference = ReturnType<typeof doc>;
 
 type ChatMessage = {
@@ -394,41 +395,6 @@ type SimcarServerRuntimeState = {
   hasCompletedAuas: boolean;
 };
 
-type AuasTabResult = {
-  acAreaHa: number;
-  auasAreaHa: number;
-  avnAreaHa: number;
-  arlAreaHa: number;
-  propertyAreaHa: number;
-  riverBufferHa: number;
-  auasPolygons: Array<{ year: number; areaHa: number }>;
-  downloadUrl?: string;
-  inputZipUrl?: string;
-  outputZipUrl?: string;
-  contextUrl?: string;
-  analysis?: string;
-  images?: Array<{ url: string; caption: string }>;
-  satellitesUsed?: string[];
-  satellitesMissing?: string[];
-  cloudWarnings?: Array<{ satellite: string; cloudScore: number }>;
-  analysisMeta?: SimcarAcAvnAnalysisMeta;
-  analysisRulesVersion?: string;
-  auasOpeningYear?: number;
-  auasOpeningDate?: string;
-  auasOpeningSource?: 'PRODES' | 'AI_FALLBACK';
-  status?: 'processing' | 'completed' | 'failed' | 'cancelled';
-  error?: string;
-};
-
-type AuasHistoryItem = AuasTabResult & {
-  id: string;
-  timestamp: string;
-  filename: string;
-  jobId: string;
-  inputFilename?: string;
-  conversationId?: string;
-};
-
 type CbersGeoJsonGeometry = {
   type: 'Polygon' | 'MultiPolygon';
   coordinates: any;
@@ -549,8 +515,6 @@ const DEFAULT_SETTINGS: UserSettings = {
 
 const SETTINGS_THEME_OPTIONS = ['Escuro (Floresta)', 'Claro (Dia)'] as const;
 const SETTINGS_FONT_SIZE_OPTIONS = ['Pequeno', 'Padrão', 'Grande'] as const;
-const AUAS_FIRESTORE_WRITE_RETRIES = 3;
-const AUAS_FIRESTORE_RETRY_BASE_MS = 450;
 
 const DEFAULT_PRODUCTION_API_BASE = 'https://geoforest-api.cursar.space';
 const CONFIGURED_API_BASE = String(
@@ -1182,7 +1146,7 @@ function CbersMapPreview({
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'auas' | 'cbers-wpm'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'cbers-wpm' | 'vetoriza-mat'>('chat');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1265,21 +1229,6 @@ export default function Dashboard() {
     auas: false,
   });
 
-  // ─── AUAS Tab State ───
-  const [auasFile, setAuasFile] = useState<File | null>(null);
-  const [auasProcessing, setAuasProcessing] = useState(false);
-  const [auasJobId, setAuasJobId] = useState<string | null>(null);
-  const [auasProgress, setAuasProgress] = useState<{ step: string; percent: number; message: string } | null>(null);
-  const [auasResult, setAuasResult] = useState<AuasTabResult | null>(null);
-  const [auasHistory, setAuasHistory] = useState<AuasHistoryItem[]>([]);
-  const [auasAgentLog, setAuasAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
-  const auasAgentLogEndRef = useRef<HTMLDivElement | null>(null);
-  const [auasElapsed, setAuasElapsed] = useState(0);
-  const [auasError, setAuasError] = useState<string | null>(null);
-  const auasAbortRef = useRef<AbortController | null>(null);
-  const auasProcessJobIdRef = useRef<string | null>(null);
-  const auasFileInputRef = useRef<HTMLInputElement | null>(null);
-
   // ─── CBERS-4A/WPM Tab State ───
   const [cbersFile, setCbersFile] = useState<File | null>(null);
   const [cbersPropertyZipB64, setCbersPropertyZipB64] = useState<string | null>(null);
@@ -1307,21 +1256,6 @@ export default function Dashboard() {
   const [cbersWmsDownloadingId, setCbersWmsDownloadingId] = useState<string | null>(null);
   const cbersFileInputRef = useRef<HTMLInputElement | null>(null);
   const cbersEventsAbortRef = useRef<AbortController | null>(null);
-
-  const resetAuasDraft = useCallback(() => {
-    auasAbortRef.current?.abort();
-    auasAbortRef.current = null;
-    auasProcessJobIdRef.current = null;
-    setAuasFile(null);
-    setAuasProcessing(false);
-    setAuasJobId(null);
-    setAuasProgress(null);
-    setAuasResult(null);
-    setAuasAgentLog([]);
-    setAuasElapsed(0);
-    setAuasError(null);
-    if (auasFileInputRef.current) auasFileInputRef.current.value = '';
-  }, []);
 
   const resetCbersDraft = useCallback(() => {
     cbersEventsAbortRef.current?.abort();
@@ -1367,18 +1301,6 @@ export default function Dashboard() {
     simcarAgentLogEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [simcarAgentLog]);
 
-  useEffect(() => {
-    if (auasProcessing) {
-      setAuasElapsed(0);
-      const iv = setInterval(() => setAuasElapsed((prev) => prev + 1), 1000);
-      return () => clearInterval(iv);
-    }
-  }, [auasProcessing]);
-
-  useEffect(() => {
-    auasAgentLogEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }, [auasAgentLog]);
-
   // ─── SIMCAR Agent Log: group steps into phases ───
   type AgentPhase = { id: string; label: string; icon: 'satellite' | 'upload' | 'brain' | 'zap'; steps: typeof simcarAgentLog; allDone: boolean };
   const simcarGroupedPhases = useMemo((): AgentPhase[] => {
@@ -1413,40 +1335,6 @@ export default function Dashboard() {
         allDone: map.get(id)!.every((s) => s.done),
       }));
   }, [simcarAgentLog]);
-
-  const auasGroupedPhases = useMemo((): AgentPhase[] => {
-    const classify = (label: string): AgentPhase['icon'] => {
-      const l = label.toLowerCase();
-      if (/baixando|imagem|renderizando|gerando|geração|indisponível/i.test(l)) return 'satellite';
-      if (/upload|cloudinary|salvando/i.test(l)) return 'upload';
-      if (/ia\s|preparando.*ia|sintetizando|analis|fallback|análise/i.test(l)) return 'brain';
-      return 'zap';
-    };
-    const phaseOrder: AgentPhase['icon'][] = ['zap', 'satellite', 'upload', 'brain'];
-    const phaseLabels: Record<AgentPhase['icon'], string> = {
-      zap: 'Inicialização',
-      satellite: 'Geração de Imagens',
-      upload: 'Upload ao Servidor',
-      brain: 'Análise por IA',
-    };
-    const map = new Map<AgentPhase['icon'], typeof auasAgentLog>();
-    for (const step of auasAgentLog) {
-      if (step.kind !== 'step') continue;
-      const key = classify(step.label);
-      const arr = map.get(key) || [];
-      arr.push(step);
-      map.set(key, arr);
-    }
-    return phaseOrder
-      .map((icon) => {
-        const steps = map.get(icon) || [];
-        if (!steps.length) return null;
-        const id = `auas-${icon}`;
-        const allDone = steps.every((s) => s.done);
-        return { id, label: phaseLabels[icon], icon, steps, allDone };
-      })
-      .filter((p): p is AgentPhase => !!p);
-  }, [auasAgentLog]);
 
   // ─── SIMCAR Clip History (for sidebar cards) ───
   const [simcarClipHistory, setSimcarClipHistory] = useState<SimcarClipHistoryItem[]>([]);
@@ -1518,7 +1406,6 @@ export default function Dashboard() {
     collection: ReturnType<typeof collection>;
   } | null>(null);
   const [simcarClipsRef, setSimcarClipsRef] = useState<ReturnType<typeof collection> | null>(null);
-  const [auasJobsRef, setAuasJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
   const [settingsRef, setSettingsRef] = useState<DocumentReference | null>(null);
   const settingsImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -1734,7 +1621,7 @@ export default function Dashboard() {
   const cancelProcessingJobsForCard = useCallback(
     async (args: {
       cardJobId: string;
-      flow: 'simcar' | 'auas';
+      flow: 'simcar';
       extraJobIds?: Array<string | null | undefined>;
     }) => {
       const cardJobId = String(args.cardJobId || '').trim();
@@ -1767,10 +1654,6 @@ export default function Dashboard() {
               if (sameDoc || clipJobId === cardJobId) idsToCancel.add(String(docSnap.id));
               return;
             }
-
-            const isAuasEndpoint = endpoint === '/api/auas/analyze';
-            if (!isAuasEndpoint) return;
-            if (sameDoc) idsToCancel.add(String(docSnap.id));
           });
         }
       } catch (error) {
@@ -2641,326 +2524,6 @@ export default function Dashboard() {
     return patch;
   }, []);
 
-  const normalizeAuasResultPayload = useCallback((raw: any): AuasTabResult => {
-    const toNumber = (value: any) => {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : 0;
-    };
-    const outputZipUrl = String(raw?.outputZipUrl || '').trim() || undefined;
-    const inputZipUrl = String(raw?.inputZipUrl || '').trim() || undefined;
-    const contextUrl = String(raw?.contextUrl || '').trim() || undefined;
-    const rawDownloadUrl = String(raw?.downloadUrl || '').trim();
-    const resolvedDownloadUrl = resolveBackendDownloadUrl(rawDownloadUrl, outputZipUrl) || undefined;
-    const images = Array.isArray(raw?.images)
-      ? raw.images
-        .map((img: any) => ({
-          url: String(img?.url || '').trim(),
-          caption: String(img?.caption || '').trim(),
-        }))
-        .filter((img: { url: string }) => Boolean(img.url))
-      : [];
-    const auasPolygons = Array.isArray(raw?.auasPolygons)
-      ? raw.auasPolygons
-        .map((item: any) => ({
-          year: Math.round(toNumber(item?.year)),
-          areaHa: toNumber(item?.areaHa),
-        }))
-        .filter((item: { year: number; areaHa: number }) => item.year > 0 && item.areaHa >= 0)
-      : [];
-    const openingYear = (() => {
-      const parsed = Number(raw?.auasOpeningYear);
-      return Number.isFinite(parsed) && parsed > 1900 ? Math.floor(parsed) : undefined;
-    })();
-    const openingSourceRaw = String(raw?.auasOpeningSource || '').trim().toUpperCase();
-    const openingSource =
-      openingSourceRaw === 'PRODES'
-        ? 'PRODES'
-        : openingSourceRaw === 'AI_FALLBACK'
-          ? 'AI_FALLBACK'
-          : undefined;
-    const openingDate = String(raw?.auasOpeningDate || '').trim() || undefined;
-    const statusRaw = String(raw?.status || '').trim().toLowerCase();
-    const status =
-      statusRaw === 'processing' || statusRaw === 'completed' || statusRaw === 'failed' || statusRaw === 'cancelled'
-        ? (statusRaw as AuasTabResult['status'])
-        : undefined;
-    const error = raw?.error ? String(raw.error) : undefined;
-    return {
-      propertyAreaHa: toNumber(raw?.propertyAreaHa),
-      acAreaHa: toNumber(raw?.acAreaHa),
-      auasAreaHa: toNumber(raw?.auasAreaHa),
-      avnAreaHa: toNumber(raw?.avnAreaHa),
-      arlAreaHa: toNumber(raw?.arlAreaHa),
-      riverBufferHa: toNumber(raw?.riverBufferHa),
-      auasPolygons,
-      downloadUrl: resolvedDownloadUrl,
-      inputZipUrl,
-      outputZipUrl,
-      contextUrl,
-      analysis: raw?.analysis ? String(raw.analysis) : undefined,
-      images,
-      satellitesUsed: Array.isArray(raw?.satellitesUsed) ? raw.satellitesUsed.map((v: any) => String(v)) : undefined,
-      satellitesMissing: Array.isArray(raw?.satellitesMissing) ? raw.satellitesMissing.map((v: any) => String(v)) : undefined,
-      cloudWarnings: Array.isArray(raw?.cloudWarnings)
-        ? raw.cloudWarnings
-          .map((item: any) => ({
-            satellite: String(item?.satellite || ''),
-            cloudScore: toNumber(item?.cloudScore),
-          }))
-          .filter((item: { satellite: string }) => Boolean(item.satellite))
-        : undefined,
-      analysisMeta: isPlainObject(raw?.analysisMeta) ? (raw.analysisMeta as SimcarAcAvnAnalysisMeta) : undefined,
-      analysisRulesVersion: raw?.analysisRulesVersion ? String(raw.analysisRulesVersion) : undefined,
-      auasOpeningYear: openingYear,
-      auasOpeningDate: openingDate,
-      auasOpeningSource: openingSource,
-      status,
-      error,
-    };
-  }, []);
-
-  const mapAuasDocToHistoryItem = useCallback(
-    (docId: string, data: any): AuasHistoryItem => {
-      const normalizedResult = normalizeAuasResultPayload({
-        propertyAreaHa: data?.propertyAreaHa,
-        acAreaHa: data?.acAreaHa,
-        auasAreaHa: data?.auasAreaHa,
-        avnAreaHa: data?.avnAreaHa,
-        arlAreaHa: data?.arlAreaHa,
-        riverBufferHa: data?.riverBufferHa,
-        auasPolygons: data?.auasPolygons,
-        downloadUrl: data?.downloadUrl,
-        inputZipUrl: data?.inputZipUrl ?? data?.files?.inputZipUrl,
-        outputZipUrl: data?.outputZipUrl ?? data?.files?.outputZipUrl,
-        contextUrl: data?.contextUrl ?? data?.files?.contextUrl,
-        analysis: data?.analysis,
-        images: data?.images,
-        satellitesUsed: data?.satellitesUsed,
-        satellitesMissing: data?.satellitesMissing,
-        cloudWarnings: data?.cloudWarnings,
-        analysisMeta: data?.analysisMeta,
-        analysisRulesVersion: data?.analysisRulesVersion,
-        auasOpeningYear: data?.auasOpeningYear,
-        auasOpeningDate: data?.auasOpeningDate,
-        auasOpeningSource: data?.auasOpeningSource,
-        status: data?.status,
-        error: data?.error,
-      });
-      return {
-        id: String(data?.id || docId),
-        jobId: String(data?.jobId || docId),
-        timestamp: toIsoDateFromUnknown(data?.timestamp || data?.updatedAt || data?.createdAt),
-        filename: String(data?.filename || 'Novo CAR'),
-        inputFilename: data?.inputFilename ? String(data.inputFilename) : undefined,
-        conversationId: data?.conversationId ? String(data.conversationId) : undefined,
-        ...normalizedResult,
-      };
-    },
-    [normalizeAuasResultPayload]
-  );
-
-  const resumeAuasProcessingUi = useCallback((entry: AuasHistoryItem) => {
-    setAuasJobId(entry.jobId);
-    setAuasError(entry.error || null);
-    setAuasProcessing(true);
-    setAuasResult(null);
-    setAuasProgress((prev) => {
-      const prevPercent = Math.max(5, Math.round(Number(prev?.percent || 12)));
-      return {
-        step: 'processing',
-        percent: Math.min(95, prevPercent),
-        message: 'Processamento em andamento no servidor. Você pode sair do site e voltar depois.',
-      };
-    });
-    setAuasAgentLog((prev) => {
-      if (prev.length > 0) return prev;
-      return [{ label: 'Processamento retomado a partir do servidor...', done: false, kind: 'step' }];
-    });
-  }, []);
-
-  const selectAuasHistoryEntry = useCallback(
-    (entry: AuasHistoryItem) => {
-      setAuasJobId(entry.jobId);
-      setAuasError(entry.error || null);
-
-      if (entry.status === 'processing') {
-        resumeAuasProcessingUi(entry);
-        return;
-      }
-
-      setAuasProcessing(false);
-      setAuasProgress(null);
-      setAuasAgentLog([]);
-
-      if (entry.status === 'failed' || entry.status === 'cancelled') {
-        setAuasResult(null);
-        if (!entry.error) {
-          setAuasError(entry.status === 'cancelled' ? 'Processamento cancelado.' : 'Processamento falhou.');
-        }
-        return;
-      }
-
-      setAuasResult(normalizeAuasResultPayload(entry));
-    },
-    [normalizeAuasResultPayload, resumeAuasProcessingUi]
-  );
-
-  const persistAuasHistoryEntry = useCallback(
-    async (entry: AuasHistoryItem) => {
-      if (!auasJobsRef || !entry?.jobId) return;
-      const auasDocRef = doc(auasJobsRef, entry.jobId);
-      const cleanEntry = stripUndefinedDeep(entry);
-      const payload = stripUndefinedDeep({
-        ...cleanEntry,
-        kind: 'novo_car',
-        title: cleanEntry.filename,
-        files: {
-          inputZipUrl: cleanEntry.inputZipUrl,
-          outputZipUrl: cleanEntry.outputZipUrl,
-          contextUrl: cleanEntry.contextUrl,
-        },
-        analysisImageCount: cleanEntry.images?.length ?? 0,
-        cloudinaryPersisted:
-          Boolean(cleanEntry.inputZipUrl) &&
-          Boolean(cleanEntry.outputZipUrl) &&
-          Boolean(cleanEntry.contextUrl),
-      });
-      let lastError: any = null;
-      for (let attempt = 1; attempt <= AUAS_FIRESTORE_WRITE_RETRIES; attempt += 1) {
-        try {
-          await setDoc(
-            auasDocRef,
-            {
-              ...payload,
-              updatedAt: serverTimestamp(),
-              createdAt: serverTimestamp(),
-            },
-            { merge: true }
-          );
-          return;
-        } catch (error: any) {
-          lastError = error;
-          if (attempt >= AUAS_FIRESTORE_WRITE_RETRIES) break;
-          const waitMs = AUAS_FIRESTORE_RETRY_BASE_MS * attempt;
-          await new Promise<void>((resolve) => window.setTimeout(resolve, waitMs));
-        }
-      }
-      throw lastError || new Error('Falha ao persistir historico Novo CAR no Firestore.');
-    },
-    [auasJobsRef]
-  );
-
-  const markAuasHistoryStatus = useCallback(
-    (jobId: string, status: NonNullable<AuasHistoryItem['status']>, error?: string) => {
-      const safeJobId = String(jobId || '').trim();
-      if (!safeJobId) return;
-      let patchedEntry: AuasHistoryItem | null = null;
-      setAuasHistory((prev) =>
-        prev.map((item) => {
-          if (item.jobId !== safeJobId) return item;
-          patchedEntry = {
-            ...item,
-            status,
-            error: error ? String(error) : undefined,
-          };
-          return patchedEntry;
-        })
-      );
-      if (patchedEntry) {
-        void persistAuasHistoryEntry(patchedEntry).catch((persistErr) => {
-          console.warn('Falha ao atualizar status do card Novo CAR:', persistErr);
-        });
-      }
-    },
-    [persistAuasHistoryEntry]
-  );
-
-  const appendAuasEntriesToConversation = useCallback(
-    async (
-      job: AuasHistoryItem,
-      entries: SimcarConversationEntry[],
-      options?: { title?: string },
-    ) => {
-      if (!conversationsRef || !job?.jobId) return null;
-
-      const validEntries = entries
-        .map((entry) => ({
-          ...entry,
-          text: String(entry?.text || '').trim(),
-        }))
-        .filter((entry) => entry.text.length > 0);
-      if (validEntries.length === 0) return job.conversationId || null;
-
-      const conversationId = job.conversationId || nanoid();
-      const convDocRef = doc(conversationsRef.collection, conversationId);
-      const snap = await getDoc(convDocRef);
-      const existingMessages = snap.exists()
-        ? ((snap.data() as any)?.messages as ChatMessage[] | undefined)
-        : undefined;
-      const baseMessages = Array.isArray(existingMessages) && existingMessages.length > 0
-        ? existingMessages
-        : [DEFAULT_ASSISTANT_MESSAGE];
-      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const additions: ChatMessage[] = validEntries.map((entry) => {
-        const cleanedMeta = entry.meta
-          ? Object.fromEntries(Object.entries(entry.meta).filter(([, value]) => value !== undefined))
-          : undefined;
-        return {
-          id: nanoid(),
-          role: entry.role,
-          text: entry.text,
-          time: now,
-          ...(cleanedMeta && Object.keys(cleanedMeta).length > 0 ? { meta: cleanedMeta as ChatMessage['meta'] } : {}),
-        };
-      });
-
-      const mergedMessages = [...baseMessages, ...additions];
-      const existingTitle = snap.exists() ? String((snap.data() as any)?.title || '').trim() : '';
-      const fallbackTitle = options?.title?.trim() || job.filename || `Novo CAR ${job.jobId.slice(0, 8)}`;
-      const nextTitle = existingTitle || fallbackTitle;
-      const lastPreview = additions[additions.length - 1]?.text?.slice(0, 120) || '';
-
-      const conversationPayload: Record<string, any> = {
-        title: nextTitle,
-        kind: 'novo_car',
-        auasJobId: job.jobId,
-        messages: sanitizeMessagesForFirestore(mergedMessages),
-        updatedAt: serverTimestamp(),
-        lastMessagePreview: lastPreview,
-        lastAttachmentType: null,
-      };
-      if (!snap.exists()) {
-        conversationPayload.createdAt = serverTimestamp();
-      }
-      await setDoc(convDocRef, conversationPayload, { merge: true });
-
-      setConversations((prev) => {
-        const next: Conversation = {
-          id: conversationId,
-          title: nextTitle,
-          lastMessagePreview: lastPreview,
-          auasJobId: job.jobId,
-          kind: 'novo_car',
-        };
-        return [next, ...prev.filter((item) => item.id !== conversationId)];
-      });
-
-      if (!job.conversationId && auasJobsRef) {
-        await setDoc(
-          doc(auasJobsRef, job.jobId),
-          { conversationId, updatedAt: serverTimestamp() },
-          { merge: true }
-        );
-        setAuasHistory((prev) =>
-          prev.map((item) => (item.jobId === job.jobId ? { ...item, conversationId } : item))
-        );
-      }
-
-      return conversationId;
-    },
-    [auasJobsRef, conversationsRef]
-  );
-
   const persistSimcarClipHistoryEntry = useCallback(
     async (clip: SimcarClipHistoryItem) => {
       if (!simcarClipsRef) return;
@@ -3370,10 +2933,6 @@ export default function Dashboard() {
       try {
         if (!currentUser) {
           setSimcarClipsRef(null);
-          setAuasJobsRef(null);
-          setAuasHistory([]);
-          setAuasJobId(null);
-          setAuasResult(null);
           setCbersHistory([]);
           setCbersJobId(null);
           setCbersProcessing(false);
@@ -3395,8 +2954,6 @@ export default function Dashboard() {
         setConversationsRef({ collection: collRef });
         const simcarRef = collection(db, 'users', currentUser.uid, 'simcar_clips');
         setSimcarClipsRef(simcarRef);
-        const auasRef = collection(db, 'users', currentUser.uid, 'auas_jobs');
-        setAuasJobsRef(auasRef);
         const cbersRef = collection(db, 'users', currentUser.uid, 'cbers_wpm_jobs');
 
         const nextSettingsRef = doc(db, 'users', currentUser.uid, 'settings', 'preferences');
@@ -3534,22 +3091,6 @@ export default function Dashboard() {
         }
 
         try {
-          const auasSnap = await getDocs(query(auasRef, orderBy('updatedAt', 'desc')));
-          const auasEntries: AuasHistoryItem[] = [];
-          auasSnap.forEach((docSnap) => {
-            const data = docSnap.data() as any;
-            auasEntries.push(mapAuasDocToHistoryItem(docSnap.id, data));
-          });
-          setAuasHistory(auasEntries);
-          if (auasEntries.length > 0) {
-            const latest = auasEntries[0];
-            selectAuasHistoryEntry(latest);
-          }
-        } catch (error) {
-          console.warn('Falha ao carregar histórico Novo CAR salvo:', error);
-        }
-
-        try {
           const cbersSnap = await getDocs(query(cbersRef, orderBy('updatedAtMs', 'desc')));
           const cbersEntries: CbersHistoryItem[] = [];
           cbersSnap.forEach((docSnap) => {
@@ -3583,7 +3124,7 @@ export default function Dashboard() {
     });
 
     return () => unsubscribe();
-  }, [mapAuasDocToHistoryItem, mapCbersDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, selectAuasHistoryEntry, selectCbersHistoryEntry, selectSimcarClipEntry, setLocation]);
+  }, [mapCbersDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, selectCbersHistoryEntry, selectSimcarClipEntry, setLocation]);
 
   useEffect(() => {
     const uid = String(userProfile?.uid || '').trim();
@@ -3778,111 +3319,6 @@ export default function Dashboard() {
     setSimcarServerRuntimeState,
     userProfile?.uid,
   ]);
-
-  const activeAuasEntry = useMemo(
-    () => (auasJobId ? auasHistory.find((item) => item.jobId === auasJobId) || null : auasHistory[0] || null),
-    [auasHistory, auasJobId]
-  );
-
-  useEffect(() => {
-    const uid = String(userProfile?.uid || '').trim();
-    const activeJobId = String(activeAuasEntry?.jobId || '').trim();
-    const activeStatus = activeAuasEntry?.status;
-    if (!uid || !activeJobId || activeStatus !== 'processing') return;
-
-    let alive = true;
-    const pollAuasJob = async () => {
-      try {
-        const jobRef = doc(db, 'users', uid, 'auas_jobs', activeJobId);
-        const snap = await getDoc(jobRef);
-        if (!alive || !snap.exists()) return;
-        const nextEntry = mapAuasDocToHistoryItem(snap.id, snap.data() as any);
-
-        setAuasHistory((prev) => {
-          let found = false;
-          const updated = prev.map((item) => {
-            if (item.jobId !== nextEntry.jobId) return item;
-            found = true;
-            return {
-              ...item,
-              ...nextEntry,
-            };
-          });
-          return found ? updated : [nextEntry, ...updated];
-        });
-
-        if (nextEntry.status === 'processing') {
-          setAuasProcessing(true);
-          setAuasResult(null);
-          setAuasError(nextEntry.error || null);
-          if (auasAbortRef.current) return;
-          setAuasProgress((prev) => {
-            const current = Math.max(5, Math.round(Number(prev?.percent || 10)));
-            const bumped = Math.min(95, current + (current < 85 ? 3 : 1));
-            return {
-              step: 'processing',
-              percent: bumped,
-              message: 'Processamento em andamento no servidor. Você pode sair do site e voltar depois.',
-            };
-          });
-          setAuasAgentLog((prev) => {
-            if (prev.length === 0) {
-              return [{ label: 'Processamento em andamento no servidor...', done: false, kind: 'step' }];
-            }
-            const hasServerStep = prev.some((step) => step.label.toLowerCase().includes('servidor'));
-            if (hasServerStep) return prev;
-            return [...prev, { label: 'Processamento continua no servidor após recarregar.', done: false, kind: 'step' }];
-          });
-          return;
-        }
-
-        if (nextEntry.status === 'completed') {
-          setAuasProcessing(false);
-          setAuasProgress(null);
-          setAuasError(null);
-          setAuasResult(normalizeAuasResultPayload(nextEntry));
-          setAuasAgentLog((prev) => {
-            const donePrev = prev.map((step) => ({ ...step, done: true }));
-            const hasFinal = donePrev.some((step) => step.label.toLowerCase().includes('conclu'));
-            if (hasFinal) return donePrev;
-            return [...donePrev, { label: 'Processamento concluído e card sincronizado.', done: true, kind: 'step' }];
-          });
-          return;
-        }
-
-        if (nextEntry.status === 'failed' || nextEntry.status === 'cancelled') {
-          setAuasProcessing(false);
-          setAuasProgress(null);
-          setAuasResult(null);
-          setAuasError(
-            nextEntry.error ||
-            (nextEntry.status === 'cancelled' ? 'Processamento cancelado.' : 'Processamento falhou no servidor.')
-          );
-          setAuasAgentLog((prev) => {
-            const donePrev = prev.map((step) => ({ ...step, done: true }));
-            const failLabel =
-              nextEntry.status === 'cancelled'
-                ? 'Processamento cancelado pelo usuário.'
-                : 'Processamento falhou no servidor.';
-            const exists = donePrev.some((step) => step.label === failLabel);
-            if (exists) return donePrev;
-            return [...donePrev, { label: failLabel, done: true, kind: 'step' }];
-          });
-        }
-      } catch {
-        // best-effort polling
-      }
-    };
-
-    void pollAuasJob();
-    const intervalId = window.setInterval(() => {
-      void pollAuasJob();
-    }, 8000);
-    return () => {
-      alive = false;
-      window.clearInterval(intervalId);
-    };
-  }, [activeAuasEntry?.jobId, activeAuasEntry?.status, mapAuasDocToHistoryItem, normalizeAuasResultPayload, userProfile?.uid]);
 
   useEffect(() => {
     if (loading || !auth.currentUser) return;
@@ -7050,18 +6486,18 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">SIMCAR</span>
             </button>
             <button
-              onClick={() => setActiveView('auas')}
-              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'auas' ? 'bg-amber-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-            >
-              <Layers size={15} />
-              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">Novo CAR</span>
-            </button>
-            <button
               onClick={() => setActiveView('cbers-wpm')}
               className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'cbers-wpm' ? 'bg-cyan-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
             >
               <Satellite size={15} />
               <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">CBERS</span>
+            </button>
+            <button
+              onClick={() => setActiveView('vetoriza-mat')}
+              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'vetoriza-mat' ? 'bg-emerald-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+            >
+              <FileText size={15} />
+              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">Vetoriza</span>
             </button>
           </div>
 
@@ -7085,17 +6521,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <div className="relative flex items-center justify-center gap-2 bg-[#120e1a] group-hover:bg-transparent text-purple-100 py-2.5 rounded-[11px] transition-colors">
                 <Plus size={16} />
                 <span className="font-medium block lg:hidden xl:block text-sm">Novo Recorte</span>
-              </div>
-            </button>
-          )}
-          {activeView === 'auas' && (
-            <button
-              onClick={() => resetAuasDraft()}
-              className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 transition-all duration-300 p-[1px] shadow-lg shadow-amber-900/30"
-            >
-              <div className="relative flex items-center justify-center gap-2 bg-[#1a1100] group-hover:bg-transparent text-amber-100 py-2.5 rounded-[11px] transition-colors">
-                <Plus size={16} />
-                <span className="font-medium block lg:hidden xl:block text-sm">Novo CAR</span>
               </div>
             </button>
           )}
@@ -7181,113 +6606,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <Satellite size={16} />
                 </div>
                 <p className="text-xs text-slate-500">Nenhuma imagem CBERS.</p>
-              </div>
-            )
-          ) : activeView === 'auas' ? (
-            /* ─── Novo CAR History Cards ─── */
-            auasHistory.length > 0 ? (
-              auasHistory.map((entry) => (
-                <div
-                  key={entry.id}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${auasJobId === entry.jobId ? 'bg-amber-500/10 border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.05)]' : 'bg-[#0a110e]/60 hover:bg-[#131b17] hover:border-amber-500/20'}`}
-                  onClick={() => {
-                    selectAuasHistoryEntry(entry);
-                  }}
-                >
-                  <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${auasJobId === entry.jobId ? 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-md shadow-amber-900/40' : 'bg-white/5 text-slate-400 group-hover:text-amber-400 group-hover:bg-amber-500/10'}`}>
-                    <Layers size={18} />
-                  </div>
-                  <div className="flex-1 min-w-0 block lg:hidden xl:block">
-                    <p className={`text-sm truncate font-medium ${auasJobId === entry.jobId ? 'text-amber-100' : 'text-slate-200 group-hover:text-amber-100'}`}>{entry.filename}</p>
-                    <div className="flex items-center gap-2 mt-1 opacity-80">
-                      <span className="text-[10px] uppercase tracking-wider font-semibold text-emerald-400 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        AUAS: {entry.auasAreaHa.toFixed(1)}ha
-                      </span>
-                      {entry.status && (
-                        <span
-                          className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
-                            ? 'text-amber-300'
-                            : entry.status === 'completed'
-                              ? 'text-emerald-300'
-                              : entry.status === 'cancelled'
-                                ? 'text-orange-300'
-                                : 'text-red-300'
-                            }`}
-                        >
-                          {entry.status === 'processing'
-                            ? 'Processando'
-                            : entry.status === 'completed'
-                              ? 'Concluído'
-                              : entry.status === 'cancelled'
-                                ? 'Cancelado'
-                                : 'Falhou'}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      const cancelled = await cancelProcessingJobsForCard({
-                        cardJobId: entry.jobId,
-                        flow: 'auas',
-                        extraJobIds: [auasProcessJobIdRef.current],
-                      });
-                      if (cancelled) {
-                        toast.info('Processamento cancelado ao excluir o card. Cobrança mínima de cancelamento aplicada.');
-                      }
-                      if (auasJobId === entry.jobId) {
-                        auasAbortRef.current?.abort();
-                        auasAbortRef.current = null;
-                        auasProcessJobIdRef.current = null;
-                      }
-                      if (auasJobsRef) {
-                        void deleteDoc(doc(auasJobsRef, entry.jobId)).catch(() => undefined);
-                      }
-                      if (conversationsRef) {
-                        const linkedConversationIds = new Set<string>();
-                        if (entry.conversationId) linkedConversationIds.add(entry.conversationId);
-                        for (const conv of conversations) {
-                          if (String(conv.auasJobId || '').trim() === String(entry.jobId)) {
-                            linkedConversationIds.add(conv.id);
-                          }
-                        }
-                        for (const convId of linkedConversationIds) {
-                          void deleteDoc(doc(conversationsRef.collection, convId)).catch(() => undefined);
-                        }
-                        if (linkedConversationIds.size > 0) {
-                          setConversations((prev) => prev.filter((c) => !linkedConversationIds.has(c.id)));
-                          if (activeConversationId && linkedConversationIds.has(activeConversationId)) {
-                            setActiveConversationId(null);
-                            setActiveConversationRef(null);
-                            setMessages([DEFAULT_ASSISTANT_MESSAGE]);
-                            messagesRef.current = [DEFAULT_ASSISTANT_MESSAGE];
-                          }
-                        }
-                      }
-                      setAuasHistory((prev) => prev.filter((item) => item.id !== entry.id));
-                      if (auasJobId === entry.jobId) {
-                        setAuasJobId(null);
-                        setAuasResult(null);
-                        setAuasProcessing(false);
-                        setAuasProgress(null);
-                        setAuasError(null);
-                      }
-                    }}
-                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
-                    title="Excluir histórico"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))
-            ) : (
-              <div className="text-center py-6 block lg:hidden xl:block">
-                <div className="inline-flex justify-center items-center w-10 h-10 rounded-full bg-white/5 text-slate-500 mb-2">
-                  <Clock size={16} />
-                </div>
-                <p className="text-xs text-slate-500">Nenhum histórico de Novo CAR.</p>
               </div>
             )
           ) : activeView === 'simcar-clip' ? (
@@ -7431,6 +6749,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 <p className="text-[10px] text-slate-600 mt-1">Clique em "Novo Recorte" para começar</p>
               </div>
             )
+          ) : activeView === 'vetoriza-mat' ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <FileText size={32} className="text-slate-600 mb-3" />
+              <p className="text-sm text-slate-400">VetorizaMat</p>
+              <p className="text-[10px] text-slate-600 mt-1">Projetos e matriculas</p>
+            </div>
           ) : (
             /* ─── Chat Conversation List ─── */
             filteredConversations.map((conv) => (
@@ -7532,7 +6856,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2 min-w-0">
               <Zap size={16} className="text-emerald-400 fill-current shrink-0" />
               <span className="font-medium text-slate-200 text-sm sm:text-base truncate">
-                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'auas' ? 'Novo CAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
+                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'vetoriza-mat' ? 'VetorizaMat' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
               </span>
               {activeView === 'chat' && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide shrink-0 hidden sm:inline-block">
@@ -9401,885 +8725,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               })()}
             </div>
           </div>
-        ) : activeView === 'auas' ? (
-          /* ══════════════════════════════════════════════════════════
-             ABA AUAS — Área de Uso Alternativo do Solo
-          ══════════════════════════════════════════════════════════ */
-          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
-            <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6 animate-fade-in-up">
-
-              {/* ─── Cabeçalho ─── */}
-              <section className="rounded-2xl border border-white/10 bg-[#0a110e]/80 p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-                <div className="flex flex-col gap-5">
-                  <div className="flex flex-col sm:flex-row sm:items-start gap-4">
-                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 shrink-0">
-                      <Layers size={24} strokeWidth={2} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between">
-                        <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Novo CAR</h1>
-                        {activeAuasEntry?.status && (
-                          <span className={`w-fit rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-wider ${activeAuasEntry.status === 'completed'
-                            ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300'
-                            : activeAuasEntry.status === 'processing'
-                              ? 'border-amber-500/25 bg-amber-500/10 text-amber-300'
-                              : activeAuasEntry.status === 'cancelled'
-                                ? 'border-orange-500/25 bg-orange-500/10 text-orange-300'
-                                : 'border-red-500/25 bg-red-500/10 text-red-300'
-                            }`}>
-                            {activeAuasEntry.status === 'completed'
-                              ? 'Concluído'
-                              : activeAuasEntry.status === 'processing'
-                                ? 'Processando'
-                                : activeAuasEntry.status === 'cancelled'
-                                  ? 'Cancelado'
-                                  : 'Falhou'}
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-2 text-xs sm:text-sm text-slate-400 leading-relaxed max-w-3xl">
-                        Classifica o imóvel em AC, AUAS, AVN e ARL usando PRODES e base hidrográfica SFB, com resumo técnico e arquivos finais para conferência.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    {[
-                      { label: 'Upload', icon: Upload, done: Boolean(auasFile || auasResult), active: !auasResult && !auasProcessing },
-                      { label: 'Bases', icon: Satellite, done: Boolean(auasResult), active: auasProcessing },
-                      { label: 'Cálculo', icon: BarChart3, done: Boolean(auasResult), active: auasProcessing },
-                      { label: 'Resultado', icon: FileText, done: Boolean(auasResult), active: Boolean(auasResult) },
-                    ].map((step) => {
-                      const Icon = step.icon;
-                      return (
-                        <div
-                          key={step.label}
-                          className={`rounded-xl border px-3 py-2.5 flex items-center gap-2 ${step.done
-                            ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200'
-                            : step.active
-                              ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
-                              : 'border-white/10 bg-white/[0.03] text-slate-400'
-                            }`}
-                        >
-                          {step.done ? <CheckCircle2 size={15} /> : <Icon size={15} />}
-                          <span className="text-xs font-semibold">{step.label}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </section>
-
-              {/* ─── Upload do Shapefile ─── */}
-              {!auasResult && !auasProcessing && (
-                <section className="bg-gradient-to-br from-white/[0.04] to-transparent backdrop-blur-md border border-white/[0.08] rounded-3xl p-6 sm:p-8 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
-                  <h2 className="font-semibold text-slate-200 mb-1.5 flex items-center gap-2 text-base">
-                    <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400">
-                      <Upload size={16} strokeWidth={2.5} />
-                    </div>
-                    Shapefile do Imóvel
-                  </h2>
-                  <p className="text-xs sm:text-sm text-slate-400 mb-6">
-                    Envie o ZIP com o shapefile da propriedade (.shp, .dbf, .prj).
-                    O servidor consultará o PRODES e a base SFB automaticamente.
-                  </p>
-
-                  <label className={`group relative flex flex-col items-center justify-center gap-3 p-10 rounded-2xl border-2 border-dashed transition-all cursor-pointer overflow-hidden isolate ${auasFile ? 'border-amber-500/40 bg-amber-500/5' : 'border-white/10 hover:border-amber-500/30 bg-white/[0.02] hover:bg-white/[0.03]'}`}>
-                    <div className={`absolute inset-0 bg-gradient-to-br from-amber-500/0 via-amber-500/0 to-amber-500/5 transition-opacity ${auasFile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
-                    <input
-                      ref={auasFileInputRef}
-                      type="file"
-                      accept=".zip"
-                      className="hidden"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0] || null;
-                        setAuasFile(f);
-                        setAuasError(null);
-                      }}
-                    />
-                    {auasFile ? (
-                      <>
-                        <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 text-amber-400 border border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.15)] relative z-10">
-                          <CheckCircle2 size={32} strokeWidth={2} />
-                        </div>
-                        <div className="text-center relative z-10">
-                          <p className="font-bold text-white text-base tracking-tight">{auasFile.name}</p>
-                          <p className="text-xs text-slate-400 mt-1 font-medium">{(auasFile.size / 1024).toFixed(0)} KB</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.preventDefault(); setAuasFile(null); if (auasFileInputRef.current) auasFileInputRef.current.value = ''; }}
-                          className="text-xs font-semibold text-slate-400 hover:text-red-400 transition-colors mt-2 px-3 py-1.5 rounded-lg hover:bg-red-500/10 relative z-10"
-                        >
-                          Remover arquivo
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <div className="p-4 rounded-2xl bg-white/5 text-slate-400 border border-white/5 group-hover:-translate-y-1 transition-transform duration-300 relative z-10 shadow-sm">
-                          <Upload size={32} strokeWidth={1.5} />
-                        </div>
-                        <div className="text-center relative z-10">
-                          <p className="font-semibold text-slate-200 text-sm sm:text-base">Arraste ou clique para selecionar</p>
-                          <p className="text-xs text-slate-500 mt-1.5 font-medium">Arquivo ZIP com shapefile do imóvel</p>
-                        </div>
-                      </>
-                    )}
-                  </label>
-
-                  {auasError && (
-                    <div className="mt-5 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm flex items-start gap-3 shadow-[0_0_15px_rgba(239,68,68,0.1)]">
-                      <AlertTriangle size={18} className="shrink-0 mt-0.5 text-red-400" />
-                      <span className="font-medium">{auasError}</span>
-                    </div>
-                  )}
-
-                  <button
-                    disabled={!auasFile}
-                    onClick={async () => {
-                      if (!auasFile) return;
-                      setAuasError(null);
-                      setAuasProcessing(true);
-                      setAuasProgress({ step: 'upload', percent: 5, message: 'Enviando shapefile...' });
-                      setAuasAgentLog([{ label: 'Iniciando processamento Novo CAR...', done: false, kind: 'step' }]);
-                      auasAbortRef.current = new AbortController();
-                      auasProcessJobIdRef.current = null;
-                      try {
-                        const reader = new FileReader();
-                        const zipB64: string = await new Promise((resolve, reject) => {
-                          reader.onload = () => resolve((reader.result as string).split(',')[1]);
-                          reader.onerror = reject;
-                          reader.readAsDataURL(auasFile);
-                        });
-                        const resp = await apiFetch('/api/auas/analyze', {
-                          method: 'POST',
-                          body: JSON.stringify({ propertyZip: zipB64, filename: auasFile.name }),
-                          signal: auasAbortRef.current.signal,
-                        });
-                        if (!resp.ok || !resp.body) {
-                          const err = await readApiError(resp);
-                          if (resp.status === 402 || String(err?.code || '').toUpperCase() === 'INSUFFICIENT_CREDITS') {
-                            handleInsufficientCredits(err.error || 'Saldo insuficiente para processar Novo CAR.');
-                          }
-                          throw new Error(err.error || `HTTP ${resp.status}`);
-                        }
-                        const reader2 = resp.body.getReader();
-                        const decoder = new TextDecoder();
-                        let buf = '';
-                        let receivedAuasResult = false;
-                        while (true) {
-                          const { value, done } = await reader2.read();
-                          if (done) break;
-                          buf += decoder.decode(value, { stream: true });
-                          const lines = buf.split('\n');
-                          buf = lines.pop() ?? '';
-                          for (const line of lines) {
-                            if (!line.startsWith('data:')) continue;
-                            let evt: any;
-                            try {
-                              evt = JSON.parse(line.slice(5));
-                            } catch {
-                              continue;
-                            }
-                            if (evt.type === 'job_started') {
-                              const streamJobId = typeof evt.jobId === 'string' ? evt.jobId.trim() : '';
-                              if (streamJobId) {
-                                auasProcessJobIdRef.current = streamJobId;
-                                setAuasJobId(streamJobId);
-                                const placeholderResult = normalizeAuasResultPayload({
-                                  propertyAreaHa: 0,
-                                  acAreaHa: 0,
-                                  auasAreaHa: 0,
-                                  avnAreaHa: 0,
-                                  arlAreaHa: 0,
-                                  riverBufferHa: 0,
-                                  auasPolygons: [],
-                                  status: 'processing',
-                                });
-                                const placeholder: AuasHistoryItem = {
-                                  id: streamJobId,
-                                  timestamp: new Date().toISOString(),
-                                  filename: auasFile.name || `Novo CAR ${streamJobId.slice(0, 8)}`,
-                                  jobId: streamJobId,
-                                  inputFilename: auasFile.name,
-                                  ...placeholderResult,
-                                };
-                                setAuasHistory((prev) => {
-                                  const existing = prev.find((item) => item.jobId === streamJobId);
-                                  if (existing) return prev;
-                                  return [placeholder, ...prev];
-                                });
-                                void persistAuasHistoryEntry(placeholder).catch(() => undefined);
-                              }
-                              continue;
-                            }
-                            if (evt.type === 'progress') {
-                              const msg = normalizeBackendText(String(evt.message || 'Processando...'));
-                              const nextPercent = Math.max(0, Math.min(100, Math.round(Number(evt.percent || 0))));
-                              setAuasProgress((prev) => {
-                                const current = Math.max(0, Math.min(100, Math.round(Number(prev?.percent || 0))));
-                                return {
-                                  step: evt.step || '',
-                                  percent: Math.max(current, nextPercent),
-                                  message: msg,
-                                };
-                              });
-                              setAuasAgentLog((prev) => {
-                                const updated = prev.map((s) => (s.done ? s : { ...s, done: true }));
-                                return [...updated, { label: msg, done: false, kind: 'step' as const }];
-                              });
-                              continue;
-                            }
-                            if (evt.type === 'model_thinking') {
-                              const source = evt.source ? `[${evt.source}]` : '';
-                              const thought = String(evt.thinkingText || '').trim();
-                              if (thought) {
-                                const snippet = thought.replace(/\s+/g, ' ').slice(0, 120);
-                                const label = source ? `${source}: ${snippet}...` : `${snippet}...`;
-                                setAuasAgentLog((prev) => [...prev, { label, done: true, kind: 'thinking' as const }]);
-                              }
-                              continue;
-                            }
-                            if (evt.type === 'billing' && evt.billing) {
-                              applyBillingToWallet(evt.billing as BillingResult);
-                              continue;
-                            }
-                            if (evt.type === 'error') {
-                              if (String(evt.code || '').toUpperCase() === 'INSUFFICIENT_CREDITS') {
-                                handleInsufficientCredits(String(evt.message || 'Saldo insuficiente para processar Novo CAR.'));
-                              }
-                              throw new Error(evt.message || 'Erro na análise AUAS');
-                            }
-                            if (evt.type === 'result') {
-                              const nextJobId = typeof evt.jobId === 'string' && evt.jobId.trim()
-                                ? evt.jobId.trim()
-                                : evt?.data?.downloadUrl?.match?.(/\/auas\/download\/([^/?]+)/)?.[1] || null;
-                              const normalizedResult = {
-                                ...normalizeAuasResultPayload(evt.data),
-                                status: 'completed' as const,
-                                error: undefined,
-                              };
-                              if (!nextJobId) {
-                                throw new Error('Resultado do Novo CAR sem jobId valido.');
-                              }
-                              const missingArtifacts = [
-                                !normalizedResult.inputZipUrl ? 'ZIP original' : '',
-                                !normalizedResult.outputZipUrl ? 'ZIP de saida' : '',
-                                !normalizedResult.contextUrl ? 'Contexto JSON' : '',
-                              ].filter(Boolean);
-                              if (missingArtifacts.length > 0) {
-                                throw new Error(`Falha na persistencia Cloudinary do Novo CAR: ${missingArtifacts.join(', ')}.`);
-                              }
-                              receivedAuasResult = true;
-                              setAuasResult(normalizedResult);
-                              setAuasJobId(nextJobId);
-                              setAuasProgress({ step: 'finalizing', percent: 100, message: 'Resultado recebido. Finalizando sincronizacao...' });
-                              setAuasAgentLog((prev) => prev.map((item) => ({ ...item, done: true })));
-
-                              const entry: AuasHistoryItem = {
-                                id: nextJobId,
-                                timestamp: new Date().toISOString(),
-                                filename: `Novo CAR ${new Date().toLocaleString('pt-BR', {
-                                  day: '2-digit',
-                                  month: '2-digit',
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })}`,
-                                jobId: nextJobId,
-                                inputFilename: auasFile.name,
-                                ...normalizedResult,
-                              };
-                              setAuasHistory((prev) => {
-                                const filtered = prev.filter((item) => item.jobId !== nextJobId);
-                                return [entry, ...filtered];
-                              });
-                              void persistAuasHistoryEntry(entry).catch((error) => {
-                                console.warn('Falha ao persistir histórico Novo CAR:', error);
-                                toast.error('Nao foi possivel sincronizar o card do Novo CAR no Firestore pelo app.');
-                              });
-
-                              const cloudinaryFiles = [
-                                entry.inputZipUrl ? `- ZIP original: ${entry.inputZipUrl}` : '',
-                                entry.outputZipUrl ? `- ZIP Novo CAR: ${entry.outputZipUrl}` : '',
-                                entry.contextUrl ? `- Contexto JSON: ${entry.contextUrl}` : '',
-                              ].filter(Boolean);
-                              const summaryLines = [
-                                `Novo CAR concluído (job ${nextJobId}).`,
-                                `Área do imóvel: ${entry.propertyAreaHa.toFixed(2)} ha.`,
-                                `AC: ${entry.acAreaHa.toFixed(2)} ha | AUAS: ${entry.auasAreaHa.toFixed(2)} ha | AVN/ARL: ${entry.avnAreaHa.toFixed(2)} ha.`,
-                                entry.riverBufferHa > 0 ? `Buffer de rios removido: ${entry.riverBufferHa.toFixed(4)} ha.` : '',
-                                entry.auasOpeningDate
-                                  ? `ABERTURA automática do shape AUAS: ${entry.auasOpeningDate} (${entry.auasOpeningSource === 'PRODES' ? 'fonte PRODES' : 'fallback IA'}).`
-                                  : 'ABERTURA do shape AUAS não preenchida (ano não detectado).',
-                                cloudinaryFiles.length > 0 ? `Arquivos no Cloudinary:\n${cloudinaryFiles.join('\n')}` : '',
-                                entry.downloadUrl ? `Download do resultado: ${entry.downloadUrl}` : '',
-                              ].filter(Boolean);
-                              if (entry.analysis) {
-                                const excerpt = entry.analysis.length > 1800
-                                  ? `${entry.analysis.slice(0, 1800)}...`
-                                  : entry.analysis;
-                                summaryLines.push(`Síntese IA:\n${excerpt}`);
-                              }
-                              void appendAuasEntriesToConversation(
-                                entry,
-                                [
-                                  {
-                                    role: 'user',
-                                    text: [
-                                      'Solicitei um processamento de Novo CAR (AUAS).',
-                                      `Arquivo: ${auasFile.name}.`,
-                                    ].join('\n'),
-                                  },
-                                  {
-                                    role: 'ai',
-                                    text: summaryLines.join('\n\n'),
-                                  },
-                                ],
-                                { title: entry.filename }
-                              ).catch((error) => {
-                                console.warn('Falha ao anexar resultado Novo CAR na conversa:', error);
-                              });
-                            }
-                          }
-                        }
-                        if (receivedAuasResult) {
-                          setAuasProcessing(false);
-                          setAuasProgress(null);
-                        }
-                      } catch (err: any) {
-                        if (err?.name !== 'AbortError') {
-                          const errorMessage = err.message || 'Erro ao processar análise AUAS.';
-                          setAuasError(errorMessage);
-                          const activeJobId = String(auasProcessJobIdRef.current || '').trim();
-                          if (activeJobId) {
-                            markAuasHistoryStatus(activeJobId, 'failed', errorMessage);
-                          }
-                          setAuasAgentLog((prev) => [
-                            ...prev.map((item) => ({ ...item, done: true })),
-                            { label: `Erro: ${errorMessage}`, done: true, kind: 'step' as const },
-                          ]);
-                        }
-                        setAuasProcessing(false);
-                        setAuasProgress(null);
-                      } finally {
-                        auasAbortRef.current = null;
-                        auasProcessJobIdRef.current = null;
-                      }
-                    }}
-                    className="mt-4 w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium transition-all shadow-lg shadow-amber-900/30"
-                  >
-                    <Zap size={16} />
-                    Iniciar Novo CAR
-                  </button>
-                </section>
-              )}
-
-              {/* ─── Em processamento ─── */}
-              {auasProcessing && (
-                <section className="relative rounded-2xl border border-amber-500/30 bg-[#111612]/95 backdrop-blur-md px-5 py-4 shadow-2xl shadow-amber-900/20">
-                  <div className="absolute -top-[7px] left-7 h-3.5 w-3.5 rotate-45 border-l border-t border-amber-500/30 bg-[#111612]" />
-                  {(() => {
-                    const pct = Math.max(0, Math.min(100, Math.round(Number(auasProgress?.percent || 0))));
-                    const activeStep = auasAgentLog.filter((s) => s.kind === 'step' && !s.done).at(-1);
-                    const thinkingSteps = auasAgentLog.filter((s) => s.kind === 'thinking');
-                    const elMin = Math.floor(auasElapsed / 60);
-                    const elSec = auasElapsed % 60;
-                    const phaseIcons: Record<string, React.ReactNode> = {
-                      satellite: <Satellite size={12} />,
-                      upload: <Upload size={12} />,
-                      brain: <Brain size={12} />,
-                      zap: <Zap size={12} />,
-                    };
-                    const phaseColors: Record<string, { text: string; border: string }> = {
-                      zap: { text: 'text-amber-400', border: 'border-amber-500/20' },
-                      satellite: { text: 'text-cyan-400', border: 'border-cyan-500/20' },
-                      upload: { text: 'text-emerald-400', border: 'border-emerald-500/20' },
-                      brain: { text: 'text-purple-400', border: 'border-purple-500/20' },
-                    };
-                    return (
-                      <>
-                        <div className="flex items-center gap-3 mb-3">
-                          <div className="relative flex-shrink-0">
-                            <div className="p-2 rounded-xl bg-amber-500/15 text-amber-400">
-                              <Brain size={16} />
-                            </div>
-                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-400 animate-ping opacity-75" />
-                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-400" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs font-semibold text-slate-200">GeoForest IA — Novo CAR em execução...</p>
-                            <p className="text-[10px] text-slate-400 truncate">
-                              {activeStep?.label || auasProgress?.message || 'Preparando...'}
-                            </p>
-                          </div>
-                          <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
-                            <span className="text-xs font-bold text-amber-400 tabular-nums">{pct}%</span>
-                            <span className="text-[9px] text-slate-500 tabular-nums flex items-center gap-1">
-                              <Clock size={9} />
-                              {elMin > 0 ? `${elMin}m ${String(elSec).padStart(2, '0')}s` : `${elSec}s`}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="mb-3 bg-black/40 h-1.5 rounded-full overflow-hidden relative">
-                          <div
-                            className="h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden bg-gradient-to-r from-amber-500 to-orange-400"
-                            style={{ width: `${pct}%` }}
-                          >
-                            <div
-                              className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent animate-[shimmer_1.5s_infinite]"
-                              style={{ backgroundSize: '200% 100%' }}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
-                          {auasGroupedPhases.map((phase) => {
-                            const colors = phaseColors[phase.icon] || phaseColors.zap;
-                            const doneSteps = phase.steps.filter((s) => s.done);
-                            const showCollapsed = phase.allDone && doneSteps.length > 2;
-                            return (
-                              <div key={phase.id} className={`rounded-lg border ${phase.allDone ? 'border-white/5 bg-white/[0.02]' : `${colors.border} bg-white/[0.03]`} overflow-hidden`}>
-                                <div className={`flex items-center gap-2 px-3 py-1.5 ${phase.allDone ? 'opacity-50' : ''}`}>
-                                  <span className={`${colors.text} flex-shrink-0`}>{phaseIcons[phase.icon]}</span>
-                                  <span className={`text-[10px] font-semibold ${phase.allDone ? 'text-slate-500' : 'text-slate-300'}`}>
-                                    {phase.label}
-                                  </span>
-                                  {phase.allDone ? (
-                                    <CheckCircle2 size={10} className="ml-auto text-emerald-500/70 flex-shrink-0" />
-                                  ) : (
-                                    <span className="ml-auto text-[9px] text-slate-500 tabular-nums">
-                                      {doneSteps.length}/{phase.steps.length}
-                                    </span>
-                                  )}
-                                </div>
-                                {!showCollapsed && (
-                                  <div className="px-3 pb-2 space-y-1">
-                                    {phase.steps.map((step, i) => (
-                                      <div
-                                        key={i}
-                                        className={`flex items-start gap-2 text-[11px] transition-all duration-300 ${step.done ? 'opacity-35' : 'opacity-100 pl-1 border-l-2 border-amber-400/50'}`}
-                                      >
-                                        {step.done ? (
-                                          <CheckCircle2 size={10} className="mt-0.5 flex-shrink-0 text-emerald-400/70" />
-                                        ) : (
-                                          <Loader2 size={10} className="mt-0.5 flex-shrink-0 animate-spin text-amber-400" />
-                                        )}
-                                        <span className={`leading-snug ${step.done ? 'text-slate-500' : 'text-slate-200 font-medium'}`}>
-                                          {step.label}
-                                        </span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                                {showCollapsed && (
-                                  <div className="px-3 pb-1.5">
-                                    <span className="text-[10px] text-slate-600">{doneSteps.length} etapas concluídas</span>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-
-                          {thinkingSteps.length > 0 && (
-                            <div className="rounded-lg border border-indigo-500/15 bg-indigo-500/[0.03] overflow-hidden">
-                              <div className="flex items-center gap-2 px-3 py-1.5 opacity-60">
-                                <span className="text-indigo-400 flex-shrink-0"><Cpu size={12} /></span>
-                                <span className="text-[10px] font-semibold text-indigo-300/80">Raciocínio da IA</span>
-                                <span className="ml-auto text-[9px] text-slate-500 tabular-nums">{thinkingSteps.length}</span>
-                              </div>
-                              <div className="px-3 pb-2 space-y-0.5">
-                                {thinkingSteps.slice(-2).map((step, i) => (
-                                  <p key={i} className="text-[10px] italic text-indigo-300/50 leading-snug truncate">
-                                    💭 {step.label}
-                                  </p>
-                                ))}
-                                {thinkingSteps.length > 2 && (
-                                  <p className="text-[9px] text-indigo-400/30">+{thinkingSteps.length - 2} anteriores</p>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          <div ref={auasAgentLogEndRef} />
-                        </div>
-
-                        <button
-                          onClick={async () => {
-                            await requestProcessCancel(auasProcessJobIdRef.current);
-                            auasProcessJobIdRef.current = null;
-                            auasAbortRef.current?.abort();
-                            setAuasProcessing(false);
-                            setAuasProgress(null);
-                            toast.info('Cancelamento solicitado. Cobrança proporcional aplicada.');
-                          }}
-                          className="mt-3 text-xs text-slate-500 hover:text-red-400 transition-colors"
-                        >
-                          Cancelar
-                        </button>
-                      </>
-                    );
-                  })()}
-                </section>
-              )}
-
-              {/* ─── Resultados ─── */}
-              {auasResult && !auasProcessing && (
-                <>
-                  {(() => {
-                    const total = Math.max(0, Number(auasResult.propertyAreaHa || 0));
-                    const pct = (area: number) => total > 0 ? `${((Number(area || 0) / total) * 100).toFixed(1)}%` : '-';
-                    const dominantRows = [
-                      { label: 'AC', area: auasResult.acAreaHa },
-                      { label: 'AUAS', area: auasResult.auasAreaHa },
-                      { label: 'AVN/ARL', area: auasResult.avnAreaHa },
-                    ].sort((a, b) => b.area - a.area);
-                    const dominant = dominantRows[0];
-                    const resultRows = [
-                      {
-                        label: 'AC',
-                        desc: 'Área consolidada pré-2008',
-                        area: auasResult.acAreaHa,
-                        pct: pct(auasResult.acAreaHa),
-                        badge: 'border-amber-500/20 bg-amber-500/10 text-amber-300',
-                      },
-                      {
-                        label: 'AUAS',
-                        desc: 'Uso alternativo pós-2008',
-                        area: auasResult.auasAreaHa,
-                        pct: pct(auasResult.auasAreaHa),
-                        badge: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300',
-                      },
-                      {
-                        label: 'AVN/ARL',
-                        desc: 'Vegetação nativa remanescente',
-                        area: auasResult.avnAreaHa,
-                        pct: pct(auasResult.avnAreaHa),
-                        badge: 'border-blue-500/20 bg-blue-500/10 text-blue-300',
-                      },
-                      {
-                        label: 'Rios',
-                        desc: 'Buffer SFB removido do cálculo',
-                        area: auasResult.riverBufferHa,
-                        pct: pct(auasResult.riverBufferHa),
-                        badge: 'border-cyan-500/20 bg-cyan-500/10 text-cyan-300',
-                      },
-                    ];
-                    return (
-                      <>
-                        <section className="rounded-2xl border border-white/10 bg-[#0e1612]/80 p-5 sm:p-6 animate-fade-in-up">
-                          <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
-                            <div>
-                              <div className="flex items-center gap-3 mb-3">
-                                <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                                  <CheckCircle2 size={18} />
-                                </div>
-                                <div>
-                                  <h2 className="text-base font-semibold text-white">Resultado Técnico Novo CAR</h2>
-                                  <p className="text-[11px] text-slate-500">Síntese pronta para conferência e exportação.</p>
-                                </div>
-                              </div>
-                              <p className="text-sm text-slate-300 leading-relaxed">
-                                O imóvel possui <strong className="text-white">{total.toFixed(2)} ha</strong>. A classe predominante é{' '}
-                                <strong className="text-emerald-300">{dominant.label}</strong>, com{' '}
-                                <strong className="text-white">{dominant.area.toFixed(2)} ha</strong>. A AUAS calculada representa{' '}
-                                <strong className="text-emerald-300">{pct(auasResult.auasAreaHa)}</strong> do imóvel.
-                              </p>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Imóvel</p>
-                                <p className="mt-1 text-xl font-bold text-white">{total.toFixed(2)} ha</p>
-                              </div>
-                              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3">
-                                <p className="text-[10px] uppercase tracking-wider text-emerald-300/80 font-semibold">AUAS</p>
-                                <p className="mt-1 text-xl font-bold text-emerald-200">{auasResult.auasAreaHa.toFixed(2)} ha</p>
-                              </div>
-                              <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-3">
-                                <p className="text-[10px] uppercase tracking-wider text-blue-300/80 font-semibold">AVN/ARL</p>
-                                <p className="mt-1 text-xl font-bold text-blue-200">{auasResult.avnAreaHa.toFixed(2)} ha</p>
-                              </div>
-                              <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-3">
-                                <p className="text-[10px] uppercase tracking-wider text-cyan-300/80 font-semibold">Rios</p>
-                                <p className="mt-1 text-xl font-bold text-cyan-200">{auasResult.riverBufferHa.toFixed(4)} ha</p>
-                              </div>
-                            </div>
-                          </div>
-                        </section>
-
-                        <section className="rounded-2xl border border-white/10 bg-[#0e1612]/70 overflow-hidden animate-fade-in-up" style={{ animationDelay: '120ms' }}>
-                          <div className="px-5 py-4 border-b border-white/10 flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-white/10 text-slate-200">
-                              <BarChart3 size={18} />
-                            </div>
-                            <div>
-                              <h3 className="font-semibold text-slate-200 text-sm sm:text-base">Quadro de Classes</h3>
-                              <p className="text-xs text-slate-500">Áreas calculadas e participação no imóvel.</p>
-                            </div>
-                          </div>
-                          <div className="overflow-x-auto">
-                            <table className="w-full min-w-[560px] text-sm">
-                              <thead className="bg-white/[0.03] text-[10px] uppercase tracking-wider text-slate-500">
-                                <tr>
-                                  <th className="px-5 py-3 text-left font-semibold">Classe</th>
-                                  <th className="px-5 py-3 text-left font-semibold">Critério</th>
-                                  <th className="px-5 py-3 text-right font-semibold">Área</th>
-                                  <th className="px-5 py-3 text-right font-semibold">% imóvel</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-white/5">
-                                {resultRows.map((row) => (
-                                  <tr key={row.label} className="hover:bg-white/[0.025] transition-colors">
-                                    <td className="px-5 py-3">
-                                      <span className={`inline-flex min-w-20 justify-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${row.badge}`}>
-                                        {row.label}
-                                      </span>
-                                    </td>
-                                    <td className="px-5 py-3 text-slate-400">{row.desc}</td>
-                                    <td className="px-5 py-3 text-right font-semibold text-slate-100">{row.area.toFixed(row.label === 'Rios' ? 4 : 2)} ha</td>
-                                    <td className="px-5 py-3 text-right text-slate-300">{row.pct}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </section>
-                      </>
-                    );
-                  })()}
-
-                  <section className="relative overflow-hidden bg-gradient-to-br from-[#0e1612]/80 to-[#0a110e]/90 border border-white/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] rounded-2xl p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
-                    {auasResult.auasOpeningDate ? (
-                      <div className="flex items-start sm:items-center gap-4 relative z-10">
-                        <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
-                          <Clock size={20} />
-                        </div>
-                        <div>
-                          <p className="text-sm text-slate-300 leading-relaxed">
-                            <strong className="text-amber-300 font-semibold tracking-wide">DATA DE ABERTURA</strong> preenchida no shape AUAS:{' '}
-                            <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-md bg-white/10 text-white font-bold ml-1">
-                              {auasResult.auasOpeningDate}
-                            </span>
-                          </p>
-                          <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
-                            <CheckCircle2 size={12} className="text-emerald-500/70" />
-                            Fonte: {auasResult.auasOpeningSource === 'PRODES' ? 'Detectado via PRODES' : 'Fallback IA Estimado'}
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-start sm:items-center gap-4 relative z-10 opacity-70">
-                        <div className="p-2.5 rounded-xl bg-slate-500/10 text-slate-400 border border-slate-500/20 shrink-0">
-                          <AlertTriangle size={20} />
-                        </div>
-                        <p className="text-sm text-slate-400">
-                          ABERTURA não preenchida automaticamente por ausência de ano detectável.
-                        </p>
-                      </div>
-                    )}
-                  </section>
-
-                  {auasResult.analysisMeta?.novoCar && (
-                    <section className="bg-[#0e1612]/70 border border-white/5 rounded-2xl p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '225ms' }}>
-                      {(() => {
-                        const novoCar = auasResult.analysisMeta?.novoCar;
-                        const classification = novoCar?.classification;
-                        const flags = Array.isArray(novoCar?.flags) ? novoCar.flags.slice(0, 5) : [];
-                        if (!classification) return null;
-                        const metrics = [
-                          { label: 'AC', value: classification.acPct, color: 'text-amber-300' },
-                          { label: 'AUAS', value: classification.auasPct, color: 'text-emerald-300' },
-                          { label: 'AVN/ARL', value: classification.avnPct, color: 'text-blue-300' },
-                          { label: 'Rios', value: classification.riverBufferPct, color: 'text-cyan-300' },
-                        ];
-                        return (
-                          <>
-                            <div className="flex items-center gap-3 mb-4">
-                              <div className="p-2 rounded-lg bg-white/10 text-slate-200 border border-white/10">
-                                <FileText size={18} />
-                              </div>
-                              <div>
-                                <h3 className="font-semibold text-slate-200 text-sm sm:text-base">Síntese Técnica Novo CAR</h3>
-                                <p className="text-xs text-slate-500 mt-0.5">Classificação percentual e alertas para conferência do ATP.</p>
-                              </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                              {metrics.map((metric) => (
-                                <div key={metric.label} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                                  <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{metric.label}</p>
-                                  <p className={`mt-1 text-lg font-bold ${metric.color}`}>{Number(metric.value || 0).toFixed(2)}%</p>
-                                </div>
-                              ))}
-                            </div>
-                            {flags.length > 0 && (
-                              <div className="mt-4 space-y-2">
-                                {flags.map((flag, idx) => (
-                                  <p key={idx} className="text-xs text-slate-400 leading-relaxed flex gap-2">
-                                    <AlertTriangle size={13} className="mt-0.5 shrink-0 text-amber-400" />
-                                    <span>{flag}</span>
-                                  </p>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </section>
-                  )}
-
-                  {Array.isArray(auasResult.images) && auasResult.images.length > 0 && (
-                    <section className="rounded-2xl border border-white/10 bg-[#0e1612]/70 p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '235ms' }}>
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
-                          <Eye size={18} />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-slate-200 text-sm sm:text-base">Imagens de Conferência</h3>
-                          <p className="text-xs text-slate-500 mt-0.5">Clique para ampliar e baixar a imagem usada no processamento.</p>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {auasResult.images.map((img, idx) => {
-                          const captionText = normalizeImageCaption(img.caption);
-                          return (
-                            <button
-                              key={`${img.url}-${idx}`}
-                              type="button"
-                              onClick={() => openSimcarAnalysisImage(img, 'Novo CAR')}
-                              className="group relative overflow-hidden rounded-xl border border-white/10 bg-black/20 text-left hover:border-cyan-500/30 transition-colors"
-                            >
-                              <img
-                                src={resolveBackendUrl(img.url)}
-                                alt={captionText}
-                                className="h-36 w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                                loading="lazy"
-                              />
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
-                                <span className="text-[10px] text-white flex items-center gap-1">
-                                  <Eye size={10} /> Ampliar
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-slate-400 px-3 py-2 bg-black/35 truncate" title={captionText}>{captionText}</p>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  )}
-
-                  {auasResult.analysis && (
-                    <section className="rounded-2xl border border-white/10 bg-[#0e1612]/70 p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '240ms' }}>
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="p-2 rounded-lg bg-purple-500/10 text-purple-300 border border-purple-500/20">
-                          <Brain size={18} />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-slate-200 text-sm sm:text-base">Resumo da IA</h3>
-                          <p className="text-xs text-slate-500 mt-0.5">Leitura técnica complementar para revisão.</p>
-                        </div>
-                      </div>
-                      <div className="analysis-markdown max-h-80 overflow-y-auto custom-scrollbar rounded-xl border border-white/5 bg-black/20 p-4">
-                        {renderAnalysisRichText(auasResult.analysis)}
-                      </div>
-                    </section>
-                  )}
-
-                  {/* Buffer de rios */}
-                  {auasResult.riverBufferHa > 0 && (
-                    <section className="relative overflow-hidden bg-gradient-to-br from-cyan-950/20 to-[#0e1612]/80 border border-cyan-500/10 shadow-[0_0_15px_rgba(6,182,212,0.03)] rounded-2xl p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '250ms' }}>
-                      <div className="absolute bottom-0 left-0 w-40 h-40 bg-cyan-500/5 rounded-full blur-2xl pointer-events-none" />
-                      <div className="relative z-10 flex items-start gap-4">
-                        <div className="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shrink-0 mt-0.5">
-                          <Layers size={20} />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-cyan-300 text-sm mb-1">
-                            Buffer de Rios SFB Aplicado
-                          </h3>
-                          <p className="text-slate-300 text-sm leading-relaxed mb-2">
-                            Área excluída por buffer (2m de cada lado):{' '}
-                            <strong className="text-cyan-400 text-base">{auasResult.riverBufferHa.toFixed(4)} ha</strong>
-                          </p>
-                          <div className="inline-flex items-center gap-1.5 text-xs text-cyan-500/70 bg-cyan-500/5 px-2.5 py-1 rounded-lg border border-cyan-500/10">
-                            <CheckCircle2 size={12} />
-                            <span>Interseções com rios removidas das classes AC, AUAS e AVN.</span>
-                          </div>
-                        </div>
-                      </div>
-                    </section>
-                  )}
-
-                  {/* Detalhamento AUAS por ano */}
-                  {auasResult.auasPolygons.length > 0 && (
-                    <section className="bg-gradient-to-br from-[#0e1612]/60 to-transparent border border-white/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] rounded-2xl p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '300ms' }}>
-                      <div className="flex items-center gap-3 mb-5 border-b border-white/5 pb-4">
-                        <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          <BarChart3 size={18} />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-slate-200 text-sm sm:text-base">Distribuição Anual AUAS</h3>
-                          <p className="text-xs text-slate-500 mt-0.5">Baseado em dados do PRODES (pós-2008)</p>
-                        </div>
-                      </div>
-                      <div className="space-y-3">
-                        {auasResult.auasPolygons
-                          .sort((a, b) => a.year - b.year)
-                          .map((p, idx) => (
-                            <div key={p.year} className="flex items-center gap-4 group/bar">
-                              <span className="text-xs font-medium text-slate-400 w-12 shrink-0 group-hover/bar:text-slate-300 transition-colors">{p.year}</span>
-                              <div className="flex-1 h-6 sm:h-7 bg-white/5 rounded-lg overflow-hidden relative shadow-inner">
-                                <div
-                                  className="absolute top-0 left-0 h-full rounded-lg bg-gradient-to-r from-emerald-500/80 to-teal-400/80 transition-all duration-1000 ease-out flex items-center shadow-[0_0_10px_rgba(16,185,129,0.3)]"
-                                  style={{
-                                    width: `${Math.max(2, Math.min(100, auasResult.auasAreaHa > 0 ? (p.areaHa / auasResult.auasAreaHa) * 100 : 0))}%`,
-                                    transformOrigin: 'left',
-                                    animation: `scaleX 1s ease-out ${350 + idx * 50}ms both`
-                                  }}
-                                >
-                                  <div className="absolute inset-0 bg-white/10 opacity-0 group-hover/bar:opacity-100 transition-opacity" />
-                                </div>
-                              </div>
-                              <span className="text-xs font-semibold text-emerald-300 w-20 text-right shrink-0 group-hover/bar:scale-105 transition-transform">{p.areaHa.toFixed(2)} ha</span>
-                            </div>
-                          ))}
-                      </div>
-                    </section>
-                  )}
-
-                  {/* Botões de ação */}
-                  <div className="flex flex-col sm:flex-row gap-4 pt-2 animate-fade-in-up" style={{ animationDelay: '350ms' }}>
-                    {auasResult.downloadUrl && (
-                      <a
-                        href={
-                          auasResult.downloadUrl.startsWith('https://res.cloudinary.com/')
-                            ? toFileProxyUrl(
-                              auasResult.downloadUrl,
-                              `novo_car_${(auasJobId || 'resultado').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`,
-                              'download'
-                            )
-                            : auasResult.downloadUrl
-                        }
-                        download
-                        className="flex-1 flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-semibold text-sm transition-all shadow-lg shadow-amber-900/30 hover:shadow-xl hover:shadow-amber-900/40 hover:-translate-y-0.5 group/dwn"
-                      >
-                        <Download size={18} className="group-hover/dwn:-translate-y-0.5 transition-transform" />
-                        Baixar Shapefiles Resultantes
-                      </a>
-                    )}
-                    <button
-                      onClick={() => resetAuasDraft()}
-                      className="flex-shrink-0 flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 font-medium text-sm transition-all group/new hover:text-white"
-                    >
-                      <Plus size={18} className="group-hover/new:rotate-90 transition-transform duration-300" />
-                      Novo Processo
-                    </button>
-                  </div>
-                </>
-              )}
-
-            </div>
-          </div>
         ) : activeView === 'cbers-wpm' ? (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
             <div className="max-w-6xl mx-auto space-y-5 sm:space-y-6">
@@ -11135,6 +9580,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               })()}
             </div>
           </div>
+        ) : activeView === 'vetoriza-mat' ? (
+          <Suspense fallback={
+            <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+              <div className="max-w-6xl mx-auto">
+                <div className="rounded-2xl border border-white/10 bg-[#0e1612]/70 p-6 text-sm text-slate-300">Carregando VetorizaMat...</div>
+              </div>
+            </div>
+          }>
+            <VetorizaMatPanel />
+          </Suspense>
         ) : activeView === 'features' ? (
           <Suspense fallback={
             <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
@@ -11148,7 +9603,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               setManualSection={setManualSection}
               onGoChat={() => setActiveView('chat')}
               onGoSimcar={() => setActiveView('simcar-clip')}
-              onGoAuas={() => setActiveView('auas')}
               onGoCbers={() => setActiveView('cbers-wpm')}
             />
           </Suspense>

@@ -74,7 +74,6 @@ const ROOT_CBRS_GROUP = "CBERS-4A-Apos_2019";
 const RESERVED_USER_STORAGE_NAMES = new Set([
   "attachments",
   "auas",
-  "auas_jobs",
   "cbers",
   "cbers_wpm_jobs",
   "conversations",
@@ -679,9 +678,9 @@ function adminFileCategory(relativePath: string): string {
   if (rel.includes("/simcar/analysis/")) return "Resultados SIMCAR";
   if (rel.includes("/simcar/input/")) return "Entradas SIMCAR";
   if (rel.includes("/simcar/context/")) return "Contexto SIMCAR";
-  if (rel.includes("/auas/output/")) return "Resultados Novo CAR";
-  if (rel.includes("/auas/input/")) return "Entradas Novo CAR";
-  if (rel.includes("/auas/context/")) return "Contexto Novo CAR";
+  if (rel.includes("/auas/output/")) return "Resultados AUAS legado";
+  if (rel.includes("/auas/input/")) return "Entradas AUAS legado";
+  if (rel.includes("/auas/context/")) return "Contexto AUAS legado";
   if (rel.includes("/cbers/output/")) return "CBERS legado";
   if (rel.includes("/trash/")) return "Lixeira";
   if (rel.endsWith(".json")) return "Historico/configuracao";

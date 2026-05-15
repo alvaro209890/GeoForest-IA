@@ -188,17 +188,6 @@ export function markPersistedRunningJobsInterrupted(): number {
         );
       }
 
-      if (endpoint === "/api/auas/analyze") {
-        writeDocBySegments(
-          ["users", uid, "auas_jobs", jobId],
-          {
-            status: "failed",
-            error,
-          },
-          { merge: true },
-        );
-      }
-
       if (endpoint === "/api/cbers-wpm/jobs") {
         const cbersData = readJsonSafe(path.join(usersDir, uid, "cbers_wpm_jobs", `${jobId}.json`));
         writeDocBySegments(
