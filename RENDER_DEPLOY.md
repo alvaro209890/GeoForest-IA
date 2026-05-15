@@ -135,7 +135,7 @@ O serviço dorme após 15 min sem requisições. O `KEEP_ALIVE_URL` resolve isso
 Para produção real considere o plano **Starter** ($7/mês) que não dorme.
 
 ### SSE (Server-Sent Events)
-O Render suporta SSE nativamente. As análises SIMCAR e Novo CAR usam SSE — não precisa de configuração extra.
+O Render suporta SSE nativamente. As análises SIMCAR usam SSE — não precisa de configuração extra.
 
 ### Disco efêmero
 O Render não tem disco persistente no plano gratuito. O `Arquivo Modelo.zip` precisa estar **commitado no repositório** (já está em `backend/../Arquivo Modelo.zip`). Não o adicione ao `.gitignore`.

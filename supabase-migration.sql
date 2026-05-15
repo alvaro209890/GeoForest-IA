@@ -70,48 +70,7 @@ CREATE TABLE IF NOT EXISTS simcar_clips (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_simcar_clips_user_job ON simcar_clips(user_id, job_id);
 CREATE INDEX IF NOT EXISTS idx_simcar_clips_geom ON simcar_clips USING GIST(geom);
 
--- 4. AUAS_JOBS
-CREATE TABLE IF NOT EXISTS auas_jobs (
-  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id                 UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  job_id                  TEXT NOT NULL,
-  kind                    TEXT NOT NULL DEFAULT 'novo_car',
-  title                   TEXT,
-  filename                TEXT NOT NULL,
-  input_filename          TEXT,
-  "timestamp"             TIMESTAMPTZ,
-  conversation_id         UUID,
-  ac_area_ha              DOUBLE PRECISION DEFAULT 0,
-  auas_area_ha            DOUBLE PRECISION DEFAULT 0,
-  avn_area_ha             DOUBLE PRECISION DEFAULT 0,
-  arl_area_ha             DOUBLE PRECISION DEFAULT 0,
-  property_area_ha        DOUBLE PRECISION DEFAULT 0,
-  river_buffer_ha         DOUBLE PRECISION DEFAULT 0,
-  auas_polygons           JSONB DEFAULT '[]'::jsonb,
-  download_url            TEXT,
-  input_zip_url           TEXT,
-  output_zip_url          TEXT,
-  context_url             TEXT,
-  analysis                TEXT,
-  images                  JSONB DEFAULT '[]'::jsonb,
-  files                   JSONB,
-  analysis_image_count    INTEGER DEFAULT 0,
-  satellites_used         JSONB,
-  satellites_missing      JSONB,
-  cloud_warnings          JSONB,
-  analysis_meta           JSONB,
-  analysis_rules_version  TEXT,
-  auas_opening_year       INTEGER,
-  auas_opening_date       TEXT,
-  auas_opening_source     TEXT,
-  created_at              TIMESTAMPTZ DEFAULT NOW(),
-  updated_at              TIMESTAMPTZ DEFAULT NOW(),
-  geom                    GEOMETRY(MultiPolygon, 4674)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_auas_jobs_user_job ON auas_jobs(user_id, job_id);
-CREATE INDEX IF NOT EXISTS idx_auas_jobs_geom ON auas_jobs USING GIST(geom);
-
--- 5. WALLETS
+-- 4. WALLETS
 CREATE TABLE IF NOT EXISTS wallets (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id        UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -122,7 +81,7 @@ CREATE TABLE IF NOT EXISTS wallets (
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 6. BILLING_LEDGER
+-- 5. BILLING_LEDGER
 CREATE TABLE IF NOT EXISTS billing_ledger (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -149,7 +108,7 @@ CREATE TABLE IF NOT EXISTS billing_ledger (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_user_ledger ON billing_ledger(user_id, ledger_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_user_created ON billing_ledger(user_id, created_at DESC);
 
--- 7. USAGE_DAILY
+-- 6. USAGE_DAILY
 CREATE TABLE IF NOT EXISTS usage_daily (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -163,7 +122,7 @@ CREATE TABLE IF NOT EXISTS usage_daily (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_daily_user_date ON usage_daily(user_id, date);
 
--- 8. USER_SETTINGS
+-- 7. USER_SETTINGS
 CREATE TABLE IF NOT EXISTS user_settings (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id            UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -182,7 +141,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   two_factor_enabled BOOLEAN NOT NULL DEFAULT true
 );
 
--- 9. SYSTEM_CONFIG
+-- 8. SYSTEM_CONFIG
 CREATE TABLE IF NOT EXISTS system_config (
   key               TEXT PRIMARY KEY,
   usd_brl_rate      NUMERIC(10,4),
@@ -199,7 +158,6 @@ INSERT INTO system_config (key) VALUES ('billing_config') ON CONFLICT (key) DO N
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE simcar_clips ENABLE ROW LEVEL SECURITY;
-ALTER TABLE auas_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wallets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE billing_ledger ENABLE ROW LEVEL SECURITY;
 ALTER TABLE usage_daily ENABLE ROW LEVEL SECURITY;

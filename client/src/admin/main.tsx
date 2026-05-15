@@ -150,7 +150,6 @@ const CHART_COLORS = ["#22d3ee", "#34d399", "#a78bfa", "#fbbf24", "#fb7185", "#6
 const RESERVED_USER_STORAGE_NAMES = new Set([
   "attachments",
   "auas",
-  "auas_jobs",
   "cbers",
   "cbers_wpm_jobs",
   "conversations",

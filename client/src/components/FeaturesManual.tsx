@@ -6,11 +6,9 @@ import {
   Camera,
   CheckCircle2,
   ChevronDown,
-  Clock,
   Cpu,
   Globe,
   HelpCircle,
-  Layers,
   Lightbulb,
   MousePointerClick,
   Satellite,
@@ -24,7 +22,6 @@ type FeaturesManualProps = {
   setManualSection: React.Dispatch<React.SetStateAction<string | null>>;
   onGoChat: () => void;
   onGoSimcar: () => void;
-  onGoAuas: () => void;
   onGoCbers: () => void;
 };
 
@@ -33,7 +30,6 @@ export default function FeaturesManual({
   setManualSection,
   onGoChat,
   onGoSimcar,
-  onGoAuas,
   onGoCbers,
 }: FeaturesManualProps) {
   return (
@@ -72,7 +68,6 @@ export default function FeaturesManual({
                   { id: 'simcar', icon: Scissors, label: 'Recorte SIMCAR', color: 'purple' },
                   { id: 'analysis', icon: Satellite, label: 'Análise por IA', color: 'amber' },
                   { id: 'map', icon: Globe, label: 'Mapa WMS', color: 'blue' },
-                  { id: 'novo-car', icon: Layers, label: 'Novo CAR', color: 'amber' },
                   { id: 'cbers', icon: Camera, label: 'CBERS-4A', color: 'cyan' },
                   { id: 'billing', icon: Wallet, label: 'Créditos', color: 'emerald' },
                   { id: 'security', icon: ShieldCheck, label: 'Segurança', color: 'red' },
@@ -453,81 +448,7 @@ export default function FeaturesManual({
               </section>
 
               {/* ═══════════════════════════════════════════════════════════════
-                   SECTION 5 — NOVO CAR
-                 ═══════════════════════════════════════════════════════════════ */}
-              <section id="manual-novo-car" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
-                <button
-                  onClick={() => setManualSection(manualSection === 'novo-car' ? null : 'novo-car')}
-                  className="w-full flex items-center justify-between p-4 sm:p-6 text-left hover:bg-white/5 transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400"><Layers size={22} /></div>
-                    <div>
-                      <h2 className="font-semibold text-lg text-slate-200">5. Novo CAR (AUAS)</h2>
-                      <p className="text-xs text-slate-500 mt-0.5">Processamento temporal de AUAS com saída vetorial pronta para protocolo</p>
-                    </div>
-                  </div>
-                  <ChevronDown size={18} className={`text-slate-500 transition-transform duration-200 ${manualSection === 'novo-car' ? 'rotate-180' : ''}`} />
-                </button>
-                {manualSection === 'novo-car' && (
-                  <div className="px-4 sm:px-6 pb-4 sm:pb-6 space-y-4 sm:space-y-6 border-t border-white/5 pt-4 sm:pt-5">
-                    <div>
-                      <h4 className="text-sm font-semibold text-slate-300 mb-3"><span className="text-amber-400">O que faz</span></h4>
-                      <p className="text-sm text-slate-400 leading-relaxed">
-                        O módulo <strong className="text-slate-300">Novo CAR</strong> analisa o imóvel e separa áreas em AC (pré-2008), AUAS (pós-2008), AVN/ARL e buffers de rios.
-                        O resultado final é um ZIP com shapefiles prontos para auditoria técnica e continuidade do cadastro.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2"><MousePointerClick size={14} className="text-amber-400" /> Passo a passo</h4>
-                      <ol className="space-y-3 text-sm text-slate-400">
-                        <li className="flex gap-3">
-                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-xs font-bold">1</span>
-                          <span>Acesse a aba <strong className="text-slate-300">Novo CAR</strong> e envie o arquivo ZIP do imóvel.</span>
-                        </li>
-                        <li className="flex gap-3">
-                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-xs font-bold">2</span>
-                          <span>Clique em <strong className="text-slate-300">Iniciar análise</strong> e acompanhe o painel em modo agente (etapas + progresso + mensagens de execução).</span>
-                        </li>
-                        <li className="flex gap-3">
-                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-xs font-bold">3</span>
-                          <span>Revise os cards de área (Imóvel, AC, AUAS, AVN/ARL), o detalhamento por ano e o resumo final da IA.</span>
-                        </li>
-                        <li className="flex gap-3">
-                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-xs font-bold">4</span>
-                          <span>Baixe o ZIP final e valide atributos em SIG (QGIS/ArcGIS) antes do protocolo.</span>
-                        </li>
-                      </ol>
-                    </div>
-
-                    <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-4">
-                      <h4 className="text-sm font-semibold text-amber-400 mb-2 flex items-center gap-2"><CheckCircle2 size={14} /> Automação de ABERTURA (AUAS)</h4>
-                      <ul className="space-y-1.5 text-sm text-slate-400">
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />A coluna <strong className="text-slate-300">ABERTURA</strong> do shape AUAS é preenchida automaticamente quando há ano detectado.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />Fonte primária: PRODES vetorial; fallback: ano extraído da análise textual de IA.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />Quando houver múltiplos anos, o sistema adota o <strong className="text-slate-300">ano mais recente</strong>.</li>
-                      </ul>
-                    </div>
-
-                    <div className="rounded-xl border border-blue-500/10 bg-blue-500/5 p-4">
-                      <h4 className="text-sm font-semibold text-blue-400 mb-2 flex items-center gap-2"><Clock size={14} /> Persistência e histórico</h4>
-                      <ul className="space-y-1.5 text-sm text-slate-400">
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-blue-400 mt-1 shrink-0" />Jobs da aba ficam persistidos em <strong className="text-slate-300">auas_jobs</strong> para reabertura posterior.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-blue-400 mt-1 shrink-0" />Imagens de análise e ZIP final ficam disponíveis no Cloudinary para download.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-blue-400 mt-1 shrink-0" />A conversa relacionada recebe resumo técnico automático para manter rastreabilidade.</li>
-                      </ul>
-                    </div>
-
-                    <button onClick={() => onGoAuas()} className="flex items-center gap-2 text-sm font-medium text-amber-400 hover:text-amber-300 transition-colors">
-                      Ir para Novo CAR <ArrowRight size={14} />
-                    </button>
-                  </div>
-                )}
-              </section>
-
-              {/* ═══════════════════════════════════════════════════════════════
-                   SECTION 6 — CBERS-4A / WPM
+                   SECTION 5 — CBERS-4A / WPM
                  ═══════════════════════════════════════════════════════════════ */}
               <section id="manual-cbers" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
@@ -537,7 +458,7 @@ export default function FeaturesManual({
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-400"><Camera size={22} /></div>
                     <div>
-                      <h2 className="font-semibold text-lg text-slate-200">6. Gerador CBERS-4A / WPM</h2>
+                      <h2 className="font-semibold text-lg text-slate-200">5. Gerador CBERS-4A / WPM</h2>
                       <p className="text-xs text-slate-500 mt-0.5">Fusão pancromática e geração de GeoTIFF em alta resolução (2m)</p>
                     </div>
                   </div>
@@ -602,7 +523,7 @@ export default function FeaturesManual({
               </section>
 
               {/* ═══════════════════════════════════════════════════════════════
-                   SECTION 7 — CRÉDITOS E COBRANÇA
+                   SECTION 6 — CRÉDITOS E COBRANÇA
                  ═══════════════════════════════════════════════════════════════ */}
               <section id="manual-billing" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
@@ -612,7 +533,7 @@ export default function FeaturesManual({
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400"><Wallet size={22} /></div>
                     <div>
-                      <h2 className="font-semibold text-lg text-slate-200">7. Créditos e Cobrança por Uso</h2>
+                      <h2 className="font-semibold text-lg text-slate-200">6. Créditos e Cobrança por Uso</h2>
                       <p className="text-xs text-slate-500 mt-0.5">Saldo, recarga, extrato, consumo por modelo e bloqueio por saldo insuficiente</p>
                     </div>
                   </div>
@@ -664,7 +585,7 @@ export default function FeaturesManual({
               </section>
 
               {/* ═══════════════════════════════════════════════════════════════
-                   SECTION 8 — SEGURANÇA, CONTA E TERMOS
+                   SECTION 7 — SEGURANÇA, CONTA E TERMOS
                  ═══════════════════════════════════════════════════════════════ */}
               <section id="manual-security" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
@@ -674,7 +595,7 @@ export default function FeaturesManual({
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-red-500/10 text-red-400"><ShieldCheck size={22} /></div>
                     <div>
-                      <h2 className="font-semibold text-lg text-slate-200">8. Segurança, Conta e Termos de Uso</h2>
+                      <h2 className="font-semibold text-lg text-slate-200">7. Segurança, Conta e Termos de Uso</h2>
                       <p className="text-xs text-slate-500 mt-0.5">Controle de acesso, recuperação de senha e conformidade de uso</p>
                     </div>
                   </div>
@@ -717,7 +638,7 @@ export default function FeaturesManual({
               </section>
 
               {/* ═══════════════════════════════════════════════════════════════
-                   SECTION 9 — FAQ
+                   SECTION 8 — FAQ
                  ═══════════════════════════════════════════════════════════════ */}
               <section id="manual-faq" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
                 <button
@@ -727,7 +648,7 @@ export default function FeaturesManual({
                   <div className="flex items-center gap-4">
                     <div className="p-2.5 rounded-xl bg-slate-500/10 text-slate-400"><HelpCircle size={22} /></div>
                     <div>
-                      <h2 className="font-semibold text-lg text-slate-200">9. Perguntas Frequentes</h2>
+                      <h2 className="font-semibold text-lg text-slate-200">8. Perguntas Frequentes</h2>
                       <p className="text-xs text-slate-500 mt-0.5">Dúvidas comuns sobre a plataforma</p>
                     </div>
                   </div>
@@ -787,10 +708,6 @@ export default function FeaturesManual({
                       {
                         q: 'O que acontece se eu tentar usar a IA sem créditos?',
                         a: 'A interface bloqueia o envio imediatamente, exibe alerta de saldo insuficiente e redireciona para Configurações com a recarga aberta.',
-                      },
-                      {
-                        q: 'O Novo CAR preenche automaticamente o campo ABERTURA do AUAS?',
-                        a: 'Sim, quando há ano detectável. A prioridade é PRODES vetorial; se necessário, usa fallback por extração textual da análise. Em múltiplos anos, utiliza o mais recente.',
                       },
                       {
                         q: 'Onde encontro os Termos de Uso da plataforma?',
