@@ -9604,6 +9604,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               onGoChat={() => setActiveView('chat')}
               onGoSimcar={() => setActiveView('simcar-clip')}
               onGoCbers={() => setActiveView('cbers-wpm')}
+              onGoVetoriza={() => setActiveView('vetoriza-mat')}
             />
           </Suspense>
         ) : (
