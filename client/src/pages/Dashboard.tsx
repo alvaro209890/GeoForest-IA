@@ -1310,7 +1310,7 @@ export default function Dashboard() {
   const [verticesError, setVerticesError] = useState<string | null>(null);
   const [verticesRows, setVerticesRows] = useState<VerticesResultRow[]>([]);
   const [verticesDownloadUrl, setVerticesDownloadUrl] = useState<string | null>(null);
-  const [verticesDefaultToleranceMm, setVerticesDefaultToleranceMm] = useState('10');
+  const [verticesDefaultToleranceMm, setVerticesDefaultToleranceMm] = useState('1');
   const [verticesIncludeOriginals, setVerticesIncludeOriginals] = useState(true);
   const [verticesIncludeReport, setVerticesIncludeReport] = useState(true);
   const [verticesIncludeCsv, setVerticesIncludeCsv] = useState(true);
@@ -10137,43 +10137,82 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               )}
 
               {verticesLayers.length > 0 && (
-                <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-4">
-                  <div>
-                    <h3 className="text-base font-semibold text-white">3. Configuração da análise</h3>
-                    <p className="text-xs text-slate-500 mt-1">A tolerância filtra a distância máxima permitida entre vértices.</p>
-                  </div>
-                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
-                    <div>
-                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Tolerância padrão (mm)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.1"
-                        value={verticesDefaultToleranceMm}
-                        onChange={(e) => setVerticesDefaultToleranceMm(e.target.value)}
-                        className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-violet-500/50"
-                      />
+                <section className="relative overflow-hidden rounded-3xl border border-emerald-400/15 bg-gradient-to-br from-[#08130f]/95 via-[#0c1716]/95 to-[#111827]/90 p-4 shadow-2xl shadow-black/20 sm:p-6">
+                  <div className="pointer-events-none absolute -right-24 -top-24 h-56 w-56 rounded-full bg-emerald-500/10 blur-3xl" />
+                  <div className="pointer-events-none absolute -bottom-20 left-1/3 h-44 w-44 rounded-full bg-violet-500/10 blur-3xl" />
+                  <div className="relative space-y-5">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="max-w-2xl">
+                        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-100">
+                          <Settings size={13} />
+                          Parâmetros da análise
+                        </div>
+                        <h3 className="mt-3 text-lg font-bold text-white">3. Configuração da análise</h3>
+                        <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                          A tolerância padrão agora começa em <span className="font-semibold text-emerald-200">1 mm</span>. Ela vale para todas as camadas que não tiverem uma tolerância própria na tabela acima.
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-emerald-300/15 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-300/80">Padrão recomendado</p>
+                        <p className="mt-1 text-2xl font-black leading-none tabular-nums">{verticesDefaultToleranceMm || '1'} mm</p>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                      {[
-                        { checked: true, label: 'Gerar ponto médio', disabled: true, onChange: () => undefined },
-                        { checked: verticesIncludeOriginals, label: 'Gerar vértices A/B', onChange: setVerticesIncludeOriginals },
-                        { checked: verticesIncludeReport, label: 'Gerar relatório TXT', onChange: setVerticesIncludeReport },
-                        { checked: verticesIncludeCsv, label: 'Gerar CSV resumo', onChange: setVerticesIncludeCsv },
-                        { checked: verticesPreserveCrs, label: 'Manter CRS original', onChange: setVerticesPreserveCrs },
-                        { checked: verticesMetricTemporary, label: 'Usar CRS métrico temporário', onChange: setVerticesMetricTemporary },
-                      ].map((item) => (
-                        <label key={item.label} className={`flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-slate-300 ${item.disabled ? 'opacity-70' : 'cursor-pointer hover:bg-white/[0.05]'}`}>
+
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
+                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                        <label className="mb-2 block text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Tolerância padrão</label>
+                        <div className="flex items-stretch overflow-hidden rounded-2xl border border-emerald-400/20 bg-white/[0.04] focus-within:border-emerald-300/60 focus-within:bg-emerald-500/10">
                           <input
-                            type="checkbox"
-                            checked={item.checked}
-                            disabled={item.disabled}
-                            onChange={(e) => item.onChange(e.target.checked)}
-                            className="h-4 w-4 rounded border-white/20 bg-white/10 accent-violet-500"
+                            type="number"
+                            min="0"
+                            step="0.1"
+                            value={verticesDefaultToleranceMm}
+                            onChange={(e) => setVerticesDefaultToleranceMm(e.target.value)}
+                            className="min-w-0 flex-1 bg-transparent px-4 py-3 text-lg font-black tabular-nums text-white outline-none placeholder-slate-600"
+                            placeholder="1"
                           />
-                          <span>{item.label}</span>
-                        </label>
-                      ))}
+                          <span className="flex items-center border-l border-white/10 bg-white/[0.04] px-4 text-sm font-bold text-emerald-200">mm</span>
+                        </div>
+                        <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+                          Use valores menores para encontrar duplicidades finas. Camadas com valor próprio ignoram esse padrão.
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        {[
+                          { checked: true, label: 'Gerar ponto médio', description: 'Sempre cria o ponto central entre os vértices.', disabled: true, onChange: () => undefined },
+                          { checked: verticesIncludeOriginals, label: 'Gerar vértices A/B', description: 'Inclui os dois pontos originais detectados.', onChange: setVerticesIncludeOriginals },
+                          { checked: verticesIncludeReport, label: 'Gerar relatório TXT', description: 'Resumo técnico em texto para conferência.', onChange: setVerticesIncludeReport },
+                          { checked: verticesIncludeCsv, label: 'Gerar CSV resumo', description: 'Planilha com ranking, distâncias e camada.', onChange: setVerticesIncludeCsv },
+                          { checked: verticesPreserveCrs, label: 'Manter CRS original', description: 'Entrega no mesmo sistema quando possível.', onChange: setVerticesPreserveCrs },
+                          { checked: verticesMetricTemporary, label: 'Usar CRS métrico temporário', description: 'Mede distâncias em metros com mais precisão.', onChange: setVerticesMetricTemporary },
+                        ].map((item) => (
+                          <label
+                            key={item.label}
+                            className={`group rounded-2xl border p-3 transition-all ${item.checked
+                              ? 'border-emerald-300/25 bg-emerald-500/10 text-emerald-50 shadow-[0_0_24px_rgba(16,185,129,0.08)]'
+                              : 'border-white/10 bg-white/[0.035] text-slate-300 hover:border-white/20 hover:bg-white/[0.06]'
+                              } ${item.disabled ? 'cursor-default opacity-80' : 'cursor-pointer'}`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border ${item.checked ? 'border-emerald-300/40 bg-emerald-400/15 text-emerald-200' : 'border-white/15 bg-white/[0.04] text-slate-500'}`}>
+                                {item.checked ? <CheckCircle2 size={15} /> : <Square size={13} />}
+                              </span>
+                              <input
+                                type="checkbox"
+                                checked={item.checked}
+                                disabled={item.disabled}
+                                onChange={(e) => item.onChange(e.target.checked)}
+                                className="sr-only"
+                              />
+                              <span className="min-w-0">
+                                <span className="block text-xs font-bold text-white">{item.label}</span>
+                                <span className="mt-1 block text-[11px] leading-relaxed text-slate-500 group-hover:text-slate-400">{item.description}</span>
+                              </span>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </section>
