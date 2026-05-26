@@ -4115,20 +4115,59 @@ export default function Dashboard() {
     window.open(toFileProxyUrl(sourceUrl, fileName, 'download'), '_blank', 'noopener,noreferrer');
   }, []);
 
-  const downloadSimcarZip = useCallback((url?: string | null, filename = 'SIMCAR_Recorte.zip') => {
-    const resolved = resolveBackendUrl(url || '');
+  const downloadSimcarZip = useCallback(async (url?: string | null, filename = 'SIMCAR_Recorte.zip') => {
+    const rawUrl = String(url || '').trim();
+    const resolved = resolveBackendUrl(rawUrl);
+    const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_') || 'SIMCAR_Recorte.zip';
     if (!resolved) {
       toast.error('Link do ZIP indisponível. Processe o recorte novamente.');
       return;
     }
-    const a = document.createElement('a');
-    a.href = resolved;
-    a.download = filename.replace(/[^a-zA-Z0-9._-]/g, '_') || 'SIMCAR_Recorte.zip';
-    a.rel = 'noopener noreferrer';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }, []);
+
+    const isBackendApiDownload = rawUrl.startsWith('/api/') || (() => {
+      try {
+        const parsed = new URL(resolved, window.location.origin);
+        return parsed.pathname.startsWith('/api/') && parsed.origin === new URL(apiUrl('/api/health'), window.location.origin).origin;
+      } catch {
+        return false;
+      }
+    })();
+
+    if (!isBackendApiDownload) {
+      const a = document.createElement('a');
+      a.href = resolved;
+      a.download = safeFilename;
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return;
+    }
+
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error('Usuário não autenticado. Faça login novamente para baixar o ZIP.');
+      const token = await user.getIdToken();
+      const response = await fetch(resolved, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) {
+        const payload = await readApiError(response);
+        throw new Error(payload?.error || `Falha ao baixar ZIP (${response.status}).`);
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = safeFilename;
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      toast.success('Download do ZIP iniciado.');
+    } catch (error: any) {
+      toast.error(error?.message || 'Falha ao baixar ZIP.');
+    }
+  }, [readApiError]);
 
   const downloadCbersWmsZip = useCallback(async (scene: CbersScene) => {
     const endpoint = scene.wmsDownloadUrl || (
@@ -9972,88 +10011,127 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               )}
 
               {verticesLayers.length > 0 && (
-                <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-4">
-                  <div>
-                    <h3 className="text-base font-semibold text-white">2. Camadas encontradas</h3>
-                    <p className="text-xs text-slate-500 mt-1">{verticesLayers.length} camada(s) identificada(s) no ZIP.</p>
-                  </div>
-                  <div className="overflow-x-auto rounded-xl border border-white/10">
-                    <table className="w-full min-w-[900px] text-left text-xs">
-                      <thead className="bg-white/[0.04] text-[10px] uppercase tracking-wider text-slate-500">
-                        <tr>
-                          <th className="px-3 py-2">Analisar</th>
-                          <th className="px-3 py-2">Camada</th>
-                          <th className="px-3 py-2">Geometria</th>
-                          <th className="px-3 py-2">Feições</th>
-                          <th className="px-3 py-2">Pontos</th>
-                          <th className="px-3 py-2">Tolerância mm</th>
-                          <th className="px-3 py-2">CRS</th>
-                          <th className="px-3 py-2">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/10">
-                        {verticesLayers.map((layer) => {
-                          const disabled = Boolean(layer.ignoredReason) || layer.featureCount <= 0 || layer.geometryType !== 'Polygon';
-                          return (
-                            <tr key={layer.id} className={disabled ? 'text-slate-600' : 'text-slate-200'}>
-                              <td className="px-3 py-2">
-                                <input
-                                  type="checkbox"
-                                  checked={layer.analyze}
-                                  disabled={disabled}
-                                  onChange={(e) => updateVerticesLayer(layer.id, { analyze: e.target.checked })}
-                                  className="h-4 w-4 rounded border-white/20 bg-white/10 accent-violet-500"
-                                />
-                              </td>
-                              <td className="px-3 py-2 font-semibold text-white">{layer.name}</td>
-                              <td className="px-3 py-2">{layer.geometryType}</td>
-                              <td className="px-3 py-2 tabular-nums">{layer.featureCount}</td>
-                              <td className="px-3 py-2">
-                                <input
-                                  type="number"
-                                  min="1"
-                                  step="1"
-                                  value={layer.pointCount}
-                                  disabled={disabled}
-                                  onChange={(e) => updateVerticesLayer(layer.id, { pointCount: Math.max(1, Number(e.target.value || 1)) })}
-                                  className="w-20 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-xs text-slate-100 outline-none focus:border-violet-500/50 disabled:opacity-40"
-                                />
-                              </td>
-                              <td className="px-3 py-2">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.1"
-                                  value={layer.toleranceMm}
-                                  disabled={disabled}
-                                  placeholder={verticesDefaultToleranceMm}
-                                  onChange={(e) => updateVerticesLayer(layer.id, { toleranceMm: e.target.value })}
-                                  className="w-28 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-xs text-slate-100 outline-none placeholder-slate-600 focus:border-violet-500/50 disabled:opacity-40"
-                                />
-                              </td>
-                              <td className="px-3 py-2">
-                                {layer.missingCrs ? (
-                                  <input
-                                    type="text"
-                                    value={layer.crsOverride}
-                                    placeholder="EPSG:4674"
-                                    onChange={(e) => updateVerticesLayer(layer.id, { crsOverride: e.target.value })}
-                                    className="w-28 rounded-lg border border-amber-400/30 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-100 outline-none focus:border-amber-300"
-                                  />
-                                ) : (
-                                  <span>{layer.crsLabel}</span>
-                                )}
-                              </td>
-                              <td className="px-3 py-2">
-                                <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase ${disabled ? 'bg-white/5 text-slate-500' : layer.missingCrs ? 'bg-amber-500/10 text-amber-200' : 'bg-emerald-500/10 text-emerald-200'}`}>
-                                  {layer.ignoredReason || (layer.missingCrs ? 'CRS manual' : layer.status || 'Pronta')}
-                                </span>
-                              </td>
+                <section className="relative overflow-hidden rounded-3xl border border-violet-400/15 bg-gradient-to-br from-[#0b1412]/95 via-[#101421]/90 to-[#140d1f]/90 p-4 shadow-2xl shadow-black/20 sm:p-6">
+                  <div className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full bg-violet-500/10 blur-3xl" />
+                  <div className="pointer-events-none absolute -bottom-24 -left-16 h-48 w-48 rounded-full bg-emerald-500/10 blur-3xl" />
+                  <div className="relative space-y-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                      <div>
+                        <div className="inline-flex items-center gap-2 rounded-full border border-violet-300/20 bg-violet-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-violet-100">
+                          <Layers size={13} />
+                          Camadas do ZIP
+                        </div>
+                        <h3 className="mt-3 text-lg font-bold text-white">2. Conferência das camadas</h3>
+                        <p className="mt-1 text-xs text-slate-400">
+                          Escolha quais camadas entram na análise e ajuste pontos, tolerância e CRS antes de processar.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-center sm:min-w-[360px]">
+                        {[
+                          { label: 'Camadas', value: verticesLayers.length },
+                          { label: 'Analisáveis', value: verticesLayers.filter((layer) => !layer.ignoredReason && layer.featureCount > 0 && layer.geometryType === 'Polygon').length },
+                          { label: 'Selecionadas', value: verticesLayers.filter((layer) => layer.analyze && !layer.ignoredReason && layer.featureCount > 0 && layer.geometryType === 'Polygon').length },
+                        ].map((item) => (
+                          <div key={item.label} className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{item.label}</p>
+                            <p className="mt-1 text-base font-black tabular-nums text-white">{item.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                      <div className="overflow-x-auto custom-scrollbar">
+                        <table className="w-full min-w-[980px] border-separate border-spacing-0 text-left text-xs">
+                          <thead>
+                            <tr className="bg-white/[0.06] text-[10px] uppercase tracking-[0.18em] text-slate-400">
+                              {['Analisar', 'Camada', 'Geometria', 'Feições', 'Pontos', 'Tolerância mm', 'CRS', 'Status'].map((head, idx) => (
+                                <th key={head} className={`px-3 py-3 font-bold ${idx === 0 ? 'pl-4' : ''} ${idx === 7 ? 'pr-4' : ''}`}>{head}</th>
+                              ))}
                             </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                          </thead>
+                          <tbody>
+                            {verticesLayers.map((layer, index) => {
+                              const disabled = Boolean(layer.ignoredReason) || layer.featureCount <= 0 || layer.geometryType !== 'Polygon';
+                              return (
+                                <tr
+                                  key={layer.id}
+                                  className={`group transition-colors ${disabled
+                                    ? 'text-slate-500 opacity-75'
+                                    : 'text-slate-200 hover:bg-violet-500/[0.06]'
+                                    } ${index % 2 === 0 ? 'bg-white/[0.015]' : 'bg-transparent'}`}
+                                >
+                                  <td className="border-t border-white/5 px-3 py-3 pl-4 align-middle">
+                                    <label className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border transition-all ${disabled ? 'border-white/10 bg-white/[0.03]' : layer.analyze ? 'border-violet-300/40 bg-violet-500/20 text-violet-100 shadow-[0_0_18px_rgba(139,92,246,0.18)]' : 'border-white/10 bg-white/[0.04] hover:border-violet-300/30'}`}>
+                                      <input
+                                        type="checkbox"
+                                        checked={layer.analyze}
+                                        disabled={disabled}
+                                        onChange={(e) => updateVerticesLayer(layer.id, { analyze: e.target.checked })}
+                                        className="sr-only"
+                                      />
+                                      {layer.analyze && !disabled ? <CheckCircle2 size={17} /> : <Square size={15} />}
+                                    </label>
+                                  </td>
+                                  <td className="max-w-[260px] border-t border-white/5 px-3 py-3 align-middle">
+                                    <p className={`truncate font-bold ${disabled ? 'text-slate-500' : 'text-white'}`}>{layer.name}</p>
+                                    {layer.path && <p className="mt-0.5 truncate text-[10px] text-slate-500">{layer.path}</p>}
+                                  </td>
+                                  <td className="border-t border-white/5 px-3 py-3 align-middle">
+                                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${layer.geometryType === 'Polygon' ? 'bg-emerald-500/10 text-emerald-200' : 'bg-slate-500/10 text-slate-400'}`}>
+                                      {layer.geometryType || '—'}
+                                    </span>
+                                  </td>
+                                  <td className="border-t border-white/5 px-3 py-3 align-middle font-semibold tabular-nums text-slate-100">{layer.featureCount}</td>
+                                  <td className="border-t border-white/5 px-3 py-3 align-middle">
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      value={layer.pointCount}
+                                      disabled={disabled}
+                                      onChange={(e) => updateVerticesLayer(layer.id, { pointCount: Math.max(1, Number(e.target.value || 1)) })}
+                                      className="w-20 rounded-xl border border-white/10 bg-white/[0.05] px-2 py-2 text-xs font-semibold text-slate-100 outline-none transition focus:border-violet-400/60 focus:bg-violet-500/10 disabled:opacity-40"
+                                    />
+                                  </td>
+                                  <td className="border-t border-white/5 px-3 py-3 align-middle">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.1"
+                                      value={layer.toleranceMm}
+                                      disabled={disabled}
+                                      placeholder={verticesDefaultToleranceMm}
+                                      onChange={(e) => updateVerticesLayer(layer.id, { toleranceMm: e.target.value })}
+                                      className="w-28 rounded-xl border border-white/10 bg-white/[0.05] px-2 py-2 text-xs font-semibold text-slate-100 outline-none placeholder-slate-600 transition focus:border-violet-400/60 focus:bg-violet-500/10 disabled:opacity-40"
+                                    />
+                                  </td>
+                                  <td className="max-w-[180px] border-t border-white/5 px-3 py-3 align-middle">
+                                    {layer.missingCrs ? (
+                                      <input
+                                        type="text"
+                                        value={layer.crsOverride}
+                                        placeholder="EPSG:4674"
+                                        onChange={(e) => updateVerticesLayer(layer.id, { crsOverride: e.target.value })}
+                                        className="w-28 rounded-xl border border-amber-400/30 bg-amber-500/10 px-2 py-2 text-xs font-semibold text-amber-100 outline-none focus:border-amber-300"
+                                      />
+                                    ) : (
+                                      <span className="block truncate text-slate-300" title={layer.crsLabel}>{layer.crsLabel}</span>
+                                    )}
+                                  </td>
+                                  <td className="border-t border-white/5 px-3 py-3 pr-4 align-middle">
+                                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${disabled ? 'bg-white/5 text-slate-500' : layer.missingCrs ? 'bg-amber-500/10 text-amber-200 ring-1 ring-amber-400/20' : 'bg-emerald-500/10 text-emerald-200 ring-1 ring-emerald-400/20'}`}>
+                                      {!disabled && !layer.missingCrs && <CheckCircle2 size={12} />}
+                                      {layer.ignoredReason || (layer.missingCrs ? 'CRS manual' : layer.status || 'Pronta')}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   </div>
                 </section>
               )}
