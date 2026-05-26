@@ -76,7 +76,7 @@ import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
-const VetorizaMatPanel = lazy(() => import('@/components/VetorizaMatPanel'));
+
 type DocumentReference = ReturnType<typeof doc>;
 
 type ChatMessage = {
@@ -1146,7 +1146,7 @@ function CbersMapPreview({
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'cbers-wpm' | 'vetoriza-mat'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'cbers-wpm'>('chat');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -6492,13 +6492,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <Satellite size={15} />
               <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">CBERS</span>
             </button>
-            <button
-              onClick={() => setActiveView('vetoriza-mat')}
-              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'vetoriza-mat' ? 'bg-emerald-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-            >
-              <FileText size={15} />
-              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">Vetoriza</span>
-            </button>
           </div>
 
           {/* ─── Botão de ação contextual ─── */}
@@ -6749,12 +6742,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 <p className="text-[10px] text-slate-600 mt-1">Clique em "Novo Recorte" para começar</p>
               </div>
             )
-          ) : activeView === 'vetoriza-mat' ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <FileText size={32} className="text-slate-600 mb-3" />
-              <p className="text-sm text-slate-400">VetorizaMat</p>
-              <p className="text-[10px] text-slate-600 mt-1">Projetos e matriculas</p>
-            </div>
           ) : (
             /* ─── Chat Conversation List ─── */
             filteredConversations.map((conv) => (
@@ -6856,7 +6843,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2 min-w-0">
               <Zap size={16} className="text-emerald-400 fill-current shrink-0" />
               <span className="font-medium text-slate-200 text-sm sm:text-base truncate">
-                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'vetoriza-mat' ? 'VetorizaMat' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
+                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
               </span>
               {activeView === 'chat' && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide shrink-0 hidden sm:inline-block">
@@ -9580,16 +9567,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               })()}
             </div>
           </div>
-        ) : activeView === 'vetoriza-mat' ? (
-          <Suspense fallback={
-            <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
-              <div className="max-w-6xl mx-auto">
-                <div className="rounded-2xl border border-white/10 bg-[#0e1612]/70 p-6 text-sm text-slate-300">Carregando VetorizaMat...</div>
-              </div>
-            </div>
-          }>
-            <VetorizaMatPanel />
-          </Suspense>
         ) : activeView === 'features' ? (
           <Suspense fallback={
             <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
@@ -9604,7 +9581,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               onGoChat={() => setActiveView('chat')}
               onGoSimcar={() => setActiveView('simcar-clip')}
               onGoCbers={() => setActiveView('cbers-wpm')}
-              onGoVetoriza={() => setActiveView('vetoriza-mat')}
             />
           </Suspense>
         ) : (

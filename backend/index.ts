@@ -41,7 +41,6 @@ import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerCbersWpmRoutes } from "./cbers-wpm";
 import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-archive";
-import { registerVetorizaProxyRoutes } from "./vetoriza-proxy";
 import {
   JobCancelledError,
   finishJob,
@@ -511,7 +510,6 @@ async function startServer() {
     ],
     requireAuth,
   );
-  registerVetorizaProxyRoutes(app);
   app.use(["/api/upload-image", "/api/upload-file"], attachOptionalAuth);
   app.use("/api/storage", express.static(STORAGE_ROOT));
   app.use("/api/raster", express.static(CBERS_ARCHIVE_ROOT));

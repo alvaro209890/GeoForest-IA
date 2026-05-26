@@ -24,7 +24,6 @@ type FeaturesManualProps = {
   onGoChat: () => void;
   onGoSimcar: () => void;
   onGoCbers: () => void;
-  onGoVetoriza: () => void;
 };
 
 export default function FeaturesManual({
@@ -33,7 +32,6 @@ export default function FeaturesManual({
   onGoChat,
   onGoSimcar,
   onGoCbers,
-  onGoVetoriza,
 }: FeaturesManualProps) {
   return (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
@@ -72,7 +70,6 @@ export default function FeaturesManual({
                   { id: 'analysis', icon: Satellite, label: 'Análise por IA', color: 'amber' },
                   { id: 'map', icon: Globe, label: 'Mapa WMS', color: 'blue' },
                   { id: 'cbers', icon: Camera, label: 'CBERS-4A', color: 'cyan' },
-                  { id: 'vetoriza', icon: FileText, label: 'Vetoriza Matrícula', color: 'emerald' },
                   { id: 'billing', icon: Wallet, label: 'Créditos', color: 'emerald' },
                   { id: 'security', icon: ShieldCheck, label: 'Segurança', color: 'red' },
                   { id: 'faq', icon: HelpCircle, label: 'FAQ', color: 'slate' },
@@ -527,119 +524,6 @@ export default function FeaturesManual({
               </section>
 
               {/* ═══════════════════════════════════════════════════════════════
-                   SECTION 6 — VETORIZA MATRÍCULA
-                 ═══════════════════════════════════════════════════════════════ */}
-              <section id="manual-vetoriza" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
-                <button
-                  onClick={() => setManualSection(manualSection === 'vetoriza' ? null : 'vetoriza')}
-                  className="w-full flex items-center justify-between p-4 sm:p-6 text-left hover:bg-white/5 transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400"><FileText size={22} /></div>
-                    <div>
-                      <h2 className="font-semibold text-lg text-slate-200">6. Vetoriza Matrícula</h2>
-                      <p className="text-xs text-slate-500 mt-0.5">PDF de matrícula rural para polígono revisável, validado e exportável</p>
-                    </div>
-                  </div>
-                  <ChevronDown size={18} className={`text-slate-500 transition-transform duration-200 ${manualSection === 'vetoriza' ? 'rotate-180' : ''}`} />
-                </button>
-                {manualSection === 'vetoriza' && (
-                  <div className="px-4 sm:px-6 pb-4 sm:pb-6 space-y-4 sm:space-y-6 border-t border-white/5 pt-4 sm:pt-5">
-                    <div>
-                      <h4 className="text-sm font-semibold text-slate-300 mb-3"><span className="text-emerald-400">O que faz</span></h4>
-                      <p className="text-sm text-slate-400 leading-relaxed">
-                        O Vetoriza Matrícula transforma PDFs escaneados de matrículas e memoriais descritivos em um polígono georreferenciado. O módulo executa OCR, extração estruturada por IA, normalização de coordenadas, fechamento do perímetro, cálculo de área e validações geométricas antes de liberar a revisão e o download.
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/5 p-4">
-                        <h4 className="text-sm font-semibold text-emerald-300 mb-1">OCR resiliente</h4>
-                        <p className="text-sm text-slate-400 leading-relaxed">Usa OCR local Tesseract em português/inglês e mantém fallback de visão quando disponível, reduzindo dependência de limite diário de API.</p>
-                      </div>
-                      <div className="rounded-xl border border-blue-500/15 bg-blue-500/5 p-4">
-                        <h4 className="text-sm font-semibold text-blue-300 mb-1">DeepSeek estruturando JSON</h4>
-                        <p className="text-sm text-slate-400 leading-relaxed">A API DeepSeek já configurada no sistema interpreta o OCR e retorna matrícula, área, CRS e lista de vértices em JSON validado.</p>
-                      </div>
-                      <div className="rounded-xl border border-purple-500/15 bg-purple-500/5 p-4">
-                        <h4 className="text-sm font-semibold text-purple-300 mb-1">Validação contra gabarito</h4>
-                        <p className="text-sm text-slate-400 leading-relaxed">A base de testes compara vértices, área e sobreposição espacial (IoU) com os polígonos esperados antes de considerar o processamento aprovado.</p>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h4 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2"><MousePointerClick size={14} className="text-emerald-400" /> Passo a passo</h4>
-                      <ol className="space-y-3 text-sm text-slate-400">
-                        <li className="flex gap-3"><span className="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center text-xs font-bold">1</span><span>Abra a aba <strong className="text-slate-300">Vetoriza</strong> na barra lateral e crie um projeto para organizar as matrículas.</span></li>
-                        <li className="flex gap-3"><span className="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center text-xs font-bold">2</span><span>Envie o PDF da matrícula/memorial. O backend renderiza até 8 páginas, incluindo matrículas com várias páginas de descrição perimetral.</span></li>
-                        <li className="flex gap-3"><span className="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center text-xs font-bold">3</span><span>O OCR lê o documento, a IA estrutura os dados e o sistema converte coordenadas DMS/decimais ou UTM para o polígono.</span></li>
-                        <li className="flex gap-3"><span className="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center text-xs font-bold">4</span><span>Na tela de revisão, confira vértices, área calculada, área declarada, divergência percentual, alertas e visualização no mapa.</span></li>
-                        <li className="flex gap-3"><span className="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center text-xs font-bold">5</span><span>Aprove o resultado ou corrija pontos manualmente. Depois exporte em formatos SIG para uso no QGIS/ArcGIS e demais fluxos técnicos.</span></li>
-                      </ol>
-                    </div>
-
-                    <div>
-                      <h4 className="text-sm font-semibold text-slate-300 mb-3">Pipeline técnico documentado</h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {[
-                          'Upload autenticado do PDF e criação de documento no projeto',
-                          'Renderização das páginas e recortes úteis do memorial',
-                          'OCR local Tesseract por+eng e fallback de visão quando disponível',
-                          'Extração estruturada com DeepSeek V4 Flash e fallback V4 Pro',
-                          'Normalização de vértices, coordenadas e altitude',
-                          'Conversão para UTM 22S/SIRGAS 2000 quando necessário',
-                          'Cálculo de área, fechamento do polígono e detecção de autointerseção',
-                          'Trava de qualidade: divergência muito alta bloqueia polígono suspeito',
-                          'Revisão visual no mapa e persistência do histórico',
-                          'Exportação do polígono aprovado para uso em SIG',
-                        ].map((item) => (
-                          <div key={item} className="flex items-start gap-2 rounded-lg bg-white/5 border border-white/5 p-2.5 text-xs text-slate-400">
-                            <CheckCircle2 size={13} className="text-emerald-400 mt-0.5 shrink-0" />
-                            <span>{item}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-emerald-500/10 bg-emerald-500/5 p-4">
-                      <h4 className="text-sm font-semibold text-emerald-400 mb-3 flex items-center gap-2"><CheckCircle2 size={14} /> Validação com matrículas de teste</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                        {[
-                          { m: '11331', v: '14/14 vértices', area: '236.1725 ha', iou: 'IoU 0.999949', diff: '-0.0026%' },
-                          { m: '11332', v: '8/8 vértices', area: '234.6933 ha', iou: 'IoU 0.999999', diff: '~0.0000%' },
-                          { m: '11333', v: '38/38 vértices', area: '64.2604 ha', iou: 'IoU 0.999934', diff: '0.0036%' },
-                        ].map((item) => (
-                          <div key={item.m} className="rounded-lg border border-white/10 bg-[#08110d]/70 p-3">
-                            <p className="text-xs uppercase tracking-wider text-emerald-400 font-bold mb-2">Matrícula {item.m}</p>
-                            <ul className="space-y-1 text-slate-400">
-                              <li>{item.v}</li>
-                              <li>Área extraída: {item.area}</li>
-                              <li>Diferença vs gabarito: {item.diff}</li>
-                              <li>{item.iou}</li>
-                            </ul>
-                          </div>
-                        ))}
-                      </div>
-                      <p className="text-xs text-slate-500 mt-3">Critério usado nos testes: quantidade de vértices igual ao esperado, IoU ≥ 0.985 e diferença de área ≤ 1,5% contra o polígono gabarito.</p>
-                    </div>
-
-                    <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-4">
-                      <h4 className="text-sm font-semibold text-amber-400 mb-2 flex items-center gap-2"><AlertTriangle size={14} /> Pontos importantes</h4>
-                      <ul className="space-y-1.5 text-sm text-slate-400">
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />DeepSeek é usado para texto/JSON. A API oficial configurada atualmente não aceita imagem direta; por isso o OCR de imagem fica separado.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />Mesmo com alta precisão, a revisão humana continua obrigatória antes de uso em protocolo, laudo ou decisão técnica.</li>
-                        <li className="flex items-start gap-2"><ArrowRight size={12} className="text-amber-500 mt-1 shrink-0" />Se a área extraída divergir demais da área declarada, o sistema bloqueia a geração para evitar salvar polígono inválido.</li>
-                      </ul>
-                    </div>
-
-                    <button onClick={() => onGoVetoriza()} className="flex items-center gap-2 text-sm font-medium text-emerald-400 hover:text-emerald-300 transition-colors">
-                      Ir para Vetoriza Matrícula <ArrowRight size={14} />
-                    </button>
-                  </div>
-                )}
-              </section>
-
-              {/* ═══════════════════════════════════════════════════════════════
                    SECTION 7 — CRÉDITOS E COBRANÇA
                  ═══════════════════════════════════════════════════════════════ */}
               <section id="manual-billing" className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden">
@@ -811,18 +695,6 @@ export default function FeaturesManual({
                         a: 'Cada recorte fica vinculado ao modo em que foi criado (Recorte Automático ou Vetorizado). Para evitar inconsistência de pipeline, a troca de modo é bloqueada no item ativo. Use "Novo Recorte" para iniciar no outro modo.',
                       },
                       {
-                        q: 'Como funciona o Vetoriza Matrícula?',
-                        a: 'Você cria um projeto, envia o PDF da matrícula ou memorial descritivo e o sistema executa OCR, extração com IA, normalização de coordenadas, cálculo de área e validações geométricas. Antes do download, o resultado aparece em revisão para conferência dos vértices, alertas e mapa.',
-                      },
-                      {
-                        q: 'O Vetoriza aceita matrícula escaneada sem texto selecionável?',
-                        a: 'Sim. O backend renderiza as páginas como imagem e usa OCR local Tesseract em português/inglês. Quando APIs de visão estão disponíveis, elas podem complementar o OCR. A extração estruturada final usa DeepSeek para texto/JSON.',
-                      },
-                      {
-                        q: 'Como o sistema evita salvar um polígono errado?',
-                        a: 'O pipeline compara área calculada, área declarada, quantidade de vértices e validade geométrica. Se a melhor extração divergir demais, o processamento é bloqueado e exige nova tentativa/revisão em vez de salvar um polígono suspeito.',
-                      },
-                      {
                         q: 'Como funciona o consumo de créditos nessas análises?',
                         a: 'O consumo é por uso real: modelos/tokens de IA e operações de armazenamento associadas ao fluxo. O detalhe aparece no extrato da aba Configurações.',
                       },
@@ -864,7 +736,7 @@ export default function FeaturesManual({
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
                   {[
                     { label: 'Frontend', value: 'React 19 + Vite + Tailwind' },
-                    { label: 'Backend', value: 'Node.js + Express + TypeScript + VetorizaMat API' },
+                    { label: 'Backend', value: 'Node.js + Express + TypeScript' },
                     { label: 'IA / OCR', value: 'DeepSeek V4 + Groq Vision + Tesseract' },
                     { label: 'Auth', value: 'Firebase Auth + Firestore' },
                     { label: 'Geoespacial', value: 'Turf.js + Proj4 + WFS/WMS' },
