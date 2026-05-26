@@ -2116,9 +2116,10 @@ export default function Dashboard() {
       const payload = await readApiError(response);
       if (!response.ok) throw new Error(payload?.error || 'Falha ao importar ZIP.');
       const layers = Array.isArray(payload?.layers) ? payload.layers : [];
+      const visibleLayers = layers.filter((layer: any) => String(layer?.geometryType) === 'Polygon' && Number(layer?.featureCount || 0) > 0 && !layer?.ignoredReason);
       setVerticesUploadId(String(payload?.uploadId || ''));
-      setVerticesLayers(layers.map((layer: any) => {
-        const ignored = Boolean(layer?.ignoredReason) || Number(layer?.featureCount || 0) <= 0 || String(layer?.geometryType) !== 'Polygon';
+      setVerticesLayers(visibleLayers.map((layer: any) => {
+        const ignored = false;
         return {
           id: String(layer?.id || layer?.name || ''),
           name: String(layer?.name || 'CAMADA'),
@@ -2137,7 +2138,7 @@ export default function Dashboard() {
       }));
       const warnings = Array.isArray(payload?.warnings) ? payload.warnings.map((item: any) => String(item)) : [];
       setVerticesWarnings(warnings);
-      if (!layers.some((layer: any) => String(layer?.geometryType) === 'Polygon' && Number(layer?.featureCount || 0) > 0)) {
+      if (!visibleLayers.length) {
         toast.error('Nenhuma camada poligonal com feições foi encontrada.');
       } else {
         toast.success('ZIP importado e camadas poligonais listadas.');

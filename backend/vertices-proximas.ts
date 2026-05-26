@@ -310,6 +310,10 @@ export function listPolygonLayersFromZip(zipBuffer: Buffer): VerticesLayerInfo[]
   });
 }
 
+export function visibleVerticesLayers(layers: VerticesLayerInfo[]): VerticesLayerInfo[] {
+  return layers.filter((layer) => layer.geometryType === "Polygon" && layer.featureCount > 0 && !layer.ignoredReason);
+}
+
 function sameCoordinate(a: number[], b: number[]): boolean {
   return Math.abs(a[0] - b[0]) <= 1e-12 && Math.abs(a[1] - b[1]) <= 1e-12;
 }
@@ -933,8 +937,9 @@ export function registerVerticesRoutes(app: Express): void {
       const filename = safeSegment(String((req.body as any)?.filename || "vertices.zip")) || "vertices.zip";
       const zipBuffer = parseBase64Zip((req.body as any)?.zipBase64);
       const layers = listPolygonLayersFromZip(zipBuffer);
-      if (!layers.some((layer) => layer.geometryType === "Polygon")) {
-        res.status(400).json({ error: layers.length ? "ZIP sem camada poligonal válida." : "ZIP sem shapefile." });
+      const visibleLayers = visibleVerticesLayers(layers);
+      if (!visibleLayers.length) {
+        res.status(400).json({ error: layers.length ? "ZIP sem camada poligonal com feições." : "ZIP sem shapefile." });
         return;
       }
       const uploadId = crypto.randomUUID();
@@ -958,8 +963,10 @@ export function registerVerticesRoutes(app: Express): void {
         ok: true,
         uploadId,
         filename,
-        layers,
-        warnings: layers.filter((layer) => layer.ignoredReason).map((layer) => `${layer.name}: ${layer.ignoredReason}`),
+        layers: visibleLayers,
+        warnings: layers
+          .filter((layer) => layer.ignoredReason && layer.featureCount > 0)
+          .map((layer) => `${layer.name}: ${layer.ignoredReason}`),
       });
     } catch (error: any) {
       res.status(400).json({ error: error?.message || "Falha ao importar ZIP." });
