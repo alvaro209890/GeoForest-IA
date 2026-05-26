@@ -1310,7 +1310,7 @@ export default function Dashboard() {
   const [verticesError, setVerticesError] = useState<string | null>(null);
   const [verticesRows, setVerticesRows] = useState<VerticesResultRow[]>([]);
   const [verticesDownloadUrl, setVerticesDownloadUrl] = useState<string | null>(null);
-  const [verticesDefaultToleranceMm, setVerticesDefaultToleranceMm] = useState('1');
+  const [verticesDefaultToleranceMm, setVerticesDefaultToleranceMm] = useState('');
   const [verticesIncludeOriginals, setVerticesIncludeOriginals] = useState(true);
   const [verticesIncludeReport, setVerticesIncludeReport] = useState(true);
   const [verticesIncludeCsv, setVerticesIncludeCsv] = useState(true);
@@ -2186,7 +2186,9 @@ export default function Dashboard() {
           crsOverride: layer.crsOverride.trim() || undefined,
         })),
         settings: {
-          defaultToleranceMm: Math.max(0, Number(verticesDefaultToleranceMm || 0)),
+          defaultToleranceMm: verticesDefaultToleranceMm.trim()
+            ? Math.max(0, Number(verticesDefaultToleranceMm))
+            : undefined,
           includeOriginalVertices: verticesIncludeOriginals,
           includeTxtReport: verticesIncludeReport,
           includeCsvSummary: verticesIncludeCsv,
@@ -10097,7 +10099,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                   <td className="border-t border-white/5 px-3 py-3 align-middle">
                                     <input
                                       type="number"
-                                      min="0"
                                       step="0.1"
                                       value={layer.toleranceMm}
                                       disabled={disabled}
@@ -10149,12 +10150,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         </div>
                         <h3 className="mt-3 text-lg font-bold text-white">3. Configuração da análise</h3>
                         <p className="mt-1 text-xs leading-relaxed text-slate-400">
-                          A tolerância padrão agora começa em <span className="font-semibold text-emerald-200">1 mm</span>. Ela vale para todas as camadas que não tiverem uma tolerância própria na tabela acima.
+                          Não existe tolerância mínima obrigatória. Deixe em branco para buscar os pares mais próximos sem limite; preencha um valor apenas se quiser filtrar por distância máxima.
                         </p>
                       </div>
                       <div className="rounded-2xl border border-emerald-300/15 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-300/80">Padrão recomendado</p>
-                        <p className="mt-1 text-2xl font-black leading-none tabular-nums">{verticesDefaultToleranceMm || '1'} mm</p>
+                        <p className="mt-1 text-2xl font-black leading-none tabular-nums">{verticesDefaultToleranceMm || 'Sem limite'}</p>
                       </div>
                     </div>
 
@@ -10164,17 +10165,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         <div className="flex items-stretch overflow-hidden rounded-2xl border border-emerald-400/20 bg-white/[0.04] focus-within:border-emerald-300/60 focus-within:bg-emerald-500/10">
                           <input
                             type="number"
-                            min="0"
                             step="0.1"
                             value={verticesDefaultToleranceMm}
                             onChange={(e) => setVerticesDefaultToleranceMm(e.target.value)}
                             className="min-w-0 flex-1 bg-transparent px-4 py-3 text-lg font-black tabular-nums text-white outline-none placeholder-slate-600"
-                            placeholder="1"
+                            placeholder="Sem limite"
                           />
                           <span className="flex items-center border-l border-white/10 bg-white/[0.04] px-4 text-sm font-bold text-emerald-200">mm</span>
                         </div>
                         <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
-                          Use valores menores para encontrar duplicidades finas. Camadas com valor próprio ignoram esse padrão.
+                          Em branco: retorna os N pares mais próximos. Com valor: retorna apenas pares até essa distância máxima.
                         </p>
                       </div>
 

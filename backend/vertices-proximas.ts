@@ -444,14 +444,26 @@ function squaredDistance(a: [number, number], b: [number, number]): number {
   return dx * dx + dy * dy;
 }
 
-export function findClosestPairsWithinTolerance(points: VertexPoint[], maxCount: number, toleranceM: number): Array<{
+export function findClosestPairsWithinTolerance(points: VertexPoint[], maxCount: number, toleranceM?: number | null): Array<{
   a: VertexPoint;
   b: VertexPoint;
   distM: number;
 }> {
-  if (points.length < 2 || maxCount <= 0 || toleranceM < 0) return [];
-  const cellSize = Math.max(toleranceM, 1e-9);
-  const toleranceSq = toleranceM * toleranceM;
+  if (points.length < 2 || maxCount <= 0) return [];
+  const hasToleranceLimit = toleranceM !== null && toleranceM !== undefined && Number.isFinite(Number(toleranceM)) && Number(toleranceM) >= 0;
+  if (!hasToleranceLimit) {
+    const candidates: Array<{ a: VertexPoint; b: VertexPoint; distM: number }> = [];
+    for (let i = 0; i < points.length; i += 1) {
+      for (let j = i + 1; j < points.length; j += 1) {
+        candidates.push({ a: points[i], b: points[j], distM: Math.sqrt(squaredDistance(points[i].metric, points[j].metric)) });
+      }
+    }
+    candidates.sort((a, b) => a.distM - b.distM || a.a.vertexIndex - b.a.vertexIndex || a.b.vertexIndex - b.b.vertexIndex);
+    return candidates.slice(0, maxCount);
+  }
+  const boundedToleranceM = Number(toleranceM);
+  const cellSize = Math.max(boundedToleranceM, 1e-9);
+  const toleranceSq = boundedToleranceM * boundedToleranceM;
   const cells = new Map<string, number[]>();
   const candidates: Array<{ a: VertexPoint; b: VertexPoint; distM: number }> = [];
 
@@ -509,10 +521,14 @@ export function analyzeLayer(args: {
   const metricCrs = crs.kind === "geographic"
     ? estimateUtmProjFromLonLat(center[0], center[1])
     : { label: crs.label, projDef: crs.projDef || "" };
-  const toleranceMm = Number.isFinite(Number(args.selection.toleranceMm))
-    ? Number(args.selection.toleranceMm)
-    : Number(args.settings.defaultToleranceMm ?? 10);
-  const toleranceM = Math.max(0, toleranceMm / 1000);
+  const explicitToleranceMm = Number(args.selection.toleranceMm);
+  const defaultToleranceMm = Number(args.settings.defaultToleranceMm);
+  const toleranceMm = Number.isFinite(explicitToleranceMm)
+    ? Math.max(0, explicitToleranceMm)
+    : Number.isFinite(defaultToleranceMm)
+      ? Math.max(0, defaultToleranceMm)
+      : null;
+  const toleranceM = toleranceMm === null ? null : toleranceMm / 1000;
   const requested = Math.max(0, Math.floor(Number(args.selection.pointCount || 0)));
   const layerCandidates: VertexPair[] = [];
 
