@@ -52,6 +52,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   DollarSign,
+  Network,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { fetchSignInMethodsForEmail, onAuthStateChanged, sendPasswordResetEmail, signOut } from 'firebase/auth';
@@ -495,6 +496,45 @@ type CbersHistoryItem = {
   batchZipRelativePath?: string;
   batchZipFilename?: string;
   batchZipBytes?: number;
+};
+
+type VerticesLayer = {
+  id: string;
+  name: string;
+  path?: string;
+  geometryType: string;
+  featureCount: number;
+  crsLabel: string;
+  missingCrs: boolean;
+  ignoredReason?: string;
+  analyze: boolean;
+  pointCount: number;
+  toleranceMm: string;
+  crsOverride: string;
+  status?: string;
+};
+
+type VerticesResultRow = {
+  camada: string;
+  ranking: number;
+  feicao: number;
+  parte: number;
+  anel: number;
+  vertice_a: number;
+  vertice_b: number;
+  dist_m: number;
+  dist_cm: number;
+  dist_mm: number;
+  x_medio: number;
+  y_medio: number;
+  [key: string]: any;
+};
+
+type VerticesProgress = {
+  stage: string;
+  percent: number;
+  message: string;
+  layer?: string;
 };
 
 const DEFAULT_SETTINGS: UserSettings = {
@@ -1146,7 +1186,7 @@ function CbersMapPreview({
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'cbers-wpm'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'cbers-wpm' | 'vertices-proximas'>('chat');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1256,6 +1296,50 @@ export default function Dashboard() {
   const [cbersWmsDownloadingId, setCbersWmsDownloadingId] = useState<string | null>(null);
   const cbersFileInputRef = useRef<HTMLInputElement | null>(null);
   const cbersEventsAbortRef = useRef<AbortController | null>(null);
+
+  // ─── Vértices Próximas State ───
+  const [verticesFile, setVerticesFile] = useState<File | null>(null);
+  const [verticesUploadId, setVerticesUploadId] = useState<string | null>(null);
+  const [verticesLayers, setVerticesLayers] = useState<VerticesLayer[]>([]);
+  const [verticesUploading, setVerticesUploading] = useState(false);
+  const [verticesProcessing, setVerticesProcessing] = useState(false);
+  const [verticesJobId, setVerticesJobId] = useState<string | null>(null);
+  const [verticesProgress, setVerticesProgress] = useState<VerticesProgress | null>(null);
+  const [verticesWarnings, setVerticesWarnings] = useState<string[]>([]);
+  const [verticesError, setVerticesError] = useState<string | null>(null);
+  const [verticesRows, setVerticesRows] = useState<VerticesResultRow[]>([]);
+  const [verticesDownloadUrl, setVerticesDownloadUrl] = useState<string | null>(null);
+  const [verticesDefaultToleranceMm, setVerticesDefaultToleranceMm] = useState('10');
+  const [verticesIncludeOriginals, setVerticesIncludeOriginals] = useState(true);
+  const [verticesIncludeReport, setVerticesIncludeReport] = useState(true);
+  const [verticesIncludeCsv, setVerticesIncludeCsv] = useState(true);
+  const [verticesPreserveCrs, setVerticesPreserveCrs] = useState(true);
+  const [verticesMetricTemporary, setVerticesMetricTemporary] = useState(true);
+  const verticesFileInputRef = useRef<HTMLInputElement | null>(null);
+  const verticesEventsAbortRef = useRef<AbortController | null>(null);
+
+  const resetVerticesDraft = useCallback(() => {
+    verticesEventsAbortRef.current?.abort();
+    verticesEventsAbortRef.current = null;
+    setVerticesFile(null);
+    setVerticesUploadId(null);
+    setVerticesLayers([]);
+    setVerticesUploading(false);
+    setVerticesProcessing(false);
+    setVerticesJobId(null);
+    setVerticesProgress(null);
+    setVerticesWarnings([]);
+    setVerticesError(null);
+    setVerticesRows([]);
+    setVerticesDownloadUrl(null);
+    setVerticesDefaultToleranceMm('10');
+    setVerticesIncludeOriginals(true);
+    setVerticesIncludeReport(true);
+    setVerticesIncludeCsv(true);
+    setVerticesPreserveCrs(true);
+    setVerticesMetricTemporary(true);
+    if (verticesFileInputRef.current) verticesFileInputRef.current.value = '';
+  }, []);
 
   const resetCbersDraft = useCallback(() => {
     cbersEventsAbortRef.current?.abort();
@@ -1939,6 +2023,199 @@ export default function Dashboard() {
       reader.readAsDataURL(file);
     });
   }, []);
+
+  const applyVerticesJobSnapshot = useCallback((job: any) => {
+    const status = String(job?.status || '').toLowerCase();
+    setVerticesProgress({
+      stage: String(job?.stage || status || 'processing'),
+      percent: Math.max(0, Math.min(100, Math.round(Number(job?.percent || 0)))),
+      message: String(job?.message || ''),
+      layer: job?.layer ? String(job.layer) : undefined,
+    });
+    setVerticesProcessing(status === 'processing');
+    if (Array.isArray(job?.warnings)) setVerticesWarnings(job.warnings.map((item: any) => String(item)));
+    if (Array.isArray(job?.resultRows)) setVerticesRows(job.resultRows as VerticesResultRow[]);
+    const downloadUrl = resolveBackendUrl(String(job?.downloadUrl || ''));
+    if (downloadUrl) setVerticesDownloadUrl(downloadUrl);
+    if (status === 'failed' || status === 'cancelled') {
+      setVerticesError(String(job?.error || job?.message || 'Falha ao processar vértices.'));
+    }
+  }, []);
+
+  const connectVerticesEvents = useCallback(async (jobId: string) => {
+    const normalizedJobId = String(jobId || '').trim();
+    if (!normalizedJobId) return;
+    verticesEventsAbortRef.current?.abort();
+    const controller = new AbortController();
+    verticesEventsAbortRef.current = controller;
+    try {
+      const response = await apiFetch(`/api/vertices/jobs/${encodeURIComponent(normalizedJobId)}/events`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split('\n\n');
+        buffer = chunks.pop() || '';
+        for (const chunk of chunks) {
+          const line = chunk.split('\n').find((item) => item.startsWith('data:'));
+          if (!line) continue;
+          try {
+            const evt = JSON.parse(line.slice(5).trim());
+            if (evt?.type === 'snapshot' && evt?.job) {
+              applyVerticesJobSnapshot(evt.job);
+            } else if (evt?.type === 'progress') {
+              applyVerticesJobSnapshot(evt);
+            }
+          } catch {
+            // Ignore malformed SSE frames.
+          }
+        }
+      }
+    } catch (error: any) {
+      if (error?.name !== 'AbortError') {
+        console.warn('Falha ao acompanhar eventos de vértices:', error);
+      }
+    } finally {
+      if (verticesEventsAbortRef.current === controller) verticesEventsAbortRef.current = null;
+    }
+  }, [apiFetch, applyVerticesJobSnapshot]);
+
+  const applyVerticesZipFile = useCallback(async (file: File | null) => {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      toast.error('Envie um arquivo .zip contendo shapefiles.');
+      return;
+    }
+    setVerticesFile(file);
+    setVerticesUploadId(null);
+    setVerticesLayers([]);
+    setVerticesRows([]);
+    setVerticesDownloadUrl(null);
+    setVerticesWarnings([]);
+    setVerticesError(null);
+    setVerticesUploading(true);
+    try {
+      const zipBase64 = await fileToBase64Payload(file);
+      const response = await apiFetch('/api/vertices/upload', {
+        method: 'POST',
+        body: JSON.stringify({ filename: file.name, zipBase64 }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || 'Falha ao importar ZIP.');
+      const layers = Array.isArray(payload?.layers) ? payload.layers : [];
+      setVerticesUploadId(String(payload?.uploadId || ''));
+      setVerticesLayers(layers.map((layer: any) => {
+        const ignored = Boolean(layer?.ignoredReason) || Number(layer?.featureCount || 0) <= 0 || String(layer?.geometryType) !== 'Polygon';
+        return {
+          id: String(layer?.id || layer?.name || ''),
+          name: String(layer?.name || 'CAMADA'),
+          path: layer?.path ? String(layer.path) : undefined,
+          geometryType: String(layer?.geometryType || ''),
+          featureCount: Number(layer?.featureCount || 0),
+          crsLabel: String(layer?.crsLabel || 'CRS ausente'),
+          missingCrs: Boolean(layer?.missingCrs),
+          ignoredReason: layer?.ignoredReason ? String(layer.ignoredReason) : undefined,
+          analyze: !ignored,
+          pointCount: 1,
+          toleranceMm: '',
+          crsOverride: Boolean(layer?.missingCrs) ? 'EPSG:4674' : '',
+          status: ignored ? String(layer?.ignoredReason || 'Ignorada') : 'Pronta',
+        } satisfies VerticesLayer;
+      }));
+      const warnings = Array.isArray(payload?.warnings) ? payload.warnings.map((item: any) => String(item)) : [];
+      setVerticesWarnings(warnings);
+      if (!layers.some((layer: any) => String(layer?.geometryType) === 'Polygon' && Number(layer?.featureCount || 0) > 0)) {
+        toast.error('Nenhuma camada poligonal com feições foi encontrada.');
+      } else {
+        toast.success('ZIP importado e camadas poligonais listadas.');
+      }
+    } catch (error: any) {
+      const message = error?.message || 'Falha ao importar ZIP.';
+      setVerticesError(message);
+      toast.error(message);
+    } finally {
+      setVerticesUploading(false);
+    }
+  }, [apiFetch, fileToBase64Payload]);
+
+  const updateVerticesLayer = useCallback((layerId: string, patch: Partial<VerticesLayer>) => {
+    setVerticesLayers((prev) => prev.map((layer) => layer.id === layerId ? { ...layer, ...patch } : layer));
+  }, []);
+
+  const startVerticesProcessing = useCallback(async () => {
+    if (!verticesUploadId) {
+      toast.error('Envie um ZIP antes de processar.');
+      return;
+    }
+    const selectedLayers = verticesLayers.filter((layer) => layer.analyze && !layer.ignoredReason && layer.featureCount > 0);
+    if (!selectedLayers.length) {
+      toast.error('Selecione ao menos uma camada poligonal para analisar.');
+      return;
+    }
+    const missingCrs = selectedLayers.find((layer) => layer.missingCrs && !layer.crsOverride.trim());
+    if (missingCrs) {
+      toast.error(`Informe o CRS da camada ${missingCrs.name}.`);
+      return;
+    }
+    setVerticesProcessing(true);
+    setVerticesError(null);
+    setVerticesRows([]);
+    setVerticesDownloadUrl(null);
+    setVerticesProgress({ stage: 'queued', percent: 1, message: 'Enviando processamento ao servidor.' });
+    try {
+      const body = {
+        uploadId: verticesUploadId,
+        layers: verticesLayers.map((layer) => ({
+          id: layer.id,
+          analyze: Boolean(layer.analyze && !layer.ignoredReason && layer.featureCount > 0),
+          pointCount: Math.max(1, Math.floor(Number(layer.pointCount || 1))),
+          toleranceMm: layer.toleranceMm.trim() ? Number(layer.toleranceMm) : undefined,
+          crsOverride: layer.crsOverride.trim() || undefined,
+        })),
+        settings: {
+          defaultToleranceMm: Math.max(0, Number(verticesDefaultToleranceMm || 0)),
+          includeOriginalVertices: verticesIncludeOriginals,
+          includeTxtReport: verticesIncludeReport,
+          includeCsvSummary: verticesIncludeCsv,
+          preserveOriginalCrs: verticesPreserveCrs,
+          useMetricTemporaryCrs: verticesMetricTemporary,
+        },
+      };
+      const response = await apiFetch('/api/vertices/process', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || 'Falha ao iniciar processamento.');
+      const jobId = String(payload?.jobId || '').trim();
+      if (!jobId) throw new Error('Backend não retornou jobId.');
+      setVerticesJobId(jobId);
+      void connectVerticesEvents(jobId);
+    } catch (error: any) {
+      const message = error?.message || 'Falha ao processar vértices.';
+      setVerticesProcessing(false);
+      setVerticesError(message);
+      toast.error(message);
+    }
+  }, [
+    apiFetch,
+    connectVerticesEvents,
+    verticesDefaultToleranceMm,
+    verticesIncludeCsv,
+    verticesIncludeOriginals,
+    verticesIncludeReport,
+    verticesLayers,
+    verticesMetricTemporary,
+    verticesPreserveCrs,
+    verticesUploadId,
+  ]);
 
   const mapCbersDocToHistoryItem = useCallback((docId: string, data: any): CbersHistoryItem => {
     const rawStatus = String(data?.status || '').trim().toLowerCase();
@@ -6492,6 +6769,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <Satellite size={15} />
               <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">CBERS</span>
             </button>
+            <button
+              onClick={() => setActiveView('vertices-proximas')}
+              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'vertices-proximas' ? 'bg-violet-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+            >
+              <Network size={15} />
+              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">Vértices</span>
+            </button>
           </div>
 
           {/* ─── Botão de ação contextual ─── */}
@@ -6525,6 +6809,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <div className="relative flex items-center justify-center gap-2 bg-[#071618] group-hover:bg-transparent text-cyan-100 py-2.5 rounded-[11px] transition-colors">
                 <Plus size={16} />
                 <span className="font-medium block lg:hidden xl:block text-sm">Nova Imagem</span>
+              </div>
+            </button>
+          )}
+          {activeView === 'vertices-proximas' && (
+            <button
+              onClick={() => resetVerticesDraft()}
+              className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-violet-600 to-emerald-600 hover:from-violet-500 hover:to-emerald-500 transition-all duration-300 p-[1px] shadow-lg shadow-violet-900/30"
+            >
+              <div className="relative flex items-center justify-center gap-2 bg-[#120e1a] group-hover:bg-transparent text-violet-100 py-2.5 rounded-[11px] transition-colors">
+                <Plus size={16} />
+                <span className="font-medium block lg:hidden xl:block text-sm">Nova Análise</span>
               </div>
             </button>
           )}
@@ -6601,6 +6896,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 <p className="text-xs text-slate-500">Nenhuma imagem CBERS.</p>
               </div>
             )
+          ) : activeView === 'vertices-proximas' ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Network size={32} className="text-slate-600 mb-3" />
+              <p className="text-sm text-slate-400">Análise de vértices</p>
+              <p className="text-[10px] text-slate-600 mt-1">
+                {verticesJobId ? `Job ${verticesJobId.slice(0, 8)}` : 'Envie um ZIP para começar'}
+              </p>
+            </div>
           ) : activeView === 'simcar-clip' ? (
             /* ─── SIMCAR Clip History Cards ─── */
             simcarClipHistory.length > 0 ? (
@@ -6843,7 +7146,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2 min-w-0">
               <Zap size={16} className="text-emerald-400 fill-current shrink-0" />
               <span className="font-medium text-slate-200 text-sm sm:text-base truncate">
-                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
+                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'vertices-proximas' ? 'Vértices Próximas' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
               </span>
               {activeView === 'chat' && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide shrink-0 hidden sm:inline-block">
@@ -9565,6 +9868,346 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   document.body,
                 );
               })()}
+            </div>
+          </div>
+        ) : activeView === 'vertices-proximas' ? (
+          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+            <div className="max-w-6xl mx-auto space-y-5 sm:space-y-6">
+              <section className="rounded-2xl border border-violet-500/15 bg-[#0b1110]/80 p-5 sm:p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-violet-200">
+                      <Network size={13} />
+                      Vértices Próximas
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Pontos próximos no mesmo anel</h2>
+                    <p className="max-w-3xl text-sm text-slate-400">
+                      Importe o ZIP do SIMCAR, selecione camadas poligonais e gere pontos médios dos pares de vértices próximas sem comparar polígonos diferentes.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    {[
+                      { label: 'Entrada', value: '.zip' },
+                      { label: 'Filtro', value: 'mm' },
+                      { label: 'Saída', value: 'SHP' },
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                        <p className="text-[10px] uppercase tracking-wider text-slate-500">{item.label}</p>
+                        <p className="mt-1 text-xs font-semibold text-violet-100">{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-white">1. Upload do ZIP</h3>
+                    <p className="text-xs text-slate-500 mt-1">O arquivo pode conter vários shapefiles. Apenas camadas poligonais com feições entram na análise.</p>
+                  </div>
+                  {verticesUploading && <Loader2 size={18} className="animate-spin text-violet-300" />}
+                </div>
+                <label
+                  className={`group relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-8 transition-all ${verticesFile
+                    ? 'border-violet-500/40 bg-violet-500/5'
+                    : 'border-white/10 bg-white/[0.02] hover:border-violet-500/30 hover:bg-white/[0.03]'
+                    } cursor-pointer`}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'copy';
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    void applyVerticesZipFile(e.dataTransfer.files?.[0] || null);
+                  }}
+                >
+                  <input
+                    ref={verticesFileInputRef}
+                    type="file"
+                    accept=".zip,application/zip"
+                    className="hidden"
+                    onChange={(e) => void applyVerticesZipFile(e.target.files?.[0] || null)}
+                  />
+                  <div className={`rounded-xl p-3 ${verticesFile ? 'bg-violet-500/15 text-violet-200' : 'bg-white/5 text-slate-400 group-hover:text-violet-300'}`}>
+                    <Upload size={22} />
+                  </div>
+                  <div className="text-center min-w-0">
+                    <p className="text-sm font-semibold text-white truncate">
+                      {verticesFile ? verticesFile.name : 'Arraste ou selecione o ZIP do SIMCAR'}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {verticesFile ? `${(verticesFile.size / 1024).toFixed(0)} KB` : 'Shapefiles compactados em .zip'}
+                    </p>
+                  </div>
+                  {verticesFile && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        resetVerticesDraft();
+                      }}
+                      className="absolute right-3 top-3 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-white/10 hover:text-red-300"
+                      aria-label="Remover ZIP de vértices"
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                </label>
+              </section>
+
+              {verticesError && (
+                <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200 flex items-center gap-2">
+                  <AlertTriangle size={16} />
+                  <span>{verticesError}</span>
+                </div>
+              )}
+
+              {verticesLayers.length > 0 && (
+                <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-4">
+                  <div>
+                    <h3 className="text-base font-semibold text-white">2. Camadas encontradas</h3>
+                    <p className="text-xs text-slate-500 mt-1">{verticesLayers.length} camada(s) identificada(s) no ZIP.</p>
+                  </div>
+                  <div className="overflow-x-auto rounded-xl border border-white/10">
+                    <table className="w-full min-w-[900px] text-left text-xs">
+                      <thead className="bg-white/[0.04] text-[10px] uppercase tracking-wider text-slate-500">
+                        <tr>
+                          <th className="px-3 py-2">Analisar</th>
+                          <th className="px-3 py-2">Camada</th>
+                          <th className="px-3 py-2">Geometria</th>
+                          <th className="px-3 py-2">Feições</th>
+                          <th className="px-3 py-2">Pontos</th>
+                          <th className="px-3 py-2">Tolerância mm</th>
+                          <th className="px-3 py-2">CRS</th>
+                          <th className="px-3 py-2">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/10">
+                        {verticesLayers.map((layer) => {
+                          const disabled = Boolean(layer.ignoredReason) || layer.featureCount <= 0 || layer.geometryType !== 'Polygon';
+                          return (
+                            <tr key={layer.id} className={disabled ? 'text-slate-600' : 'text-slate-200'}>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="checkbox"
+                                  checked={layer.analyze}
+                                  disabled={disabled}
+                                  onChange={(e) => updateVerticesLayer(layer.id, { analyze: e.target.checked })}
+                                  className="h-4 w-4 rounded border-white/20 bg-white/10 accent-violet-500"
+                                />
+                              </td>
+                              <td className="px-3 py-2 font-semibold text-white">{layer.name}</td>
+                              <td className="px-3 py-2">{layer.geometryType}</td>
+                              <td className="px-3 py-2 tabular-nums">{layer.featureCount}</td>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  value={layer.pointCount}
+                                  disabled={disabled}
+                                  onChange={(e) => updateVerticesLayer(layer.id, { pointCount: Math.max(1, Number(e.target.value || 1)) })}
+                                  className="w-20 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-xs text-slate-100 outline-none focus:border-violet-500/50 disabled:opacity-40"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.1"
+                                  value={layer.toleranceMm}
+                                  disabled={disabled}
+                                  placeholder={verticesDefaultToleranceMm}
+                                  onChange={(e) => updateVerticesLayer(layer.id, { toleranceMm: e.target.value })}
+                                  className="w-28 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-xs text-slate-100 outline-none placeholder-slate-600 focus:border-violet-500/50 disabled:opacity-40"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                {layer.missingCrs ? (
+                                  <input
+                                    type="text"
+                                    value={layer.crsOverride}
+                                    placeholder="EPSG:4674"
+                                    onChange={(e) => updateVerticesLayer(layer.id, { crsOverride: e.target.value })}
+                                    className="w-28 rounded-lg border border-amber-400/30 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-100 outline-none focus:border-amber-300"
+                                  />
+                                ) : (
+                                  <span>{layer.crsLabel}</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase ${disabled ? 'bg-white/5 text-slate-500' : layer.missingCrs ? 'bg-amber-500/10 text-amber-200' : 'bg-emerald-500/10 text-emerald-200'}`}>
+                                  {layer.ignoredReason || (layer.missingCrs ? 'CRS manual' : layer.status || 'Pronta')}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              )}
+
+              {verticesLayers.length > 0 && (
+                <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-4">
+                  <div>
+                    <h3 className="text-base font-semibold text-white">3. Configuração da análise</h3>
+                    <p className="text-xs text-slate-500 mt-1">A tolerância filtra a distância máxima permitida entre vértices.</p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
+                    <div>
+                      <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Tolerância padrão (mm)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={verticesDefaultToleranceMm}
+                        onChange={(e) => setVerticesDefaultToleranceMm(e.target.value)}
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-violet-500/50"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                      {[
+                        { checked: true, label: 'Gerar ponto médio', disabled: true, onChange: () => undefined },
+                        { checked: verticesIncludeOriginals, label: 'Gerar vértices A/B', onChange: setVerticesIncludeOriginals },
+                        { checked: verticesIncludeReport, label: 'Gerar relatório TXT', onChange: setVerticesIncludeReport },
+                        { checked: verticesIncludeCsv, label: 'Gerar CSV resumo', onChange: setVerticesIncludeCsv },
+                        { checked: verticesPreserveCrs, label: 'Manter CRS original', onChange: setVerticesPreserveCrs },
+                        { checked: verticesMetricTemporary, label: 'Usar CRS métrico temporário', onChange: setVerticesMetricTemporary },
+                      ].map((item) => (
+                        <label key={item.label} className={`flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-slate-300 ${item.disabled ? 'opacity-70' : 'cursor-pointer hover:bg-white/[0.05]'}`}>
+                          <input
+                            type="checkbox"
+                            checked={item.checked}
+                            disabled={item.disabled}
+                            onChange={(e) => item.onChange(e.target.checked)}
+                            className="h-4 w-4 rounded border-white/20 bg-white/10 accent-violet-500"
+                          />
+                          <span>{item.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              {verticesLayers.length > 0 && (
+                <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-white">4. Processamento</h3>
+                      <p className="text-xs text-slate-500 mt-1">Cada feição, parte e anel é analisado isoladamente.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void startVerticesProcessing()}
+                      disabled={verticesProcessing || verticesUploading || !verticesUploadId}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {verticesProcessing ? <Loader2 size={17} className="animate-spin" /> : <Cpu size={17} />}
+                      Processar vértices
+                    </button>
+                  </div>
+                  {verticesProgress && (
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-xs">
+                        <span className="font-medium text-slate-300">{verticesProgress.layer || verticesProgress.stage}</span>
+                        <span className="font-bold tabular-nums text-violet-300">{verticesProgress.percent}%</span>
+                      </div>
+                      <div className="h-3 rounded-full bg-white/10 overflow-hidden">
+                        <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-emerald-400 transition-all duration-500" style={{ width: `${verticesProgress.percent}%` }} />
+                      </div>
+                      <p className="text-xs text-slate-400">{verticesProgress.message}</p>
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {(verticesRows.length > 0 || verticesDownloadUrl || verticesWarnings.length > 0) && (
+                <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-white">5. Resultado</h3>
+                      <p className="text-xs text-slate-500 mt-1">{verticesRows.length} par(es) encontrado(s).</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {verticesDownloadUrl && (
+                        <button
+                          type="button"
+                          onClick={() => downloadSimcarZip(verticesDownloadUrl, `vertices_proximas_${(verticesJobId || 'resultado').slice(0, 8)}.zip`)}
+                          className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500"
+                        >
+                          <Download size={16} />
+                          Baixar ZIP
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVerticesRows([]);
+                          setVerticesWarnings([]);
+                          setVerticesDownloadUrl(null);
+                          setVerticesProgress(null);
+                          setVerticesError(null);
+                        }}
+                        className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-slate-200 hover:bg-white/[0.08]"
+                      >
+                        <Trash2 size={16} />
+                        Limpar análise
+                      </button>
+                      <button
+                        type="button"
+                        onClick={resetVerticesDraft}
+                        className="inline-flex items-center gap-2 rounded-xl border border-violet-400/20 bg-violet-500/10 px-4 py-2.5 text-sm font-semibold text-violet-100 hover:bg-violet-500/15"
+                      >
+                        <Plus size={16} />
+                        Nova análise
+                      </button>
+                    </div>
+                  </div>
+                  {verticesWarnings.length > 0 && (
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-100 space-y-1">
+                      {verticesWarnings.map((warning, index) => (
+                        <p key={`${warning}-${index}`}>{warning}</p>
+                      ))}
+                    </div>
+                  )}
+                  {verticesRows.length > 0 && (
+                    <div className="overflow-x-auto rounded-xl border border-white/10">
+                      <table className="w-full min-w-[1100px] text-left text-xs">
+                        <thead className="bg-white/[0.04] text-[10px] uppercase tracking-wider text-slate-500">
+                          <tr>
+                            {['Camada', 'Ranking', 'Feição', 'Parte', 'Anel', 'Vértice A', 'Vértice B', 'Dist m', 'Dist cm', 'Dist mm', 'X médio', 'Y médio'].map((head) => (
+                              <th key={head} className="px-3 py-2">{head}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/10 text-slate-200">
+                          {verticesRows.map((row, index) => (
+                            <tr key={`${row.camada}-${row.ranking}-${index}`}>
+                              <td className="px-3 py-2 font-semibold text-white">{row.camada}</td>
+                              <td className="px-3 py-2 tabular-nums">{row.ranking}</td>
+                              <td className="px-3 py-2 tabular-nums">{row.feicao}</td>
+                              <td className="px-3 py-2 tabular-nums">{row.parte}</td>
+                              <td className="px-3 py-2 tabular-nums">{row.anel}</td>
+                              <td className="px-3 py-2 tabular-nums">{row.vertice_a}</td>
+                              <td className="px-3 py-2 tabular-nums">{row.vertice_b}</td>
+                              <td className="px-3 py-2 tabular-nums">{Number(row.dist_m || 0).toFixed(6)}</td>
+                              <td className="px-3 py-2 tabular-nums">{Number(row.dist_cm || 0).toFixed(3)}</td>
+                              <td className="px-3 py-2 tabular-nums">{Number(row.dist_mm || 0).toFixed(3)}</td>
+                              <td className="px-3 py-2 tabular-nums">{Number(row.x_medio || 0).toFixed(8)}</td>
+                              <td className="px-3 py-2 tabular-nums">{Number(row.y_medio || 0).toFixed(8)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              )}
             </div>
           </div>
         ) : activeView === 'features' ? (
