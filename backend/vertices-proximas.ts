@@ -525,13 +525,10 @@ export function analyzeLayer(args: {
   const metricCrs = crs.kind === "geographic"
     ? estimateUtmProjFromLonLat(center[0], center[1])
     : { label: crs.label, projDef: crs.projDef || "" };
+  // Campo de tolerância vazio significa SEM limite de distância: retorna os N pares mais próximos.
+  // Não herdar tolerância padrão aqui, para "Pontos = 6" sempre significar "os 6 mais próximos".
   const explicitToleranceMm = Number(args.selection.toleranceMm);
-  const defaultToleranceMm = Number(args.settings.defaultToleranceMm);
-  const toleranceMm = Number.isFinite(explicitToleranceMm)
-    ? Math.max(0, explicitToleranceMm)
-    : Number.isFinite(defaultToleranceMm)
-      ? Math.max(0, defaultToleranceMm)
-      : null;
+  const toleranceMm = Number.isFinite(explicitToleranceMm) ? Math.max(0, explicitToleranceMm) : null;
   const toleranceM = toleranceMm === null ? null : toleranceMm / 1000;
   const requested = Math.max(0, Math.floor(Number(args.selection.pointCount || 0)));
   const layerCandidates: VertexPair[] = [];
@@ -573,7 +570,8 @@ export function analyzeLayer(args: {
   layerCandidates.sort((a, b) => a.distM - b.distM || a.feature - b.feature || a.part - b.part || a.ring - b.ring);
   const selected = layerCandidates.slice(0, requested).map((pair, index) => ({ ...pair, ranking: index + 1 }));
   if (requested > selected.length) {
-    warnings.push(`${args.layerName}: solicitados ${requested} ponto(s), encontrados ${selected.length} par(es) dentro da tolerância.`);
+    const suffix = toleranceMm === null ? "disponíveis." : "dentro da tolerância.";
+    warnings.push(`${args.layerName}: solicitados ${requested} ponto(s), encontrados ${selected.length} par(es) ${suffix}`);
   }
   return { pairs: selected, warnings, crs, metricCrsLabel: metricCrs.label };
 }

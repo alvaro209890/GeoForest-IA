@@ -1310,7 +1310,6 @@ export default function Dashboard() {
   const [verticesError, setVerticesError] = useState<string | null>(null);
   const [verticesRows, setVerticesRows] = useState<VerticesResultRow[]>([]);
   const [verticesDownloadUrl, setVerticesDownloadUrl] = useState<string | null>(null);
-  const [verticesDefaultToleranceMm, setVerticesDefaultToleranceMm] = useState('');
   const [verticesIncludeOriginals, setVerticesIncludeOriginals] = useState(true);
   const [verticesIncludeReport, setVerticesIncludeReport] = useState(true);
   const [verticesIncludeCsv, setVerticesIncludeCsv] = useState(true);
@@ -2187,9 +2186,6 @@ export default function Dashboard() {
           crsOverride: layer.crsOverride.trim() || undefined,
         })),
         settings: {
-          defaultToleranceMm: verticesDefaultToleranceMm.trim()
-            ? Math.max(0, Number(verticesDefaultToleranceMm))
-            : undefined,
           includeOriginalVertices: verticesIncludeOriginals,
           includeTxtReport: verticesIncludeReport,
           includeCsvSummary: verticesIncludeCsv,
@@ -2217,7 +2213,6 @@ export default function Dashboard() {
     apiFetch,
     connectVerticesEvents,
     readApiError,
-    verticesDefaultToleranceMm,
     verticesIncludeCsv,
     verticesIncludeOriginals,
     verticesIncludeReport,
@@ -10155,27 +10150,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         </p>
                       </div>
                       <div className="rounded-2xl border border-emerald-300/15 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-300/80">Padrão recomendado</p>
-                        <p className="mt-1 text-2xl font-black leading-none tabular-nums">{verticesDefaultToleranceMm || 'Sem limite'}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-300/80">Regra ativa</p>
+                        <p className="mt-1 text-2xl font-black leading-none tabular-nums">Sem limite</p>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-                        <label className="mb-2 block text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Tolerância padrão</label>
-                        <div className="flex items-stretch overflow-hidden rounded-2xl border border-emerald-400/20 bg-white/[0.04] focus-within:border-emerald-300/60 focus-within:bg-emerald-500/10">
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={verticesDefaultToleranceMm}
-                            onChange={(e) => setVerticesDefaultToleranceMm(e.target.value)}
-                            className="min-w-0 flex-1 bg-transparent px-4 py-3 text-lg font-black tabular-nums text-white outline-none placeholder-slate-600"
-                            placeholder="Sem limite"
-                          />
-                          <span className="flex items-center border-l border-white/10 bg-white/[0.04] px-4 text-sm font-bold text-emerald-200">mm</span>
-                        </div>
-                        <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
-                          Em branco: retorna os N pares mais próximos. Com valor: retorna apenas pares até essa distância máxima.
+                        <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Como funciona</p>
+                        <p className="text-[11px] leading-relaxed text-slate-400">
+                          O campo <strong className="text-slate-200">Pontos</strong> manda na quantidade: se colocar 6, retorna os 6 pares mais próximos disponíveis. Só há filtro de distância quando a tolerância da própria camada for preenchida.
                         </p>
                       </div>
 

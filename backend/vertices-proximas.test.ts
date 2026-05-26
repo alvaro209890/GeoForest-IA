@@ -101,6 +101,41 @@ describe("analyzeLayer", () => {
     expect(result.warnings.join(" ")).toContain("encontrados 0");
   });
 
+  it("treats blank layer tolerance as no distance limit even when a default exists", () => {
+    const { shp } = buildShpAndShx([
+      {
+        type: "polygon",
+        rings: [
+          [
+            [0, 0],
+            [10, 0],
+            [10, 10],
+            [9, 10],
+            [8, 10],
+            [7, 10],
+            [6, 10],
+            [5, 10],
+            [0, 10],
+            [0, 0],
+          ],
+        ],
+        attributes: {},
+      },
+    ]);
+
+    const result = analyzeLayer({
+      layerId: "ARL",
+      layerName: "ARL",
+      shpBuffer: shp,
+      prjText: "PROJCS[\"UTM\",PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"zone\",21]]",
+      selection: { id: "ARL", pointCount: 6 },
+      settings: { defaultToleranceMm: 0 },
+    });
+
+    expect(result.pairs).toHaveLength(6);
+    expect(result.pairs.map((pair) => pair.ranking)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
   it("does not compare vertices across different features", () => {
     const { shp } = buildShpAndShx([
       {
