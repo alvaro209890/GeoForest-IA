@@ -4,6 +4,7 @@ import { buildShpAndShx } from "./shapefile-writer";
 import {
   analyzeLayer,
   findClosestPairsWithinTolerance,
+  visibleVerticesLayers,
 } from "./vertices-proximas";
 
 describe("findClosestPairsWithinTolerance", () => {
@@ -38,6 +39,34 @@ describe("findClosestPairsWithinTolerance", () => {
     expect(pairs[0].a.vertexIndex).toBe(2);
     expect(pairs[0].b.vertexIndex).toBe(3);
     expect(pairs[0].distM).toBeCloseTo(0.5);
+  });
+});
+
+describe("visibleVerticesLayers", () => {
+  it("removes empty/ignored layers from the upload table payload", () => {
+    const layers = visibleVerticesLayers([
+      {
+        id: "arl_cerrado_preservada",
+        name: "ARL_CERRADO_PRESERVADA",
+        path: "arl_cerrado_preservada.shp",
+        geometryType: "Polygon",
+        featureCount: 0,
+        crsLabel: "EPSG:4674",
+        missingCrs: false,
+        ignoredReason: "Camada vazia ignorada.",
+      },
+      {
+        id: "arl_floresta_preservada",
+        name: "ARL_FLORESTA_PRESERVADA",
+        path: "arl_floresta_preservada.shp",
+        geometryType: "Polygon",
+        featureCount: 12,
+        crsLabel: "EPSG:4674",
+        missingCrs: false,
+      },
+    ]);
+
+    expect(layers.map((layer) => layer.name)).toEqual(["ARL_FLORESTA_PRESERVADA"]);
   });
 });
 
