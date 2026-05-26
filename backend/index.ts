@@ -41,6 +41,7 @@ import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerCbersWpmRoutes } from "./cbers-wpm";
 import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-archive";
+import { registerVerticesRoutes } from "./vertices-proximas";
 import {
   JobCancelledError,
   finishJob,
@@ -499,6 +500,12 @@ async function startServer() {
       /^\/api\/cbers-wpm\/jobs\/[^/]+\/status$/,
       /^\/api\/cbers-wpm\/jobs\/[^/]+\/events$/,
       /^\/api\/cbers-wpm\/jobs\/[^/]+$/,
+      "/api/vertices/upload",
+      "/api/vertices/process",
+      /^\/api\/vertices\/jobs\/[^/]+\/status$/,
+      /^\/api\/vertices\/jobs\/[^/]+\/events$/,
+      /^\/api\/vertices\/jobs\/[^/]+$/,
+      /^\/api\/vertices\/download\/[^/]+$/,
       "/api/process/cancel",
       "/api/account/bootstrap",
       "/api/me",
@@ -636,6 +643,7 @@ async function startServer() {
   registerWfsIntersectionRoutes(app);
   registerSimcarClipRoutes(app);
   registerCbersWpmRoutes(app);
+  registerVerticesRoutes(app);
   registerCbersArchiveAdminRoutes(app);
 
   const MODEL_CATALOG = [

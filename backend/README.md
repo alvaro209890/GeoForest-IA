@@ -53,6 +53,16 @@ https://geoforest-api.cursar.space → Cloudflare Tunnel → localhost:3001
 - `POST /api/simcar/clip/import-vectorized` — Importa ZIP pré-vetorizado
 - `GET /api/simcar/gemini/config` — Config Gemini (+ `?probe=1`)
 
+### Vértices Próximas
+- `POST /api/vertices/upload` — Upload ZIP e listagem de camadas poligonais
+- `POST /api/vertices/process` — Processamento assíncrono de vértices próximas
+- `GET /api/vertices/jobs/:jobId/events` — Progresso via SSE
+- `GET /api/vertices/jobs/:jobId/status` — Status do job
+- `GET /api/vertices/download/:jobId` — Download ZIP final
+- `DELETE /api/vertices/jobs/:jobId` — Cancela/remove job
+
+Detalhes técnicos: [`../docs/VERTICES_PROXIMAS.md`](../docs/VERTICES_PROXIMAS.md).
+
 ### CBERS
 - `POST /api/cbers/search` — Busca cenas no STAC INPE
 - `POST /api/cbers/download` — Download + processamento
