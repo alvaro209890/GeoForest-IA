@@ -75,6 +75,7 @@ import { MapView } from '@/components/Map';
 import TermsOfUseDialog from '@/components/TermsOfUseDialog';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
+import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
 
@@ -1680,7 +1681,12 @@ export default function Dashboard() {
     try {
       return JSON.parse(text);
     } catch {
-      return { error: text };
+      const isHtml = /^\s*</.test(text);
+      return {
+        error: isHtml
+          ? `A API retornou HTML em vez de JSON (${response.status}). Recarregue a página e tente novamente.`
+          : text.slice(0, 500),
+      };
     }
   }, []);
 
@@ -2107,7 +2113,7 @@ export default function Dashboard() {
         method: 'POST',
         body: JSON.stringify({ filename: file.name, zipBase64 }),
       });
-      const payload = await response.json();
+      const payload = await readApiError(response);
       if (!response.ok) throw new Error(payload?.error || 'Falha ao importar ZIP.');
       const layers = Array.isArray(payload?.layers) ? payload.layers : [];
       setVerticesUploadId(String(payload?.uploadId || ''));
@@ -2143,7 +2149,7 @@ export default function Dashboard() {
     } finally {
       setVerticesUploading(false);
     }
-  }, [apiFetch, fileToBase64Payload]);
+  }, [apiFetch, fileToBase64Payload, readApiError]);
 
   const updateVerticesLayer = useCallback((layerId: string, patch: Partial<VerticesLayer>) => {
     setVerticesLayers((prev) => prev.map((layer) => layer.id === layerId ? { ...layer, ...patch } : layer));
@@ -2192,7 +2198,7 @@ export default function Dashboard() {
         method: 'POST',
         body: JSON.stringify(body),
       });
-      const payload = await response.json();
+      const payload = await readApiError(response);
       if (!response.ok) throw new Error(payload?.error || 'Falha ao iniciar processamento.');
       const jobId = String(payload?.jobId || '').trim();
       if (!jobId) throw new Error('Backend não retornou jobId.');
@@ -2207,6 +2213,7 @@ export default function Dashboard() {
   }, [
     apiFetch,
     connectVerticesEvents,
+    readApiError,
     verticesDefaultToleranceMm,
     verticesIncludeCsv,
     verticesIncludeOriginals,
@@ -10845,7 +10852,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             }
           }
         `}</style>
-      </main >
-    </div >
+      </main>
+      <VerticesProximasInfoDialog />
+    </div>
   );
 }
