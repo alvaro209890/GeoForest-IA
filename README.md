@@ -19,6 +19,7 @@ Sistema de apoio à Engenharia Florestal com inteligência artificial, voltado p
 - [Correções Recentes](#correções-recentes)
 - [Pipeline SIMCAR Clip](#pipeline-simcar-clip)
 - [Camadas SIMCAR Recortadas](#camadas-simcar-recortadas)
+- [Vértices Próximas](#vértices-próximas)
 - [CBERS e WMS Local](#cbers-e-wms-local)
 - [Banco de Conhecimento](#banco-de-conhecimento)
 - [API - Endpoints](#api---endpoints)
@@ -114,6 +115,7 @@ GeoForest-IA/
 │   ├── index.ts               # Servidor Express (2.851 linhas)
 │   ├── simcar-clip.ts         # Recorte SIMCAR + análise IA (9.920 linhas)
 │   ├── cbers-wpm.ts           # CBERS-4A WPM (2.964 linhas)
+│   ├── vertices-proximas.ts   # Análise de vértices próximas em shapefiles
 │   ├── knowledge-base.ts      # RAG base conhecimento (1.064 linhas)
 │   ├── cbers-archive.ts       # Acervo permanente CBERS (963 linhas)
 │   ├── wfs-intersection.ts    # Interseção WFS (660 linhas)
@@ -288,6 +290,22 @@ const TEMPLATE_LAYERS = [
 
 ---
 
+## Vértices Próximas
+
+Módulo para localizar pares de vértices muito próximos em shapefiles poligonais do SIMCAR.
+
+**Regra crítica:** compara somente dentro do mesmo grupo `camada + feição + parte + anel`. Não compara feições diferentes, partes diferentes, anéis diferentes ou polígonos que apenas se encostam. O ponto final repetido do anel é ignorado como fechamento natural.
+
+**Fluxo:** aba **Vértices Próximas** → upload ZIP → seleção/configuração de camadas → processamento assíncrono → tabela de resultados → download do ZIP.
+
+**Saídas:** `pontos_vertices_proximas.shp`, `vertices_pares.shp` opcional, `resumo_vertices.csv` opcional e `relatorio_vertices.txt` opcional.
+
+**Documentação:** [`docs/VERTICES_PROXIMAS.md`](docs/VERTICES_PROXIMAS.md)
+
+**Arquivos:** `backend/vertices-proximas.ts`, `backend/vertices-proximas.test.ts`, `client/src/pages/Dashboard.tsx`
+
+---
+
 ## CBERS e WMS Local
 
 Documentação detalhada: [`docs/WMS_CBERS.md`](docs/WMS_CBERS.md).
@@ -345,6 +363,16 @@ Sistema **RAG** próprio: carrega apenas documentos relevantes para otimizar tok
 | POST | `/api/simcar/clip/analyze-auas` | Análise AUAS (SSE) |
 | POST | `/api/simcar/clip/import-vectorized` | Import ZIP pré-vetorizado |
 | GET | `/api/simcar/gemini/config` | Config Gemini (+ probe) |
+
+### Vértices Próximas
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| POST | `/api/vertices/upload` | Upload ZIP e listagem de camadas poligonais |
+| POST | `/api/vertices/process` | Processamento assíncrono de vértices próximas |
+| GET | `/api/vertices/jobs/:jobId/events` | Progresso via SSE |
+| GET | `/api/vertices/jobs/:jobId/status` | Status do job |
+| GET | `/api/vertices/download/:jobId` | Download ZIP final |
+| DELETE | `/api/vertices/jobs/:jobId` | Cancela/remove job |
 
 ### CBERS
 | Método | Rota | Descrição |
