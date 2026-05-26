@@ -22,6 +22,23 @@ describe("findClosestPairsWithinTolerance", () => {
     expect(pairs[0].a.vertexIndex).toBe(1);
     expect(pairs[0].b.vertexIndex).toBe(2);
   });
+
+  it("returns closest pairs without a minimum tolerance when tolerance is blank", () => {
+    const pairs = findClosestPairsWithinTolerance(
+      [
+        { original: [0, 0], metric: [0, 0], vertexIndex: 1 },
+        { original: [5, 0], metric: [5, 0], vertexIndex: 2 },
+        { original: [5.5, 0], metric: [5.5, 0], vertexIndex: 3 },
+      ],
+      1,
+      null,
+    );
+
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].a.vertexIndex).toBe(2);
+    expect(pairs[0].b.vertexIndex).toBe(3);
+    expect(pairs[0].distM).toBeCloseTo(0.5);
+  });
 });
 
 describe("analyzeLayer", () => {
