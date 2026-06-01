@@ -1332,7 +1332,6 @@ export default function Dashboard() {
     setVerticesError(null);
     setVerticesRows([]);
     setVerticesDownloadUrl(null);
-    setVerticesDefaultToleranceMm('10');
     setVerticesIncludeOriginals(true);
     setVerticesIncludeReport(true);
     setVerticesIncludeCsv(true);
@@ -10098,7 +10097,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                       step="0.1"
                                       value={layer.toleranceMm}
                                       disabled={disabled}
-                                      placeholder={verticesDefaultToleranceMm}
+                                      placeholder="Opcional"
                                       onChange={(e) => updateVerticesLayer(layer.id, { toleranceMm: e.target.value })}
                                       className="w-28 rounded-xl border border-white/10 bg-white/[0.05] px-2 py-2 text-xs font-semibold text-slate-100 outline-none placeholder-slate-600 transition focus:border-violet-400/60 focus:bg-violet-500/10 disabled:opacity-40"
                                     />
