@@ -204,6 +204,15 @@ async function ensureExternalOverviews(tifPath: string): Promise<string | null> 
   return fs.existsSync(overviewPath) ? overviewPath : null;
 }
 
+async function ensureRgbColorInterpretation(tifPath: string): Promise<void> {
+  await runCommand("gdal_edit.py", [
+    "-colorinterp_1", "red",
+    "-colorinterp_2", "green",
+    "-colorinterp_3", "blue",
+    tifPath,
+  ]);
+}
+
 function writeJsonAtomic(filePath: string, data: unknown): void {
   ensureDir(path.dirname(filePath));
   const tmp = `${filePath}.${crypto.randomUUID()}.tmp`;
@@ -603,6 +612,7 @@ export async function publishCbersPanToArchive(args: {
     filename: archiveFilename,
     sourcePath: args.sourcePath,
   });
+  await ensureRgbColorInterpretation(stored.absolutePath);
   await ensureExternalOverviews(stored.absolutePath);
   const storeName = cleanLayerName(`${orbit}_${year}_${path.basename(archiveFilename, path.extname(archiveFilename))}`);
   const imageId = storeName;
