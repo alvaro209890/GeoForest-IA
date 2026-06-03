@@ -213,6 +213,23 @@ const CBERS_GEOREF_SANITY_MAX_M = Math.max(
   3000,
   Number(process.env.CBERS_GEOREF_SANITY_MAX_M || 20000),
 );
+// Contrast stretch applied when converting the 16-bit pansharpened scene to the 8-bit RGB
+// GeoTIFF that GeoServer renders. A plain `gdal_translate -scale` stretches each band over
+// its absolute min..max, so a handful of saturated/cloud pixels flatten the whole image to
+// a dark, washed-out look (e.g. a band with min 49 / max 1023 / mean 158 maps the mean to
+// DN ~28). A per-band N-sigma stretch (mean +/- sigma) clips that bright tail and lands the
+// mean near mid-tone, which is the single biggest visual-quality win for the WMS imagery.
+// "sigma" (default) uses mean +/- CBERS_STRETCH_SIGMA*stdDev; "minmax" keeps the old
+// absolute-range behaviour. Border pixels stay 0 (nodata/transparent) because the output
+// floor is 0 and the low cut is clamped to >= 0.
+const CBERS_STRETCH_MODE = String(process.env.CBERS_STRETCH_MODE || "sigma").toLowerCase();
+const CBERS_STRETCH_SIGMA = (() => {
+  const value = Number(process.env.CBERS_STRETCH_SIGMA || 2.5);
+  return Number.isFinite(value) && value > 0 ? value : 2.5;
+})();
+// Approximate stats subsample the raster (via overviews/decimation) instead of a full read,
+// so the extra gdalinfo pass before the byte conversion stays cheap on full-orbit scenes.
+const CBERS_STRETCH_APPROX = String(process.env.CBERS_STRETCH_APPROX ?? "1") !== "0";
 const GEOSERVER_WORKSPACE = process.env.GEOSERVER_WORKSPACE || "cbers";
 const GEOSERVER_DATA_DIR = process.env.GEOSERVER_DATA_DIR || "/home/server/geoserver_data";
 const GEOSERVER_PUBLIC_WMS_BASE = String(
@@ -1494,6 +1511,54 @@ async function readRasterBoundsInfo(rasterPath: string, jobId: string): Promise<
   }
 }
 
+type BandStat = { minimum: number; maximum: number; mean: number; stdDev: number };
+
+function parseBandStats(info: any): BandStat[] {
+  const bands = Array.isArray(info?.bands) ? info.bands : [];
+  return bands.map((band: any) => ({
+    minimum: Number(band?.minimum),
+    maximum: Number(band?.maximum),
+    mean: Number(band?.mean),
+    stdDev: Number(band?.stdDev),
+  }));
+}
+
+// Builds per-band `-scale_N lo hi 0 255` arguments for gdal_translate from a per-band
+// N-sigma contrast stretch (mean +/- CBERS_STRETCH_SIGMA*stdDev, clipped to the real
+// range). Returns null when stats are unavailable so the caller can fall back to the plain
+// `-scale` behaviour. The low cut is clamped to >= 0 and the output floor is 0, so source
+// border pixels (value 0) keep mapping to 0 and stay transparent via `-a_nodata 0`.
+async function computeByteStretchArgs(rawPath: string, jobId: string): Promise<string[] | null> {
+  if (CBERS_STRETCH_MODE === "minmax") return null;
+  let stats: BandStat[];
+  try {
+    const flag = CBERS_STRETCH_APPROX ? "-approx_stats" : "-stats";
+    const output = await runCommandCapture("gdalinfo", ["-json", flag, rawPath], jobId);
+    stats = parseBandStats(JSON.parse(output));
+  } catch {
+    return null;
+  }
+  if (stats.length < 3) return null;
+  const args: string[] = [];
+  for (let i = 0; i < 3; i += 1) {
+    const stat = stats[i];
+    if (!stat || ![stat.minimum, stat.maximum, stat.mean, stat.stdDev].every(Number.isFinite)) {
+      return null;
+    }
+    let lo = Math.max(stat.minimum, stat.mean - CBERS_STRETCH_SIGMA * stat.stdDev);
+    let hi = Math.min(stat.maximum, stat.mean + CBERS_STRETCH_SIGMA * stat.stdDev);
+    if (!(hi > lo)) {
+      // Flat or near-constant band: stretch over its real range instead.
+      lo = stat.minimum;
+      hi = stat.maximum;
+    }
+    if (!(hi > lo)) return null;
+    lo = Math.max(0, lo);
+    args.push(`-scale_${i + 1}`, String(lo), String(hi), "0", "255");
+  }
+  return args;
+}
+
 function outerRingCoordinates(geometry?: Polygon | MultiPolygon | null): number[][] {
   const ring = geometry?.type === "Polygon"
     ? geometry.coordinates[0]
@@ -1775,6 +1840,10 @@ async function processCbersScene(args: {
   report({ stage: "pansharpen", percent: 87, message: "Fusão pancromática da folha completa concluída." });
 
   const finalTempPath = path.join(sceneDir, "cbers_4a_wpm_342_pan.tif");
+  const stretchArgs = (await computeByteStretchArgs(rawPansharpenPath, jobId)) ?? ["-scale"];
+  const stretchLabel = stretchArgs[0] === "-scale"
+    ? "contraste automático (min-max)"
+    : `realce por ${CBERS_STRETCH_SIGMA}σ por banda`;
   await runCommand({
     uid,
     jobId,
@@ -1782,7 +1851,7 @@ async function processCbersScene(args: {
     commandArgs: [
       "-of", "GTiff",
       "-ot", "Byte",
-      "-scale",
+      ...stretchArgs,
       "-a_nodata", "0",
       "-colorinterp_1", "red",
       "-colorinterp_2", "green",
@@ -1796,7 +1865,7 @@ async function processCbersScene(args: {
     basePercent: 87,
     spanPercent: 8,
     stage: "geotiff",
-    message: "Gerando GeoTIFF final da órbita/ponto completa para ArcMap.",
+    message: `Gerando GeoTIFF final 8 bits (${stretchLabel}) da órbita/ponto completa para ArcMap.`,
     onProgress: report,
   });
   const outputName = cbersOutputFilename(scene.id || args.itemId, collection.level);

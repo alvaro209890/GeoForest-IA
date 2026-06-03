@@ -74,6 +74,17 @@ else
 fi
 
 echo
+echo "[preflight] Verificando ambiente CBERS/WMS (nao bloqueia o deploy)..."
+if [ -x "$PROJECT_DIR/scripts/cbers-doctor.sh" ]; then
+  if ! "$PROJECT_DIR/scripts/cbers-doctor.sh"; then
+    echo ">> AVISO: cbers-doctor apontou problemas. A geracao/publicacao CBERS pode falhar."
+    echo ">> Revise acima (GDAL, GeoServer, acervo) antes de gerar imagens."
+  fi
+else
+  echo ">> scripts/cbers-doctor.sh ausente ou sem permissao de execucao; pulando preflight."
+fi
+
+echo
 echo "[2/6] Validando TypeScript..."
 npm run check
 

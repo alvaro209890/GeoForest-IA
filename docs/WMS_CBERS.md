@@ -113,14 +113,67 @@ Fluxo de processamento:
 1. Usuario busca cenas por ZIP/SHP ou por orbita, ponto e data.
 2. Backend busca cenas CBERS-4A/WPM no STAC do INPE.
 3. Backend baixa bandas BAND3, BAND4, BAND2 e BAND0 da folha completa.
-4. GDAL fusiona PAN e gera GeoTIFF final C342_PAN da folha completa.
-5. GeoTIFF e salvo no banco local da conta.
-6. GeoTIFF tambem e copiado para o acervo permanente do HD Backup.
-7. Backend publica automaticamente o GeoTIFF no GeoServer/WMS.
-8. Para lote, o ZIP da conta e criado com todos os TIF nomeados no padrao.
+4. gdal_pansharpen.py fusiona PAN (BAND0) com 3-4-2 -> raster 16 bits.
+5. gdal_translate converte para GeoTIFF 8 bits RGB aplicando realce de
+   contraste por banda (ver "Realce de contraste" abaixo).
+6. Backend valida o georreferenciamento nativo contra a footprint STAC da
+   propria cena (sem comparar com outra aquisicao).
+7. GeoTIFF e salvo no banco local da conta.
+8. GeoTIFF tambem e copiado para o acervo permanente do HD Backup, com
+   overviews (.ovr) reamostrados por media para zoom-out suave.
+9. Backend publica automaticamente o GeoTIFF no GeoServer/WMS (com retry).
+10. Para lote, o ZIP da conta e criado com todos os TIF nomeados no padrao.
 ```
 
 Regra operacional: a imagem CBERS baixada pelo usuario e publicada no WMS representa a folha completa da orbita/ponto baixada do INPE. O SHP, quando enviado, serve para busca e validacao de cobertura; ele nao recorta o GeoTIFF final.
+
+## Realce de contraste (qualidade da imagem)
+
+A cena pansharpened sai do INPE em 16 bits com valores concentrados numa
+faixa estreita. Um `gdal_translate -scale` simples estica cada banda do
+minimo absoluto ao maximo absoluto, entao alguns pixels de nuvem/saturacao
+achatam o histograma e a imagem fica escura e lavada (numa cena tipica a
+media das bandas cai para DN ~20-70 de 255).
+
+A partir desta versao o passo de conversao para 8 bits aplica um realce
+**por banda** controlado por `CBERS_STRETCH_MODE`:
+
+```text
+sigma  (padrao)  ->  estica [media - N*desvio, media + N*desvio] para [0, 255]
+minmax           ->  comportamento antigo (min..max absoluto)
+```
+
+Com `sigma` (N = `CBERS_STRETCH_SIGMA`, padrao 2.5) a cauda brilhante de
+nuvem/saturacao e cortada e a media das bandas cai proxima de 128, com muito
+mais contraste e um balanco de branco automatico. Medido numa cena real
+CBERS-4A/WPM:
+
+```text
+antigo (-scale):   media das bandas  28.7 / 73.1 / 20.4   (escura)
+novo  (sigma 2.5): media das bandas 125.9 / 129.7 / 125.5 (meio-tom)
+```
+
+O piso de saida e 0 e o corte inferior e limitado a >= 0, entao os pixels de
+borda (valor 0) continuam mapeando para 0 e ficam transparentes via
+`-a_nodata 0`. As estatisticas usam `-approx_stats` (`CBERS_STRETCH_APPROX=1`,
+subamostragem rapida) e, se falharem, o pipeline cai automaticamente no
+`-scale` antigo — nunca quebra a geracao. As imagens Int16 antigas ja
+publicadas no acervo nao sao afetadas; o realce vale para novas geracoes.
+
+## Publicacao automatica robusta
+
+A publicacao usa a REST do GeoServer e agora tolera o GeoServer reiniciando
+(ex.: logo apos um deploy):
+
+```text
+GEOSERVER_READY_TIMEOUT_MS     espera o GeoServer responder antes de publicar
+GEOSERVER_PUBLISH_RETRIES      re-tentativas em erro de rede / HTTP 5xx
+GEOSERVER_PUBLISH_RETRY_DELAY_MS  intervalo entre tentativas
+```
+
+Antes era possivel uma cena terminar o processamento, encontrar o GeoServer
+fora do ar por alguns segundos e nao ser publicada. Agora ela aguarda e
+re-tenta.
 
 Arquivo da conta:
 
@@ -227,6 +280,68 @@ status: ativa, removida da conta, excluida do HD/WMS
 botao de exclusao definitiva do HD/WMS
 ```
 
+## Puxar no servidor do WMS (deploy)
+
+O backend que gera e publica CBERS roda **no proprio PC do WMS**, pelo
+servico `geoforest-backend.service`, a partir do checkout:
+
+```text
+/media/server/HD Backup/Servidores_NAO_MEXA/GeoForest-IA
+```
+
+Fluxo recomendado apos um `git pull` nesse checkout:
+
+```bash
+cd "/media/server/HD Backup/Servidores_NAO_MEXA/GeoForest-IA"
+git pull --rebase --autostash origin main
+scripts/cbers-doctor.sh        # preflight: GDAL, GeoServer, acervo (HD 2 TB)
+npm run build                  # regenera dist/index.js
+systemctl --user restart geoforest-backend.service
+```
+
+O script `scripts/deploy-firebase-restart-backend.sh` ja faz tudo isso
+(incluindo o preflight `cbers-doctor` de forma nao-bloqueante) e ainda publica
+o Firebase Hosting e da push no GitHub.
+
+### Preflight: cbers-doctor
+
+`scripts/cbers-doctor.sh` confirma que o ambiente esta pronto para gerar e
+publicar:
+
+```text
+- ferramentas GDAL no PATH (inclui gdal_pansharpen.py e gdal_edit.py)
+- acervo CBERS_ARCHIVE_ROOT existe e e gravavel (HD de 2 TB montado)
+- GeoServer REST respondendo e workspace 'cbers' presente
+- raiz de symlinks externos gravavel
+- WMS publico respondendo (aviso, nao bloqueia)
+```
+
+Ele carrega o mesmo `~/.config/geoforest/backend.env` do backend e usa os
+defaults do codigo quando uma variavel nao esta definida. Sai com codigo != 0
+se uma verificacao critica falhar.
+
+### Variaveis de ambiente CBERS/WMS
+
+Todas tem default embutido (ver `config/geoforest-backend.env.example`); so
+defina para sobrescrever:
+
+```text
+CBERS_ARCHIVE_ROOT                 acervo dos GeoTIFFs (HD 2 TB)
+GEOSERVER_BASE_URL                 REST local do GeoServer
+GEOSERVER_USER / GEOSERVER_PASSWORD
+GEOSERVER_WORKSPACE                workspace (cbers)
+GEOSERVER_DATA_DIR                 data dir do GeoServer
+GEOSERVER_EXTERNAL_CBRS_ROOT       raiz dos symlinks externos
+GEOSERVER_PUBLIC_WMS_BASE          WMS publico (cloudflare)
+CBERS_STRETCH_MODE                 sigma | minmax
+CBERS_STRETCH_SIGMA                N desvios (padrao 2.5)
+CBERS_STRETCH_APPROX               1 = stats aproximadas (rapido)
+CBERS_OVERVIEW_RESAMPLING          reamostragem das overviews (average)
+GEOSERVER_PUBLISH_RETRIES          re-tentativas de publicacao
+GEOSERVER_PUBLISH_RETRY_DELAY_MS   intervalo entre tentativas
+GEOSERVER_READY_TIMEOUT_MS         espera o GeoServer subir antes de publicar
+```
+
 ## Build e deploy
 
 Build completo:
@@ -266,11 +381,14 @@ curl -sS "https://wms.cursar.space/geoserver/cbers/wms?service=WMS&version=1.3.0
 ## Arquivos principais no codigo
 
 ```text
-backend/cbers-wpm.ts       processamento CBERS da conta
-backend/cbers-archive.ts   acervo permanente, GeoServer REST e APIs admin
-backend/index.ts           CORS, registro de rotas e servico HTTP
+backend/cbers-wpm.ts        processamento CBERS, pansharpen, realce, validacao
+backend/cbers-archive.ts    acervo permanente, GeoServer REST e APIs admin
+backend/index.ts            CORS, registro de rotas e servico HTTP
+scripts/cbers-doctor.sh     preflight CBERS/WMS no servidor
+scripts/deploy-firebase-restart-backend.sh  deploy completo (pull+build+restart)
+config/geoforest-backend.env.example  referencia das variaveis de ambiente
 .agents/WMS_LOCAL_SITE_VINCULACAO.md  vinculo WMS local, API e site
-client/src/admin/main.tsx  painel admin publico
-firebase.json              Firebase Hosting multi-site
-vite.config.ts             build separado app/admin
+client/src/admin/main.tsx   painel admin publico
+firebase.json               Firebase Hosting multi-site
+vite.config.ts              build separado app/admin
 ```

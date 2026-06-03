@@ -89,6 +89,25 @@ const CBERS_OVERVIEW_LEVELS = String(
   .split(/\s+/)
   .map((value) => Number(value))
   .filter((value) => Number.isInteger(value) && value > 1);
+// Resampling used to build the .ovr pyramids. "average" smooths the zoomed-out imagery far
+// better than gdaladdo's default "nearest", which looks noisy/aliased at small scales.
+const CBERS_OVERVIEW_RESAMPLING = String(
+  process.env.CBERS_OVERVIEW_RESAMPLING || "average",
+).trim() || "average";
+// GeoServer can be briefly unavailable right after a deploy/restart while a scene finishes
+// processing. Retry publish operations with a short backoff instead of dropping the scene.
+const GEOSERVER_PUBLISH_RETRIES = Math.max(
+  0,
+  Number(process.env.GEOSERVER_PUBLISH_RETRIES || 4),
+);
+const GEOSERVER_PUBLISH_RETRY_DELAY_MS = Math.max(
+  500,
+  Number(process.env.GEOSERVER_PUBLISH_RETRY_DELAY_MS || 4000),
+);
+const GEOSERVER_READY_TIMEOUT_MS = Math.max(
+  0,
+  Number(process.env.GEOSERVER_READY_TIMEOUT_MS || 60000),
+);
 
 function ensureDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
@@ -195,6 +214,7 @@ async function ensureExternalOverviews(tifPath: string): Promise<string | null> 
   }
   await runCommand("gdaladdo", [
     "-ro",
+    "-r", CBERS_OVERVIEW_RESAMPLING,
     "--config", "COMPRESS_OVERVIEW", "LZW",
     "--config", "INTERLEAVE_OVERVIEW", "PIXEL",
     "--config", "BIGTIFF_OVERVIEW", "IF_SAFER",
@@ -294,17 +314,72 @@ function authHeader(): string {
   return `Basic ${Buffer.from(`${GEOSERVER_USER}:${GEOSERVER_PASSWORD}`).toString("base64")}`;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// 5xx/connection failures here are almost always GeoServer mid-restart (e.g. right after a
+// deploy) rather than a bad request, so they are worth retrying.
+function isTransientStatus(status: number): boolean {
+  return status === 0 || status === 429 || (status >= 500 && status <= 599);
+}
+
 async function geoserverFetch(
   restPath: string,
   options: RequestInit = {},
 ): Promise<globalThis.Response> {
-  return fetch(`${GEOSERVER_BASE_URL}${restPath}`, {
-    ...options,
-    headers: {
-      Authorization: authHeader(),
-      ...(options.headers || {}),
-    },
-  }) as Promise<globalThis.Response>;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= GEOSERVER_PUBLISH_RETRIES; attempt += 1) {
+    try {
+      const response = (await fetch(`${GEOSERVER_BASE_URL}${restPath}`, {
+        ...options,
+        headers: {
+          Authorization: authHeader(),
+          ...(options.headers || {}),
+        },
+      })) as globalThis.Response;
+      if (isTransientStatus(response.status) && attempt < GEOSERVER_PUBLISH_RETRIES) {
+        await sleep(GEOSERVER_PUBLISH_RETRY_DELAY_MS);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      // Network-level failure (connection refused/reset while GeoServer restarts).
+      lastError = error;
+      if (attempt >= GEOSERVER_PUBLISH_RETRIES) break;
+      await sleep(GEOSERVER_PUBLISH_RETRY_DELAY_MS);
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`GeoServer indisponível em ${GEOSERVER_BASE_URL}${restPath}`);
+}
+
+// Polls GeoServer until it answers, so a scene that finishes processing while GeoServer is
+// still coming up after a restart waits for it instead of failing to publish.
+async function waitForGeoserverReady(): Promise<void> {
+  if (GEOSERVER_READY_TIMEOUT_MS <= 0) return;
+  const deadline = Date.now() + GEOSERVER_READY_TIMEOUT_MS;
+  let lastError: unknown = null;
+  for (;;) {
+    try {
+      const response = (await fetch(`${GEOSERVER_BASE_URL}/rest/about/version.json`, {
+        headers: { Authorization: authHeader() },
+      })) as globalThis.Response;
+      if (response.ok || response.status === 401 || response.status === 403) return;
+      lastError = new Error(`status ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `GeoServer não respondeu em ${GEOSERVER_BASE_URL} após ${Math.round(
+          GEOSERVER_READY_TIMEOUT_MS / 1000,
+        )}s: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+      );
+    }
+    await sleep(GEOSERVER_PUBLISH_RETRY_DELAY_MS);
+  }
 }
 
 async function geoserverJson(restPath: string): Promise<PlainObject | null> {
@@ -500,6 +575,7 @@ async function publishGeoTiff(args: {
   year: string;
   title: string;
 }): Promise<void> {
+  await waitForGeoserverReady();
   await createCoverageStore(args.storeName);
   const linkedFile = linkForGeoserver(args.hdPath, args.orbit, args.year, args.storeName);
   await geoserverWrite(
