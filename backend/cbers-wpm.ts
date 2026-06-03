@@ -217,12 +217,15 @@ const CBERS_GEOREF_SANITY_MAX_M = Math.max(
 // GeoTIFF that GeoServer renders. A plain `gdal_translate -scale` stretches each band over
 // its absolute min..max, so a handful of saturated/cloud pixels flatten the whole image to
 // a dark, washed-out look (e.g. a band with min 49 / max 1023 / mean 158 maps the mean to
-// DN ~28). A per-band N-sigma stretch (mean +/- sigma) clips that bright tail and lands the
-// mean near mid-tone, which is the single biggest visual-quality win for the WMS imagery.
-// "sigma" (default) uses mean +/- CBERS_STRETCH_SIGMA*stdDev; "minmax" keeps the old
-// absolute-range behaviour. Border pixels stay 0 (nodata/transparent) because the output
-// floor is 0 and the low cut is clamped to >= 0.
-const CBERS_STRETCH_MODE = String(process.env.CBERS_STRETCH_MODE || "sigma").toLowerCase();
+// DN ~28). We instead clip the bright tail at mean + N*stdDev. Modes:
+//   "global"  (default) one shared [lo, hi] for the 3 bands -> brightens and adds contrast
+//             WITHOUT shifting the colour balance (preserves the familiar 342 look).
+//   "perband" / "sigma" independent [lo, hi] per band -> maximum contrast and an automatic
+//             white balance, but it visibly changes the hue (shifts to the magenta/green
+//             false-colour). Use only if that look is wanted.
+//   "minmax"  legacy absolute min..max behaviour.
+// Border pixels stay 0 (nodata/transparent): the output floor is 0 and the low cut is >= 0.
+const CBERS_STRETCH_MODE = String(process.env.CBERS_STRETCH_MODE || "global").toLowerCase();
 const CBERS_STRETCH_SIGMA = (() => {
   const value = Number(process.env.CBERS_STRETCH_SIGMA || 2.5);
   return Number.isFinite(value) && value > 0 ? value : 2.5;
@@ -1523,11 +1526,10 @@ function parseBandStats(info: any): BandStat[] {
   }));
 }
 
-// Builds per-band `-scale_N lo hi 0 255` arguments for gdal_translate from a per-band
-// N-sigma contrast stretch (mean +/- CBERS_STRETCH_SIGMA*stdDev, clipped to the real
-// range). Returns null when stats are unavailable so the caller can fall back to the plain
-// `-scale` behaviour. The low cut is clamped to >= 0 and the output floor is 0, so source
-// border pixels (value 0) keep mapping to 0 and stay transparent via `-a_nodata 0`.
+// Builds the gdal_translate `-scale` arguments for the byte conversion. Returns null when
+// stats are unavailable (or mode is "minmax") so the caller falls back to the plain `-scale`
+// behaviour. In every mode the output floor is 0 and the low cut is clamped to >= 0, so
+// source border pixels (value 0) keep mapping to 0 and stay transparent via `-a_nodata 0`.
 async function computeByteStretchArgs(rawPath: string, jobId: string): Promise<string[] | null> {
   if (CBERS_STRETCH_MODE === "minmax") return null;
   let stats: BandStat[];
@@ -1539,24 +1541,41 @@ async function computeByteStretchArgs(rawPath: string, jobId: string): Promise<s
     return null;
   }
   if (stats.length < 3) return null;
-  const args: string[] = [];
-  for (let i = 0; i < 3; i += 1) {
-    const stat = stats[i];
-    if (!stat || ![stat.minimum, stat.maximum, stat.mean, stat.stdDev].every(Number.isFinite)) {
-      return null;
-    }
-    let lo = Math.max(stat.minimum, stat.mean - CBERS_STRETCH_SIGMA * stat.stdDev);
-    let hi = Math.min(stat.maximum, stat.mean + CBERS_STRETCH_SIGMA * stat.stdDev);
-    if (!(hi > lo)) {
-      // Flat or near-constant band: stretch over its real range instead.
-      lo = stat.minimum;
-      hi = stat.maximum;
-    }
-    if (!(hi > lo)) return null;
-    lo = Math.max(0, lo);
-    args.push(`-scale_${i + 1}`, String(lo), String(hi), "0", "255");
+  const bands = stats.slice(0, 3);
+  if (bands.some((s) => ![s.minimum, s.maximum, s.mean, s.stdDev].every(Number.isFinite))) {
+    return null;
   }
-  return args;
+
+  if (CBERS_STRETCH_MODE === "perband" || CBERS_STRETCH_MODE === "sigma") {
+    // Independent stretch per band: max contrast, but changes the colour balance.
+    const args: string[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const s = bands[i];
+      let lo = Math.max(s.minimum, s.mean - CBERS_STRETCH_SIGMA * s.stdDev);
+      let hi = Math.min(s.maximum, s.mean + CBERS_STRETCH_SIGMA * s.stdDev);
+      if (!(hi > lo)) {
+        lo = s.minimum;
+        hi = s.maximum;
+      }
+      if (!(hi > lo)) return null;
+      lo = Math.max(0, lo);
+      args.push(`-scale_${i + 1}`, String(lo), String(hi), "0", "255");
+    }
+    return args;
+  }
+
+  // Default "global" (colour-preserving): one shared [lo, hi] for all three bands, so the
+  // ratio between bands (the hue) is unchanged — only brightness/contrast improve. lo is the
+  // darkest real value across bands; hi is the brightest band's mean + N*stdDev, which keeps
+  // the dominant band (e.g. NIR over vegetation) reaching the top of the range so the scene
+  // keeps its familiar green-dominant 342 look while no longer washing out dark.
+  let lo = Math.max(0, Math.min(...bands.map((s) => s.minimum)));
+  let hi = Math.max(...bands.map((s) => Math.min(s.maximum, s.mean + CBERS_STRETCH_SIGMA * s.stdDev)));
+  if (!(hi > lo)) {
+    hi = Math.max(...bands.map((s) => s.maximum));
+  }
+  if (!(hi > lo)) return null;
+  return ["-scale", String(lo), String(hi), "0", "255"];
 }
 
 function outerRingCoordinates(geometry?: Polygon | MultiPolygon | null): number[][] {
@@ -1841,9 +1860,11 @@ async function processCbersScene(args: {
 
   const finalTempPath = path.join(sceneDir, "cbers_4a_wpm_342_pan.tif");
   const stretchArgs = (await computeByteStretchArgs(rawPansharpenPath, jobId)) ?? ["-scale"];
-  const stretchLabel = stretchArgs[0] === "-scale"
+  const stretchLabel = stretchArgs.length <= 1
     ? "contraste automático (min-max)"
-    : `realce por ${CBERS_STRETCH_SIGMA}σ por banda`;
+    : stretchArgs[0] === "-scale"
+      ? `realce ${CBERS_STRETCH_SIGMA}σ preservando cor`
+      : `realce ${CBERS_STRETCH_SIGMA}σ por banda`;
   await runCommand({
     uid,
     jobId,

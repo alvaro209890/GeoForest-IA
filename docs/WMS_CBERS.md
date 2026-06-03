@@ -135,30 +135,31 @@ minimo absoluto ao maximo absoluto, entao alguns pixels de nuvem/saturacao
 achatam o histograma e a imagem fica escura e lavada (numa cena tipica a
 media das bandas cai para DN ~20-70 de 255).
 
-A partir desta versao o passo de conversao para 8 bits aplica um realce
-**por banda** controlado por `CBERS_STRETCH_MODE`:
+A partir desta versao o passo de conversao para 8 bits corta a cauda clara em
+`media + N*desvio` (N = `CBERS_STRETCH_SIGMA`, padrao 2.5), controlado por
+`CBERS_STRETCH_MODE`:
 
 ```text
-sigma  (padrao)  ->  estica [media - N*desvio, media + N*desvio] para [0, 255]
-minmax           ->  comportamento antigo (min..max absoluto)
+global  (padrao)  um unico [lo, hi] para as 3 bandas -> clareia e contrasta
+                  SEM mudar o balanco de cor (preserva o 342 verde de sempre)
+perband           [lo, hi] independente por banda -> contraste maximo, mas
+                  MUDA a cor (falsa-cor magenta/verde). Use so se quiser.
+minmax            comportamento antigo (min..max absoluto, escuro)
 ```
 
-Com `sigma` (N = `CBERS_STRETCH_SIGMA`, padrao 2.5) a cauda brilhante de
-nuvem/saturacao e cortada e a media das bandas cai proxima de 128, com muito
-mais contraste e um balanco de branco automatico. Medido numa cena real
-CBERS-4A/WPM:
+Por que dois modos: o realce `perband` faz um balanco de branco automatico que
+deixa a imagem no padrao falsa-cor (solo magenta, vegetacao verde) — otimo
+tecnicamente, mas troca o aspecto. O `global` aplica a MESMA transformacao nas
+3 bandas, entao a razao entre elas (o tom) nao muda: a cena fica com o mesmo
+verde de hoje, so que mais clara e com bem mais contraste/detalhe. Por isso o
+padrao e `global`.
 
-```text
-antigo (-scale):   media das bandas  28.7 / 73.1 / 20.4   (escura)
-novo  (sigma 2.5): media das bandas 125.9 / 129.7 / 125.5 (meio-tom)
-```
-
-O piso de saida e 0 e o corte inferior e limitado a >= 0, entao os pixels de
-borda (valor 0) continuam mapeando para 0 e ficam transparentes via
-`-a_nodata 0`. As estatisticas usam `-approx_stats` (`CBERS_STRETCH_APPROX=1`,
-subamostragem rapida) e, se falharem, o pipeline cai automaticamente no
-`-scale` antigo — nunca quebra a geracao. As imagens Int16 antigas ja
-publicadas no acervo nao sao afetadas; o realce vale para novas geracoes.
+Em ambos o piso de saida e 0 e o corte inferior e limitado a >= 0, entao os
+pixels de borda (valor 0) continuam transparentes via `-a_nodata 0`. As
+estatisticas usam `-approx_stats` (`CBERS_STRETCH_APPROX=1`, subamostragem
+rapida) e, se falharem, o pipeline cai no `-scale` antigo — nunca quebra a
+geracao. As imagens Int16 antigas ja publicadas no acervo nao sao afetadas; o
+realce vale para novas geracoes.
 
 ## Publicacao automatica robusta
 
@@ -333,7 +334,7 @@ GEOSERVER_WORKSPACE                workspace (cbers)
 GEOSERVER_DATA_DIR                 data dir do GeoServer
 GEOSERVER_EXTERNAL_CBRS_ROOT       raiz dos symlinks externos
 GEOSERVER_PUBLIC_WMS_BASE          WMS publico (cloudflare)
-CBERS_STRETCH_MODE                 sigma | minmax
+CBERS_STRETCH_MODE                 global | perband | minmax
 CBERS_STRETCH_SIGMA                N desvios (padrao 2.5)
 CBERS_STRETCH_APPROX               1 = stats aproximadas (rapido)
 CBERS_OVERVIEW_RESAMPLING          reamostragem das overviews (average)
