@@ -60,6 +60,7 @@ import {
     buildDbfBuffer,
     geojsonToPolyRecords,
     geojsonToShpRecords,
+    ringSignedArea,
     type DbfFieldDef,
     type ShpRecord,
 } from "./shapefile-writer";
@@ -886,8 +887,32 @@ function ringsToFeature(rings: number[][][]): Feature<Polygon | MultiPolygon> | 
         })
         .filter((ring) => ring.length >= 4);
     if (!closedRings.length) return null;
+
+    const polygons: number[][][][] = [];
+    for (const ring of closedRings) {
+        const area = ringSignedArea(ring);
+        if (area > 0) {
+            // New exterior ring (shell) starts a new polygon
+            polygons.push([ring]);
+        } else {
+            // Interior ring (hole) belongs to the last outer ring
+            if (polygons.length > 0) {
+                polygons[polygons.length - 1].push(ring);
+            } else {
+                // Fallback: if CCW but no shell exists, treat as outer ring
+                polygons.push([ring]);
+            }
+        }
+    }
+
+    if (polygons.length === 0) return null;
+
     try {
-        return turfPolygon(closedRings);
+        if (polygons.length === 1) {
+            return turfPolygon(polygons[0]);
+        } else {
+            return turfMultiPolygon(polygons);
+        }
     } catch {
         return null;
     }
@@ -1094,18 +1119,9 @@ export function parseUserShapefile(zipBuffer: Buffer): {
     const features: Feature<Polygon | MultiPolygon>[] = [];
     for (const rings of processedPolygons) {
         try {
-            // Ensure rings are closed
-            const closedRings = rings.map((ring) => {
-                if (ring.length < 3) return ring;
-                const first = ring[0];
-                const last = ring[ring.length - 1];
-                if (first[0] !== last[0] || first[1] !== last[1]) {
-                    return [...ring, [first[0], first[1]]];
-                }
-                return ring;
-            });
-            if (closedRings[0] && closedRings[0].length >= 4) {
-                features.push(turfPolygon(closedRings));
+            const feat = ringsToFeature(rings);
+            if (feat) {
+                features.push(feat);
             }
         } catch {
             // Skip invalid polygons
@@ -1250,11 +1266,34 @@ function parseNumberMatched(xml: string): number | null {
     return Number.isFinite(numeric) ? numeric : null;
 }
 
+function bboxFromWkt(wkt: string): [number, number, number, number] | null {
+    const coords: number[] = [];
+    const regex = /[-+]?[0-9]*\.?[0-9]+/g;
+    let match;
+    while ((match = regex.exec(wkt))) {
+        coords.push(Number(match[0]));
+    }
+    if (coords.length < 6) return null;
+    const xs = coords.filter((_, i) => i % 2 === 0);
+    const ys = coords.filter((_, i) => i % 2 === 1);
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
 async function fetchWfsClipFeatures(
     wfsLayerName: string,
     polygonWkt: string,
     srsName: string = "EPSG:4674",
 ): Promise<WfsClipFetchResult> {
+    if (polygonWkt.length > 4000) {
+        const bbox = bboxFromWkt(polygonWkt);
+        if (bbox) {
+            console.log(`[SIMCAR CLIP] Polígono de consulta complexo (${polygonWkt.length} caracteres). Otimizando com fallback BBOX.`);
+            const res = await fetchWfsBboxFeatures(wfsLayerName, bbox, srsName);
+            res.warnings.push(`Polígono complexo de consulta (${polygonWkt.length} caracteres). A busca foi otimizada via Bbox.`);
+            return res;
+        }
+    }
+
     const geometryField = await getGeometryFieldForLayer(wfsLayerName);
     const cqlFilter = `INTERSECTS(${geometryField},${polygonWkt})`;
     const allFeatures: WfsFeature[] = [];
@@ -2281,10 +2320,17 @@ async function processClip(
     // 3. Extract template schemas and .prj files
     const templateSchemas = readTemplateSchemas(templateEntries);
     const prjBuffers = new Map<string, Buffer>();
+    const templateShapeTypes = new Map<string, number>();
     for (const entry of templateEntries) {
         if (entry.name.toLowerCase().endsWith(".prj")) {
             const base = path.basename(entry.name, ".prj").toUpperCase();
             prjBuffers.set(base, entry.data);
+        } else if (entry.name.toLowerCase().endsWith(".shp")) {
+            const base = path.basename(entry.name, ".shp").toUpperCase();
+            if (entry.data.length >= 36) {
+                const shapeType = entry.data.readInt32LE(32);
+                templateShapeTypes.set(base, shapeType);
+            }
         }
     }
     throwIfClientDisconnected(res);
@@ -2465,6 +2511,8 @@ async function processClip(
         const fieldDefs = templateSchemas.get(layerName) || [
             { name: "ID", type: "N" as const, length: 10, decimals: 0 },
         ];
+        const expectedShapeType = templateShapeTypes.get(layerName.toUpperCase()) ?? 5;
+        const isPointLayer = expectedShapeType === 1 || expectedShapeType === 8;
 
         const records: ShpRecord[] = [];
         const pointRecords: Array<{ coordinates: [number, number]; attributes: Record<string, string | number | null> }> = [];
@@ -2473,7 +2521,7 @@ async function processClip(
         for (let featIndex = 0; featIndex < clipped.length; featIndex += 1) {
             if (featIndex % 50 === 0) throwIfClientDisconnected(res);
             const feat = clipped[featIndex];
-            if (feat.kind === "polygon") {
+            if (feat.kind === "polygon" && !isPointLayer) {
                 // Usa geojsonToPolyRecords para tratar MultiPolygon corretamente:
                 // cada polígono vira um ShpRecord separado (não buracos)
                 const polyRecords = geojsonToPolyRecords(feat.geometry as any);
@@ -2500,7 +2548,7 @@ async function processClip(
                 } catch {
                     // Ignore area calculation errors
                 }
-            } else if (feat.kind === "point") {
+            } else if (feat.kind === "point" && isPointLayer) {
                 for (const coord of feat.pointCoords) {
                     const attributes = applyLayerAttributeRules(
                         layerName,

@@ -322,7 +322,7 @@ export function buildDbfBuffer(
                     : str.padEnd(field.length, " ");
             }
 
-            buf.write(str, offset, field.length, "ascii");
+            buf.write(str, offset, field.length, "latin1");
             offset += field.length;
         }
     }
@@ -343,7 +343,7 @@ export function buildDbfBuffer(
  * Calcula a área com sinal de um anel (2D) usando shoelace.
  * Positiva = CW (horário), Negativa = CCW (anti-horário).
  */
-function ringSignedArea(ring: number[][]): number {
+export function ringSignedArea(ring: number[][]): number {
     let area = 0;
     for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
         area += ring[i][0] * ring[j][1] - ring[j][0] * ring[i][1];

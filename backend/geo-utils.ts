@@ -110,7 +110,11 @@ export function detectUtmProj(prjText: string) {
     if (!Number.isFinite(zone) || zone <= 0 || zone > 60) return null;
     const hemisphere =
         zoneMatch[2] ||
-        (upper.includes("SOUTH") || upper.includes("SUL") ? "S" : "N");
+        (upper.includes("SOUTH") || upper.includes("SUL")
+            ? "S"
+            : zone >= 18 && zone <= 25
+            ? "S"
+            : "N");
     const south = hemisphere === "S";
     const proj = `+proj=utm +zone=${zone} ${south ? "+south " : ""}+datum=WGS84 +units=m +no_defs`;
     return proj.trim();
