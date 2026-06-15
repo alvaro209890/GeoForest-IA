@@ -526,6 +526,12 @@ const RIVER_CLIP_LAYERS = new Set([
     "RIO_ACIMA_600",
 ]);
 const SPRING_LAYER_NAME = "NASCENTE";
+/**
+ * Camadas selecionadas pelo MESMO buffer dos rios (500m), porém mantidas
+ * INTEIRAS — sem recorte. Se a feição toca o buffer da ATP, ela entra completa,
+ * mesmo que ultrapasse o limite da ATP. Usado para reservatórios artificiais.
+ */
+const WHOLE_FEATURE_BUFFER_LAYERS = new Set(["RESERVATORIO_ARTIFICIAL"]);
 const RIVER_CLIP_EXTENSION_METERS = Number(process.env.SIMCAR_RIVER_CLIP_EXTENSION_METERS || 500);
 
 type LocalSimcarLayerSource = {
@@ -1672,6 +1678,40 @@ function clipFeaturesToPolygon(
     return clipped;
 }
 
+/**
+ * Seleciona feições poligonais que TOCAM a fronteira informada (a fronteira já
+ * vem expandida com o buffer dos rios), mas devolve a geometria ORIGINAL inteira,
+ * sem recortar. Usado para reservatórios artificiais: se o reservatório está
+ * dentro do buffer de 500m da ATP, ele entra completo no shapefile de saída,
+ * ainda que parte dele fique fora da ATP.
+ */
+function selectWholeFeaturesIntersecting(
+    features: WfsFeature[],
+    boundary: Feature<Polygon | MultiPolygon>,
+): ClipResult[] {
+    const selected: ClipResult[] = [];
+    for (const feature of features) {
+        if (!feature.geometry) continue;
+        const polygonLike = toPolygonOrMultiFeature(feature.geometry);
+        if (!polygonLike) continue;
+        try {
+            const fc = turfFeatureCollection([boundary, polygonLike]) as FeatureCollection<Polygon | MultiPolygon>;
+            const intersection = turfIntersect(fc);
+            if (intersection && intersection.geometry) {
+                selected.push({
+                    kind: "polygon",
+                    // Geometria inteira — NÃO usa a interseção, preserva o reservatório completo.
+                    geometry: polygonLike.geometry,
+                    properties: feature.properties,
+                });
+            }
+        } catch {
+            // Ignora feições que falham na verificação de interseção
+        }
+    }
+    return selected;
+}
+
 /* ─── Template Schema Extraction ─────────────────────────────── */
 
 function readTemplateSchemas(
@@ -2482,6 +2522,9 @@ async function processClip(
         // GeoServer reject INTERSECTS WKT with HTTP 400; local clipping keeps the configured margin.
         const isRiverLayer = RIVER_CLIP_LAYERS.has(layerName);
         const isSpringLayer = layerName === SPRING_LAYER_NAME;
+        // Reservatórios usam o MESMO buffer dos rios para seleção, mas são mantidos
+        // inteiros (sem recorte na divisa da ATP).
+        const isWholeFeatureBufferLayer = WHOLE_FEATURE_BUFFER_LAYERS.has(layerName);
         const clippedRiverFeatures = isSpringLayer ? getClippedRiverFeatures(clippedGeometries) : [];
         // Rios usam a fronteira expandida (única). Demais camadas recortam contra
         // cada lote do imóvel separadamente, reunindo as peças no mesmo shapefile.
@@ -2520,7 +2563,7 @@ async function processClip(
 
         let wfsFetch: WfsClipFetchResult;
         try {
-            wfsFetch = isRiverLayer || isSpringLayer
+            wfsFetch = isRiverLayer || isSpringLayer || isWholeFeatureBufferLayer
                 ? await fetchWfsBboxFeatures(wfsTypeName, featureBbox(riverClipBoundary.polygon), "EPSG:4674")
                 : await fetchWfsClipFeatures(wfsTypeName, clipWkt, "EPSG:4674");
         } catch (err: any) {
@@ -2548,11 +2591,13 @@ async function processClip(
             continue;
         }
 
-        const clipped = clipFeaturesToPolygon(wfsFeatures, clipBoundaries, {
-            pointClipPolygons: isSpringLayer && clippedRiverFeatures.length > 0
-                ? [...userPolygons, ...clippedRiverFeatures]
-                : undefined,
-        });
+        const clipped = isWholeFeatureBufferLayer
+            ? selectWholeFeaturesIntersecting(wfsFeatures, riverClipBoundary.polygon)
+            : clipFeaturesToPolygon(wfsFeatures, clipBoundaries, {
+                pointClipPolygons: isSpringLayer && clippedRiverFeatures.length > 0
+                    ? [...userPolygons, ...clippedRiverFeatures]
+                    : undefined,
+            });
         throwIfClientDisconnected(res);
 
         if (!clipped.length) {

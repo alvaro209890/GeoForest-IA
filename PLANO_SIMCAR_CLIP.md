@@ -36,6 +36,23 @@ Todas buscadas no WFS da SEMA-MT e recortadas nos limites do imóvel:
 **Categoria 3 — Camadas Vazias:**
 Se uma camada WFS não retornar feições na área, ela mantém os arquivos vazios do template.
 
+### Buffer de Proximidade (500m)
+
+Algumas camadas hídricas são selecionadas usando o **limite da ATP expandido por 500m**
+(`SIMCAR_RIVER_CLIP_EXTENSION_METERS`, padrão `500`), em vez do limite exato do imóvel:
+
+- **Rios** (`RIO_ATE_10`, `RIO_10_A_50`, `RIO_50_A_200`, `RIO_200_A_600`, `RIO_ACIMA_600`):
+  recortados contra o limite **expandido em 500m**. A feição é cortada na fronteira do buffer.
+- **Nascentes** (`NASCENTE`): camada de pontos buscada pela bbox do buffer; o ponto é mantido se
+  estiver dentro do imóvel **ou** dentro de um rio já recortado.
+- **Reservatórios artificiais** (`RESERVATORIO_ARTIFICIAL`): usam o **mesmo buffer de 500m** para
+  *seleção*, porém são mantidos **INTEIROS, sem recorte**. Se o reservatório toca o buffer da ATP,
+  ele entra completo no shapefile de saída — **mesmo que parte dele fique fora da ATP** (não é
+  cortado na divisa). Implementado por `selectWholeFeaturesIntersecting()` em `backend/simcar-clip.ts`,
+  controlado pelo conjunto `WHOLE_FEATURE_BUFFER_LAYERS`.
+
+As demais camadas da Categoria 2 são recortadas exatamente nos limites de cada lote do imóvel.
+
 ### Mapeamento de Nomes
 
 Os typeNames do WFS seguem padrão similar aos do modelo. O sistema fará discovery automático via WFS GetCapabilities com fuzzy matching (ex: `AREA_CONSOLIDADA` → `geoportal:simcar_area_consolidada`).
