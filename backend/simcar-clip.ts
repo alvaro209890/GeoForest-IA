@@ -529,9 +529,10 @@ const SPRING_LAYER_NAME = "NASCENTE";
 /**
  * Camadas selecionadas pelo MESMO buffer dos rios (500m), porém mantidas
  * INTEIRAS — sem recorte. Se a feição toca o buffer da ATP, ela entra completa,
- * mesmo que ultrapasse o limite da ATP. Usado para reservatórios artificiais.
+ * mesmo que ultrapasse o limite da ATP. Usado para reservatórios artificiais e
+ * lagoas naturais.
  */
-const WHOLE_FEATURE_BUFFER_LAYERS = new Set(["RESERVATORIO_ARTIFICIAL"]);
+const WHOLE_FEATURE_BUFFER_LAYERS = new Set(["RESERVATORIO_ARTIFICIAL", "LAGOA_NATURAL"]);
 const RIVER_CLIP_EXTENSION_METERS = Number(process.env.SIMCAR_RIVER_CLIP_EXTENSION_METERS || 500);
 
 type LocalSimcarLayerSource = {

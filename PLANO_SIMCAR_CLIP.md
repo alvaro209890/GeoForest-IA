@@ -45,11 +45,11 @@ Algumas camadas hídricas são selecionadas usando o **limite da ATP expandido p
   recortados contra o limite **expandido em 500m**. A feição é cortada na fronteira do buffer.
 - **Nascentes** (`NASCENTE`): camada de pontos buscada pela bbox do buffer; o ponto é mantido se
   estiver dentro do imóvel **ou** dentro de um rio já recortado.
-- **Reservatórios artificiais** (`RESERVATORIO_ARTIFICIAL`): usam o **mesmo buffer de 500m** para
-  *seleção*, porém são mantidos **INTEIROS, sem recorte**. Se o reservatório toca o buffer da ATP,
-  ele entra completo no shapefile de saída — **mesmo que parte dele fique fora da ATP** (não é
-  cortado na divisa). Implementado por `selectWholeFeaturesIntersecting()` em `backend/simcar-clip.ts`,
-  controlado pelo conjunto `WHOLE_FEATURE_BUFFER_LAYERS`.
+- **Reservatórios artificiais** (`RESERVATORIO_ARTIFICIAL`) e **lagoas naturais** (`LAGOA_NATURAL`):
+  usam o **mesmo buffer de 500m** para *seleção*, porém são mantidos **INTEIROS, sem recorte**. Se a
+  feição toca o buffer da ATP, ela entra completa no shapefile de saída — **mesmo que parte dela fique
+  fora da ATP** (não é cortada na divisa). Implementado por `selectWholeFeaturesIntersecting()` em
+  `backend/simcar-clip.ts`, controlado pelo conjunto `WHOLE_FEATURE_BUFFER_LAYERS`.
 
 As demais camadas da Categoria 2 são recortadas exatamente nos limites de cada lote do imóvel.
 
