@@ -147,7 +147,8 @@ Headers: Content-Disposition: attachment; filename="SIMCAR_Recorte_<timestamp>.z
  2. Decodificar base64 → Buffer do ZIP do usuário
  3. extractZipEntries() → encontrar .shp, .shx, .dbf, .prj
  4. readFullShapefile() → ler TODOS os polígonos do .shp
- 5. Se múltiplos polígonos → turf.union() para geometria unificada
+ 5. Mantém cada polígono separado (NÃO une os lotes); a união é só para bbox/WFS.
+    Ver docs/SIMCAR_RECORTE_POR_POLIGONO.md — o recorte é feito lote a lote.
  6. Ler .prj → detectUtmProj() → reprojetar para EPSG:4674 se necessário
  7. Validar geometria: turf.buffer(geom, 0) para corrigir self-intersections
  8. Ler Arquivo Modelo.zip (fs.readFileSync) → extractZipEntries()

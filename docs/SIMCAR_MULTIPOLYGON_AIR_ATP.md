@@ -2,6 +2,12 @@
 
 Data: 2026-05-15
 
+> **Atualização 2026-06-15:** o fluxo de `AIR`/`ATP` deixou de usar a geometria
+> **unida** (`userGeometry`) e passou a iterar os lotes individuais
+> (`userPolygons`), gerando um registro por lote. Isso era necessário porque a
+> união de lotes contíguos podia colapsar em um único polígono, anulando o efeito
+> descrito abaixo. Detalhes em `docs/SIMCAR_RECORTE_POR_POLIGONO.md`.
+
 Este documento registra a correção aplicada no pipeline de recorte SIMCAR para imóveis enviados como **um único shapefile contendo múltiplos polígonos de propriedade**.
 
 ## Contexto

@@ -1070,6 +1070,7 @@ function readLocalSimcarClipFeatures(
  */
 export function parseUserShapefile(zipBuffer: Buffer): {
     polygon: Feature<Polygon | MultiPolygon>;
+    polygons: Feature<Polygon | MultiPolygon>[];
     geometry: SupportedPolygonGeometry;
     areaHa: number;
 } {
@@ -1130,11 +1131,31 @@ export function parseUserShapefile(zipBuffer: Buffer): {
 
     if (!features.length) throw new Error("Nenhum polígono válido encontrado no Shapefile.");
 
-    // Union all polygons into one
-    let unified: Feature<Polygon | MultiPolygon> = features[0];
-    for (let i = 1; i < features.length; i++) {
+    // Mantém cada polígono do shapefile separado (NÃO une os lotes).
+    // Cada lote é corrigido individualmente via buffer(0) para sanar
+    // auto-interseções, e será recortado separadamente contra o WFS.
+    const polygons: Feature<Polygon | MultiPolygon>[] = [];
+    for (const feat of features) {
+        let fixed = feat;
         try {
-            const fc = turfFeatureCollection([unified, features[i]]) as FeatureCollection<Polygon | MultiPolygon>;
+            const buffered = turfBuffer(feat, 0, { units: "meters" });
+            if (buffered) fixed = buffered as Feature<Polygon | MultiPolygon>;
+        } catch {
+            // If buffer(0) fails, keep as-is
+        }
+        if (normalizePolygonGeometry(fixed.geometry)) {
+            polygons.push(fixed);
+        }
+    }
+
+    if (!polygons.length) throw new Error("Nenhum polígono válido encontrado no Shapefile.");
+
+    // Geometria unificada apenas para usos agregados (bbox, área total,
+    // snapshots WMS e consulta WFS). O recorte real usa `polygons`.
+    let unified: Feature<Polygon | MultiPolygon> = polygons[0];
+    for (let i = 1; i < polygons.length; i++) {
+        try {
+            const fc = turfFeatureCollection([unified, polygons[i]]) as FeatureCollection<Polygon | MultiPolygon>;
             const u = turfUnion(fc);
             if (u) unified = u as Feature<Polygon | MultiPolygon>;
         } catch {
@@ -1142,20 +1163,17 @@ export function parseUserShapefile(zipBuffer: Buffer): {
         }
     }
 
-    // Fix self-intersections via buffer(0)
-    try {
-        const buffered = turfBuffer(unified, 0, { units: "meters" });
-        if (buffered) unified = buffered as Feature<Polygon | MultiPolygon>;
-    } catch {
-        // If buffer(0) fails, keep as-is
-    }
-
     const geometry = normalizePolygonGeometry(unified.geometry);
     if (!geometry) throw new Error("Geometria do imóvel não pôde ser validada.");
 
-    const areaHa = Number((turfArea(unified) / 10000).toFixed(4));
+    // Área total = soma das áreas de cada lote (lotes do SIMCAR são distintos e
+    // não se sobrepõem). Evita a subcontagem causada por artefatos do turf.union,
+    // que pode descartar regiões ao unir polígonos adjacentes.
+    const areaHa = Number(
+        (polygons.reduce((acc, poly) => acc + turfArea(poly), 0) / 10000).toFixed(4),
+    );
 
-    return { polygon: unified, geometry, areaHa };
+    return { polygon: unified, polygons, geometry, areaHa };
 }
 
 /* ─── Layer Name Mapping (Template → WFS) ────────────────────── */
@@ -1294,6 +1312,31 @@ async function fetchWfsClipFeatures(
         }
     }
 
+    // O GeoServer da SEMA-MT às vezes rejeita o INTERSECTS com HTTP 400 mesmo
+    // para WKTs abaixo de 4000 caracteres (geometria com muitos vértices ou
+    // múltiplos lotes). Nesse caso caímos para a consulta por BBOX, que é
+    // tolerante — o recorte fino é refeito localmente, lote a lote.
+    try {
+        return await fetchWfsIntersectsFeatures(wfsLayerName, polygonWkt, srsName);
+    } catch (error: any) {
+        if (error instanceof ClientAbortError) throw error;
+        const msg = String(error?.message || "");
+        const bbox = bboxFromWkt(polygonWkt);
+        if (/WFS 400/i.test(msg) && bbox) {
+            console.log(`[SIMCAR CLIP] INTERSECTS rejeitado (${msg.slice(0, 80)}). Fallback BBOX para ${wfsLayerName}.`);
+            const res = await fetchWfsBboxFeatures(wfsLayerName, bbox, srsName);
+            res.warnings.push("Consulta INTERSECTS rejeitada pelo WFS; busca otimizada via Bbox (recorte refeito localmente).");
+            return res;
+        }
+        throw error;
+    }
+}
+
+async function fetchWfsIntersectsFeatures(
+    wfsLayerName: string,
+    polygonWkt: string,
+    srsName: string = "EPSG:4674",
+): Promise<WfsClipFetchResult> {
     const geometryField = await getGeometryFieldForLayer(wfsLayerName);
     const cqlFilter = `INTERSECTS(${geometryField},${polygonWkt})`;
     const allFeatures: WfsFeature[] = [];
@@ -1566,32 +1609,40 @@ type ClipResult = ClippedPolygonResult | ClippedPointResult;
 
 function clipFeaturesToPolygon(
     features: WfsFeature[],
-    userPolygon: Feature<Polygon | MultiPolygon>,
+    userPolygons:
+        | Feature<Polygon | MultiPolygon>
+        | Array<Feature<Polygon | MultiPolygon>>,
     options: { pointClipPolygons?: Array<Feature<Polygon | MultiPolygon>> } = {},
 ): ClipResult[] {
     const clipped: ClipResult[] = [];
+    // Cada polígono do imóvel é recortado separadamente (sem unir as feições).
+    // Assim, uma feição WFS que cruza a divisa entre dois lotes gera uma peça
+    // independente para cada lote, todas reunidas no mesmo shapefile de saída.
+    const clipPolygons = Array.isArray(userPolygons) ? userPolygons : [userPolygons];
     const pointClipPolygons = options.pointClipPolygons?.length
         ? options.pointClipPolygons
-        : [userPolygon];
+        : clipPolygons;
 
     for (const feature of features) {
         if (!feature.geometry) continue;
 
-        // Caso 1: geometria poligonal — faz interseção normal
+        // Caso 1: geometria poligonal — interseção contra cada lote separadamente
         const polygonLike = toPolygonOrMultiFeature(feature.geometry);
         if (polygonLike) {
-            try {
-                const fc = turfFeatureCollection([userPolygon, polygonLike]) as FeatureCollection<Polygon | MultiPolygon>;
-                const intersection = turfIntersect(fc);
-                if (intersection && intersection.geometry) {
-                    clipped.push({
-                        kind: "polygon",
-                        geometry: intersection.geometry,
-                        properties: feature.properties,
-                    });
+            for (const clipPolygon of clipPolygons) {
+                try {
+                    const fc = turfFeatureCollection([clipPolygon, polygonLike]) as FeatureCollection<Polygon | MultiPolygon>;
+                    const intersection = turfIntersect(fc);
+                    if (intersection && intersection.geometry) {
+                        clipped.push({
+                            kind: "polygon",
+                            geometry: intersection.geometry,
+                            properties: feature.properties,
+                        });
+                    }
+                } catch {
+                    // Skip features that fail intersection
                 }
-            } catch {
-                // Skip features that fail intersection
             }
             continue;
         }
@@ -2242,6 +2293,10 @@ async function processClip(
 
     // 1. Get user property boundary (via ZIP or WFS CAR)
     let userPolygon: any;
+    // Lista de polígonos individuais do imóvel (lotes). O recorte WFS é feito
+    // contra cada lote separadamente; `userPolygon` (unificado) só é usado para
+    // bbox, área total e consulta WFS.
+    let userPolygons: Feature<Polygon | MultiPolygon>[];
     let userGeometry: any;
     let areaHa: number;
     let userWkt: string;
@@ -2252,6 +2307,7 @@ async function processClip(
             const feature = await fetchSigefBoundaryByParcelCode(sigefParcelCode);
             userGeometry = feature.geometry;
             userPolygon = feature;
+            userPolygons = [feature];
             areaHa = computeAreaHa(feature);
             userWkt = polygonToWkt(userGeometry);
             sendSSE(res, { type: "progress", layer: "SIGEF", stage: `Parcela SIGEF localizada — ${areaHa.toFixed(2)} ha`, percent: 5 });
@@ -2270,6 +2326,7 @@ async function processClip(
             const feature = await fetchCarBoundaryByNumber(carNumber);
             userGeometry = feature.geometry;
             userPolygon = feature;
+            userPolygons = [feature];
             areaHa = computeAreaHa(feature);
             userWkt = polygonToWkt(userGeometry);
             sendSSE(res, { type: "progress", layer: "WFS", stage: `CAR localizado — ${areaHa.toFixed(2)} ha`, percent: 5 });
@@ -2291,6 +2348,7 @@ async function processClip(
             return { ok: false, cloudinaryStoredBytes: 0 };
         }
         userPolygon = userResult.polygon;
+        userPolygons = userResult.polygons;
         userGeometry = userResult.geometry;
         areaHa = userResult.areaHa;
         userWkt = polygonToWkt(userGeometry);
@@ -2385,7 +2443,15 @@ async function processClip(
                 attributes["IDENTIFIC"] = airIdentificacao;
             }
 
-            const records = geojsonToShpRecords(userGeometry, attributes);
+            // Gera um registro por lote do imóvel (sem unir), preservando os
+            // mesmos atributos em todos — inclusive o número da AIR (IDENTIFIC),
+            // que fica idêntico em cada polígono do shape de AIR.
+            const records: ShpRecord[] = [];
+            for (const poly of userPolygons) {
+                const polyGeometry = normalizePolygonGeometry(poly.geometry);
+                if (!polyGeometry) continue;
+                records.push(...geojsonToShpRecords(polyGeometry, attributes));
+            }
             if (!records.length) {
                 layerSummaries.push({
                     name: layerName,
@@ -2417,9 +2483,11 @@ async function processClip(
         const isRiverLayer = RIVER_CLIP_LAYERS.has(layerName);
         const isSpringLayer = layerName === SPRING_LAYER_NAME;
         const clippedRiverFeatures = isSpringLayer ? getClippedRiverFeatures(clippedGeometries) : [];
-        const clipBoundary = isRiverLayer
-            ? riverClipBoundary.polygon
-            : userPolygon;
+        // Rios usam a fronteira expandida (única). Demais camadas recortam contra
+        // cada lote do imóvel separadamente, reunindo as peças no mesmo shapefile.
+        const clipBoundaries = isRiverLayer
+            ? [riverClipBoundary.polygon]
+            : userPolygons;
         const clipWkt = isRiverLayer
             ? riverClipBoundary.wkt
             : userWkt;
@@ -2480,9 +2548,9 @@ async function processClip(
             continue;
         }
 
-        const clipped = clipFeaturesToPolygon(wfsFeatures, clipBoundary, {
+        const clipped = clipFeaturesToPolygon(wfsFeatures, clipBoundaries, {
             pointClipPolygons: isSpringLayer && clippedRiverFeatures.length > 0
-                ? [userPolygon, ...clippedRiverFeatures]
+                ? [...userPolygons, ...clippedRiverFeatures]
                 : undefined,
         });
         throwIfClientDisconnected(res);
