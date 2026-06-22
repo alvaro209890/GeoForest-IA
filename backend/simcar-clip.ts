@@ -1106,7 +1106,28 @@ export function parseUserShapefile(zipBuffer: Buffer): {
             } else if (upper.includes("WGS") && upper.includes("84")) {
                 // WGS84 ≈ EPSG:4674 for practical purposes
                 needsReproject = false;
+            } else {
+                throw new Error(
+                    "O sistema de coordenadas do shapefile não é SIRGAS 2000. " +
+                    "Converta o arquivo para SIRGAS 2000 (EPSG:4674 ou " +
+                    "SIRGAS 2000 UTM zona 22S/23S) e tente novamente."
+                );
             }
+        }
+    } else {
+        // No .prj file — check if coordinates look like geographic (lat/lon)
+        const hasLatLonExtent = allPolygons.some(polygon =>
+            polygon.some(ring =>
+                ring.some(([x, y]) => x >= -180 && x <= 180 && y >= -90 && y <= 90)
+            )
+        );
+        if (!hasLatLonExtent) {
+            throw new Error(
+                "Não foi possível identificar o sistema de coordenadas do shapefile " +
+                "(arquivo .prj não encontrado no ZIP). " +
+                "Certifique-se de que o shapefile está em SIRGAS 2000 (EPSG:4674) " +
+                "e inclua o arquivo .prj no ZIP."
+            );
         }
     }
 
