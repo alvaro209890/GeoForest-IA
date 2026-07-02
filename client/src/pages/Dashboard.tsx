@@ -179,6 +179,7 @@ type Conversation = {
   lastAttachmentType?: 'image' | 'pdf';
   kind?: string;
   simcarJobId?: string;
+  verticesJobId?: string;
   auasJobId?: string;
 };
 
@@ -536,6 +537,25 @@ type VerticesProgress = {
   percent: number;
   message: string;
   layer?: string;
+};
+
+type VerticesHistoryItem = {
+  id: string;
+  jobId: string;
+  filename: string;
+  timestamp: string;
+  status: 'processing' | 'completed' | 'failed' | 'cancelled' | 'uploaded' | 'deleted';
+  stage?: string;
+  percent: number;
+  message?: string;
+  error?: string;
+  downloadUrl?: string;
+  outputUrl?: string;
+  outputBytes?: number;
+  resultRows?: VerticesResultRow[];
+  warnings?: string[];
+  analyzedLayers?: Array<{ name: string; requested: number; found: number; crsLabel?: string; metricCrsLabel?: string }>;
+  conversationId?: string;
 };
 
 const DEFAULT_SETTINGS: UserSettings = {
@@ -1310,6 +1330,7 @@ export default function Dashboard() {
   const [verticesError, setVerticesError] = useState<string | null>(null);
   const [verticesRows, setVerticesRows] = useState<VerticesResultRow[]>([]);
   const [verticesDownloadUrl, setVerticesDownloadUrl] = useState<string | null>(null);
+  const [verticesHistory, setVerticesHistory] = useState<VerticesHistoryItem[]>([]);
   const [verticesIncludeOriginals, setVerticesIncludeOriginals] = useState(true);
   const [verticesIncludeReport, setVerticesIncludeReport] = useState(true);
   const [verticesIncludeCsv, setVerticesIncludeCsv] = useState(true);
@@ -1317,6 +1338,7 @@ export default function Dashboard() {
   const [verticesMetricTemporary, setVerticesMetricTemporary] = useState(true);
   const verticesFileInputRef = useRef<HTMLInputElement | null>(null);
   const verticesEventsAbortRef = useRef<AbortController | null>(null);
+  const verticesConversationSavedRef = useRef<Set<string>>(new Set());
 
   const resetVerticesDraft = useCallback(() => {
     verticesEventsAbortRef.current?.abort();
@@ -1489,6 +1511,7 @@ export default function Dashboard() {
     collection: ReturnType<typeof collection>;
   } | null>(null);
   const [simcarClipsRef, setSimcarClipsRef] = useState<ReturnType<typeof collection> | null>(null);
+  const [verticesJobsRef, setVerticesJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
   const [settingsRef, setSettingsRef] = useState<DocumentReference | null>(null);
   const settingsImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -2028,23 +2051,145 @@ export default function Dashboard() {
     });
   }, []);
 
+  const mapVerticesDocToHistoryItem = useCallback((docId: string, data: any): VerticesHistoryItem => {
+    const rawStatus = String(data?.status || '').trim().toLowerCase();
+    const status: VerticesHistoryItem['status'] =
+      rawStatus === 'completed' || rawStatus === 'failed' || rawStatus === 'cancelled' || rawStatus === 'uploaded' || rawStatus === 'deleted'
+        ? rawStatus
+        : 'processing';
+    return {
+      id: String(data?.id || docId),
+      jobId: String(data?.jobId || docId),
+      filename: String(data?.filename || 'Vértices Próximas'),
+      timestamp: toIsoDateFromUnknown(data?.completedAt || data?.updatedAt || data?.createdAt || data?.timestamp),
+      status,
+      stage: data?.stage ? String(data.stage) : undefined,
+      percent: Math.max(0, Math.min(100, Math.round(Number(data?.percent || (status === 'completed' ? 100 : 0))))),
+      message: data?.message ? String(data.message) : undefined,
+      error: data?.error ? String(data.error) : undefined,
+      downloadUrl: data?.downloadUrl ? resolveBackendUrl(String(data.downloadUrl)) : undefined,
+      outputUrl: data?.outputUrl ? resolveBackendUrl(String(data.outputUrl)) : undefined,
+      outputBytes: Number.isFinite(Number(data?.outputBytes)) ? Number(data.outputBytes) : undefined,
+      resultRows: Array.isArray(data?.resultRows) ? data.resultRows as VerticesResultRow[] : undefined,
+      warnings: Array.isArray(data?.warnings) ? data.warnings.map((item: any) => String(item)) : undefined,
+      analyzedLayers: Array.isArray(data?.analyzedLayers) ? data.analyzedLayers.map((item: any) => ({
+        name: String(item?.name || 'Camada'),
+        requested: Number(item?.requested || 0),
+        found: Number(item?.found || 0),
+        crsLabel: item?.crsLabel ? String(item.crsLabel) : undefined,
+        metricCrsLabel: item?.metricCrsLabel ? String(item.metricCrsLabel) : undefined,
+      })) : undefined,
+      conversationId: data?.conversationId ? String(data.conversationId) : undefined,
+    };
+  }, []);
+
+  const appendVerticesJobToConversation = useCallback(async (job: VerticesHistoryItem) => {
+    if (!conversationsRef || !verticesJobsRef || !job?.jobId || job.status !== 'completed') return null;
+    if (job.conversationId || verticesConversationSavedRef.current.has(job.jobId)) return job.conversationId || null;
+    verticesConversationSavedRef.current.add(job.jobId);
+
+    const conversationId = nanoid();
+    const convDocRef = doc(conversationsRef.collection, conversationId);
+    const pairsCount = Array.isArray(job.resultRows) ? job.resultRows.length : 0;
+    const analyzedCount = Array.isArray(job.analyzedLayers) ? job.analyzedLayers.length : 0;
+    const warningCount = Array.isArray(job.warnings) ? job.warnings.length : 0;
+    const title = `Vértices Próximas - ${job.filename}`;
+    const summary = [
+      'Análise de Vértices Próximas concluída.',
+      `Arquivo: ${job.filename}`,
+      `Camadas analisadas: ${analyzedCount}`,
+      `Pares encontrados: ${pairsCount}`,
+      warningCount > 0 ? `Avisos: ${warningCount}` : '',
+      job.downloadUrl ? `Download: ${job.downloadUrl}` : '',
+    ].filter(Boolean).join('\n');
+    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const messages: ChatMessage[] = [
+      DEFAULT_ASSISTANT_MESSAGE,
+      {
+        id: nanoid(),
+        role: 'ai',
+        text: summary,
+        time: now,
+        meta: { model: 'vertices-proximas' },
+      },
+    ];
+
+    await setDoc(convDocRef, {
+      title,
+      kind: 'vertices_proximas',
+      verticesJobId: job.jobId,
+      messages: sanitizeMessagesForFirestore(messages),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      lastMessagePreview: summary.slice(0, 120),
+      lastAttachmentType: null,
+    }, { merge: true });
+
+    await setDoc(doc(verticesJobsRef, job.jobId), { conversationId, updatedAtMs: Date.now() }, { merge: true });
+
+    setConversations((prev) => [{
+      id: conversationId,
+      title,
+      kind: 'vertices_proximas',
+      verticesJobId: job.jobId,
+      lastMessagePreview: summary.slice(0, 120),
+    }, ...prev.filter((item) => item.id !== conversationId)]);
+    setVerticesHistory((prev) => prev.map((item) => item.jobId === job.jobId ? { ...item, conversationId } : item));
+
+    return conversationId;
+  }, [conversationsRef, verticesJobsRef]);
+
+  const deleteVerticesJob = useCallback(async (entry: VerticesHistoryItem) => {
+    try {
+      await apiFetch(`/api/vertices/jobs/${encodeURIComponent(entry.jobId)}`, { method: 'DELETE' }).catch(() => undefined);
+      if (verticesJobsRef) void deleteDoc(doc(verticesJobsRef, entry.jobId)).catch(() => undefined);
+      if (conversationsRef) {
+        const linkedConversationIds = new Set<string>();
+        if (entry.conversationId) linkedConversationIds.add(entry.conversationId);
+        for (const conv of conversations) {
+          if (String(conv.verticesJobId || '').trim() === String(entry.jobId)) linkedConversationIds.add(conv.id);
+        }
+        for (const convId of linkedConversationIds) void deleteDoc(doc(conversationsRef.collection, convId)).catch(() => undefined);
+        if (linkedConversationIds.size > 0) setConversations((prev) => prev.filter((c) => !linkedConversationIds.has(c.id)));
+      }
+      setVerticesHistory((prev) => prev.filter((item) => item.jobId !== entry.jobId));
+      if (verticesJobId === entry.jobId) resetVerticesDraft();
+      toast.success('Análise de vértices removida.');
+    } catch (error: any) {
+      toast.error(error?.message || 'Falha ao excluir análise de vértices.');
+    }
+  }, [apiFetch, conversations, conversationsRef, resetVerticesDraft, verticesJobId, verticesJobsRef]);
+
   const applyVerticesJobSnapshot = useCallback((job: any) => {
-    const status = String(job?.status || '').toLowerCase();
+    const item = mapVerticesDocToHistoryItem(String(job?.jobId || verticesJobId || nanoid()), job);
+    const status = item.status;
     setVerticesProgress({
-      stage: String(job?.stage || status || 'processing'),
-      percent: Math.max(0, Math.min(100, Math.round(Number(job?.percent || 0)))),
-      message: String(job?.message || ''),
+      stage: item.stage || status || 'processing',
+      percent: item.percent,
+      message: item.message || '',
       layer: job?.layer ? String(job.layer) : undefined,
     });
     setVerticesProcessing(status === 'processing');
-    if (Array.isArray(job?.warnings)) setVerticesWarnings(job.warnings.map((item: any) => String(item)));
-    if (Array.isArray(job?.resultRows)) setVerticesRows(job.resultRows as VerticesResultRow[]);
-    const downloadUrl = resolveBackendUrl(String(job?.downloadUrl || ''));
-    if (downloadUrl) setVerticesDownloadUrl(downloadUrl);
+    if (item.warnings) setVerticesWarnings(item.warnings);
+    if (item.resultRows) setVerticesRows(item.resultRows);
+    if (item.downloadUrl) setVerticesDownloadUrl(item.downloadUrl);
     if (status === 'failed' || status === 'cancelled') {
-      setVerticesError(String(job?.error || job?.message || 'Falha ao processar vértices.'));
+      setVerticesError(item.error || item.message || 'Falha ao processar vértices.');
+    } else {
+      setVerticesError(null);
     }
-  }, []);
+    if (item.jobId) {
+      setVerticesHistory((prev) => {
+        const next = { ...item, filename: item.filename || verticesFile?.name || 'Vértices Próximas' };
+        return [next, ...prev.filter((entry) => entry.jobId !== next.jobId)];
+      });
+      if (status === 'completed') {
+        void appendVerticesJobToConversation(item).catch(() => {
+          verticesConversationSavedRef.current.delete(item.jobId);
+        });
+      }
+    }
+  }, [appendVerticesJobToConversation, mapVerticesDocToHistoryItem, verticesFile?.name, verticesJobId]);
 
   const connectVerticesEvents = useCallback(async (jobId: string) => {
     const normalizedJobId = String(jobId || '').trim();
@@ -2073,7 +2218,7 @@ export default function Dashboard() {
           try {
             const evt = JSON.parse(line.slice(5).trim());
             if (evt?.type === 'snapshot' && evt?.job) {
-              applyVerticesJobSnapshot(evt.job);
+              applyVerticesJobSnapshot({ ...evt.job, jobId: evt.jobId || evt.job?.jobId });
             } else if (evt?.type === 'progress') {
               applyVerticesJobSnapshot(evt);
             }
@@ -2090,6 +2235,28 @@ export default function Dashboard() {
       if (verticesEventsAbortRef.current === controller) verticesEventsAbortRef.current = null;
     }
   }, [apiFetch, applyVerticesJobSnapshot]);
+
+  const selectVerticesHistoryEntry = useCallback((entry: VerticesHistoryItem) => {
+    verticesEventsAbortRef.current?.abort();
+    setActiveView('vertices-proximas');
+    setVerticesFile(null);
+    setVerticesUploadId(null);
+    setVerticesLayers([]);
+    setVerticesUploading(false);
+    setVerticesProcessing(entry.status === 'processing');
+    setVerticesJobId(entry.jobId);
+    setVerticesProgress({
+      stage: entry.stage || entry.status,
+      percent: entry.percent,
+      message: entry.message || (entry.status === 'completed' ? 'Análise concluída.' : ''),
+    });
+    setVerticesWarnings(entry.warnings || []);
+    setVerticesRows(entry.resultRows || []);
+    setVerticesDownloadUrl(entry.downloadUrl || null);
+    setVerticesError(entry.status === 'failed' ? entry.error || entry.message || 'Falha ao processar vértices.' : null);
+    if (verticesFileInputRef.current) verticesFileInputRef.current.value = '';
+    if (entry.status === 'processing') void connectVerticesEvents(entry.jobId);
+  }, [connectVerticesEvents]);
 
   const applyVerticesZipFile = useCallback(async (file: File | null) => {
     if (!file) return;
@@ -2201,6 +2368,16 @@ export default function Dashboard() {
       const jobId = String(payload?.jobId || '').trim();
       if (!jobId) throw new Error('Backend não retornou jobId.');
       setVerticesJobId(jobId);
+      setVerticesHistory((prev) => [{
+        id: jobId,
+        jobId,
+        filename: verticesFile?.name || 'Vértices Próximas',
+        timestamp: new Date().toISOString(),
+        status: 'processing',
+        stage: 'queued',
+        percent: 1,
+        message: 'Processamento de vértices enviado ao servidor.',
+      }, ...prev.filter((entry) => entry.jobId !== jobId)]);
       void connectVerticesEvents(jobId);
     } catch (error: any) {
       const message = error?.message || 'Falha ao processar vértices.';
@@ -3214,7 +3391,9 @@ export default function Dashboard() {
       try {
         if (!currentUser) {
           setSimcarClipsRef(null);
+          setVerticesJobsRef(null);
           setCbersHistory([]);
+          setVerticesHistory([]);
           setCbersJobId(null);
           setCbersProcessing(false);
           setLocation('/');
@@ -3235,6 +3414,8 @@ export default function Dashboard() {
         setConversationsRef({ collection: collRef });
         const simcarRef = collection(db, 'users', currentUser.uid, 'simcar_clips');
         setSimcarClipsRef(simcarRef);
+        const verticesRef = collection(db, 'users', currentUser.uid, 'vertices_jobs');
+        setVerticesJobsRef(verticesRef);
         const cbersRef = collection(db, 'users', currentUser.uid, 'cbers_wpm_jobs');
 
         const nextSettingsRef = doc(db, 'users', currentUser.uid, 'settings', 'preferences');
@@ -3259,6 +3440,7 @@ export default function Dashboard() {
             lastAttachmentType: (data as any).lastAttachmentType,
             kind: typeof data?.kind === 'string' ? data.kind : undefined,
             simcarJobId: typeof data?.simcarJobId === 'string' ? data.simcarJobId : undefined,
+            verticesJobId: typeof data?.verticesJobId === 'string' ? data.verticesJobId : undefined,
             auasJobId: typeof data?.auasJobId === 'string' ? data.auasJobId : undefined,
           });
         });
@@ -3372,6 +3554,33 @@ export default function Dashboard() {
         }
 
         try {
+          const verticesSnap = await getDocs(query(verticesRef, orderBy('updatedAtMs', 'desc')));
+          const verticesEntries: VerticesHistoryItem[] = [];
+          verticesSnap.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            const item = mapVerticesDocToHistoryItem(docSnap.id, data);
+            if (item.status !== 'uploaded' && item.status !== 'deleted') verticesEntries.push(item);
+          });
+          setVerticesHistory(verticesEntries);
+          const runningVertices = verticesEntries.find((entry) => entry.status === 'processing');
+          if (runningVertices) {
+            setActiveView('vertices-proximas');
+            setVerticesProcessing(true);
+            setVerticesJobId(runningVertices.jobId);
+            setVerticesProgress({
+              stage: runningVertices.stage || runningVertices.status,
+              percent: runningVertices.percent,
+              message: runningVertices.message || 'Processamento em andamento.',
+            });
+            setVerticesWarnings(runningVertices.warnings || []);
+            setVerticesRows(runningVertices.resultRows || []);
+            setVerticesDownloadUrl(runningVertices.downloadUrl || null);
+          }
+        } catch (error) {
+          console.warn('Falha ao carregar histórico de vértices salvo:', error);
+        }
+
+        try {
           const cbersSnap = await getDocs(query(cbersRef, orderBy('updatedAtMs', 'desc')));
           const cbersEntries: CbersHistoryItem[] = [];
           cbersSnap.forEach((docSnap) => {
@@ -3405,7 +3614,7 @@ export default function Dashboard() {
     });
 
     return () => unsubscribe();
-  }, [mapCbersDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, selectCbersHistoryEntry, selectSimcarClipEntry, setLocation]);
+  }, [mapCbersDocToHistoryItem, mapVerticesDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, selectCbersHistoryEntry, selectSimcarClipEntry, setLocation]);
 
   useEffect(() => {
     const uid = String(userProfile?.uid || '').trim();
@@ -6404,27 +6613,39 @@ Arquivo de imagem previamente anexado pelo usuário.`;
     );
   }, [simcarClipHistory]);
 
-  const isSimcarConversation = useCallback(
+  const verticesConversationIds = useMemo(() => {
+    return new Set(
+      verticesHistory
+        .map((entry) => String(entry.conversationId || '').trim())
+        .filter(Boolean)
+    );
+  }, [verticesHistory]);
+
+  const isWorkflowConversation = useCallback(
     (conv: Conversation) => {
-      if (String(conv.kind || '').toLowerCase() === 'simcar_recorte') return true;
-      if (String(conv.simcarJobId || '').trim()) return true;
-      if (simcarConversationIds.has(conv.id)) return true;
+      const kind = String(conv.kind || '').toLowerCase();
+      if (kind === 'simcar_recorte' || kind === 'vertices_proximas') return true;
+      if (String(conv.simcarJobId || '').trim() || String(conv.verticesJobId || '').trim()) return true;
+      if (simcarConversationIds.has(conv.id) || verticesConversationIds.has(conv.id)) return true;
       const title = String(conv.title || '').toLowerCase();
       const preview = String(conv.lastMessagePreview || '').toLowerCase();
       // Fallback para casos de persistência ainda não reconciliada (troca rápida de abas).
       return (
         title.includes('recorte simcar') ||
+        title.includes('vertices proximas') ||
+        title.includes('vértices próximas') ||
         title.includes('analise de auas') ||
         title.includes('análise de auas') ||
-        preview.includes('recorte') && preview.includes('simcar')
+        (preview.includes('recorte') && preview.includes('simcar')) ||
+        (preview.includes('vértices') && preview.includes('concluída'))
       );
     },
-    [simcarConversationIds]
+    [simcarConversationIds, verticesConversationIds]
   );
 
   const filteredConversations = conversations.filter(
     (c) =>
-      !isSimcarConversation(c) &&
+      !isWorkflowConversation(c) &&
       c.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -6940,13 +7161,64 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </div>
             )
           ) : activeView === 'vertices-proximas' ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <Network size={32} className="text-slate-600 mb-3" />
-              <p className="text-sm text-slate-400">Análise de vértices</p>
-              <p className="text-[10px] text-slate-600 mt-1">
-                {verticesJobId ? `Job ${verticesJobId.slice(0, 8)}` : 'Envie um ZIP para começar'}
-              </p>
-            </div>
+            verticesHistory.length > 0 ? (
+              verticesHistory.map((entry) => (
+                <div
+                  key={entry.jobId}
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${verticesJobId === entry.jobId ? 'bg-violet-500/10 border-violet-500/20 shadow-[0_0_15px_rgba(139,92,246,0.06)]' : 'bg-[#100d18]/70 hover:bg-[#171322] hover:border-violet-500/20'}`}
+                  onClick={() => selectVerticesHistoryEntry(entry)}
+                >
+                  <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${verticesJobId === entry.jobId ? 'bg-gradient-to-br from-violet-500 to-emerald-500 text-white shadow-md shadow-violet-900/40' : 'bg-white/5 text-slate-400 group-hover:text-violet-300 group-hover:bg-violet-500/10'}`}>
+                    <Network size={18} />
+                  </div>
+                  <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                    <p className={`text-sm truncate font-medium ${verticesJobId === entry.jobId ? 'text-violet-100' : 'text-slate-200 group-hover:text-violet-100'}`}>{entry.filename}</p>
+                    <div className="flex items-center gap-2 mt-1 opacity-80">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold text-violet-300">
+                        {entry.percent}%
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
+                          ? 'text-amber-300'
+                          : entry.status === 'completed'
+                            ? 'text-emerald-300'
+                            : entry.status === 'cancelled'
+                              ? 'text-orange-300'
+                              : 'text-red-300'
+                          }`}
+                      >
+                        {entry.status === 'processing'
+                          ? 'Processando'
+                          : entry.status === 'completed'
+                            ? 'Concluído'
+                            : entry.status === 'cancelled'
+                              ? 'Cancelado'
+                              : 'Falhou'}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-0.5 truncate">
+                      {(entry.resultRows?.length || 0)} par(es) • {(entry.analyzedLayers?.length || 0)} camada(s)
+                    </p>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void deleteVerticesJob(entry);
+                    }}
+                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                    title="Excluir análise"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Network size={32} className="text-slate-600 mb-3" />
+                <p className="text-sm text-slate-400">Nenhuma análise de vértices</p>
+                <p className="text-[10px] text-slate-600 mt-1">Clique em "Nova Análise" para começar</p>
+              </div>
+            )
           ) : activeView === 'simcar-clip' ? (
             /* ─── SIMCAR Clip History Cards ─── */
             simcarClipHistory.length > 0 ? (

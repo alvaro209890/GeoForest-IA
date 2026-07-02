@@ -53,6 +53,21 @@ Fluxo da tela:
 5. Processamento com barra de progresso.
 6. Resultado em tabela e download do ZIP.
 
+
+## Histórico e cards laterais
+
+A aba **Vértices Próximas** mantém o mesmo padrão de navegação do **Recorte SIMCAR**:
+
+- cada processamento iniciado aparece como card no canto esquerdo da tela;
+- jobs em andamento podem ser reabertos pelo card e continuam recebendo progresso por SSE;
+- jobs concluídos mostram percentual, status, total de pares encontrados e quantidade de camadas analisadas;
+- ao concluir, o frontend cria uma conversa vinculada em `users/<uid>/conversations` com `kind: vertices_proximas` e `verticesJobId`;
+- o documento do job em `users/<uid>/vertices_jobs/<jobId>` recebe `conversationId`, evitando duplicidade de conversa;
+- conversas de workflow (`simcar_recorte` e `vertices_proximas`) ficam fora da lista geral de chat e aparecem na sidebar da respectiva aba;
+- excluir o card remove o job de `vertices_jobs` e também a conversa vinculada.
+
+Esse vínculo permite recuperar o resultado depois de trocar de aba, recarregar o frontend ou reiniciar o backend.
+
 ## Backend
 
 Arquivo principal:
