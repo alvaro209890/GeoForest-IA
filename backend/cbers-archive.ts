@@ -568,6 +568,61 @@ function linkForGeoserver(hdPath: string, orbit: string, year: string, storeName
   return target;
 }
 
+function firstFiniteNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return null;
+}
+
+function coverageBounds(payload: PlainObject | null): { minx: number; miny: number; maxx: number; maxy: number } | null {
+  const coverage = payload?.coverage || {};
+  const bbox = coverage.latLonBoundingBox || coverage.nativeBoundingBox || {};
+  const minx = firstFiniteNumber(bbox.minx, bbox.minX);
+  const miny = firstFiniteNumber(bbox.miny, bbox.minY);
+  const maxx = firstFiniteNumber(bbox.maxx, bbox.maxX);
+  const maxy = firstFiniteNumber(bbox.maxy, bbox.maxY);
+  if ([minx, miny, maxx, maxy].some((value) => value === null)) return null;
+  if (!(Number(maxx) > Number(minx)) || !(Number(maxy) > Number(miny))) return null;
+  return { minx: Number(minx), miny: Number(miny), maxx: Number(maxx), maxy: Number(maxy) };
+}
+
+async function verifyGeoTiffWmsPublication(storeName: string): Promise<void> {
+  const layer = await geoserverJson(`/rest/layers/${GEOSERVER_WORKSPACE}:${encodeURIComponent(storeName)}.json`);
+  if (!layer?.layer) throw new Error(`GeoServer não retornou a layer publicada ${GEOSERVER_WORKSPACE}:${storeName}.`);
+
+  const coverage = await geoserverJson(
+    `/rest/workspaces/${GEOSERVER_WORKSPACE}/coveragestores/${encodeURIComponent(storeName)}/coverages/${encodeURIComponent(storeName)}.json`,
+  );
+  const bbox = coverageBounds(coverage);
+  if (!bbox) throw new Error(`GeoServer não retornou bbox válida para ${GEOSERVER_WORKSPACE}:${storeName}.`);
+
+  const params = new URLSearchParams({
+    service: "WMS",
+    version: "1.1.1",
+    request: "GetMap",
+    layers: `${GEOSERVER_WORKSPACE}:${storeName}`,
+    styles: "",
+    srs: "EPSG:4326",
+    bbox: `${bbox.minx},${bbox.miny},${bbox.maxx},${bbox.maxy}`,
+    width: "64",
+    height: "64",
+    format: "image/png",
+    transparent: "true",
+  });
+  const response = await fetch(`${GEOSERVER_BASE_URL}/${GEOSERVER_WORKSPACE}/wms?${params.toString()}`, {
+    headers: { Authorization: authHeader() },
+  }) as globalThis.Response;
+  const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+  const bytes = Buffer.from(await response.arrayBuffer()).length;
+  if (!response.ok || !contentType.startsWith("image/") || bytes < 100) {
+    throw new Error(
+      `WMS GetMap não validou ${GEOSERVER_WORKSPACE}:${storeName}: status=${response.status}, contentType=${contentType}, bytes=${bytes}.`,
+    );
+  }
+}
+
 async function publishGeoTiff(args: {
   storeName: string;
   hdPath: string;
@@ -650,6 +705,8 @@ async function publishGeoTiff(args: {
     },
     style: "",
   });
+
+  await verifyGeoTiffWmsPublication(args.storeName);
 }
 
 function recordPath(imageId: string): string {

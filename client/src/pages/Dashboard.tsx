@@ -1304,7 +1304,7 @@ export default function Dashboard() {
   const [cbersDateStart, setCbersDateStart] = useState('');
   const [cbersDateEnd, setCbersDateEnd] = useState('');
   const [cbersMaxCloudCover, setCbersMaxCloudCover] = useState('');
-  const [cbersLevelFilter, setCbersLevelFilter] = useState<'all' | 'L4' | 'L2'>('all');
+  const [, setCbersLevelFilter] = useState<'L4'>('L4');
   const [cbersSortOrder, setCbersSortOrder] = useState<'desc' | 'asc'>('desc');
   const [cbersAreaHa, setCbersAreaHa] = useState<number | null>(null);
   const [cbersPropertyGeometry, setCbersPropertyGeometry] = useState<CbersGeoJsonGeometry | null>(null);
@@ -1378,7 +1378,7 @@ export default function Dashboard() {
     setCbersDateStart('');
     setCbersDateEnd('');
     setCbersMaxCloudCover('');
-    setCbersLevelFilter('all');
+    setCbersLevelFilter('L4');
     setCbersSortOrder('desc');
     setCbersAreaHa(null);
     setCbersPropertyGeometry(null);
@@ -2607,7 +2607,7 @@ export default function Dashboard() {
     const maxCloud = cbersMaxCloudCover.trim() ? Number(cbersMaxCloudCover) : null;
     return sortCbersScenes(
       cbersScenes.filter((scene) => {
-        if (cbersLevelFilter !== 'all' && scene.level !== cbersLevelFilter) return false;
+        if (scene.level && scene.level !== 'L4') return false;
         if (maxCloud !== null && Number.isFinite(maxCloud)) {
           if (scene.cloudCover === null) return false;
           if (scene.cloudCover > maxCloud) return false;
@@ -2622,7 +2622,7 @@ export default function Dashboard() {
         return true;
       })
     );
-  }, [cbersDateEnd, cbersDateStart, cbersLevelFilter, cbersMaxCloudCover, cbersScenes, sortCbersScenes]);
+  }, [cbersDateEnd, cbersDateStart, cbersMaxCloudCover, cbersScenes, sortCbersScenes]);
 
   useEffect(() => {
     if (cbersScenes.length === 0) return;
@@ -2644,6 +2644,10 @@ export default function Dashboard() {
   );
 
   const toggleCbersSceneSelection = useCallback((scene: CbersScene) => {
+    if (scene.level && scene.level !== 'L4') {
+      toast.error('A geração CBERS está restrita a cenas L4.');
+      return;
+    }
     if (scene.wmsAvailable) {
       toast.info('Esta folha já está disponível no WMS. Use a imagem publicada em vez de gerar novamente.');
       return;
@@ -2769,7 +2773,7 @@ export default function Dashboard() {
       setCbersScenes(scenes);
       const maxCloud = cbersMaxCloudCover.trim() ? Number(cbersMaxCloudCover) : null;
       const firstCovered = scenes.find((scene) => {
-        if (cbersLevelFilter !== 'all' && scene.level !== cbersLevelFilter) return false;
+        if (scene.level && scene.level !== 'L4') return false;
         if (scene.coversArea === false || scene.wmsAvailable) return false;
         if (maxCloud !== null && Number.isFinite(maxCloud)) {
           return scene.cloudCover !== null && scene.cloudCover <= maxCloud;
@@ -2789,7 +2793,7 @@ export default function Dashboard() {
     } finally {
       setCbersSearching(false);
     }
-  }, [apiFetch, cbersCarNumber, cbersDateEnd, cbersDateStart, cbersFile, cbersLevelFilter, cbersMaxCloudCover, cbersOrbit, cbersPoint, fileToBase64Payload, sortCbersScenes]);
+  }, [apiFetch, cbersCarNumber, cbersDateEnd, cbersDateStart, cbersFile, cbersMaxCloudCover, cbersOrbit, cbersPoint, fileToBase64Payload, sortCbersScenes]);
 
   const startCbersProcessing = useCallback(async (sceneIdOverride?: string) => {
     const targetSceneIds = sceneIdOverride
@@ -2803,12 +2807,14 @@ export default function Dashboard() {
     }
     const blocked = targetSceneIds
       .map((id) => cbersScenes.find((scene) => scene.id === id))
-      .find((scene) => scene?.coversArea === false || scene?.wmsAvailable);
+      .find((scene) => scene?.coversArea === false || scene?.wmsAvailable || (scene?.level && scene.level !== 'L4'));
     if (blocked) {
       toast.error(
         blocked.wmsAvailable
           ? `A folha da cena ${blocked.id} já está disponível no WMS. Use a imagem existente.`
-          : `Cena ${blocked.id} não cobre 100% da área.`
+          : blocked.level && blocked.level !== 'L4'
+            ? `A cena ${blocked.id} é ${blocked.level}; a geração aceita somente L4.`
+            : `Cena ${blocked.id} não cobre 100% da área.`
       );
       return;
     }
@@ -9342,13 +9348,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                     <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">GeoTIFF 3-4-2 com pancromática</h2>
                     <p className="max-w-3xl text-sm text-slate-400">
-                      Busque por ZIP/SHP ou por órbita, ponto e data, escolha uma cena pública do STAC INPE e gere a folha completa em .tif para ArcMap.
+                      Busque por ZIP/SHP ou por órbita, ponto e data, escolha uma cena L4 pública do STAC INPE e gere a folha completa em .tif para ArcMap.
                     </p>
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-center">
                     {[
                       { label: 'Fonte', value: 'INPE STAC' },
-                      { label: 'Coleção', value: 'L4/L2-DN' },
+                      { label: 'Coleção', value: 'L4-DN' },
                       { label: 'Saída', value: 'GeoTIFF' },
                     ].map((item) => (
                       <div key={item.label} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
@@ -9482,7 +9488,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                       <div>
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-cyan-300">Filtros da busca</p>
-                        <p className="text-xs text-slate-500">Combine órbita/ponto, nível, nuvem e período sem perder a seleção da área.</p>
+                        <p className="text-xs text-slate-500">Combine órbita/ponto, nuvem e período sem perder a seleção da área. A geração usa somente cenas L4.</p>
                       </div>
                       <button
                         type="button"
@@ -9492,7 +9498,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           setCbersDateStart('');
                           setCbersDateEnd('');
                           setCbersMaxCloudCover('');
-                          setCbersLevelFilter('all');
+                          setCbersLevelFilter('L4');
                           setCbersSortOrder('desc');
                         }}
                         className="self-start rounded-lg border border-white/10 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 transition-colors hover:bg-white/5 hover:text-white sm:self-auto"
@@ -9526,21 +9532,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </div>
                       <div className="md:col-span-6 lg:col-span-3">
                         <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Nível CBERS</label>
-                        <div className="grid grid-cols-3 rounded-xl border border-white/10 bg-white/[0.04] p-1">
-                          {[
-                            { value: 'all', label: 'L4 + L2' },
-                            { value: 'L4', label: 'Só L4' },
-                            { value: 'L2', label: 'Só L2' },
-                          ].map((item) => (
-                            <button
-                              key={item.value}
-                              type="button"
-                              onClick={() => setCbersLevelFilter(item.value as 'all' | 'L4' | 'L2')}
-                              className={`rounded-lg px-2 py-2 text-[11px] font-semibold transition-colors ${cbersLevelFilter === item.value ? 'bg-cyan-400 text-[#04110e]' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}
-                            >
-                              {item.label}
-                            </button>
-                          ))}
+                        <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2.5 text-sm font-semibold text-emerald-100">
+                          Somente L4-DN
                         </div>
                       </div>
                       <div className="md:col-span-4 lg:col-span-2">
@@ -9609,11 +9602,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <button
                       type="button"
                       onClick={() => void startCbersProcessing()}
-                      disabled={cbersSelectedSceneIds.length === 0 || cbersProcessing || cbersSelectedScenes.some((scene) => scene.coversArea === false || scene.wmsAvailable)}
+                      disabled={cbersSelectedSceneIds.length === 0 || cbersProcessing || cbersSelectedScenes.some((scene) => scene.coversArea === false || scene.wmsAvailable || (scene.level && scene.level !== 'L4'))}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {cbersProcessing ? <Loader2 size={17} className="animate-spin" /> : <Cpu size={17} />}
-                      Gerar {cbersSelectedSceneIds.length > 1 ? `${cbersSelectedSceneIds.length} GeoTIFFs` : 'GeoTIFF'}
+                      Gerar L4 {cbersSelectedSceneIds.length > 1 ? `${cbersSelectedSceneIds.length} GeoTIFFs` : 'GeoTIFF'}
                     </button>
                   </div>
 
@@ -9630,7 +9623,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           const coverage = Number(scene.coveragePercent ?? 0);
                           const hasCoverage = typeof scene.coveragePercent === 'number' && Number.isFinite(scene.coveragePercent);
                           const availableOnWms = scene.wmsAvailable && scene.wmsUrl;
-                          const blocked = scene.coversArea === false || Boolean(availableOnWms);
+                          const legacyNonL4 = Boolean(scene.level && scene.level !== 'L4');
+                          const blocked = scene.coversArea === false || Boolean(availableOnWms) || legacyNonL4;
                           return (
                             <button
                               key={scene.id}
@@ -9653,8 +9647,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                   <div className="mt-1 flex flex-wrap items-center gap-1.5">
                                     <p className="text-xs text-slate-400">{date}</p>
                                     {scene.level && (
-                                      <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${scene.level === 'L4' ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-amber-400/25 bg-amber-400/10 text-amber-200'}`}>
-                                        {scene.level}{scene.fallbackFromL2 ? ' fallback' : ''}
+                                      <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${scene.level === 'L4' ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-red-400/25 bg-red-400/10 text-red-200'}`}>
+                                        {scene.level === 'L4' ? 'L4' : 'Legado'}
                                       </span>
                                     )}
                                   </div>
@@ -9991,7 +9985,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   : 'Sem data';
                 const selected = cbersSelectedSceneIds.includes(cbersPreviewScene.id);
                 const availableOnWms = cbersPreviewScene.wmsAvailable && cbersPreviewScene.wmsUrl;
-                const blocked = cbersPreviewScene.coversArea === false || Boolean(availableOnWms);
+                const blocked = cbersPreviewScene.coversArea === false || Boolean(availableOnWms) || Boolean(cbersPreviewScene.level && cbersPreviewScene.level !== 'L4');
                 const estimate = cbersPreviewScene.estimate;
                 return createPortal(
                   <div
@@ -10060,8 +10054,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             </div>
                             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                               <p className="text-[10px] uppercase tracking-wider text-slate-500">Nível</p>
-                              <p className={`mt-1 text-sm font-semibold ${cbersPreviewScene.level === 'L2' ? 'text-amber-200' : 'text-emerald-200'}`}>
-                                {cbersPreviewScene.level || 'L4'}{cbersPreviewScene.fallbackFromL2 ? ' fallback' : ''}
+                              <p className={`mt-1 text-sm font-semibold ${cbersPreviewScene.level && cbersPreviewScene.level !== 'L4' ? 'text-red-200' : 'text-emerald-200'}`}>
+                                {cbersPreviewScene.level && cbersPreviewScene.level !== 'L4' ? 'Legado' : 'L4'}
                               </p>
                             </div>
                             <div className={`rounded-xl border p-3 ${cbersPreviewScene.coversArea === false ? 'border-red-500/20 bg-red-500/10' : typeof cbersPreviewScene.coveragePercent === 'number' ? 'border-emerald-500/20 bg-emerald-500/10' : 'border-cyan-500/20 bg-cyan-500/10'}`}>

@@ -101,7 +101,7 @@ type CbersAreaContext = {
   areaHa: number;
 };
 
-type CbersSceneJobState = {
+export type CbersSceneJobState = {
   itemId: string;
   collectionId?: string;
   level?: CbersCollectionLevel;
@@ -165,16 +165,12 @@ class CbersCancelError extends Error {
 const STAC_ROOT = String(
   process.env.CBERS_STAC_ROOT || "https://data.inpe.br/bdc/stac/v1",
 ).replace(/\/+$/, "");
+const CBERS_GENERATION_LEVEL: CbersCollectionLevel = "L4";
 const CBERS_COLLECTIONS: CbersCollectionConfig[] = [
   {
-    level: "L4",
+    level: CBERS_GENERATION_LEVEL,
     collectionId: process.env.CBERS_COLLECTION_L4 || "CB4A-WPM-L4-DN-1",
     priority: 1,
-  },
-  {
-    level: "L2",
-    collectionId: process.env.CBERS_COLLECTION_L2 || "CB4A-WPM-L2-DN-1",
-    priority: 2,
   },
 ];
 const CBERS_REQUIRED_ASSETS = ["BAND3", "BAND4", "BAND2", "BAND0"] as const;
@@ -204,11 +200,10 @@ const CBERS_TRANSLATE_ESTIMATE_MS = Math.max(
   30000,
   Number(process.env.CBERS_TRANSLATE_ESTIMATE_MS || 3 * 60 * 1000),
 );
-// CBERS-4A/WPM L2 and L4 are never produced for the same acquisition, so an L2 scene has
-// no co-spatial L4 to register against (different-date scenes of the same orbit/point are
-// framed kilometres apart along-track). We therefore trust INPE's native georeferencing
-// and only refuse to publish a scene whose georeferencing is grossly broken, measured
-// against the scene's OWN STAC footprint (the only genuinely co-spatial reference).
+// CBERS generation is intentionally L4-only. L2 is kept in a few read paths only so old
+// archive metadata can still be displayed/downloaded without creating new L2 products.
+// We trust INPE's native georeferencing and only refuse to publish a scene whose
+// georeferencing is grossly broken, measured against the scene's OWN STAC footprint.
 const CBERS_GEOREF_SANITY_MAX_M = Math.max(
   3000,
   Number(process.env.CBERS_GEOREF_SANITY_MAX_M || 20000),
@@ -398,6 +393,18 @@ function cbersLevelFromItemId(itemId: string): CbersCollectionLevel | null {
   const match = String(itemId || "").match(/[_-](L[24])(?:$|[_-])/i);
   const level = match?.[1]?.toUpperCase();
   return level === "L2" || level === "L4" ? level : null;
+}
+
+export function assertCbersL4GenerationItem(itemId: string, collectionId?: string | null): void {
+  const itemLevel = cbersLevelFromItemId(itemId);
+  const cleanCollectionId = String(collectionId || "").trim();
+  const collection = cleanCollectionId ? cbersCollectionById(cleanCollectionId) : null;
+  const requestedLevel = collection?.level || itemLevel || CBERS_GENERATION_LEVEL;
+  if (requestedLevel !== CBERS_GENERATION_LEVEL) {
+    throw new Error(
+      `A geração CBERS está restrita a cenas L4. Cena recusada: ${itemId || cleanCollectionId || "sem identificador"}.`,
+    );
+  }
 }
 
 function inferCbersCollection(itemId: string, collectionId?: string | null): CbersCollectionConfig {
@@ -764,6 +771,97 @@ function archiveAvailabilityFromRecord(record: CbersArchiveRecord): CbersWmsAvai
   };
 }
 
+function cbersDatetimeFromItemId(itemId: string): string {
+  const parsed = parseCbersItemIdForWms(itemId);
+  if (!parsed?.dateCompact) return "";
+  const iso = `${parsed.dateCompact.slice(0, 4)}-${parsed.dateCompact.slice(4, 6)}-${parsed.dateCompact.slice(6, 8)}T00:00:00Z`;
+  return Number.isFinite(new Date(iso).getTime()) ? iso : "";
+}
+
+export function buildReusedCbersSceneState(record: CbersArchiveRecord): CbersSceneJobState {
+  const level = record.level === "L2" || record.level === "L4" ? record.level : CBERS_GENERATION_LEVEL;
+  const collection = level === CBERS_GENERATION_LEVEL
+    ? cbersCollectionByLevel(CBERS_GENERATION_LEVEL)
+    : null;
+  const wmsDownloadUrl = wmsDownloadPathForArchiveImage(record.imageId);
+  return {
+    itemId: record.itemId,
+    collectionId: collection?.collectionId,
+    level,
+    scene: {
+      id: record.itemId,
+      collectionId: collection?.collectionId,
+      level,
+      datetime: cbersDatetimeFromItemId(record.itemId),
+      cloudCover: null,
+      bbox: null,
+      assetKeys: [],
+      wmsAvailable: true,
+      wmsLayerName: record.wmsLayerName,
+      wmsUrl: record.wmsPublicUrl,
+      wmsDownloadUrl,
+      archiveImageId: record.imageId,
+      archiveFilename: record.archiveFilename,
+      alignmentStatus: "aligned",
+    },
+    status: "completed",
+    stage: "completed",
+    percent: 100,
+    message: "Imagem CBERS já publicada no WMS; acervo reaproveitado para este usuário.",
+    outputUrl: wmsDownloadUrl,
+    outputRelativePath: record.hdRelativePath,
+    outputFilename: record.sourceFilename,
+    outputBytes: record.bytes,
+    archive: record,
+    archiveImageId: record.imageId,
+    wmsLayerName: record.wmsLayerName,
+    wmsUrl: record.wmsPublicUrl,
+    wmsDownloadUrl,
+    alignmentStatus: "aligned",
+  };
+}
+
+function persistCompletedCbersReuseJob(args: {
+  uid: string;
+  jobId: string;
+  filename: string;
+  area: CbersAreaContext;
+  itemIds: string[];
+  reusedScenes: CbersSceneJobState[];
+}): void {
+  const first = args.reusedScenes[0];
+  const now = new Date().toISOString();
+  persistCbersJob(args.uid, args.jobId, {
+    status: "completed",
+    stage: "completed",
+    percent: 100,
+    message: args.reusedScenes.length === 1
+      ? "Imagem CBERS já estava publicada no WMS; acervo reaproveitado."
+      : `${args.reusedScenes.length} imagem(ns) CBERS já estavam publicadas no WMS; acervo reaproveitado.`,
+    filename: args.filename,
+    itemId: args.itemIds[0],
+    itemIds: args.itemIds,
+    mode: args.itemIds.length > 1 ? "batch" : "single",
+    areaHa: args.area.areaHa || undefined,
+    propertyGeometry: args.area.geometry,
+    scene: first?.scene || null,
+    scenes: args.reusedScenes,
+    outputUrl: first?.outputUrl,
+    outputRelativePath: first?.outputRelativePath,
+    outputFilename: first?.outputFilename,
+    outputBytes: first?.outputBytes,
+    archive: first?.archive,
+    archiveImageId: first?.archiveImageId,
+    wmsLayerName: first?.wmsLayerName,
+    wmsUrl: first?.wmsUrl,
+    wmsDownloadUrl: first?.wmsDownloadUrl,
+    alignmentStatus: first?.alignmentStatus,
+    createdAt: now,
+    completedAt: now,
+  });
+  finishJob({ jobId: args.jobId, status: "completed" });
+}
+
 function findArchiveRecordByImageId(imageId: string): CbersArchiveRecord | null {
   const cleanImageId = String(imageId || "").trim();
   if (!cleanImageId) return null;
@@ -773,13 +871,19 @@ function findArchiveRecordByImageId(imageId: string): CbersArchiveRecord | null 
   )) || null;
 }
 
-function findAnyActiveArchiveForItem(itemId: string): CbersWmsAvailability | null {
+function findActiveArchiveRecordForItem(itemId: string): CbersArchiveRecord | null {
   const cleanItemId = String(itemId || "").trim();
   if (!cleanItemId) return null;
-  const archive = listCbersArchiveRecords().find((record) => (
+  return listCbersArchiveRecords().find((record) => (
     record.itemId === cleanItemId &&
     isActiveArchiveRecord(record)
   )) || null;
+}
+
+function findAnyActiveArchiveForItem(itemId: string): CbersWmsAvailability | null {
+  const cleanItemId = String(itemId || "").trim();
+  if (!cleanItemId) return null;
+  const archive = findActiveArchiveRecordForItem(cleanItemId);
   if (archive) return archiveAvailabilityFromRecord(archive);
   return findLocalGeoserverLayerForItem(cleanItemId);
 }
@@ -788,12 +892,7 @@ function findExactArchiveAvailability(
   itemId: string,
   _geometryHash?: string | null,
 ): CbersWmsAvailability | null {
-  const cleanItemId = String(itemId || "").trim();
-  if (!cleanItemId) return null;
-  const archive = listCbersArchiveRecords().find((record) => (
-    record.itemId === cleanItemId &&
-    isActiveArchiveRecord(record)
-  )) || null;
+  const archive = findActiveArchiveRecordForItem(itemId);
   return archive ? archiveAvailabilityFromRecord(archive) : null;
 }
 
@@ -950,7 +1049,7 @@ async function searchCbersScenes(
         if (!current || collection.priority < currentPriority) {
           byEquivalentScene.set(key, {
             ...next,
-            fallbackFromL2: collection.level === "L2",
+            fallbackFromL2: false,
           });
         }
         if (byEquivalentScene.size >= outputLimit) break;
@@ -967,6 +1066,7 @@ async function searchCbersScenes(
 }
 
 async function getStacItem(itemId: string, collectionId?: string | null): Promise<{ item: any; collection: CbersCollectionConfig }> {
+  assertCbersL4GenerationItem(itemId, collectionId);
   const first = inferCbersCollection(itemId, collectionId);
   const candidates = [
     first,
@@ -1646,14 +1746,9 @@ function projectFootprintBounds(
   return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
 }
 
-// CBERS-4A/WPM scenes arrive from INPE already projected to UTM with valid georeferencing.
-// L4 is orthorectified (ground control + DEM); L2 is only system-corrected, so its absolute
-// accuracy is a few dozen metres worse — but INPE never produces L2 and L4 for the same
-// acquisition, so there is no co-spatial L4 to register an L2 against. (Different-date L4
-// scenes of the same orbit/point are framed kilometres apart along-track, which is why
-// comparing bbox centres used to flag almost every scene as "displaced".) We therefore
-// publish the native georeferencing and only refuse a scene whose georeferencing is grossly
-// broken relative to its OWN STAC footprint.
+// CBERS-4A/WPM L4 scenes arrive from INPE already orthorectified and projected to UTM.
+// We publish the native georeferencing and only refuse a scene whose georeferencing is
+// grossly broken relative to its OWN STAC footprint.
 async function validateAndCorrectCbersAlignment(args: {
   uid: string;
   jobId: string;
@@ -1701,11 +1796,7 @@ async function validateAndCorrectCbersAlignment(args: {
     }
   }
 
-  const warning =
-    args.scene.level === "L2"
-      ? "Imagem L2 (corrigida por sistema, sem ortorretificação): posicionamento absoluto com exatidão um pouco menor que a L4 (tipicamente dezenas de metros)."
-      : undefined;
-  return { status: "aligned", offsetMeters, warning };
+  return { status: "aligned", offsetMeters };
 }
 
 async function createPrivateCbersZip(args: {
@@ -2157,11 +2248,15 @@ async function runCbersBatchJob(input: {
   filename: string;
   area: CbersAreaContext;
   itemIds: string[];
+  reusedScenes?: CbersSceneJobState[];
 }): Promise<void> {
   const { uid, jobId } = input;
   const tmpDir = path.join(CBERS_TMP_ROOT, jobId);
   fs.mkdirSync(tmpDir, { recursive: true });
   const sceneStates = new Map<string, CbersSceneJobState>();
+  for (const reused of input.reusedScenes || []) {
+    sceneStates.set(reused.itemId, reused);
+  }
   for (const itemId of input.itemIds) {
     sceneStates.set(itemId, {
       itemId,
@@ -2194,7 +2289,12 @@ async function runCbersBatchJob(input: {
       percent: 2,
       message: input.area.geometry ? "Lendo limite da área enviada." : "Processando por órbita/ponto sem SHP.",
     });
-    persistBatch({ stage: "queued", message: `${input.itemIds.length} cena(s) na fila.` });
+    persistBatch({
+      stage: "queued",
+      message: input.reusedScenes?.length
+        ? `${input.reusedScenes.length} cena(s) reaproveitada(s) do WMS; ${input.itemIds.length} cena(s) nova(s) na fila.`
+        : `${input.itemIds.length} cena(s) na fila.`,
+    });
 
     let cursor = 0;
     const worker = async () => {
@@ -2450,57 +2550,75 @@ export function registerCbersWpmRoutes(app: Express): void {
         res.status(400).json({ error: "itemId ou itemIds é obrigatório." });
         return;
       }
+      for (const itemId of itemIds) assertCbersL4GenerationItem(itemId);
       const area = await resolveAreaContextFromRequest(req.body);
-      const archivedItem = itemIds.find((itemId) => Boolean(findExactArchiveAvailability(itemId, area.geometryHash)));
-      if (archivedItem) {
-        const archive = findExactArchiveAvailability(archivedItem, area.geometryHash);
-        res.status(409).json({
-          error: "Esta folha CBERS já está disponível no WMS. Use a imagem existente em vez de gerar novamente.",
-          code: "CBERS_ALREADY_AVAILABLE_WMS",
-          itemId: archivedItem,
-          archiveImageId: archive?.archiveImageId,
-          archiveFilename: archive?.archiveFilename,
-          wmsLayerName: archive?.wmsLayerName,
-          wmsUrl: archive?.wmsUrl,
-          wmsDownloadUrl: archive?.wmsDownloadUrl,
-        });
-        return;
-      }
       const filename = String((req.body as any)?.filename || "CBERS-4A/WPM").trim();
+      const archiveByItemId = new Map<string, CbersArchiveRecord>();
+      for (const itemId of itemIds) {
+        const archive = findActiveArchiveRecordForItem(itemId);
+        if (archive) archiveByItemId.set(itemId, archive);
+      }
+      const reusedScenes = itemIds
+        .map((itemId) => archiveByItemId.get(itemId))
+        .filter((record): record is CbersArchiveRecord => Boolean(record))
+        .map(buildReusedCbersSceneState);
+      const newItemIds = itemIds.filter((itemId) => !archiveByItemId.has(itemId));
       const processingJob = startJob({
         uid,
         endpoint: "/api/cbers-wpm/jobs",
-        metadata: { itemId: itemIds[0], itemIds, filename, hasPropertyGeometry: Boolean(area.geometry) },
+        metadata: {
+          itemId: itemIds[0],
+          itemIds,
+          filename,
+          hasPropertyGeometry: Boolean(area.geometry),
+          reusedFromWms: reusedScenes.length,
+          newScenes: newItemIds.length,
+        },
       });
       const jobId = processingJob.jobId;
+
+      if (newItemIds.length === 0) {
+        persistCompletedCbersReuseJob({ uid, jobId, filename, area, itemIds, reusedScenes });
+        res.status(200).json({ ok: true, jobId, reused: true, reusedCount: reusedScenes.length });
+        return;
+      }
+
       persistCbersJob(uid, jobId, {
         status: "processing",
         stage: "queued",
         percent: 1,
-        message: "Processamento CBERS enviado para o servidor.",
+        message: reusedScenes.length
+          ? `${reusedScenes.length} cena(s) já disponível(is) no WMS; processando ${newItemIds.length} cena(s) nova(s).`
+          : "Processamento CBERS enviado para o servidor.",
         filename,
         itemId: itemIds[0],
         itemIds,
         mode: itemIds.length > 1 ? "batch" : "single",
         areaHa: area.areaHa || undefined,
         propertyGeometry: area.geometry,
-        scenes: itemIds.map((itemId) => ({
-          itemId,
-          collectionId: inferCbersCollection(itemId).collectionId,
-          level: inferCbersCollection(itemId).level,
-          status: "processing",
-          stage: "queued",
-          percent: 1,
-          message: "Aguardando processamento.",
-        })),
+        scenes: [
+          ...reusedScenes,
+          ...newItemIds.map((itemId): CbersSceneJobState => {
+            const collection = inferCbersCollection(itemId);
+            return {
+              itemId,
+              collectionId: collection.collectionId,
+              level: collection.level,
+              status: "processing",
+              stage: "queued",
+              percent: 1,
+              message: "Aguardando processamento.",
+            };
+          }),
+        ],
         collections: CBERS_COLLECTIONS.map(({ level, collectionId }) => ({ level, collectionId })),
         createdAt: new Date().toISOString(),
       });
-      res.status(202).json({ ok: true, jobId });
-      if (itemIds.length > 1) {
-        void runCbersBatchJob({ uid, jobId, filename, area, itemIds });
+      res.status(202).json({ ok: true, jobId, reused: reusedScenes.length > 0, reusedCount: reusedScenes.length });
+      if (itemIds.length > 1 || reusedScenes.length > 0) {
+        void runCbersBatchJob({ uid, jobId, filename, area, itemIds: newItemIds, reusedScenes });
       } else {
-        void runCbersJob({ uid, jobId, filename, area, itemId: itemIds[0] });
+        void runCbersJob({ uid, jobId, filename, area, itemId: newItemIds[0] });
       }
     } catch (error: any) {
       res.status(400).json({ error: error?.message || "Falha ao iniciar job CBERS." });

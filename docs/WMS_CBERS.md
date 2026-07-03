@@ -111,7 +111,7 @@ Fluxo de processamento:
 
 ```text
 1. Usuario busca cenas por ZIP/SHP ou por orbita, ponto e data.
-2. Backend busca cenas CBERS-4A/WPM no STAC do INPE.
+2. Backend busca somente cenas CBERS-4A/WPM L4-DN no STAC do INPE.
 3. Backend baixa bandas BAND3, BAND4, BAND2 e BAND0 da folha completa.
 4. gdal_pansharpen.py fusiona PAN (BAND0) com 3-4-2 -> raster 16 bits.
 5. gdal_translate converte para GeoTIFF 8 bits RGB aplicando realce de
@@ -122,10 +122,16 @@ Fluxo de processamento:
 8. GeoTIFF tambem e copiado para o acervo permanente do HD Backup, com
    overviews (.ovr) reamostrados por media para zoom-out suave.
 9. Backend publica automaticamente o GeoTIFF no GeoServer/WMS (com retry).
-10. Para lote, o ZIP da conta e criado com todos os TIF nomeados no padrao.
+10. Backend confirma a publicacao lendo a layer REST, a coverage REST e um
+    `GetMap` WMS real em PNG antes de concluir o job como publicado.
+11. Para lote, o ZIP da conta e criado com todos os TIF nomeados no padrao.
 ```
 
 Regra operacional: a imagem CBERS baixada pelo usuario e publicada no WMS representa a folha completa da orbita/ponto baixada do INPE. O SHP, quando enviado, serve para busca e validacao de cobertura; ele nao recorta o GeoTIFF final.
+
+Regra de nivel: novas geracoes CBERS sao restritas a L4-DN. Registros L2 antigos podem continuar existindo no indice/acervo para leitura historica, mas o backend recusa qualquer nova geracao L2 antes de iniciar download/processamento.
+
+Regra de reuso: antes de gerar, o backend consulta o indice permanente do acervo CBERS. Se a cena L4 solicitada ja estiver ativa no WMS, o sistema nao gera outro GeoTIFF; ele cria um job/card concluido para o usuario atual apontando para o mesmo `imageId`, layer e download WMS do acervo. Em lote, cenas ja publicadas entram como concluidas e apenas as cenas ainda inexistentes seguem para processamento.
 
 ## Realce de contraste (qualidade da imagem)
 
@@ -175,6 +181,18 @@ GEOSERVER_PUBLISH_RETRY_DELAY_MS  intervalo entre tentativas
 Antes era possivel uma cena terminar o processamento, encontrar o GeoServer
 fora do ar por alguns segundos e nao ser publicada. Agora ela aguarda e
 re-tenta.
+
+Depois de criar ou atualizar coverage/layer/grupos, a publicacao tambem faz
+uma validacao de ponta a ponta local:
+
+```text
+GET /rest/layers/cbers:<layer>.json
+GET /rest/workspaces/cbers/coveragestores/<store>/coverages/<coverage>.json
+GET /geoserver/cbers/wms?service=WMS&request=GetMap&layers=cbers:<layer>
+```
+
+Se o `GetMap` nao responder uma imagem PNG valida, o job falha em vez de
+registrar uma imagem como publicada sem WMS funcional.
 
 Arquivo da conta:
 
