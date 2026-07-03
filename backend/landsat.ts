@@ -145,6 +145,8 @@ const GEOSERVER_LANDSAT_STYLE = process.env.GEOSERVER_LANDSAT_STYLE || "landsat_
 const GEOSERVER_PUBLIC_WMS_BASE = String(
   process.env.GEOSERVER_PUBLIC_WMS_BASE || "https://wms.cursar.space/geoserver/cbers/wms",
 ).trim();
+const ROOT_RASTER_GROUP = "RASTER";
+const ROOT_LANDSAT_GROUP = "LANDSAT";
 
 const eventSubscribers = new Map<string, Set<Response>>();
 
@@ -846,6 +848,77 @@ function buildStoreName(scene: LandsatScene, filename: string): string {
   return cleanLayerName(`landsat_${scene.orbit}_${scene.year}_${path.basename(filename, path.extname(filename))}`);
 }
 
+type LayerGroupUpsert = {
+  name: string;
+  title: string;
+  publishable: PlainObject;
+  style: PlainObject | string;
+};
+
+export function landsatLayerGroupNames(orbit: string, year: string): {
+  rasterGroup: string;
+  rootGroup: string;
+  orbitGroup: string;
+  yearGroup: string;
+} {
+  return {
+    rasterGroup: ROOT_RASTER_GROUP,
+    rootGroup: ROOT_LANDSAT_GROUP,
+    orbitGroup: `landsat_orbit_${safeName(orbit, "000_000")}`,
+    yearGroup: `landsat_orbit_${safeName(orbit, "000_000")}_y${safeName(year, "0000")}`,
+  };
+}
+
+export function buildLandsatLayerGroupHierarchy(args: {
+  storeName: string;
+  orbit: string;
+  year: string;
+}): LayerGroupUpsert[] {
+  const names = landsatLayerGroupNames(args.orbit, args.year);
+  return [
+    {
+      name: names.yearGroup,
+      title: args.year,
+      publishable: {
+        "@type": "layer",
+        name: `${GEOSERVER_WORKSPACE}:${args.storeName}`,
+        href: `${GEOSERVER_BASE_URL}/rest/workspaces/${GEOSERVER_WORKSPACE}/layers/${args.storeName}.json`,
+      },
+      style: { name: GEOSERVER_LANDSAT_STYLE, href: `${GEOSERVER_BASE_URL}/rest/styles/${GEOSERVER_LANDSAT_STYLE}.json` },
+    },
+    {
+      name: names.orbitGroup,
+      title: args.orbit,
+      publishable: {
+        "@type": "layerGroup",
+        name: `${GEOSERVER_WORKSPACE}:${names.yearGroup}`,
+        href: `${GEOSERVER_BASE_URL}/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${names.yearGroup}.json`,
+      },
+      style: "",
+    },
+    {
+      name: names.rootGroup,
+      title: names.rootGroup,
+      publishable: {
+        "@type": "layerGroup",
+        name: `${GEOSERVER_WORKSPACE}:${names.orbitGroup}`,
+        href: `${GEOSERVER_BASE_URL}/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${names.orbitGroup}.json`,
+      },
+      style: "",
+    },
+    {
+      name: names.rasterGroup,
+      title: names.rasterGroup,
+      publishable: {
+        "@type": "layerGroup",
+        name: `${GEOSERVER_WORKSPACE}:${names.rootGroup}`,
+        href: `${GEOSERVER_BASE_URL}/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${names.rootGroup}.json`,
+      },
+      style: "",
+    },
+  ];
+}
+
 function xmlEscape(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -897,12 +970,7 @@ function groupStyles(payload: PlainObject | null): any[] {
   return asArray(payload?.layerGroup?.styles?.style);
 }
 
-async function upsertLayerGroup(args: {
-  name: string;
-  title: string;
-  publishable: PlainObject;
-  style: PlainObject | string;
-}): Promise<void> {
+async function upsertLayerGroup(args: LayerGroupUpsert): Promise<void> {
   const existing = await geoserverJson(
     `/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${encodeURIComponent(args.name)}.json`,
   );
@@ -933,6 +1001,65 @@ async function upsertLayerGroup(args: {
   } else {
     await geoserverWrite(`/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups`, "POST", body, "application/json");
   }
+}
+
+async function removeDirectLayersFromLayerGroup(groupName: string): Promise<number> {
+  const existing = await geoserverJson(
+    `/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${encodeURIComponent(groupName)}.json`,
+  );
+  if (!existing?.layerGroup) return 0;
+  const currentPublished = groupPublished(existing);
+  const currentStyles = groupStyles(existing);
+  const published: PlainObject[] = [];
+  const styles: any[] = [];
+  let removed = 0;
+  currentPublished.forEach((item, index) => {
+    if (String(item?.["@type"] || "").toLowerCase() === "layer") {
+      removed += 1;
+      return;
+    }
+    published.push(item);
+    styles.push(currentStyles[index] ?? "");
+  });
+  if (!removed) return 0;
+  const previous = existing.layerGroup;
+  await geoserverWrite(
+    `/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${encodeURIComponent(groupName)}`,
+    "PUT",
+    JSON.stringify({
+      layerGroup: {
+        name: groupName,
+        mode: previous.mode || "NAMED",
+        title: previous.title || groupName,
+        enabled: previous.enabled !== false,
+        advertised: previous.advertised !== false,
+        workspace: { name: GEOSERVER_WORKSPACE },
+        publishables: { published },
+        styles: { style: styles },
+      },
+    }),
+    "application/json",
+  );
+  return removed;
+}
+
+export async function repairLandsatWmsTree(): Promise<{ records: number; directLayersRemoved: number }> {
+  const records = readLocalLandsatRecords();
+  const seen = new Set<string>();
+  for (const record of records) {
+    const key = `${record.storeName}:${record.orbit}:${record.year}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    for (const group of buildLandsatLayerGroupHierarchy({
+      storeName: record.storeName,
+      orbit: record.orbit,
+      year: record.year,
+    })) {
+      await upsertLayerGroup(group);
+    }
+  }
+  const directLayersRemoved = await removeDirectLayersFromLayerGroup(ROOT_LANDSAT_GROUP);
+  return { records: seen.size, directLayersRemoved };
 }
 
 async function publishLandsatGeoTiff(args: {
@@ -976,38 +1103,10 @@ async function publishLandsatGeoTiff(args: {
     JSON.stringify({ coverage: { title: args.title, enabled: true } }),
     "application/json",
   );
-  const yearGroup = `landsat_orbit_${args.orbit}_y${args.year}`;
-  const orbitGroup = `landsat_orbit_${args.orbit}`;
-  await upsertLayerGroup({
-    name: yearGroup,
-    title: yearGroup,
-    publishable: {
-      "@type": "layer",
-      name: `${GEOSERVER_WORKSPACE}:${args.storeName}`,
-      href: `${GEOSERVER_BASE_URL}/rest/workspaces/${GEOSERVER_WORKSPACE}/layers/${args.storeName}.json`,
-    },
-    style: { name: GEOSERVER_LANDSAT_STYLE, href: `${GEOSERVER_BASE_URL}/rest/styles/${GEOSERVER_LANDSAT_STYLE}.json` },
-  });
-  await upsertLayerGroup({
-    name: orbitGroup,
-    title: orbitGroup,
-    publishable: {
-      "@type": "layerGroup",
-      name: `${GEOSERVER_WORKSPACE}:${yearGroup}`,
-      href: `${GEOSERVER_BASE_URL}/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${yearGroup}.json`,
-    },
-    style: "",
-  });
-  await upsertLayerGroup({
-    name: "LANDSAT",
-    title: "LANDSAT",
-    publishable: {
-      "@type": "layerGroup",
-      name: `${GEOSERVER_WORKSPACE}:${orbitGroup}`,
-      href: `${GEOSERVER_BASE_URL}/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${orbitGroup}.json`,
-    },
-    style: "",
-  });
+  for (const group of buildLandsatLayerGroupHierarchy(args)) {
+    await upsertLayerGroup(group);
+  }
+  await removeDirectLayersFromLayerGroup(ROOT_LANDSAT_GROUP);
   await verifyLandsatWmsPublication(args.storeName);
 }
 

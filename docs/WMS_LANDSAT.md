@@ -45,20 +45,26 @@ Cada store aponta para o GeoTIFF real no HD Backup por URL `file:`.
 A publicacao automatica cria/atualiza grupos:
 
 ```text
-LANDSAT
-  landsat_orbit_<orbita_ponto>
-    landsat_orbit_<orbita_ponto>_y<ano>
-      cbers:landsat_<orbita_ponto>_<ano>_<nome_normalizado>
+RASTER
+  LANDSAT
+    landsat_orbit_<orbita_ponto>
+      landsat_orbit_<orbita_ponto>_y<ano>
+        cbers:landsat_<orbita_ponto>_<ano>_<nome_normalizado>
 ```
 
 Exemplo:
 
 ```text
-LANDSAT
-  landsat_orbit_224_069
-    landsat_orbit_224_069_y2020
-      cbers:landsat_224_069_2020_lc08_224_069_20200907_comp654
+RASTER
+  LANDSAT
+    landsat_orbit_224_069
+      landsat_orbit_224_069_y2020
+        cbers:landsat_224_069_2020_lc08_224_069_20200907_comp654
 ```
+
+O backend sempre regrava essa cadeia em ordem de baixo para cima: ano, orbita/ponto, `LANDSAT` e `RASTER`. Se uma publicacao antiga colocou layers diretamente dentro de `LANDSAT`, a rotina de reparo remove apenas essa referencia direta e preserva a layer real dentro do ano.
+
+Conferencia CBERS: o fluxo CBERS Archive ja usa a mesma raiz `RASTER`, com a arvore `RASTER -> CBERS-4A-Apos_2019 -> orbit_<orbita_ponto> -> orbit_<orbita_ponto>_y<ano> -> layer`.
 
 O WMS publico continua em:
 
@@ -208,7 +214,7 @@ Para cena nova:
 5. Cria overviews com `gdaladdo`.
 6. Copia TIF e OVR para o acervo LANDSAT no HD Backup.
 7. Publica coverage store/layer no GeoServer via REST.
-8. Atualiza grupos LANDSAT, landsat_orbit_* e landsat_orbit_*_y*.
+8. Atualiza grupos RASTER, LANDSAT, landsat_orbit_* e landsat_orbit_*_y*.
 9. Valida REST e `GetMap` antes de marcar job como concluido.
 ```
 

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildLandsatLayerGroupHierarchy,
   buildLandsatOutputFilename,
   landsatAssetKeysForComposition,
+  landsatLayerGroupNames,
   parseLandsatLayerName,
   parseLandsatStacId,
   planetaryComputerItemIdFromLandsatId,
@@ -51,5 +53,39 @@ describe("Landsat helpers", () => {
       .toBe("LC08_L2SP_225070_20200930_02_T1");
     expect(planetaryComputerItemIdFromLandsatId("LC08_L2SP_225070_20200930_02_T1"))
       .toBe("LC08_L2SP_225070_20200930_02_T1");
+  });
+
+  it("builds the WMS folder tree under RASTER", () => {
+    expect(landsatLayerGroupNames("225_070", "2020")).toEqual({
+      rasterGroup: "RASTER",
+      rootGroup: "LANDSAT",
+      orbitGroup: "landsat_orbit_225_070",
+      yearGroup: "landsat_orbit_225_070_y2020",
+    });
+
+    const hierarchy = buildLandsatLayerGroupHierarchy({
+      storeName: "landsat_225_070_2020_lc08_c654",
+      orbit: "225_070",
+      year: "2020",
+    });
+
+    expect(hierarchy.map((group) => group.name)).toEqual([
+      "landsat_orbit_225_070_y2020",
+      "landsat_orbit_225_070",
+      "LANDSAT",
+      "RASTER",
+    ]);
+    expect(hierarchy[0].publishable).toMatchObject({
+      "@type": "layer",
+      name: "cbers:landsat_225_070_2020_lc08_c654",
+    });
+    expect(hierarchy[2].publishable).toMatchObject({
+      "@type": "layerGroup",
+      name: "cbers:landsat_orbit_225_070",
+    });
+    expect(hierarchy[3].publishable).toMatchObject({
+      "@type": "layerGroup",
+      name: "cbers:LANDSAT",
+    });
   });
 });

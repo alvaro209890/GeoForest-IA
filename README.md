@@ -317,6 +317,7 @@ Documentação detalhada: [`docs/WMS_CBERS.md`](docs/WMS_CBERS.md) e [`docs/WMS_
 - **Acervo Landsat:** `/media/server/HD Backup/RASTER/LANDSAT/<orbita_ponto>/<ano>/`
 - **GeoServer:** `localhost:8081`, workspace `cbers`
 - **WMS Público:** `https://wms.cursar.space` (Cloudflare Tunnel → proxy :8082 → GeoServer :8081)
+- **Árvore WMS:** `RASTER -> CBERS-4A-Apos_2019 -> orbit_* -> ano -> layer` e `RASTER -> LANDSAT -> landsat_orbit_* -> ano -> layer`
 - **STAC INPE:** `https://data.inpe.br/bdc/stac/v1` (collection `CB4A-WPM-L4-DN-1`)
 - **STAC Landsat:** `https://landsatlook.usgs.gov/stac-server` (collection `landsat-c2l2-sr`)
 - **Painel Admin:** `https://geoforest-admin.web.app`
