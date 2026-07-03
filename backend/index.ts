@@ -40,6 +40,7 @@ import {
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerCbersWpmRoutes } from "./cbers-wpm";
+import { registerLandsatRoutes } from "./landsat";
 import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-archive";
 import { registerVerticesRoutes } from "./vertices-proximas";
 import {
@@ -500,6 +501,12 @@ async function startServer() {
       /^\/api\/cbers-wpm\/jobs\/[^/]+\/status$/,
       /^\/api\/cbers-wpm\/jobs\/[^/]+\/events$/,
       /^\/api\/cbers-wpm\/jobs\/[^/]+$/,
+      "/api/landsat/search",
+      "/api/landsat/estimate",
+      "/api/landsat/jobs",
+      /^\/api\/landsat\/jobs\/[^/]+\/status$/,
+      /^\/api\/landsat\/jobs\/[^/]+\/events$/,
+      /^\/api\/landsat\/jobs\/[^/]+$/,
       "/api/vertices/upload",
       "/api/vertices/process",
       /^\/api\/vertices\/jobs\/[^/]+\/status$/,
@@ -643,6 +650,7 @@ async function startServer() {
   registerWfsIntersectionRoutes(app);
   registerSimcarClipRoutes(app);
   registerCbersWpmRoutes(app);
+  registerLandsatRoutes(app);
   registerVerticesRoutes(app);
   registerCbersArchiveAdminRoutes(app);
 

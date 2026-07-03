@@ -115,6 +115,7 @@ GeoForest-IA/
 │   ├── index.ts               # Servidor Express (2.851 linhas)
 │   ├── simcar-clip.ts         # Recorte SIMCAR + análise IA (9.920 linhas)
 │   ├── cbers-wpm.ts           # CBERS-4A WPM (2.964 linhas)
+│   ├── landsat.ts             # Landsat Collection 2 SR + WMS local
 │   ├── vertices-proximas.ts   # Análise de vértices próximas em shapefiles
 │   ├── knowledge-base.ts      # RAG base conhecimento (1.064 linhas)
 │   ├── cbers-archive.ts       # Acervo permanente CBERS (963 linhas)
@@ -139,6 +140,7 @@ GeoForest-IA/
 │   └── admin/                 # Painel admin CBERS
 ├── banco_de_dados/            # Conhecimento florestal (29 .md)
 ├── docs/WMS_CBERS.md          # Documentação WMS/CBERS
+├── docs/WMS_LANDSAT.md        # Documentação WMS/Landsat
 └── firebase.json
 ```
 
@@ -306,15 +308,17 @@ Módulo para localizar pares de vértices muito próximos em shapefiles poligona
 
 ---
 
-## CBERS e WMS Local
+## CBERS, Landsat e WMS Local
 
-Documentação detalhada: [`docs/WMS_CBERS.md`](docs/WMS_CBERS.md).
+Documentação detalhada: [`docs/WMS_CBERS.md`](docs/WMS_CBERS.md) e [`docs/WMS_LANDSAT.md`](docs/WMS_LANDSAT.md).
 
 **Resumo:**
 - **Acervo:** `/media/server/HD Backup/RASTER/CBERS_4A/<orbita_ponto>/<ano>/`
+- **Acervo Landsat:** `/media/server/HD Backup/RASTER/LANDSAT/<orbita_ponto>/<ano>/`
 - **GeoServer:** `localhost:8081`, workspace `cbers`
 - **WMS Público:** `https://wms.cursar.space` (Cloudflare Tunnel → proxy :8082 → GeoServer :8081)
 - **STAC INPE:** `https://data.inpe.br/bdc/stac/v1` (collection `CB4A-WPM-L4-DN-1`)
+- **STAC Landsat:** `https://landsatlook.usgs.gov/stac-server` (collection `landsat-c2l2-sr`)
 - **Painel Admin:** `https://geoforest-admin.web.app`
 - **Índice global:** Armazenado em JSON em `Banco_de_dados/GeoForest/cbers_archive/images/`
 
@@ -381,6 +385,15 @@ Sistema **RAG** próprio: carrega apenas documentos relevantes para otimizar tok
 | POST | `/api/cbers/download` | Download e processamento |
 | GET | `/api/cbers/images` | Imagens da conta |
 | DELETE | `/api/cbers/images/:id` | Remove da conta |
+
+### Landsat
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| POST | `/api/landsat/search` | Busca imagens no WMS local e no STAC USGS |
+| POST | `/api/landsat/jobs` | Reusa imagem WMS ou baixa/gera/publica cena nova |
+| GET | `/api/landsat/jobs/:jobId/status` | Status do job Landsat |
+| GET | `/api/landsat/jobs/:jobId/events` | SSE de progresso Landsat |
+| GET | `/api/landsat/wms-download` | ZIP de imagem Landsat publicada |
 
 ### CBERS Archive (Admin)
 | Método | Rota | Descrição |
@@ -485,6 +498,7 @@ journalctl --user -u geoforest-backend.service -n 50 -f
 ## Documentação Adicional
 
 - [`docs/WMS_CBERS.md`](docs/WMS_CBERS.md) — WMS local, CBERS, acervo permanente
+- [`docs/WMS_LANDSAT.md`](docs/WMS_LANDSAT.md) — WMS local, Landsat e reuso/publicação automática
 - [`README_PROJETO.md`](README_PROJETO.md) — Documentação original (frontend)
 - [`FIREBASE_SETUP.md`](FIREBASE_SETUP.md) — Configuração Firebase
 - `banco_de_dados/INDICE.md` — Índice completo da base de conhecimento

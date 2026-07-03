@@ -500,6 +500,65 @@ type CbersHistoryItem = {
   batchZipBytes?: number;
 };
 
+type LandsatComposition = 'false_color' | 'natural_color';
+type LandsatJobStatus = 'processing' | 'completed' | 'failed' | 'cancelled';
+
+type LandsatScene = {
+  id: string;
+  source: 'local_wms' | 'usgs_stac';
+  collectionId?: string;
+  platform?: string;
+  sensor?: string;
+  path: string;
+  row: string;
+  orbit: string;
+  year: string;
+  date: string;
+  datetime: string;
+  cloudCover: number | null;
+  composition: LandsatComposition;
+  compositionLabel: string;
+  bbox: [number, number, number, number] | null;
+  geometry?: CbersGeoJsonGeometry;
+  thumbnailUrl?: string;
+  coveragePercent?: number;
+  coversArea?: boolean;
+  assetKeys?: string[];
+  downloadBytes?: number | null;
+  wmsAvailable?: boolean;
+  wmsLayerName?: string;
+  wmsStoreName?: string;
+  wmsUrl?: string;
+  wmsDownloadUrl?: string;
+  sourcePath?: string;
+  outputFilename?: string;
+};
+
+type LandsatHistoryItem = {
+  id: string;
+  jobId: string;
+  filename: string;
+  timestamp: string;
+  createdAt?: string;
+  updatedAt?: string;
+  status: LandsatJobStatus;
+  stage?: string;
+  percent: number;
+  message?: string;
+  error?: string;
+  sceneId?: string;
+  composition?: LandsatComposition;
+  scene?: LandsatScene | null;
+  outputUrl?: string;
+  outputRelativePath?: string;
+  outputFilename?: string;
+  outputBytes?: number;
+  wmsLayerName?: string;
+  wmsStoreName?: string;
+  wmsUrl?: string;
+  wmsDownloadUrl?: string;
+};
+
 type VerticesLayer = {
   id: string;
   name: string;
@@ -1113,6 +1172,29 @@ const cbersBatchZipFilename = (jobId?: string | null) => {
   return `CBERS_4A_WPM_LOTE${suffix ? `_${suffix}` : ''}_C342_PAN.zip`;
 };
 
+const landsatArchiveZipFilename = (item?: LandsatHistoryItem | LandsatScene | null) => {
+  const anyItem = item as any;
+  const scene = anyItem?.source ? anyItem as LandsatScene : anyItem?.scene as LandsatScene | undefined;
+  const explicit = anyItem?.outputFilename || scene?.outputFilename || anyItem?.wmsStoreName || scene?.wmsStoreName || anyItem?.wmsLayerName || scene?.wmsLayerName || scene?.id || anyItem?.sceneId || anyItem?.jobId;
+  const stem = String(explicit || 'LANDSAT')
+    .replace(/^.*:/, '')
+    .replace(/\.(tif|tiff|zip)$/i, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/_+/g, '_') || 'LANDSAT';
+  return `${stem}.zip`;
+};
+
+const landsatArchiveZipUrl = (item?: LandsatHistoryItem | LandsatScene | null) => {
+  if (!item) return '';
+  const anyItem = item as any;
+  const scene = anyItem?.source ? anyItem as LandsatScene : anyItem?.scene as LandsatScene | undefined;
+  const direct = anyItem?.wmsDownloadUrl || scene?.wmsDownloadUrl;
+  if (direct) return String(direct);
+  const layerName = anyItem?.wmsLayerName || scene?.wmsLayerName || scene?.wmsStoreName || anyItem?.wmsStoreName;
+  if (!layerName) return '';
+  return `/api/landsat/wms-download?layerName=${encodeURIComponent(String(layerName))}`;
+};
+
 function CbersMapPreview({
   propertyGeometry,
   sceneGeometry,
@@ -1207,7 +1289,7 @@ function CbersMapPreview({
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'cbers-wpm' | 'vertices-proximas'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'cbers-wpm' | 'landsat' | 'vertices-proximas'>('chat');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1318,6 +1400,31 @@ export default function Dashboard() {
   const cbersFileInputRef = useRef<HTMLInputElement | null>(null);
   const cbersEventsAbortRef = useRef<AbortController | null>(null);
 
+  // ─── Landsat Tab State ───
+  const [landsatFile, setLandsatFile] = useState<File | null>(null);
+  const [landsatPropertyZipB64, setLandsatPropertyZipB64] = useState<string | null>(null);
+  const [landsatSearching, setLandsatSearching] = useState(false);
+  const [landsatScenes, setLandsatScenes] = useState<LandsatScene[]>([]);
+  const [landsatSelectedSceneId, setLandsatSelectedSceneId] = useState<string | null>(null);
+  const [landsatPreviewScene, setLandsatPreviewScene] = useState<LandsatScene | null>(null);
+  const [landsatOrbit, setLandsatOrbit] = useState('');
+  const [landsatPoint, setLandsatPoint] = useState('');
+  const [landsatCarNumber, setLandsatCarNumber] = useState('');
+  const [landsatDateStart, setLandsatDateStart] = useState('');
+  const [landsatDateEnd, setLandsatDateEnd] = useState('');
+  const [landsatMaxCloudCover, setLandsatMaxCloudCover] = useState('30');
+  const [landsatComposition, setLandsatComposition] = useState<LandsatComposition>('false_color');
+  const [landsatAreaHa, setLandsatAreaHa] = useState<number | null>(null);
+  const [landsatPropertyGeometry, setLandsatPropertyGeometry] = useState<CbersGeoJsonGeometry | null>(null);
+  const [landsatProcessing, setLandsatProcessing] = useState(false);
+  const [landsatHistory, setLandsatHistory] = useState<LandsatHistoryItem[]>([]);
+  const [landsatJobId, setLandsatJobId] = useState<string | null>(null);
+  const [landsatProgress, setLandsatProgress] = useState<{ stage: string; percent: number; message: string } | null>(null);
+  const [landsatError, setLandsatError] = useState<string | null>(null);
+  const [landsatWmsDownloadingId, setLandsatWmsDownloadingId] = useState<string | null>(null);
+  const landsatFileInputRef = useRef<HTMLInputElement | null>(null);
+  const landsatEventsAbortRef = useRef<AbortController | null>(null);
+
   // ─── Vértices Próximas State ───
   const [verticesFile, setVerticesFile] = useState<File | null>(null);
   const [verticesUploadId, setVerticesUploadId] = useState<string | null>(null);
@@ -1388,6 +1495,32 @@ export default function Dashboard() {
     setCbersProgress(null);
     setCbersError(null);
     if (cbersFileInputRef.current) cbersFileInputRef.current.value = '';
+  }, []);
+
+  const resetLandsatDraft = useCallback(() => {
+    landsatEventsAbortRef.current?.abort();
+    landsatEventsAbortRef.current = null;
+    setLandsatFile(null);
+    setLandsatPropertyZipB64(null);
+    setLandsatSearching(false);
+    setLandsatScenes([]);
+    setLandsatSelectedSceneId(null);
+    setLandsatPreviewScene(null);
+    setLandsatOrbit('');
+    setLandsatPoint('');
+    setLandsatCarNumber('');
+    setLandsatDateStart('');
+    setLandsatDateEnd('');
+    setLandsatMaxCloudCover('30');
+    setLandsatComposition('false_color');
+    setLandsatAreaHa(null);
+    setLandsatPropertyGeometry(null);
+    setLandsatProcessing(false);
+    setLandsatJobId(null);
+    setLandsatProgress(null);
+    setLandsatError(null);
+    setLandsatWmsDownloadingId(null);
+    if (landsatFileInputRef.current) landsatFileInputRef.current.value = '';
   }, []);
 
   // ─── SIMCAR Agent Log: elapsed timer ───
@@ -2938,6 +3071,425 @@ export default function Dashboard() {
     };
   }, [apiFetch, applyCbersJobPatch, cbersJobId, cbersProcessing, mapCbersDocToHistoryItem]);
 
+  const normalizeLandsatScene = useCallback((raw: any): LandsatScene | null => {
+    if (!isPlainObject(raw)) return null;
+    const composition: LandsatComposition = String(raw?.composition || '') === 'natural_color' ? 'natural_color' : 'false_color';
+    return {
+      id: String(raw?.id || raw?.wmsStoreName || raw?.wmsLayerName || ''),
+      source: raw?.source === 'local_wms' ? 'local_wms' : 'usgs_stac',
+      collectionId: raw?.collectionId ? String(raw.collectionId) : undefined,
+      platform: raw?.platform ? String(raw.platform) : undefined,
+      sensor: raw?.sensor ? String(raw.sensor) : undefined,
+      path: String(raw?.path || raw?.orbit || ''),
+      row: String(raw?.row || ''),
+      orbit: String(raw?.orbit || [raw?.path, raw?.row].filter(Boolean).join('_')),
+      year: String(raw?.year || ''),
+      date: String(raw?.date || ''),
+      datetime: String(raw?.datetime || ''),
+      cloudCover: Number.isFinite(Number(raw?.cloudCover)) ? Number(raw.cloudCover) : null,
+      composition,
+      compositionLabel: String(raw?.compositionLabel || (composition === 'natural_color' ? 'Natural' : 'Falsa-cor')),
+      bbox: Array.isArray(raw?.bbox) && raw.bbox.length >= 4
+        ? [Number(raw.bbox[0]), Number(raw.bbox[1]), Number(raw.bbox[2]), Number(raw.bbox[3])] as [number, number, number, number]
+        : null,
+      geometry: raw?.geometry as CbersGeoJsonGeometry | undefined,
+      thumbnailUrl: raw?.thumbnailUrl ? String(raw.thumbnailUrl) : undefined,
+      coveragePercent: Number.isFinite(Number(raw?.coveragePercent)) ? Number(raw.coveragePercent) : undefined,
+      coversArea: typeof raw?.coversArea === 'boolean' ? raw.coversArea : undefined,
+      assetKeys: Array.isArray(raw?.assetKeys) ? raw.assetKeys.map((item: any) => String(item)) : undefined,
+      downloadBytes: Number.isFinite(Number(raw?.downloadBytes)) ? Number(raw.downloadBytes) : null,
+      wmsAvailable: Boolean(raw?.wmsAvailable),
+      wmsLayerName: raw?.wmsLayerName ? String(raw.wmsLayerName) : undefined,
+      wmsStoreName: raw?.wmsStoreName ? String(raw.wmsStoreName) : undefined,
+      wmsUrl: raw?.wmsUrl ? String(raw.wmsUrl) : undefined,
+      wmsDownloadUrl: raw?.wmsDownloadUrl ? String(raw.wmsDownloadUrl) : undefined,
+      sourcePath: raw?.sourcePath ? String(raw.sourcePath) : undefined,
+      outputFilename: raw?.outputFilename ? String(raw.outputFilename) : undefined,
+    };
+  }, []);
+
+  const mapLandsatDocToHistoryItem = useCallback((docId: string, data: any): LandsatHistoryItem => {
+    const rawStatus = String(data?.status || '').trim().toLowerCase();
+    const status: LandsatJobStatus =
+      rawStatus === 'completed' || rawStatus === 'failed' || rawStatus === 'cancelled'
+        ? rawStatus
+        : 'processing';
+    const scene = normalizeLandsatScene(data?.scene);
+    const composition = String(data?.composition || scene?.composition || '') === 'natural_color' ? 'natural_color' : 'false_color';
+    return {
+      id: String(data?.id || docId),
+      jobId: String(data?.jobId || docId),
+      filename: String(data?.filename || 'LANDSAT'),
+      timestamp: toIsoDateFromUnknown(data?.timestamp || data?.updatedAt || data?.createdAt),
+      createdAt: data?.createdAt ? toIsoDateFromUnknown(data.createdAt) : undefined,
+      updatedAt: data?.updatedAt ? toIsoDateFromUnknown(data.updatedAt) : undefined,
+      status,
+      stage: data?.stage ? String(data.stage) : undefined,
+      percent: Math.max(0, Math.min(100, Math.round(Number(data?.percent || 0)))),
+      message: data?.message ? String(data.message) : undefined,
+      error: data?.error ? String(data.error) : undefined,
+      sceneId: data?.sceneId ? String(data.sceneId) : scene?.id,
+      composition,
+      scene,
+      outputUrl: data?.outputUrl ? resolveBackendUrl(String(data.outputUrl)) : undefined,
+      outputRelativePath: data?.outputRelativePath ? String(data.outputRelativePath) : undefined,
+      outputFilename: data?.outputFilename ? String(data.outputFilename) : undefined,
+      outputBytes: Number.isFinite(Number(data?.outputBytes)) ? Number(data.outputBytes) : undefined,
+      wmsLayerName: data?.wmsLayerName ? String(data.wmsLayerName) : scene?.wmsLayerName,
+      wmsStoreName: data?.wmsStoreName ? String(data.wmsStoreName) : scene?.wmsStoreName,
+      wmsUrl: data?.wmsUrl ? String(data.wmsUrl) : scene?.wmsUrl,
+      wmsDownloadUrl: data?.wmsDownloadUrl ? String(data.wmsDownloadUrl) : scene?.wmsDownloadUrl,
+    };
+  }, [normalizeLandsatScene]);
+
+  const applyLandsatJobPatch = useCallback((job: LandsatHistoryItem) => {
+    setLandsatHistory((prev) => {
+      const exists = prev.some((item) => item.jobId === job.jobId);
+      const next = exists
+        ? prev.map((item) => (item.jobId === job.jobId ? {
+          ...item,
+          ...job,
+          filename: job.filename === 'LANDSAT' ? item.filename : job.filename,
+          timestamp: item.timestamp || job.timestamp,
+          createdAt: job.createdAt || item.createdAt,
+          updatedAt: job.updatedAt || item.updatedAt,
+          sceneId: job.sceneId || item.sceneId,
+          composition: job.composition || item.composition,
+          scene: job.scene || item.scene,
+          outputUrl: job.outputUrl || item.outputUrl,
+          outputRelativePath: job.outputRelativePath || item.outputRelativePath,
+          outputFilename: job.outputFilename || item.outputFilename,
+          outputBytes: job.outputBytes ?? item.outputBytes,
+          wmsLayerName: job.wmsLayerName || item.wmsLayerName,
+          wmsStoreName: job.wmsStoreName || item.wmsStoreName,
+          wmsUrl: job.wmsUrl || item.wmsUrl,
+          wmsDownloadUrl: job.wmsDownloadUrl || item.wmsDownloadUrl,
+        } : item))
+        : [job, ...prev];
+      return next.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+    });
+    setLandsatJobId(job.jobId);
+    setLandsatProcessing(job.status === 'processing');
+    setLandsatProgress({
+      stage: job.stage || job.status,
+      percent: job.percent,
+      message: job.message || '',
+    });
+    setLandsatError(job.status === 'failed' || job.status === 'cancelled' ? job.error || job.message || null : null);
+    if (job.sceneId) setLandsatSelectedSceneId(job.sceneId);
+  }, []);
+
+  const connectLandsatEvents = useCallback(async (jobId: string) => {
+    const normalizedJobId = String(jobId || '').trim();
+    if (!normalizedJobId) return;
+    landsatEventsAbortRef.current?.abort();
+    const controller = new AbortController();
+    landsatEventsAbortRef.current = controller;
+    try {
+      const response = await apiFetch(`/api/landsat/jobs/${encodeURIComponent(normalizedJobId)}/events`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split('\n\n');
+        buffer = chunks.pop() || '';
+        for (const chunk of chunks) {
+          const line = chunk.split('\n').find((item) => item.startsWith('data:'));
+          if (!line) continue;
+          try {
+            const evt = JSON.parse(line.slice(5).trim());
+            if (evt?.type === 'snapshot' && evt?.job) {
+              applyLandsatJobPatch(mapLandsatDocToHistoryItem(normalizedJobId, evt.job));
+            } else if (evt?.type === 'progress') {
+              applyLandsatJobPatch(mapLandsatDocToHistoryItem(normalizedJobId, evt));
+            }
+          } catch {
+            // Ignore malformed SSE frames.
+          }
+        }
+      }
+    } catch (error: any) {
+      if (error?.name !== 'AbortError') {
+        console.warn('Falha ao acompanhar eventos Landsat:', error);
+      }
+    } finally {
+      if (landsatEventsAbortRef.current === controller) landsatEventsAbortRef.current = null;
+    }
+  }, [apiFetch, applyLandsatJobPatch, mapLandsatDocToHistoryItem]);
+
+  const selectLandsatHistoryEntry = useCallback((entry: LandsatHistoryItem) => {
+    setLandsatJobId(entry.jobId);
+    setLandsatProcessing(entry.status === 'processing');
+    setLandsatProgress({
+      stage: entry.stage || entry.status,
+      percent: entry.percent,
+      message: entry.message || '',
+    });
+    setLandsatError(entry.status === 'failed' || entry.status === 'cancelled' ? entry.error || entry.message || null : null);
+    setLandsatSelectedSceneId(entry.sceneId || entry.scene?.id || null);
+    if (entry.status === 'processing') void connectLandsatEvents(entry.jobId);
+  }, [connectLandsatEvents]);
+
+  const sortLandsatScenes = useCallback((scenes: LandsatScene[]) => {
+    return [...scenes].sort((a, b) => String(b.datetime || '').localeCompare(String(a.datetime || '')));
+  }, []);
+
+  const landsatVisibleScenes = useMemo(() => {
+    const startMs = landsatDateStart ? new Date(`${landsatDateStart}T00:00:00`).getTime() : null;
+    const endMs = landsatDateEnd ? new Date(`${landsatDateEnd}T23:59:59`).getTime() : null;
+    const maxCloud = landsatMaxCloudCover.trim() ? Number(landsatMaxCloudCover) : null;
+    return sortLandsatScenes(
+      landsatScenes.filter((scene) => {
+        if (scene.composition !== landsatComposition) return false;
+        if (maxCloud !== null && Number.isFinite(maxCloud)) {
+          if (scene.cloudCover !== null && scene.cloudCover > maxCloud) return false;
+        }
+        if (scene.datetime) {
+          const sceneMs = new Date(scene.datetime).getTime();
+          if (Number.isFinite(sceneMs)) {
+            if (startMs !== null && Number.isFinite(startMs) && sceneMs < startMs) return false;
+            if (endMs !== null && Number.isFinite(endMs) && sceneMs > endMs) return false;
+          }
+        }
+        return true;
+      })
+    );
+  }, [landsatComposition, landsatDateEnd, landsatDateStart, landsatMaxCloudCover, landsatScenes, sortLandsatScenes]);
+
+  useEffect(() => {
+    if (landsatScenes.length === 0) return;
+    const visibleIds = new Set(landsatVisibleScenes.map((scene) => scene.id));
+    if (landsatSelectedSceneId && !visibleIds.has(landsatSelectedSceneId)) {
+      setLandsatSelectedSceneId(landsatVisibleScenes[0]?.id || null);
+    }
+  }, [landsatScenes.length, landsatSelectedSceneId, landsatVisibleScenes]);
+
+  const landsatSelectedScene = useMemo(
+    () => landsatScenes.find((scene) => scene.id === landsatSelectedSceneId) || null,
+    [landsatScenes, landsatSelectedSceneId]
+  );
+
+  const applyLandsatZipFile = useCallback((file: File | null) => {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      toast.error('Envie um shapefile compactado em .zip.');
+      return;
+    }
+    setLandsatFile(file);
+    setLandsatPropertyZipB64(null);
+    setLandsatScenes([]);
+    setLandsatSelectedSceneId(null);
+    setLandsatPreviewScene(null);
+    setLandsatPropertyGeometry(null);
+    setLandsatAreaHa(null);
+    setLandsatError(null);
+    setLandsatCarNumber('');
+  }, []);
+
+  const searchLandsatScenes = useCallback(async () => {
+    const orbit = landsatOrbit.trim();
+    const point = landsatPoint.trim();
+    const carNumber = landsatCarNumber.trim();
+    const hasDirectFilter = orbit.length > 0 && point.length > 0;
+    if (!landsatFile && !carNumber && !hasDirectFilter) {
+      toast.error('Selecione um ZIP/SHP, informe Nº do CAR estadual ou informe órbita e ponto.');
+      return;
+    }
+    if (landsatDateStart && landsatDateEnd && landsatDateStart > landsatDateEnd) {
+      toast.error('A data inicial deve ser anterior ou igual à data final.');
+      return;
+    }
+    const maxCloud = landsatMaxCloudCover.trim() ? Number(landsatMaxCloudCover) : undefined;
+    setLandsatSearching(true);
+    setLandsatError(null);
+    setLandsatScenes([]);
+    setLandsatSelectedSceneId(null);
+    try {
+      const body: Record<string, unknown> = {
+        dateStart: landsatDateStart || undefined,
+        dateEnd: landsatDateEnd || undefined,
+        orbit: orbit || undefined,
+        row: point || undefined,
+        point: point || undefined,
+        maxCloudCover: Number.isFinite(maxCloud) ? maxCloud : undefined,
+        composition: landsatComposition,
+      };
+      if (landsatFile) {
+        const propertyZip = await fileToBase64Payload(landsatFile);
+        setLandsatPropertyZipB64(propertyZip);
+        body.propertyZip = propertyZip;
+        body.filename = landsatFile.name;
+      } else if (carNumber) {
+        setLandsatPropertyZipB64(null);
+        body.carNumber = carNumber;
+        body.filename = `CAR_${carNumber}.zip`;
+      } else {
+        setLandsatPropertyZipB64(null);
+      }
+      const response = await apiFetch('/api/landsat/search', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || 'Falha ao buscar cenas Landsat.');
+      const scenes = sortLandsatScenes(
+        (Array.isArray(payload?.scenes) ? payload.scenes : [])
+          .map((item: any) => normalizeLandsatScene(item))
+          .filter((item: LandsatScene | null): item is LandsatScene => Boolean(item))
+      );
+      const nextAreaHa = Number(payload?.areaHa);
+      setLandsatAreaHa(Number.isFinite(nextAreaHa) && nextAreaHa > 0 ? nextAreaHa : null);
+      setLandsatPropertyGeometry(isPlainObject(payload?.propertyGeometry) ? payload.propertyGeometry as CbersGeoJsonGeometry : null);
+      setLandsatScenes(scenes);
+      const firstCovered = scenes.find((scene) => scene.coversArea !== false) || scenes[0] || null;
+      setLandsatSelectedSceneId(firstCovered?.id || null);
+      setLandsatPreviewScene(null);
+      if (!scenes.length) {
+        toast.info(hasDirectFilter && !carNumber ? 'Nenhuma cena Landsat encontrada para essa órbita/ponto.' : 'Nenhuma cena Landsat encontrada para essa área.');
+      }
+    } catch (error: any) {
+      const message = error?.message || 'Falha ao buscar cenas Landsat.';
+      setLandsatError(message);
+      toast.error(message);
+    } finally {
+      setLandsatSearching(false);
+    }
+  }, [
+    apiFetch,
+    fileToBase64Payload,
+    landsatCarNumber,
+    landsatComposition,
+    landsatDateEnd,
+    landsatDateStart,
+    landsatFile,
+    landsatMaxCloudCover,
+    landsatOrbit,
+    landsatPoint,
+    normalizeLandsatScene,
+    sortLandsatScenes,
+  ]);
+
+  const startLandsatProcessing = useCallback(async (sceneIdOverride?: string) => {
+    const targetSceneId = String(sceneIdOverride || landsatSelectedSceneId || '').trim();
+    if (!targetSceneId) {
+      toast.error('Selecione uma cena Landsat.');
+      return;
+    }
+    const scene = landsatScenes.find((item) => item.id === targetSceneId) || landsatSelectedScene;
+    if (scene?.coversArea === false) {
+      toast.error(`Cena cobre apenas ${(scene.coveragePercent ?? 0).toFixed(2)}% da área.`);
+      return;
+    }
+    setLandsatError(null);
+    setLandsatProcessing(true);
+    setLandsatProgress({ stage: 'queued', percent: 1, message: 'Enviando processamento Landsat ao servidor.' });
+    try {
+      const carNumber = landsatCarNumber.trim();
+      const filename = landsatFile?.name || (carNumber ? `CAR_${carNumber}.zip` : `LANDSAT_${scene?.orbit || targetSceneId}`);
+      const body: Record<string, unknown> = {
+        filename,
+        sceneId: targetSceneId,
+        composition: scene?.composition || landsatComposition,
+      };
+      if (landsatFile) {
+        const propertyZip = landsatPropertyZipB64 || await fileToBase64Payload(landsatFile);
+        setLandsatPropertyZipB64(propertyZip);
+        body.propertyZip = propertyZip;
+      } else if (carNumber) {
+        body.carNumber = carNumber;
+      }
+      const response = await apiFetch('/api/landsat/jobs', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || 'Falha ao iniciar processamento Landsat.');
+      const jobId = String(payload?.jobId || '').trim();
+      if (!jobId) throw new Error('Backend não retornou jobId Landsat.');
+      const optimistic: LandsatHistoryItem = {
+        id: jobId,
+        jobId,
+        filename,
+        timestamp: new Date().toISOString(),
+        status: 'processing',
+        stage: 'queued',
+        percent: 1,
+        message: scene?.wmsAvailable ? 'Imagem Landsat encontrada no WMS; registrando reuso.' : 'Processamento Landsat enviado para o servidor.',
+        sceneId: targetSceneId,
+        composition: scene?.composition || landsatComposition,
+        scene: scene || null,
+      };
+      applyLandsatJobPatch(optimistic);
+      void connectLandsatEvents(jobId);
+    } catch (error: any) {
+      const message = error?.message || 'Falha ao iniciar processamento Landsat.';
+      setLandsatProcessing(false);
+      setLandsatError(message);
+      toast.error(message);
+    }
+  }, [
+    apiFetch,
+    applyLandsatJobPatch,
+    connectLandsatEvents,
+    fileToBase64Payload,
+    landsatCarNumber,
+    landsatComposition,
+    landsatFile,
+    landsatPropertyZipB64,
+    landsatScenes,
+    landsatSelectedScene,
+    landsatSelectedSceneId,
+  ]);
+
+  const deleteLandsatJob = useCallback(async (entry: LandsatHistoryItem) => {
+    if (!entry?.jobId) return;
+    try {
+      await apiFetch(`/api/landsat/jobs/${encodeURIComponent(entry.jobId)}`, { method: 'DELETE' });
+    } catch {
+      // Keep local cleanup responsive even if backend already removed it.
+    }
+    setLandsatHistory((prev) => prev.filter((item) => item.jobId !== entry.jobId));
+    if (landsatJobId === entry.jobId) {
+      setLandsatJobId(null);
+      setLandsatProcessing(false);
+      setLandsatProgress(null);
+      setLandsatError(null);
+    }
+  }, [apiFetch, landsatJobId]);
+
+  useEffect(() => {
+    if (!landsatProcessing || !landsatJobId) return;
+    let active = true;
+    const pollStatus = async () => {
+      try {
+        const response = await apiFetch(`/api/landsat/jobs/${encodeURIComponent(landsatJobId)}/status`, {
+          method: 'GET',
+        });
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (!active || !payload?.job) return;
+        applyLandsatJobPatch(mapLandsatDocToHistoryItem(landsatJobId, payload.job));
+      } catch {
+        // SSE remains the primary live channel; polling is only a fallback.
+      }
+    };
+    void pollStatus();
+    const interval = window.setInterval(() => {
+      void pollStatus();
+    }, 10000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [apiFetch, applyLandsatJobPatch, landsatJobId, landsatProcessing, mapLandsatDocToHistoryItem]);
+
   const normalizeSimcarClipSummary = useCallback((raw: any): SimcarClipSummary | null => {
     if (!raw || typeof raw !== 'object') return null;
     const toNumber = (value: any) => {
@@ -3399,9 +3951,12 @@ export default function Dashboard() {
           setSimcarClipsRef(null);
           setVerticesJobsRef(null);
           setCbersHistory([]);
+          setLandsatHistory([]);
           setVerticesHistory([]);
           setCbersJobId(null);
           setCbersProcessing(false);
+          setLandsatJobId(null);
+          setLandsatProcessing(false);
           setLocation('/');
           return;
         }
@@ -3423,6 +3978,7 @@ export default function Dashboard() {
         const verticesRef = collection(db, 'users', currentUser.uid, 'vertices_jobs');
         setVerticesJobsRef(verticesRef);
         const cbersRef = collection(db, 'users', currentUser.uid, 'cbers_wpm_jobs');
+        const landsatRef = collection(db, 'users', currentUser.uid, 'landsat_jobs');
 
         const nextSettingsRef = doc(db, 'users', currentUser.uid, 'settings', 'preferences');
         setSettingsRef(nextSettingsRef);
@@ -3604,6 +4160,24 @@ export default function Dashboard() {
           console.warn('Falha ao carregar histórico CBERS salvo:', error);
         }
 
+        try {
+          const landsatSnap = await getDocs(query(landsatRef, orderBy('updatedAtMs', 'desc')));
+          const landsatEntries: LandsatHistoryItem[] = [];
+          landsatSnap.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            landsatEntries.push(mapLandsatDocToHistoryItem(docSnap.id, data));
+          });
+          setLandsatHistory(landsatEntries);
+          const runningLandsat = landsatEntries.find((entry) => entry.status === 'processing');
+          if (runningLandsat) {
+            selectLandsatHistoryEntry(runningLandsat);
+          } else if (landsatEntries.length > 0) {
+            selectLandsatHistoryEntry(landsatEntries[0]);
+          }
+        } catch (error) {
+          console.warn('Falha ao carregar histórico Landsat salvo:', error);
+        }
+
         if (list.length === 0) {
           await createConversation(collRef);
         } else {
@@ -3620,7 +4194,7 @@ export default function Dashboard() {
     });
 
     return () => unsubscribe();
-  }, [mapCbersDocToHistoryItem, mapVerticesDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, selectCbersHistoryEntry, selectSimcarClipEntry, setLocation]);
+  }, [mapCbersDocToHistoryItem, mapLandsatDocToHistoryItem, mapVerticesDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, selectCbersHistoryEntry, selectLandsatHistoryEntry, selectSimcarClipEntry, setLocation]);
 
   useEffect(() => {
     const uid = String(userProfile?.uid || '').trim();
@@ -4380,6 +4954,22 @@ export default function Dashboard() {
       toast.error(error?.message || 'Falha ao baixar ZIP.');
     }
   }, [readApiError]);
+
+  const downloadLandsatWmsZip = useCallback(async (item: LandsatHistoryItem | LandsatScene) => {
+    const url = landsatArchiveZipUrl(item);
+    const resolved = resolveBackendUrl(url);
+    if (!resolved) {
+      toast.error('Link do ZIP Landsat indisponível.');
+      return;
+    }
+    const id = (item as any)?.jobId || (item as any)?.id || (item as any)?.sceneId || 'landsat';
+    setLandsatWmsDownloadingId(String(id));
+    try {
+      await downloadSimcarZip(url, landsatArchiveZipFilename(item));
+    } finally {
+      window.setTimeout(() => setLandsatWmsDownloadingId(null), 1200);
+    }
+  }, [downloadSimcarZip]);
 
   const downloadCbersWmsZip = useCallback(async (scene: CbersScene) => {
     const endpoint = scene.wmsDownloadUrl || (
@@ -7003,7 +7593,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
         <div className="px-4 mb-4 space-y-1.5">
           {/* ─── Abas permanentes ─── */}
-          <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-white/5 border border-white/5">
+          <div className="grid grid-cols-5 gap-1 p-1 rounded-xl bg-white/5 border border-white/5">
             <button
               onClick={() => setActiveView('chat')}
               className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'chat' ? 'bg-emerald-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
@@ -7038,6 +7628,13 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             >
               <Satellite size={15} />
               <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">CBERS</span>
+            </button>
+            <button
+              onClick={() => setActiveView('landsat')}
+              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'landsat' ? 'bg-sky-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+            >
+              <Layers size={15} />
+              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">Landsat</span>
             </button>
             <button
               onClick={() => setActiveView('vertices-proximas')}
@@ -7079,6 +7676,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <div className="relative flex items-center justify-center gap-2 bg-[#071618] group-hover:bg-transparent text-cyan-100 py-2.5 rounded-[11px] transition-colors">
                 <Plus size={16} />
                 <span className="font-medium block lg:hidden xl:block text-sm">Nova Imagem</span>
+              </div>
+            </button>
+          )}
+          {activeView === 'landsat' && (
+            <button
+              onClick={() => resetLandsatDraft()}
+              className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-sky-600 to-emerald-600 hover:from-sky-500 hover:to-emerald-500 transition-all duration-300 p-[1px] shadow-lg shadow-sky-900/30"
+            >
+              <div className="relative flex items-center justify-center gap-2 bg-[#071318] group-hover:bg-transparent text-sky-100 py-2.5 rounded-[11px] transition-colors">
+                <Plus size={16} />
+                <span className="font-medium block lg:hidden xl:block text-sm">Nova Landsat</span>
               </div>
             </button>
           )}
@@ -7164,6 +7772,66 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <Satellite size={16} />
                 </div>
                 <p className="text-xs text-slate-500">Nenhuma imagem CBERS.</p>
+              </div>
+            )
+          ) : activeView === 'landsat' ? (
+            landsatHistory.length > 0 ? (
+              landsatHistory.map((entry) => (
+                <div
+                  key={entry.id}
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${landsatJobId === entry.jobId ? 'bg-sky-500/10 border-sky-500/20 shadow-[0_0_15px_rgba(14,165,233,0.06)]' : 'bg-[#071318]/60 hover:bg-[#101b20] hover:border-sky-500/20'}`}
+                  onClick={() => selectLandsatHistoryEntry(entry)}
+                >
+                  <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${landsatJobId === entry.jobId ? 'bg-gradient-to-br from-sky-500 to-emerald-500 text-white shadow-md shadow-sky-900/40' : 'bg-white/5 text-slate-400 group-hover:text-sky-300 group-hover:bg-sky-500/10'}`}>
+                    <Layers size={18} />
+                  </div>
+                  <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                    <p className={`text-sm truncate font-medium ${landsatJobId === entry.jobId ? 'text-sky-100' : 'text-slate-200 group-hover:text-sky-100'}`}>{entry.scene?.id || entry.sceneId || entry.filename}</p>
+                    <div className="flex items-center gap-2 mt-1 opacity-80">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold text-sky-300">
+                        {entry.percent}%
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
+                          ? 'text-amber-300'
+                          : entry.status === 'completed'
+                            ? 'text-emerald-300'
+                            : entry.status === 'cancelled'
+                              ? 'text-orange-300'
+                              : 'text-red-300'
+                          }`}
+                      >
+                        {entry.status === 'processing'
+                          ? 'Processando'
+                          : entry.status === 'completed'
+                            ? 'Concluído'
+                            : entry.status === 'cancelled'
+                              ? 'Cancelado'
+                              : 'Falhou'}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 truncate text-[10px] text-slate-500">
+                      {entry.scene?.date || entry.scene?.year || 'Landsat'} • {entry.scene?.compositionLabel || entry.composition || 'falsa-cor'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void deleteLandsatJob(entry);
+                    }}
+                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                    title="Excluir imagem"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-6 block lg:hidden xl:block">
+                <div className="inline-flex justify-center items-center w-10 h-10 rounded-full bg-white/5 text-slate-500 mb-2">
+                  <Layers size={16} />
+                </div>
+                <p className="text-xs text-slate-500">Nenhuma imagem Landsat.</p>
               </div>
             )
           ) : activeView === 'vertices-proximas' ? (
@@ -7467,7 +8135,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2 min-w-0">
               <Zap size={16} className="text-emerald-400 fill-current shrink-0" />
               <span className="font-medium text-slate-200 text-sm sm:text-base truncate">
-                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'vertices-proximas' ? 'Vértices Próximas' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
+                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'landsat' ? 'Landsat WMS' : activeView === 'vertices-proximas' ? 'Vértices Próximas' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
               </span>
               {activeView === 'chat' && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide shrink-0 hidden sm:inline-block">
@@ -10177,6 +10845,464 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   document.body,
                 );
               })()}
+            </div>
+          </div>
+        ) : activeView === 'landsat' ? (
+          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+            <div className="max-w-6xl mx-auto space-y-5 sm:space-y-6">
+              <section className="rounded-2xl border border-sky-500/15 bg-[#071318]/80 p-5 sm:p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                      <Layers size={13} />
+                      Landsat Collection 2 SR
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">GeoTIFF Landsat com reuso do WMS</h2>
+                    <p className="max-w-3xl text-sm text-slate-400">
+                      Importe o polígono ou informe órbita/ponto, escolha data e composição. Se a imagem já existir no WMS, o sistema reutiliza; se não existir, baixa do USGS e publica no GeoServer.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    {[
+                      { label: 'Fonte', value: 'USGS STAC' },
+                      { label: 'Acervo', value: 'WMS local' },
+                      { label: 'Saída', value: 'GeoTIFF' },
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                        <p className="text-[10px] uppercase tracking-wider text-slate-500">{item.label}</p>
+                        <p className="mt-1 text-xs font-semibold text-sky-100">{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5">
+                <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-semibold text-white">Área de interesse</h3>
+                      <p className="text-xs text-slate-500 mt-1">Use ZIP/SHP da ATP, Nº do CAR estadual ou filtre direto por órbita e ponto Landsat.</p>
+                    </div>
+                    {landsatAreaHa !== null && (
+                      <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-200">
+                        {landsatAreaHa.toFixed(2)} ha
+                      </span>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Nº do CAR estadual</label>
+                    <input
+                      type="text"
+                      value={landsatCarNumber}
+                      onChange={(e) => {
+                        const value = e.target.value.trim();
+                        setLandsatCarNumber(value);
+                        if (value) {
+                          setLandsatFile(null);
+                          setLandsatPropertyZipB64(null);
+                          setLandsatScenes([]);
+                          setLandsatSelectedSceneId(null);
+                          setLandsatPreviewScene(null);
+                          setLandsatPropertyGeometry(null);
+                          setLandsatAreaHa(null);
+                          setLandsatError(null);
+                          if (landsatFileInputRef.current) landsatFileInputRef.current.value = '';
+                        }
+                      }}
+                      disabled={Boolean(landsatFile)}
+                      placeholder="Ex: MT-5107768-XXXXXXX..."
+                      className={`w-full rounded-xl border bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none placeholder-slate-600 focus:border-sky-500/50 ${landsatFile ? 'border-white/5 opacity-40 cursor-not-allowed' : 'border-white/10'}`}
+                    />
+                  </div>
+
+                  <label
+                    className={`group relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-8 transition-all ${landsatCarNumber.trim()
+                      ? 'border-white/5 bg-white/[0.01] opacity-40 cursor-not-allowed'
+                      : landsatFile
+                        ? 'border-sky-500/40 bg-sky-500/5 cursor-pointer'
+                        : 'border-white/10 bg-white/[0.02] hover:border-sky-500/30 hover:bg-white/[0.03] cursor-pointer'
+                      }`}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (!landsatCarNumber.trim()) e.dataTransfer.dropEffect = 'copy';
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (landsatCarNumber.trim()) return;
+                      applyLandsatZipFile(e.dataTransfer.files?.[0] || null);
+                    }}
+                  >
+                    <input
+                      ref={landsatFileInputRef}
+                      type="file"
+                      accept=".zip,application/zip"
+                      className="hidden"
+                      disabled={Boolean(landsatCarNumber.trim())}
+                      onChange={(e) => {
+                        applyLandsatZipFile(e.target.files?.[0] || null);
+                      }}
+                    />
+                    <div className={`rounded-xl p-3 ${landsatFile ? 'bg-sky-500/15 text-sky-200' : landsatCarNumber.trim() ? 'bg-white/5 text-slate-600' : 'bg-white/5 text-slate-400 group-hover:text-sky-300'}`}>
+                      <Upload size={22} />
+                    </div>
+                    <div className="text-center min-w-0">
+                      <p className="text-sm font-semibold text-white truncate">
+                        {landsatCarNumber.trim() ? 'Upload desabilitado pelo Nº do CAR' : landsatFile ? landsatFile.name : 'Arraste ou selecione o ZIP da ATP'}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {landsatFile ? `${(landsatFile.size / 1024).toFixed(0)} KB` : landsatCarNumber.trim() ? 'Limpe o CAR para enviar ZIP/SHP.' : 'Shapefile compactado em .zip'}
+                      </p>
+                    </div>
+                    {landsatFile && !landsatCarNumber.trim() && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setLandsatFile(null);
+                          setLandsatPropertyZipB64(null);
+                          setLandsatScenes([]);
+                          setLandsatSelectedSceneId(null);
+                          setLandsatPreviewScene(null);
+                          setLandsatPropertyGeometry(null);
+                          setLandsatAreaHa(null);
+                          setLandsatError(null);
+                          if (landsatFileInputRef.current) landsatFileInputRef.current.value = '';
+                        }}
+                        className="absolute right-3 top-3 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-white/10 hover:text-red-300"
+                        aria-label="Remover ZIP Landsat"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
+                  </label>
+
+                  {landsatError && (
+                    <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200 flex items-center gap-2">
+                      <AlertTriangle size={16} />
+                      <span>{landsatError}</span>
+                    </div>
+                  )}
+
+                  <div className="rounded-2xl border border-sky-500/10 bg-[#071318]/70 p-3 sm:p-4 space-y-4">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-300">Filtros da busca</p>
+                        <p className="text-xs text-slate-500">A composição define as bandas do GeoTIFF gerado ou reaproveitado.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLandsatOrbit('');
+                          setLandsatPoint('');
+                          setLandsatDateStart('');
+                          setLandsatDateEnd('');
+                          setLandsatMaxCloudCover('30');
+                          setLandsatComposition('false_color');
+                        }}
+                        className="self-start rounded-lg border border-white/10 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 transition-colors hover:bg-white/5 hover:text-white sm:self-auto"
+                      >
+                        Limpar filtros
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
+                      <div className="md:col-span-3 lg:col-span-2">
+                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Órbita</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={landsatOrbit}
+                          onChange={(e) => setLandsatOrbit(e.target.value.replace(/\D+/g, '').slice(0, 3))}
+                          placeholder="224"
+                          className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-sky-500/50"
+                        />
+                      </div>
+                      <div className="md:col-span-3 lg:col-span-2">
+                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Ponto</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={landsatPoint}
+                          onChange={(e) => setLandsatPoint(e.target.value.replace(/\D+/g, '').slice(0, 3))}
+                          placeholder="069"
+                          className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-sky-500/50"
+                        />
+                      </div>
+                      <div className="md:col-span-6 lg:col-span-3">
+                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Composição</label>
+                        <div className="grid grid-cols-2 gap-1 rounded-xl border border-white/10 bg-white/[0.04] p-1">
+                          <button
+                            type="button"
+                            onClick={() => setLandsatComposition('false_color')}
+                            className={`rounded-lg px-2 py-2 text-xs font-semibold transition-colors ${landsatComposition === 'false_color' ? 'bg-sky-500/20 text-sky-100' : 'text-slate-400 hover:text-white'}`}
+                          >
+                            Falsa-cor
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setLandsatComposition('natural_color')}
+                            className={`rounded-lg px-2 py-2 text-xs font-semibold transition-colors ${landsatComposition === 'natural_color' ? 'bg-sky-500/20 text-sky-100' : 'text-slate-400 hover:text-white'}`}
+                          >
+                            Natural
+                          </button>
+                        </div>
+                      </div>
+                      <div className="md:col-span-4 lg:col-span-2">
+                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Nuvem máx.</label>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          min="0"
+                          max="100"
+                          step="1"
+                          value={landsatMaxCloudCover}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setLandsatMaxCloudCover('');
+                              return;
+                            }
+                            const numeric = Math.max(0, Math.min(100, Number(value)));
+                            setLandsatMaxCloudCover(Number.isFinite(numeric) ? String(numeric) : '');
+                          }}
+                          placeholder="30"
+                          className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none placeholder-slate-600 focus:border-sky-500/50"
+                        />
+                      </div>
+                      <div className="md:col-span-8 lg:col-span-5">
+                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Período</label>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <input
+                            type="date"
+                            value={landsatDateStart}
+                            onChange={(e) => setLandsatDateStart(e.target.value)}
+                            className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-sky-500/50"
+                          />
+                          <input
+                            type="date"
+                            value={landsatDateEnd}
+                            onChange={(e) => setLandsatDateEnd(e.target.value)}
+                            className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-sky-500/50"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void searchLandsatScenes()}
+                      disabled={(!landsatFile && !landsatCarNumber.trim() && (!landsatOrbit.trim() || !landsatPoint.trim())) || landsatSearching || landsatProcessing}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {landsatSearching ? <Loader2 size={17} className="animate-spin" /> : <Search size={17} />}
+                      Buscar imagens
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void startLandsatProcessing()}
+                      disabled={!landsatSelectedScene || landsatProcessing || landsatSelectedScene.coversArea === false}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {landsatProcessing ? <Loader2 size={17} className="animate-spin" /> : landsatSelectedScene?.wmsAvailable ? <CheckCircle2 size={17} /> : <Cpu size={17} />}
+                      {landsatSelectedScene?.wmsAvailable ? 'Reusar do WMS' : 'Gerar e publicar'}
+                    </button>
+                  </div>
+
+                  {(landsatPropertyGeometry || landsatSelectedScene?.geometry) && (
+                    <CbersMapPreview
+                      propertyGeometry={landsatPropertyGeometry}
+                      sceneGeometry={landsatSelectedScene?.geometry || null}
+                    />
+                  )}
+
+                  {landsatScenes.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-white">Imagens disponíveis</h3>
+                        <span className="text-xs text-slate-500">{landsatVisibleScenes.length}/{landsatScenes.length} cena(s)</span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {landsatVisibleScenes.map((scene) => {
+                          const selected = landsatSelectedSceneId === scene.id;
+                          const date = scene.datetime ? new Date(scene.datetime).toLocaleDateString('pt-BR') : scene.date || 'Sem data';
+                          const coverage = Number(scene.coveragePercent ?? 0);
+                          const hasCoverage = typeof scene.coveragePercent === 'number' && Number.isFinite(scene.coveragePercent);
+                          const availableOnWms = scene.wmsAvailable && scene.wmsUrl;
+                          const blocked = scene.coversArea === false;
+                          return (
+                            <button
+                              key={scene.id}
+                              type="button"
+                              onClick={() => setLandsatSelectedSceneId(scene.id)}
+                              className={`text-left rounded-xl border p-3 transition-all ${selected ? 'border-sky-500/40 bg-sky-500/10' : availableOnWms ? 'border-emerald-500/25 bg-emerald-500/[0.06] hover:border-emerald-400/40' : blocked ? 'border-red-500/20 bg-red-500/[0.04]' : 'border-white/10 bg-white/[0.03] hover:border-sky-500/25 hover:bg-sky-500/[0.04]'}`}
+                            >
+                              <div className="flex gap-3">
+                                <div className="h-16 w-16 rounded-lg border border-white/10 bg-black/30 overflow-hidden shrink-0">
+                                  {scene.thumbnailUrl ? (
+                                    <img src={scene.thumbnailUrl} alt={scene.id} className="h-full w-full object-cover" />
+                                  ) : (
+                                    <div className="h-full w-full flex items-center justify-center text-slate-600">
+                                      <Layers size={20} />
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-semibold text-white truncate">{scene.id}</p>
+                                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                    <p className="text-xs text-slate-400">{date}</p>
+                                    <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${availableOnWms ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-sky-400/25 bg-sky-400/10 text-sky-200'}`}>
+                                      {availableOnWms ? 'WMS' : 'USGS'}
+                                    </span>
+                                    <span className="rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-bold text-slate-300">
+                                      {scene.compositionLabel}
+                                    </span>
+                                  </div>
+                                  <p className="mt-1 text-[10px] uppercase tracking-wider text-slate-500">
+                                    {scene.path}/{scene.row} • {scene.cloudCover === null ? 'Nuvem n/d' : `Nuvem ${scene.cloudCover.toFixed(1)}%`}
+                                  </p>
+                                  <p className={`mt-1 text-[10px] font-semibold uppercase tracking-wider ${scene.coversArea === false ? 'text-red-300' : hasCoverage ? 'text-emerald-300' : 'text-sky-300'}`}>
+                                    {hasCoverage ? `Cobertura ${coverage.toFixed(1)}%` : 'Busca por órbita/ponto'}
+                                  </p>
+                                  {availableOnWms && (
+                                    <div className="mt-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-2">
+                                      <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-200">
+                                        Publicada no WMS
+                                      </p>
+                                      <span
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void downloadLandsatWmsZip(scene);
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key !== 'Enter' && e.key !== ' ') return;
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          void downloadLandsatWmsZip(scene);
+                                        }}
+                                        className="mt-2 inline-flex max-w-full items-center gap-1 rounded-md border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-100 hover:bg-emerald-400/15"
+                                      >
+                                        {landsatWmsDownloadingId === scene.id ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                                        <span className="truncate">Baixar ZIP</span>
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                                <span
+                                  className={`shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border ${selected ? 'border-sky-500/40 bg-sky-500/15 text-sky-200' : 'border-white/10 bg-white/[0.04] text-slate-500'} ${blocked ? 'opacity-40' : 'hover:text-sky-200'}`}
+                                  title={selected ? 'Cena selecionada' : 'Selecionar cena'}
+                                >
+                                  {selected ? <CheckSquare size={17} /> : <Square size={17} />}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {landsatVisibleScenes.length === 0 && (
+                        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">
+                          Nenhuma cena dentro dos filtros atuais.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+
+                <aside className="rounded-2xl border border-white/10 bg-[#071318]/80 p-5 sm:p-6 space-y-5">
+                  {(() => {
+                    const activeLandsat = landsatJobId ? landsatHistory.find((item) => item.jobId === landsatJobId) : null;
+                    const pct = Math.max(0, Math.min(100, Math.round(Number(landsatProgress?.percent ?? activeLandsat?.percent ?? 0))));
+                    const done = activeLandsat?.status === 'completed';
+                    const zipUrl = landsatArchiveZipUrl(activeLandsat || landsatSelectedScene);
+                    const activeStage = String(landsatProgress?.stage || activeLandsat?.stage || '').toLowerCase();
+                    const stageLabelByKey: Record<string, string> = {
+                      queued: 'Na fila',
+                      download: 'Baixando bandas',
+                      composite: 'Compondo RGB',
+                      vrt: 'Montando VRT',
+                      geotiff: 'Gerando GeoTIFF',
+                      archive: 'Salvando no acervo',
+                      publish_wms: 'Publicando WMS',
+                      verify_wms: 'Validando WMS',
+                      completed: 'Concluído',
+                      failed: 'Falhou',
+                      cancelled: 'Cancelado',
+                    };
+                    const stageLabel = stageLabelByKey[activeStage] || landsatProgress?.stage || activeLandsat?.stage || 'Aguardando';
+                    const progressMessage = landsatProgress?.message || activeLandsat?.message || 'Busque imagens e selecione uma cena para iniciar.';
+                    return (
+                      <>
+                        <div>
+                          <h3 className="text-base font-semibold text-white">Processamento</h3>
+                          <p className="mt-1 text-xs text-slate-500">{activeLandsat?.scene?.id || activeLandsat?.sceneId || landsatSelectedScene?.id || 'Nenhum job selecionado'}</p>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-xs items-end">
+                            <span className="font-medium text-slate-300">{stageLabel}</span>
+                            <span className="font-bold tabular-nums text-sky-300">{pct}%</span>
+                          </div>
+                          <div className="h-3 rounded-full bg-white/10 overflow-hidden">
+                            <div className="h-full rounded-full bg-gradient-to-r from-sky-500 to-emerald-400 transition-all duration-500" style={{ width: `${pct}%` }} />
+                          </div>
+                          <p className="min-h-[2rem] text-xs leading-relaxed text-slate-400">{progressMessage}</p>
+                        </div>
+                        {landsatProcessing && activeLandsat && (
+                          <button
+                            type="button"
+                            onClick={() => void deleteLandsatJob(activeLandsat)}
+                            className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-200 hover:bg-red-500/15 transition-colors"
+                          >
+                            <X size={16} />
+                            Cancelar
+                          </button>
+                        )}
+                        {done && activeLandsat && zipUrl && (
+                          <button
+                            type="button"
+                            onClick={() => void downloadLandsatWmsZip(activeLandsat)}
+                            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white hover:bg-sky-500 transition-colors"
+                          >
+                            {landsatWmsDownloadingId === activeLandsat.jobId ? <Loader2 size={17} className="animate-spin" /> : <Download size={17} />}
+                            Baixar cena em ZIP
+                          </button>
+                        )}
+                        {landsatSelectedScene?.wmsAvailable && !activeLandsat && (
+                          <button
+                            type="button"
+                            onClick={() => void downloadLandsatWmsZip(landsatSelectedScene)}
+                            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500 transition-colors"
+                          >
+                            <Download size={17} />
+                            Baixar WMS atual
+                          </button>
+                        )}
+                        {activeLandsat?.outputBytes && (
+                          <p className="text-center text-[10px] text-slate-500">
+                            Arquivo final: {(activeLandsat.outputBytes / 1024 / 1024).toFixed(1)} MB
+                          </p>
+                        )}
+                        {activeLandsat?.wmsLayerName && (
+                          <a
+                            href={activeLandsat.wmsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-xs font-semibold text-slate-200 hover:bg-white/[0.07]"
+                          >
+                            <ArrowUpRight size={14} />
+                            Abrir WMS
+                          </a>
+                        )}
+                      </>
+                    );
+                  })()}
+                </aside>
+              </div>
             </div>
           </div>
         ) : activeView === 'vertices-proximas' ? (
