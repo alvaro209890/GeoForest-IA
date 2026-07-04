@@ -457,48 +457,114 @@ npm run build
 
 ## Manutenção
 
-### Verificar status
+### Verificar status completo
 ```bash
 # API
 curl -sS https://geoforest-api.cursar.space/api/health
 
-# WMS
+# WMS público
 curl -sS "https://wms.cursar.space/geoserver/cbers/wms?service=WMS&version=1.3.0&request=GetCapabilities"
 
-# App
+# GeoServer local (REST)
+curl -sS -u admin:geoserver http://127.0.0.1:8081/geoserver/rest/about/version.json
+
+# App principal
 curl -fsSI https://ia-florestal.web.app
+
+# Admin CBERS
+curl -fsSI https://geoforest-admin.web.app
+
+# Cloudflare Tunnel
+systemctl --user status geoserver-wms-tunnel.service
+```
+
+### Pré-voo (antes de deploy)
+```bash
+cd "/media/server/HD Backup/Servidores_NAO_MEXA/GeoForest-IA"
+scripts/cbers-doctor.sh    # GDAL, GeoServer, acervo HD, symlinks
+```
+
+### Acervo WMS
+```bash
+# Total de layers CBERS no GeoServer
+curl -s -u admin:geoserver http://127.0.0.1:8081/geoserver/rest/workspaces/cbers/coveragestores.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['coverageStores']['coverageStore']))"
+
+# Total de layers Landsat
+curl -s -u admin:geoserver http://127.0.0.1:8081/geoserver/rest/workspaces/cbers/coveragestores.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(sum(1 for s in d['coverageStores']['coverageStore'] if s['name'].startswith('landsat_')))"
+
+# Listar layers com órbita errada
+curl -s -u admin:geoserver http://127.0.0.1:8081/geoserver/rest/workspaces/cbers/coveragestores.json | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for s in d['coverageStores']['coverageStore']:
+    n=s['name']
+    parts=n.split('_')
+    if len(parts)>=5 and not n.startswith('landsat_'):
+        for i in range(len(parts)):
+            if len(parts[i])==8 and parts[i].isdigit() and i+2<len(parts):
+                so=f'{parts[0]}_{parts[1]}'
+                si=f'{parts[i+1]}_{parts[i+2]}'
+                if so!=si: print(f'MISMATCH: {n} (store={so}, stac={si})')
+"
+
+# Espaço em disco
+df -h "/media/server/HD Backup/RASTER"
 ```
 
 ### Reiniciar serviços
 ```bash
+# Backend
 systemctl --user restart geoforest-backend.service
+
+# GeoServer + proxy + tunnel
 systemctl --user restart geoserver-wms.service
 systemctl --user restart geoserver-wms-public-proxy.service
+systemctl --user restart geoserver-wms-tunnel.service
 ```
 
 ### Logs
 ```bash
 journalctl --user -u geoforest-backend.service -n 50 -f
+journalctl --user -u geoserver-wms.service -n 30
 ```
+
+### Deploy completo (puxar, buildar, publicar)
+```bash
+cd "/media/server/HD Backup/Servidores_NAO_MEXA/GeoForest-IA"
+scripts/deploy-firebase-restart-backend.sh
+```
+Esse script faz: `git pull` → `npm run build` → `firebase deploy` → `systemctl restart`.
 
 ---
 
 ## Variáveis de Ambiente
 
-| Variável | Obrig. | Descrição |
-|----------|--------|-----------|
-| `GROQ_API_KEY` | ✅ | API key Groq (LLMs) |
-| `CLOUDINARY_API_KEY` | ✅ | Cloudinary |
-| `CLOUDINARY_API_SECRET` | ✅ | Cloudinary |
-| `GEMINI_API_KEY` | ⚠️ | Gemini para análise SIMCAR |
-| `SEMA_WMS_BASE_URL` | ❌ | WMS SEMA-MT |
-| `SEMA_WMS_AUTHKEY` | ❌ | Auth key WMS SEMA |
-| `SIMCAR_REQUIRE_GEMINI` | ❌ | Falha sem Gemini se true |
-| `SIMCAR_LOCAL_SHAPES_ROOT` | ❌ | Pasta shapes locais SIMCAR |
-| `CLOUDINARY_FOLDER` | ❌ | Pasta Cloudinary |
-| `GEMINI_VISION_MODELS` | ❌ | Modelos visão (separados por `,`) |
-| `GEMINI_TEXT_SYNTHESIS_MODELS` | ❌ | Modelos síntese textual |
-| `GEMINI_IMAGE_SHARE` | ❌ | Proporção imagens (0.55-0.95) |
+### Obrigatórias
+| Variável | Descrição |
+|----------|-----------|
+| `GROQ_API_KEY` | API key Groq (LLMs) |
+| `CLOUDINARY_API_KEY` | Cloudinary |
+| `CLOUDINARY_API_SECRET` | Cloudinary |
+
+### Opcionais (com defaults)
+| Variável | Default | Descrição |
+|----------|---------|-----------|
+| `GEMINI_API_KEY` | — | Gemini para análise SIMCAR |
+| `GEOSERVER_USER` | `admin` | GeoServer REST |
+| `GEOSERVER_PASSWORD` | `geoserver` | GeoServer REST |
+| `GEOSERVER_WORKSPACE` | `cbers` | Workspace GeoServer |
+| `GEOSERVER_BASE_URL` | `http://127.0.0.1:8081/geoserver` | REST local |
+| `GEOSERVER_PUBLIC_WMS_BASE` | `https://wms.cursar.space/geoserver/cbers/wms` | WMS público |
+| `CBERS_ARCHIVE_ROOT` | `/media/server/HD Backup/RASTER/CBERS_4A` | Acervo CBERS |
+| `CBERS_STAC_ROOT` | `https://data.inpe.br/bdc/stac/v1` | STAC INPE |
+| `CBERS_STRETCH_MODE` | `global` | Realce: global, perband, minmax |
+| `CBERS_STRETCH_SIGMA` | `2.5` | Desvios para corte de contraste |
+| `LANDSAT_ARCHIVE_ROOT` | `/media/server/HD Backup/RASTER/LANDSAT` | Acervo Landsat |
+| `LANDSAT_STAC_ROOT` | `https://landsatlook.usgs.gov/stac-server` | STAC USGS |
+| `SEMA_WMS_BASE_URL` | — | WMS SEMA-MT |
+| `SIMCAR_LOCAL_SHAPES_ROOT` | — | Pasta shapes locais SIMCAR |
+
+Arquivo de referência: [`config/geoforest-backend.env.example`](config/geoforest-backend.env.example)
 
 ---
 
