@@ -1301,7 +1301,7 @@ function CbersMapPreview({
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activeView, setActiveView] = useState<'chat' | 'settings' | 'simcar-clip' | 'features' | 'cbers-wpm' | 'landsat' | 'vertices-proximas'>('chat');
+  const [activeView, setActiveView] = useState<'simcar-clip' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'features' | 'settings'>('simcar-clip');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -4457,24 +4457,12 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (activeView === 'chat') {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
+    // Chat removido — scroll não é mais necessário aqui
+    // mantido vazio pra não quebrar hooks
   }, [messages, activeView]);
 
   useEffect(() => {
-    if (activeView !== 'chat') return;
-    if (!typingMessageId && !aiThinking) return;
-    const container = chatScrollRef.current;
-    if (!container) return;
-
-    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (distanceToBottom > 180) return;
-
-    const raf = window.requestAnimationFrame(() => {
-      container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
-    });
-    return () => window.cancelAnimationFrame(raf);
+    // Chat removido — sem animação de digitação
   }, [typingText, liveThinkingText, typingMessageId, aiThinking, activeView]);
 
   useEffect(() => {
@@ -4611,7 +4599,7 @@ export default function Dashboard() {
     setActiveConversationId(id);
     setActiveConversationRef(docRef);
     setMessages(initialMessages);
-    setActiveView('chat');
+    setActiveView('simcar-clip');
   };
 
   const loadConversation = async (collRef: ReturnType<typeof collection>, id: string) => {
@@ -4651,7 +4639,7 @@ export default function Dashboard() {
     }
     setActiveConversationId(id);
     setActiveConversationRef(docRef);
-    setActiveView('chat');
+    setActiveView('simcar-clip');
     setIsSidebarOpen(false);
   };
 
@@ -7612,93 +7600,111 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       <aside
         className={`
           fixed lg:relative z-30 flex flex-col h-full w-[85vw] max-w-80
-          bg-[#0a120e]/95 lg:bg-[#0a120e]/80 backdrop-blur-xl border-r border-white/5
-          transition-transform duration-300 ease-in-out
-          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-20 xl:w-80 xl:max-w-80'}
+          bg-gradient-to-b from-[#0a120e]/98 via-[#0a120e]/95 to-[#0a120e]/98
+          backdrop-blur-2xl border-r border-emerald-500/10
+          shadow-2xl shadow-black/30
+          transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]
+          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-[72px] xl:w-80 xl:max-w-80'}
         `}
       >
-        <div className="p-6 flex items-center gap-3 cursor-pointer" onClick={() => setActiveView('chat')}>
-          <div className="relative group">
-            <div className="absolute inset-0 bg-emerald-500 blur opacity-40 group-hover:opacity-60 transition-opacity rounded-lg"></div>
-            <div className="relative bg-gradient-to-br from-emerald-400 to-green-600 p-1.5 rounded-xl shadow-lg shadow-emerald-900/50">
+        <div className="p-5 flex items-center gap-3 cursor-pointer group/sidebar-logo" onClick={() => setActiveView('simcar-clip')}>
+          <div className="relative">
+            <div className="absolute inset-0 bg-emerald-500/60 blur-xl rounded-full animate-pulse opacity-60 group-hover/sidebar-logo:opacity-100 transition-opacity duration-500"></div>
+            <div className="relative bg-gradient-to-br from-emerald-400 to-green-600 p-2 rounded-xl shadow-lg shadow-emerald-900/50 group-hover/sidebar-logo:shadow-emerald-500/30 transition-shadow duration-300">
               <img
                 src="/logo-no-bg.svg"
                 alt="GeoForest IA"
-                className="h-8 w-8 object-contain"
-              />            </div>
+                className="h-7 w-7 sm:h-8 sm:w-8 object-contain"
+              />
+            </div>
           </div>
-          <div className="flex flex-col xl:flex lg:hidden overflow-hidden">
-            <span className="font-bold text-base sm:text-lg tracking-tight text-white">GeoForest IA</span>
-            <span className="text-[10px] sm:text-xs text-emerald-400/80 font-medium tracking-wide">INTELLIGENCE</span>
+          <div className="flex flex-col overflow-hidden transition-all duration-300 xl:opacity-100 lg:opacity-0 lg:w-0 xl:w-auto">
+            <span className="font-bold text-base tracking-tight text-white group-hover/sidebar-logo:text-emerald-200 transition-colors">GeoForest IA</span>
+            <span className="text-[10px] text-emerald-400/70 font-medium tracking-[0.15em] uppercase">Forestry Intelligence</span>
           </div>
         </div>
 
-        <div className="px-4 mb-4 space-y-1.5">
-          {/* ─── Abas permanentes ─── */}
-          <div className="grid grid-cols-5 gap-1 p-1 rounded-xl bg-white/5 border border-white/5">
-            <button
-              onClick={() => setActiveView('chat')}
-              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'chat' ? 'bg-emerald-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-            >
-              <MessageSquare size={15} />
-              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">Assistente</span>
-            </button>
-            <button
-              onClick={() => {
-                setActiveView('simcar-clip');
-                if (simcarClipLayers.length === 0) {
-                  fetch(apiUrl('/api/simcar/layers'))
-                    .then((r) => r.json())
-                    .then((data: any) => {
-                      if (Array.isArray(data?.layers)) {
-                        setSimcarClipLayers(
-                          data.layers.map((l: any) => ({ name: l.name, category: l.category, selected: true })),
-                        );
-                      }
-                    })
-                    .catch(() => { });
-                }
-              }}
-              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'simcar-clip' ? 'bg-purple-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-            >
-              <Scissors size={15} />
-              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">SIMCAR</span>
-            </button>
-            <button
-              onClick={() => setActiveView('cbers-wpm')}
-              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'cbers-wpm' ? 'bg-cyan-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-            >
-              <Satellite size={15} />
-              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">CBERS</span>
-            </button>
-            <button
-              onClick={() => setActiveView('landsat')}
-              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'landsat' ? 'bg-sky-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-            >
-              <Layers size={15} />
-              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">Landsat</span>
-            </button>
-            <button
-              onClick={() => setActiveView('vertices-proximas')}
-              className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg transition-all text-xs font-medium ${activeView === 'vertices-proximas' ? 'bg-violet-600/80 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-            >
-              <Network size={15} />
-              <span className="block lg:hidden xl:block leading-none text-[10px] sm:text-xs">Vértices</span>
-            </button>
+        <div className="px-3 mb-3 space-y-2">
+          {/* ─── Abas — Segmented Control Moderno ─── */}
+          <div className="relative p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm">
+            <div className="grid grid-cols-4 gap-0.5 relative">
+              {/* Active tab background slider */}
+              <div
+                className="absolute top-0.5 bottom-0.5 left-0.5 w-[calc(25%-2px)] rounded-xl transition-all duration-400 ease-[cubic-bezier(0.4,0,0.2,1)] z-0"
+                style={{
+                  transform: `translateX(${activeView === 'simcar-clip' ? 0 : activeView === 'cbers-wpm' ? 100 : activeView === 'landsat' ? 200 : 300}%)`,
+                  background: activeView === 'simcar-clip' 
+                    ? 'linear-gradient(135deg, #7c3aed, #6366f1)' 
+                    : activeView === 'cbers-wpm' 
+                    ? 'linear-gradient(135deg, #06b6d4, #10b981)'
+                    : activeView === 'landsat'
+                    ? 'linear-gradient(135deg, #0ea5e9, #10b981)'
+                    : 'linear-gradient(135deg, #8b5cf6, #10b981)',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)',
+                }}
+              />
+              <button
+                onClick={() => {
+                  setActiveView('simcar-clip');
+                  if (simcarClipLayers.length === 0) {
+                    fetch(apiUrl('/api/simcar/layers'))
+                      .then((r) => r.json())
+                      .then((data: any) => {
+                        if (Array.isArray(data?.layers)) {
+                          setSimcarClipLayers(
+                            data.layers.map((l: any) => ({ name: l.name, category: l.category, selected: true })),
+                          );
+                        }
+                      })
+                      .catch(() => { });
+                  }
+                }}
+                className={`relative z-10 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                  activeView === 'simcar-clip' 
+                    ? 'text-white' 
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
+                }`}
+              >
+                <Scissors size={16} className={activeView === 'simcar-clip' ? 'drop-shadow-[0_0_6px_rgba(167,139,250,0.5)]' : ''} />
+                <span className="block lg:hidden xl:block leading-none text-[10px] tracking-wide">SIMCAR</span>
+              </button>
+              <button
+                onClick={() => setActiveView('cbers-wpm')}
+                className={`relative z-10 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                  activeView === 'cbers-wpm' 
+                    ? 'text-white' 
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
+                }`}
+              >
+                <Satellite size={16} className={activeView === 'cbers-wpm' ? 'drop-shadow-[0_0_6px_rgba(34,211,238,0.5)]' : ''} />
+                <span className="block lg:hidden xl:block leading-none text-[10px] tracking-wide">CBERS</span>
+              </button>
+              <button
+                onClick={() => setActiveView('landsat')}
+                className={`relative z-10 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                  activeView === 'landsat' 
+                    ? 'text-white' 
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
+                }`}
+              >
+                <Layers size={16} className={activeView === 'landsat' ? 'drop-shadow-[0_0_6px_rgba(56,189,248,0.5)]' : ''} />
+                <span className="block lg:hidden xl:block leading-none text-[10px] tracking-wide">Landsat</span>
+              </button>
+              <button
+                onClick={() => setActiveView('vertices-proximas')}
+                className={`relative z-10 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                  activeView === 'vertices-proximas' 
+                    ? 'text-white' 
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
+                }`}
+              >
+                <Network size={16} className={activeView === 'vertices-proximas' ? 'drop-shadow-[0_0_6px_rgba(167,139,250,0.5)]' : ''} />
+                <span className="block lg:hidden xl:block leading-none text-[10px] tracking-wide">Vértices</span>
+              </button>
+            </div>
           </div>
 
           {/* ─── Botão de ação contextual ─── */}
-          {activeView === 'chat' && (
-            <button
-              onClick={() => createConversation()}
-              className="w-full group relative overflow-hidden rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-all duration-300 p-[1px]"
-            >
-              <div className="relative flex items-center justify-center gap-2 bg-[#0f241a] group-hover:bg-transparent text-emerald-100 py-2.5 rounded-[11px] transition-colors">
-                <Plus size={16} />
-                <span className="font-medium block lg:hidden xl:block text-sm">Novo Chat</span>
-              </div>
-            </button>
-          )}
           {activeView === 'simcar-clip' && (
             <button
               onClick={() => { resetSimcarDraft('auto-clip'); setActiveView('simcar-clip'); }}
@@ -7744,18 +7750,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </button>
           )}
 
-          {/* ─── Busca (só no chat) ─── */}
-          {activeView === 'chat' && (
-            <div className="relative">
-              <Search size={16} className="text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-              <Input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Buscar conversa..."
-                className="pl-9 bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-emerald-400 focus:ring-emerald-400/40"
-              />
-            </div>
-          )}
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 space-y-1 custom-scrollbar">
@@ -8077,42 +8071,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </div>
             )
           ) : (
-            /* ─── Chat Conversation List ─── */
-            filteredConversations.map((conv) => (
-              <div
-                key={conv.id}
-                className={`w-full flex items-center gap-2 p-2 rounded-lg transition-colors group ${conv.id === activeConversationId ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-slate-400'}`}
-              >
-                <button
-                  onClick={() => onSelectConversation(conv.id)}
-                  className="flex-1 min-w-0 text-left flex items-center gap-3"
-                >
-                  <MessageSquare
-                    size={18}
-                    className={conv.id === activeConversationId ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}
-                  />
-                  <div className="overflow-hidden block lg:hidden xl:block">
-                    <p className="text-sm text-slate-300 truncate group-hover:text-white transition-colors inline-flex items-center gap-2">
-                      {conv.lastAttachmentType === 'pdf' && <FileText size={12} className="text-emerald-300 shrink-0" />}
-                      {conv.lastAttachmentType === 'image' && <ImagePlus size={12} className="text-emerald-300 shrink-0" />}
-                      <span className="truncate">{conv.title}</span>
-                    </p>
-                    {conv.lastMessagePreview && <p className="text-[10px] text-slate-600 truncate">{conv.lastMessagePreview}</p>}
-                  </div>
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteConversation(conv.id);
-                  }}
-                  className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition"
-                  title="Excluir chat"
-                  aria-label="Excluir chat"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))
+            /* ─── Chat removido — use as abas acima ─── */
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <TreePine size={40} className="text-emerald-700/50 mb-4" />
+              <p className="text-sm text-slate-400">Selecione uma ferramenta acima</p>
+              <p className="text-[10px] text-slate-600 mt-1">SIMCAR, CBERS, Landsat ou Vértices</p>
+            </div>
           )}
         </div>
 
@@ -8177,221 +8141,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2 min-w-0">
               <Zap size={16} className="text-emerald-400 fill-current shrink-0" />
               <span className="font-medium text-slate-200 text-sm sm:text-base truncate">
-                {activeView === 'chat' ? 'GeoForest v2.0' : activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'landsat' ? 'Landsat WMS' : activeView === 'vertices-proximas' ? 'Vértices Próximas' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
+                {activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'landsat' ? 'Landsat WMS' : activeView === 'vertices-proximas' ? 'Vértices Próximas' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
               </span>
-              {activeView === 'chat' && (
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-wide shrink-0 hidden sm:inline-block">
-                  Online
-                </span>
-              )}
             </div>
           </div>
           <div className="flex items-center gap-2"></div>
         </header>
 
-        {activeView === 'chat' ? (
-          <>
-            <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-2 sm:px-4 py-4 sm:py-6 scroll-smooth custom-scrollbar relative z-0">
-              <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
-                {chatTimeline}
-              </div>
-            </div>
-
-            <div className="p-2 sm:p-4 pb-4 sm:pb-6 w-full flex-shrink-0 relative z-30">
-              {chatError && (
-                <div className="max-w-3xl mx-auto mb-2">
-                  <div className="flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-                    <AlertTriangle size={14} className="mt-0.5 text-amber-300 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="leading-relaxed">{chatError}</p>
-                      <div className="mt-2 flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={onRetryLastPrompt}
-                          className="rounded-md border border-amber-300/35 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-100 hover:bg-amber-400/20"
-                        >
-                          Repetir ultima pergunta
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setChatError(null)}
-                          className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-[11px] text-slate-200 hover:bg-white/10"
-                        >
-                          Fechar
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div className="max-w-3xl mx-auto relative group z-30">
-                <div className="absolute inset-0 bg-emerald-500/5 rounded-2xl blur-sm group-focus-within:bg-emerald-500/10 transition-all duration-500" />
-                <div className="relative bg-[#0e1612]/90 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/50 overflow-visible focus-within:border-emerald-500/40 focus-within:ring-1 focus-within:ring-emerald-500/20 transition-all duration-300">
-                  <textarea
-                    ref={chatTextareaRef}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSend())}
-                    placeholder="Descreva sua análise ambiental ou anexe um mapa..."
-                    className="w-full bg-transparent text-slate-200 placeholder:text-slate-500 px-4 py-4 min-h-[60px] max-h-[200px] resize-none focus:outline-none text-sm leading-relaxed custom-scrollbar"
-                    rows={1}
-                    style={{ height: input ? `${Math.min(input.split('\n').length * 24 + 32, 200)}px` : '60px' }}
-                  />
-                  {(imageFile || pdfFile || queuedFiles.length > 0) && (
-                    <div className="px-4 pb-2">
-                      <div className="inline-flex max-w-[320px] items-center gap-2 px-2.5 py-2 rounded-xl bg-[#0c1511] border border-white/10 text-xs text-slate-200 shadow-sm">
-                        <div
-                          className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center ${imageFile || queuedFiles.some((f) => (f.type || '').toLowerCase().startsWith('image/'))
-                            ? 'bg-emerald-500/20 text-emerald-300'
-                            : 'bg-red-500/20 text-red-300'
-                            }`}
-                        >
-                          {imageFile ||
-                            queuedFiles.some((f) => (f.type || '').toLowerCase().startsWith('image/')) ? (
-                            <ImagePlus size={13} />
-                          ) : (
-                            <FileText size={13} />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="truncate font-medium">
-                            {queuedFiles.length > 0
-                              ? `${queuedFiles.length} arquivo(s) selecionado(s)`
-                              : imageFile?.name || pdfFile?.name}
-                          </p>
-                          <p className="text-[10px] text-slate-500">
-                            {queuedFiles.length > 0
-                              ? 'Múltiplos anexos prontos para envio'
-                              : imageFile
-                                ? 'Imagem pronta para envio'
-                                : 'PDF pronto para envio'}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => clearAttachments()}
-                          className="ml-1 h-6 w-6 shrink-0 rounded-md text-slate-500 hover:text-red-300 hover:bg-red-500/10"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-3 pt-1">
-                    <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                      <label className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs cursor-pointer">
-                        <ImagePlus size={16} className="text-emerald-300" />
-                        <span className="hidden sm:inline">Anexar</span>
-                        <input
-                          type="file"
-                          accept="image/*,application/pdf"
-                          multiple
-                          className="hidden"
-                          onChange={(e) => {
-                            onPickAttachment(Array.from(e.target.files || []));
-                            e.currentTarget.value = '';
-                          }}
-                        />
-                      </label>
-                      <div className="relative z-40" ref={modelMenuRef}>
-                        <button
-                          type="button"
-                          onClick={() => setModelMenuOpen((v) => !v)}
-                          className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:text-emerald-200 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-all text-xs"
-                        >
-                          <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.7)]"></span>
-                          <span className="max-w-[80px] sm:max-w-[140px] truncate">{selectedModelLabel}</span>
-                          <ChevronDown
-                            size={13}
-                            className={`text-slate-400 transition-transform ${modelMenuOpen ? 'rotate-180' : ''}`}
-                          />
-                        </button>
-
-                        {modelMenuOpen && (
-                          <div className="absolute left-0 sm:left-0 right-0 sm:right-auto bottom-full mb-2 w-[calc(100vw-2rem)] sm:w-80 max-w-80 rounded-2xl bg-[#0d1612]/95 border border-white/10 shadow-2xl backdrop-blur-xl z-[120] overflow-hidden">
-                            <div className="px-4 py-3 border-b border-white/10">
-                              <p className="text-[10px] uppercase tracking-wider text-slate-500">Seleção de modelo</p>
-                              <p className="text-xs text-slate-300 mt-1">Escolha manualmente ou use Auto</p>
-                            </div>
-                            <div className="max-h-80 overflow-auto custom-scrollbar p-2 space-y-1">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedModel('auto');
-                                  setModelMenuOpen(false);
-                                }}
-                                className={`w-full text-left rounded-xl px-3 py-2 border transition-colors ${selectedModel === 'auto'
-                                  ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200'
-                                  : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
-                                  }`}
-                              >
-                                <div className="text-xs font-medium">Auto (Florestal)</div>
-                                <div className="text-[11px] text-slate-400 mt-0.5">
-                                  Escolhe modelo por contexto (texto, imagem e documento)
-                                </div>
-                              </button>
-                              {models.map((model) => (
-                                <button
-                                  key={model.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedModel(model.id);
-                                    setModelMenuOpen(false);
-                                  }}
-                                  className={`w-full text-left rounded-xl px-3 py-2 border transition-colors ${selectedModel === model.id
-                                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200'
-                                    : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
-                                    }`}
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <div className="text-xs font-medium">{model.label}</div>
-                                    <div className="text-[10px] text-slate-400 uppercase tracking-wider">
-                                      {(model.capabilities || ['text']).join(' + ')}
-                                    </div>
-                                  </div>
-                                  <div className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                                    {model.description}
-                                  </div>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 sm:gap-3 ml-auto">
-                      {(sending || aiThinking) && (
-                        <button
-                          type="button"
-                          onClick={onStopChatGeneration}
-                          className="flex items-center gap-1.5 sm:gap-2 px-3 py-2 rounded-lg text-xs font-medium border border-rose-400/30 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20"
-                        >
-                          <Square size={12} />
-                          <span className="hidden sm:inline">Parar</span>
-                        </button>
-                      )}
-                      <div className="h-4 w-[1px] bg-white/10 hidden sm:block"></div>
-                      <button
-                        onClick={handleSend}
-                        disabled={sending || uploading || (!input.trim() && !imageFile && !pdfFile && queuedFiles.length === 0)}
-                        className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${input.trim() || imageFile || pdfFile || queuedFiles.length > 0
-                          ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/25 hover:bg-emerald-400'
-                          : 'bg-white/5 text-slate-500 cursor-not-allowed'
-                          }`}
-                      >
-                        <span className="hidden sm:inline">{sending ? 'Gerando...' : uploading ? 'Enviando...' : 'Enviar'}</span>
-                        <Send size={14} className={input.trim() ? 'fill-current' : ''} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div className="text-center mt-2">
-                  <p className="text-[10px] text-slate-600">A IA pode cometer erros. Verifique informações críticas.</p>
-                </div>
-              </div>
-            </div>
-          </>
-        ) : activeView === 'simcar-clip' ? (
+        {activeView === 'simcar-clip' ? (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
             <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6 animate-fade-in-up">
               <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-4 sm:p-6">
@@ -11876,7 +11633,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <FeaturesManual
               manualSection={manualSection}
               setManualSection={setManualSection}
-              onGoChat={() => setActiveView('chat')}
+              onGoChat={() => setActiveView('simcar-clip')}
               onGoSimcar={() => setActiveView('simcar-clip')}
               onGoCbers={() => setActiveView('cbers-wpm')}
             />
