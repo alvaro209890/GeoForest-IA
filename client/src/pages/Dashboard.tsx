@@ -1347,6 +1347,8 @@ export default function Dashboard() {
   );
   const [simcarAirId, setSimcarAirId] = useState('');
   const [simcarAirIdStripped, setSimcarAirIdStripped] = useState(false);
+  const [simcarShowCancel, setSimcarShowCancel] = useState(false);
+  const simcarCancelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [simcarCarNumber, setSimcarCarNumber] = useState('');
   const [simcarSigefParcelCode, setSimcarSigefParcelCode] = useState('');
   const [simcarClipJobId, setSimcarClipJobId] = useState<string | null>(null);
@@ -3908,84 +3910,14 @@ export default function Dashboard() {
 
   const appendSimcarEntriesToConversation = useCallback(
     async (
-      clip: SimcarClipHistoryItem,
-      entries: SimcarConversationEntry[],
-      options?: { title?: string },
+      _clip: SimcarClipHistoryItem,
+      _entries: SimcarConversationEntry[],
+      _options?: { title?: string },
     ) => {
-      if (!conversationsRef || !clip?.jobId) return null;
-
-      const validEntries = entries
-        .map((entry) => ({
-          ...entry,
-          text: String(entry?.text || '').trim(),
-        }))
-        .filter((entry) => entry.text.length > 0);
-
-      if (validEntries.length === 0) return clip.conversationId || null;
-
-      const conversationId = clip.conversationId || nanoid();
-      const convDocRef = doc(conversationsRef.collection, conversationId);
-      const snap = await getDoc(convDocRef);
-      const existingMessages = snap.exists()
-        ? ((snap.data() as any)?.messages as ChatMessage[] | undefined)
-        : undefined;
-      const baseMessages = Array.isArray(existingMessages) && existingMessages.length > 0
-        ? existingMessages
-        : [DEFAULT_ASSISTANT_MESSAGE];
-      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const additions: ChatMessage[] = validEntries.map((entry) => {
-        const cleanedMeta = entry.meta
-          ? Object.fromEntries(Object.entries(entry.meta).filter(([, value]) => value !== undefined))
-          : undefined;
-        return {
-          id: nanoid(),
-          role: entry.role,
-          text: entry.text,
-          time: now,
-          ...(cleanedMeta && Object.keys(cleanedMeta).length > 0 ? { meta: cleanedMeta as ChatMessage['meta'] } : {}),
-        };
-      });
-
-      const mergedMessages = [...baseMessages, ...additions];
-      const existingTitle = snap.exists() ? String((snap.data() as any)?.title || '').trim() : '';
-      const fallbackTitle = options?.title?.trim() || clip.filename || `Recorte SIMCAR ${clip.jobId.slice(0, 8)}`;
-      const nextTitle = existingTitle || fallbackTitle;
-      const lastPreview = additions[additions.length - 1]?.text?.slice(0, 120) || '';
-
-      const conversationPayload: Record<string, any> = {
-        title: nextTitle,
-        kind: 'simcar_recorte',
-        simcarJobId: clip.jobId,
-        messages: sanitizeMessagesForFirestore(mergedMessages),
-        updatedAt: serverTimestamp(),
-        lastMessagePreview: lastPreview,
-        lastAttachmentType: null,
-      };
-      if (!snap.exists()) {
-        conversationPayload.createdAt = serverTimestamp();
-      }
-
-      await setDoc(convDocRef, conversationPayload, { merge: true });
-
-      setConversations((prev) => {
-        const next: Conversation = {
-          id: conversationId,
-          title: nextTitle,
-          lastMessagePreview: lastPreview,
-        };
-        return [next, ...prev.filter((item) => item.id !== conversationId)];
-      });
-
-      if (!clip.conversationId) {
-        await patchPersistedSimcarClip(clip.jobId, { conversationId });
-        setSimcarClipHistory((prev) =>
-          prev.map((item) => (item.jobId === clip.jobId ? { ...item, conversationId } : item)),
-        );
-      }
-
-      return conversationId;
+      // Chat removido — escrita fantasma desativada para economizar Firestore/Cloudinary
+      return null;
     },
-    [conversationsRef, patchPersistedSimcarClip]
+    [] // sem dependências — função é no-op
   );
 
   useEffect(() => {
@@ -8460,7 +8392,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           }
                           className="text-[10px] text-slate-400 hover:text-slate-300 transition-colors"
                         >
-                          Nenhum
+                          Obrigatórias
                         </button>
                       </div>
                     </div>
@@ -8566,6 +8498,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     setSimcarClipProcessing(true);
                     setSimcarClipCanceling(false);
                     simcarClipCancelRequestedRef.current = false;
+                    // Show cancel button only after 400ms to avoid flicker on fast operations
+                    simcarCancelTimerRef.current = setTimeout(() => setSimcarShowCancel(true), 400);
                     clearSimcarClipProgressQueue();
                     setSimcarClipProgress(null);
                     setSimcarClipDownloadUrl(null);
@@ -8775,6 +8709,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         }
                       }
                     } finally {
+                      if (simcarCancelTimerRef.current) {
+                        clearTimeout(simcarCancelTimerRef.current);
+                        simcarCancelTimerRef.current = null;
+                      }
+                      setSimcarShowCancel(false);
                       clearSimcarClipProgressQueue();
                       setSimcarClipProcessing(false);
                       setSimcarClipCanceling(false);
@@ -8806,7 +8745,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </button>
 
                 {/* Cancel Button */}
-                {simcarClipProcessing && (
+                {simcarShowCancel && (
                   <button
                     type="button"
                     disabled={simcarClipCanceling}
