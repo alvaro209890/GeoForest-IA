@@ -112,13 +112,13 @@ O backend roda **exclusivamente em servidor local**, exposto via Cloudflare Tunn
 ```
 GeoForest-IA/
 ├── backend/                    # ~21.700 linhas TypeScript
-│   ├── index.ts               # Servidor Express (2.851 linhas)
+│   ├── index.ts               # Servidor Express (2.864 linhas)
 │   ├── simcar-clip.ts         # Recorte SIMCAR + análise IA (9.920 linhas)
-│   ├── cbers-wpm.ts           # CBERS-4A WPM (2.964 linhas)
-│   ├── landsat.ts             # Landsat Collection 2 SR + WMS local
+│   ├── cbers-wpm.ts           # CBERS-4A WPM (2.693 linhas)
+│   ├── landsat.ts             # Landsat Collection 2 SR + WMS local (1.621 linhas)
 │   ├── vertices-proximas.ts   # Análise de vértices próximas em shapefiles
 │   ├── knowledge-base.ts      # RAG base conhecimento (1.064 linhas)
-│   ├── cbers-archive.ts       # Acervo permanente CBERS (963 linhas)
+│   ├── cbers-archive.ts       # Acervo permanente CBERS (1.105 linhas)
 │   ├── wfs-intersection.ts    # Interseção WFS (660 linhas)
 │   ├── local-storage.ts       # Armazenamento local
 │   ├── billing.ts             # Cobrança por uso
@@ -379,22 +379,28 @@ Sistema **RAG** próprio: carrega apenas documentos relevantes para otimizar tok
 | GET | `/api/vertices/download/:jobId` | Download ZIP final |
 | DELETE | `/api/vertices/jobs/:jobId` | Cancela/remove job |
 
-### CBERS
+### CBERS-4A/WPM
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| POST | `/api/cbers/search` | Busca cenas CBERS |
-| POST | `/api/cbers/download` | Download e processamento |
-| GET | `/api/cbers/images` | Imagens da conta |
-| DELETE | `/api/cbers/images/:id` | Remove da conta |
+| POST | `/api/cbers-wpm/search` | Busca cenas CBERS no STAC INPE |
+| POST | `/api/cbers-wpm/estimate` | Estima tamanho/tempo de download |
+| POST | `/api/cbers-wpm/jobs` | Inicia processamento (single ou batch) |
+| GET | `/api/cbers-wpm/jobs/:jobId/status` | Status do job CBERS |
+| GET | `/api/cbers-wpm/jobs/:jobId/events` | SSE de progresso CBERS |
+| DELETE | `/api/cbers-wpm/jobs/:jobId` | Cancela/remove job |
+| GET | `/api/cbers-wpm/wms-download` | ZIP de imagem CBERS publicada no WMS |
+| HEAD | `/api/cbers-wpm/wms-download` | Verifica disponibilidade do ZIP |
 
 ### Landsat
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | POST | `/api/landsat/search` | Busca imagens no WMS local e no STAC USGS |
+| POST | `/api/landsat/estimate` | Estima tamanho/tempo de download |
 | POST | `/api/landsat/jobs` | Reusa imagem WMS ou baixa/gera/publica cena nova |
 | GET | `/api/landsat/jobs/:jobId/status` | Status do job Landsat |
 | GET | `/api/landsat/jobs/:jobId/events` | SSE de progresso Landsat |
 | GET | `/api/landsat/wms-download` | ZIP de imagem Landsat publicada |
+| HEAD | `/api/landsat/wms-download` | Verifica disponibilidade do ZIP |
 
 ### CBERS Archive (Admin)
 | Método | Rota | Descrição |

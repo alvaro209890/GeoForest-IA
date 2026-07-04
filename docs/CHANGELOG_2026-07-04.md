@@ -138,6 +138,33 @@ Para reverter: `git revert 9245ff6f` e novo deploy Firebase.
 
 ## 7. Pendências / Próximos Passos
 
+- [x] Correção de 4 layers CBERS com órbita errada no GeoServer (04/07/2026)
 - [ ] Análise de consistência da seção SIMCAR (em andamento)
 - [ ] Possível limpeza de estados chat não utilizados (~30 variáveis)
 - [ ] Extrair views SIMCAR/CBERS/Landsat/Vertices para componentes separados
+
+---
+
+## 8. Hotfix: Correção de órbita em 4 layers CBERS (04/07/2026)
+
+**Problema:** 4 coveragestores CBERS no GeoServer estavam na órbita errada — arquivos legados
+de setembro/2025 e junho/2024 migrados em lote em 12/04/2026 com a órbita do diretório
+diferente da órbita real do STAC item.
+
+**Layers afetadas:**
+| Store antiga (órbita errada) | Órbita correta |
+|---|---|
+| `211_132_2020_...211_133...C342` | 211_133 |
+| `211_132_2020_...211_133...C342_PAN` | 211_133 |
+| `212_129_2022_...211_129...C342` | 211_129 |
+| `213_129_2021_...212_129...C342` | 212_129 |
+
+**Correção:**
+- 20 arquivos movidos para diretórios de órbita correta no HD Backup
+- Nome do caso 3 corrigido (`211.129` → `211_129`)
+- 4 coveragestores antigos removidos, 4 novos recriados no GeoServer
+- Layer groups `orbit_211_133`, `orbit_211_133_y2020`, `orbit_211_129_y2022` criados
+- Todos verificados com WMS GetMap (200 OK, image/png)
+- Total permanece 734 coveragestores
+- Código atual de publicação (`publishCbersPanToArchive`) validado: extrai órbita corretamente
+  do STAC item ID — sem bugs nesse fluxo
