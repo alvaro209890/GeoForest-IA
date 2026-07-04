@@ -1341,10 +1341,12 @@ export default function Dashboard() {
   const simcarClipProcessJobIdRef = useRef<string | null>(null);
   const simcarClipCancelRequestedRef = useRef(false);
   const simcarClipProgressFlushTimerRef = useRef<number | null>(null);
+  const simcarFileInputRef = useRef<HTMLInputElement | null>(null);
   const simcarClipProgressPendingRef = useRef<{ current: number; total: number; layer: string; status: string } | null>(
     null
   );
   const [simcarAirId, setSimcarAirId] = useState('');
+  const [simcarAirIdStripped, setSimcarAirIdStripped] = useState(false);
   const [simcarCarNumber, setSimcarCarNumber] = useState('');
   const [simcarSigefParcelCode, setSimcarSigefParcelCode] = useState('');
   const [simcarClipJobId, setSimcarClipJobId] = useState<string | null>(null);
@@ -8276,6 +8278,27 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
                 )}
 
+                {/* Hidden file input for upload */}
+                <input
+                  ref={simcarFileInputRef}
+                  type="file"
+                  accept=".zip"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setSimcarClipFile(file);
+                      setSimcarClipDownloadUrl(null);
+                      setSimcarClipSummary(null);
+                      setSimcarClipError(null);
+                      setSimcarVectorizedStatus(null);
+                      setSimcarCarNumber('');
+                      setSimcarSigefParcelCode('');
+                    }
+                    // Reset so the same file can be re-selected
+                    e.target.value = '';
+                  }}
+                />
                 {/* Upload Area */}
                 <div
                   className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors mb-4 ${(simcarCarNumber.trim() || simcarSigefParcelCode.trim()) && simcarClipMode === 'auto-clip'
@@ -8289,22 +8312,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   onClick={() => {
                     if ((simcarCarNumber.trim() || simcarSigefParcelCode.trim()) && simcarClipMode === 'auto-clip') return;
                     if (simcarVectorizedServerZipReady) return;
-                    const input = document.createElement('input');
-                    input.type = 'file';
-                    input.accept = '.zip';
-                    input.onchange = (e) => {
-                      const file = (e.target as HTMLInputElement).files?.[0];
-                      if (file) {
-                        setSimcarClipFile(file);
-                        setSimcarClipDownloadUrl(null);
-                        setSimcarClipSummary(null);
-                        setSimcarClipError(null);
-                        setSimcarVectorizedStatus(null);
-                        setSimcarCarNumber('');
-                        setSimcarSigefParcelCode('');
-                      }
-                    };
-                    input.click();
+                    simcarFileInputRef.current?.click();
                   }}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => {
@@ -8494,11 +8502,24 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <input
                       type="text"
                       value={simcarAirId}
-                      onChange={(e) => setSimcarAirId(e.target.value.replace(/[a-zA-ZÀ-ÿ]/g, ''))}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const cleaned = raw.replace(/[a-zA-ZÀ-ÿ]/g, '');
+                        setSimcarAirIdStripped(raw !== cleaned);
+                        setSimcarAirId(cleaned);
+                      }}
                       placeholder="Ex: 5107768..."
-                      className="w-full px-4 py-2.5 rounded-xl bg-black/30 border border-white/10 text-white text-sm placeholder-slate-500 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none transition-colors"
+                      className={`w-full px-4 py-2.5 rounded-xl bg-black/30 border text-white text-sm placeholder-slate-500 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 focus:outline-none transition-colors ${simcarAirIdStripped ? 'border-amber-500/50 focus:border-amber-400' : 'border-white/10'}`}
                     />
-                    <p className="text-[10px] text-slate-500 mt-1">Será preenchido no campo IDENTIFIC da camada AIR</p>
+                    {simcarAirIdStripped && (
+                      <p className="text-[10px] text-amber-400 mt-1 flex items-center gap-1">
+                        <AlertTriangle size={10} />
+                        Letras removidas automaticamente — use apenas números
+                      </p>
+                    )}
+                    {!simcarAirIdStripped && (
+                      <p className="text-[10px] text-slate-500 mt-1">Será preenchido no campo IDENTIFIC da camada AIR</p>
+                    )}
                   </div>
                 )}
 
@@ -8733,7 +8754,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 }
                                 setSimcarClipError(null);
                               }
-                            } catch { }
+                            } catch (parseErr: any) {
+                              console.error('[SIMCAR SSE] Falha ao parsear evento:', parseErr?.message, 'linha:', line.slice(0, 200));
+                            }
                           }
                         }
                       }
