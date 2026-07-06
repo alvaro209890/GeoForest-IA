@@ -1326,6 +1326,8 @@ export default function Dashboard() {
   const [simcarClipFile, setSimcarClipFile] = useState<File | null>(null);
   const [simcarClipMode, setSimcarClipMode] = useState<'auto-clip' | 'vectorized-analysis'>('auto-clip');
   const [simcarClipLayers, setSimcarClipLayers] = useState<Array<{ name: string; category: string; selected: boolean }>>([]);
+  const [simcarClipLayersLoading, setSimcarClipLayersLoading] = useState(false);
+  const [simcarClipLayersError, setSimcarClipLayersError] = useState<string | null>(null);
   const [simcarClipProcessing, setSimcarClipProcessing] = useState(false);
   const [simcarClipCanceling, setSimcarClipCanceling] = useState(false);
   const [simcarVectorizedRunning, setSimcarVectorizedRunning] = useState(false);
@@ -1607,6 +1609,28 @@ export default function Dashboard() {
       setSimcarClipMode(simcarLockedMode);
     }
   }, [simcarClipMode, simcarLockedMode]);
+
+  const loadSimcarClipLayers = useCallback(() => {
+    setSimcarClipLayersLoading(true);
+    setSimcarClipLayersError(null);
+    fetch(apiUrl('/api/simcar/layers'))
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data: any) => {
+        if (!Array.isArray(data?.layers)) throw new Error('Resposta inválida do servidor');
+        setSimcarClipLayers(data.layers.map((l: any) => ({ name: l.name, category: l.category, selected: true })));
+      })
+      .catch((err: any) => {
+        setSimcarClipLayersError(err?.message || 'Falha ao carregar a lista de camadas do servidor.');
+      })
+      .finally(() => setSimcarClipLayersLoading(false));
+  }, []);
+
+  useEffect(() => {
+    loadSimcarClipLayers();
+  }, [loadSimcarClipLayers]);
 
   // ─── SIMCAR Satellite Selection ───
   const simcarFixedSatelliteKeys = useMemo(
@@ -7580,17 +7604,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <button
                 onClick={() => {
                   setActiveView('simcar-clip');
-                  if (simcarClipLayers.length === 0) {
-                    fetch(apiUrl('/api/simcar/layers'))
-                      .then((r) => r.json())
-                      .then((data: any) => {
-                        if (Array.isArray(data?.layers)) {
-                          setSimcarClipLayers(
-                            data.layers.map((l: any) => ({ name: l.name, category: l.category, selected: true })),
-                          );
-                        }
-                      })
-                      .catch(() => { });
+                  if (simcarClipLayers.length === 0 && !simcarClipLayersLoading) {
+                    loadSimcarClipLayers();
                   }
                 }}
                 className={`relative z-10 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
@@ -8370,6 +8385,27 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 )}
 
                 {/* Layer Selection */}
+                {simcarClipMode === 'auto-clip' && simcarClipLayers.length === 0 && (
+                  <div className="mb-4 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs">
+                    {simcarClipLayersLoading ? (
+                      <span className="text-slate-400">Carregando lista de camadas do servidor...</span>
+                    ) : (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-amber-300">
+                          {simcarClipLayersError
+                            ? `Não foi possível carregar as camadas: ${simcarClipLayersError}`
+                            : 'Não foi possível carregar as camadas do servidor.'}
+                        </span>
+                        <button
+                          onClick={loadSimcarClipLayers}
+                          className="shrink-0 rounded-lg border border-amber-400/30 bg-amber-400/10 px-2 py-1 font-semibold text-amber-200 hover:bg-amber-400/20 transition-colors"
+                        >
+                          Tentar novamente
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {simcarClipMode === 'auto-clip' && simcarClipLayers.length > 0 && (
                   <div className="mb-4">
                     <div className="flex items-center justify-between mb-2">
