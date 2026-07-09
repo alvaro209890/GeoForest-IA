@@ -44,7 +44,7 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
   const [cpfResponsavel, setCpfResponsavel] = useState('');
   const [numeroApf, setNumeroApf] = useState('');
   const [carNumber, setCarNumber] = useState('');
-  const [carType, setCarType] = useState<'FEDERAL' | 'ESTADUAL'>('FEDERAL');
+  const [carType, setCarType] = useState<'FEDERAL' | 'ESTADUAL'>('ESTADUAL');
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<ApfReceiptItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -98,8 +98,10 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
       try {
         const params = new URLSearchParams({
           numeroApf: item.numero,
-          cpfCnpj,
+          cpfCnpj: cpfCnpj || '',
           type,
+          carNumber: carNumber || '',
+          carType: carType || 'ESTADUAL',
           filename: `apf_${type}_${item.numero.replace('/', '_')}_${(item.imovel || 'imovel').replace(/\s+/g, '_')}.pdf`,
         });
 
@@ -126,7 +128,7 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
         setDownloadingId(null);
       }
     },
-    [cpfCnpj, apiFetch],
+    [cpfCnpj, carNumber, carType, apiFetch],
   );
 
   return (
@@ -186,8 +188,8 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
                 onChange={(e) => setCarType(e.target.value as 'FEDERAL' | 'ESTADUAL')}
                 className="rounded-lg border border-slate-600 bg-slate-800 px-2 py-2 text-xs text-white focus:border-blue-500 focus:outline-none"
               >
-                <option value="FEDERAL">Federal</option>
                 <option value="ESTADUAL">Estadual</option>
+                <option value="FEDERAL">Federal</option>
               </select>
               <input
                 type="text"

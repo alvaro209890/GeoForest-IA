@@ -118,7 +118,7 @@ function buildFormBody(hidden: HiddenFields, overrides: Record<string, string>):
   params.set("txtCpfCnpjProprietario", overrides["txtCpfCnpjProprietario"] || "");
   params.set("txtCpfResponsavel", overrides["txtCpfResponsavel"] || "");
   params.set("txtNumeroApf", overrides["txtNumeroApf"] || "");
-  params.set("rblNumeroCar", overrides["rblNumeroCar"] || "FEDERAL");
+  params.set("rblNumeroCar", overrides["rblNumeroCar"] || "ESTADUAL");
   params.set("txtNumeroSicar", overrides["txtNumeroSicar"] || "");
   if (overrides["btnBuscar"]) params.set("btnBuscar", overrides["btnBuscar"]);
   return params;
@@ -164,15 +164,41 @@ async function searchApf(params: {
   carNumber?: string;
   carType?: "FEDERAL" | "ESTADUAL";
 }): Promise<ApfSearchResult> {
-  // Get fresh page
-  const { hidden } = await getPage();
+  // Get fresh page (defaults to FEDERAL radio)
+  let { hidden } = await getPage();
+
+  // If searching with ESTADUAL CAR, we need to switch the radio first
+  const carType = params.carType || "ESTADUAL";
+  if (carType === "ESTADUAL" && params.carNumber) {
+    const switchOverrides: Record<string, string> = {
+      txtCpfCnpjProprietario: "",
+      txtCpfResponsavel: "",
+      txtNumeroApf: "",
+      rblNumeroCar: "ESTADUAL",
+      txtNumeroSicar: "",
+      __EVENTTARGET: "rblNumeroCar$1",
+      __EVENTARGUMENT: "",
+      __LASTFOCUS: "",
+    };
+    const switchBody = buildFormBody(hidden, switchOverrides);
+    const switchHtml = await postForm(switchBody, "");
+
+    // Extract new hidden fields from the postback response
+    const newHidden: HiddenFields = {};
+    const re = /<input type="hidden"\s+name="([^"]+)"\s+id="[^"]*"\s+value="([^"]*)"/g;
+    let m;
+    while ((m = re.exec(switchHtml)) !== null) {
+      newHidden[m[1]] = m[2];
+    }
+    hidden = newHidden;
+  }
 
   // Submit search
   const overrides: Record<string, string> = {
     txtCpfCnpjProprietario: params.cpfCnpj || "",
     txtCpfResponsavel: params.cpfResponsavel || "",
     txtNumeroApf: params.numeroApf || "",
-    rblNumeroCar: params.carType || "FEDERAL",
+    rblNumeroCar: carType,
     txtNumeroSicar: params.carNumber || "",
     btnBuscar: "Buscar",
     __EVENTTARGET: "",
@@ -192,31 +218,53 @@ async function searchApf(params: {
     throw new Error(msg);
   }
 
-  // Parse results from repeater
+  // Parse results from repeater — more robust approach
   const items: ApfSearchItem[] = [];
-  const panelRe = /<div id="repeater_divApfInterno_(\d+)"[^>]*>([\s\S]*?)<div class="panel-footer"/g;
-  let panelMatch: RegExpExecArray | null;
-  while ((panelMatch = panelRe.exec(html)) !== null) {
-    const panelHtml = panelMatch[2];
-    const index = panelMatch[1];
-    const getSpan = (id: string) => {
-      const re = new RegExp(`id="repeater_${id}_${index}"[^>]*>([^<]*)<`);
-      const m = re.exec(panelHtml);
-      return m ? m[1].trim() : "";
-    };
+  // Find all result panels by their start markers
+  const panelStarts: number[] = [];
+  const startRe = /<div\s+id="repeater_divApfInterno_(\d+)"[^>]*>/g;
+  let startMatch;
+  const panelIndices: string[] = [];
+  while ((startMatch = startRe.exec(html)) !== null) {
+    panelStarts.push(startMatch.index);
+    panelIndices.push(startMatch[1]);
+  }
 
-    items.push({
-      numero: getSpan("labApfNumero"),
-      situacao: getSpan("labSituacao"),
-      imovel: getSpan("labImovel"),
-      car: getSpan("labCarNumero"),
-      responsavel: getSpan("labResponsavel"),
-      atividade: getSpan("labAtividade"),
-      municipio: getSpan("labMunicipio"),
-      dataEmissao: getSpan("labDataEmissao"),
-      dataValidade: getSpan("labDataValidade"),
-      ultimaAtualizacao: getSpan("labUltimaAtualizacao"),
-    });
+  if (panelStarts.length > 0) {
+    // Find the end of the last panel (next panel-footer after last start, or end of div)
+    const footerRe = /<div\s+class="panel-footer/g;
+    const allFooters: number[] = [];
+    let fm;
+    while ((fm = footerRe.exec(html)) !== null) {
+      allFooters.push(fm.index);
+    }
+
+    for (let i = 0; i < panelStarts.length; i++) {
+      const start = panelStarts[i];
+      // End is the corresponding footer (i-th footer after this start)
+      const footerIdx = allFooters.find(f => f > start);
+      const end = footerIdx !== undefined ? footerIdx : start + 5000;
+      const panelHtml = html.substring(start, end);
+
+      const getSpan = (id: string) => {
+        const re = new RegExp(`id="repeater_${id}_${panelIndices[i]}"[^>]*>([^<]*)<`);
+        const m = re.exec(panelHtml);
+        return m ? m[1].trim() : "";
+      };
+
+      items.push({
+        numero: getSpan("labApfNumero"),
+        situacao: getSpan("labSituacao"),
+        imovel: getSpan("labImovel"),
+        car: getSpan("labCarNumero"),
+        responsavel: getSpan("labResponsavel"),
+        atividade: getSpan("labAtividade"),
+        municipio: getSpan("labMunicipio"),
+        dataEmissao: getSpan("labDataEmissao"),
+        dataValidade: getSpan("labDataValidade"),
+        ultimaAtualizacao: getSpan("labUltimaAtualizacao"),
+      });
+    }
   }
 
   // Get total count from label
@@ -237,20 +285,46 @@ async function downloadApfPdf(
   numeroApf: string,
   cpfCnpj: string,
   pdfType: "apf" | "termo" = "apf",
+  carNumber?: string,
+  carType?: "FEDERAL" | "ESTADUAL",
 ): Promise<Buffer> {
   // First search to get the results page with VIEWSTATE
-  const { hidden } = await getPage();
+  let { hidden } = await getPage();
+
+  // If using ESTADUAL CAR, switch radio first
+  const ct = carType || "ESTADUAL";
+  if (ct === "ESTADUAL" && carNumber) {
+    const switchOverrides: Record<string, string> = {
+      txtCpfCnpjProprietario: "",
+      txtCpfResponsavel: "",
+      txtNumeroApf: "",
+      rblNumeroCar: "ESTADUAL",
+      txtNumeroSicar: "",
+      __EVENTTARGET: "rblNumeroCar$1",
+      __EVENTARGUMENT: "",
+      __LASTFOCUS: "",
+    };
+    const switchBody = buildFormBody(hidden, switchOverrides);
+    const switchHtml = await postForm(switchBody, "");
+    const newHidden: HiddenFields = {};
+    const re = /<input type="hidden"\s+name="([^"]+)"\s+id="[^"]*"\s+value="([^"]*)"/g;
+    let m;
+    while ((m = re.exec(switchHtml)) !== null) {
+      newHidden[m[1]] = m[2];
+    }
+    hidden = newHidden;
+  }
 
   const searchOverrides: Record<string, string> = {
-    txtCpfCnpjProprietario: cpfCnpj,
+    txtCpfCnpjProprietario: cpfCnpj || "",
     txtNumeroApf: numeroApf,
     btnBuscar: "Buscar",
-    rblNumeroCar: "FEDERAL",
+    rblNumeroCar: ct,
     __EVENTTARGET: "",
     __EVENTARGUMENT: "",
     __LASTFOCUS: "",
     txtCpfResponsavel: "",
-    txtNumeroSicar: "",
+    txtNumeroSicar: carNumber || "",
   };
 
   const searchBody = buildFormBody(hidden, searchOverrides);
@@ -280,14 +354,14 @@ async function downloadApfPdf(
       : "repeater$ctl00$btnPdfApf";
 
   const downloadOverrides: Record<string, string> = {
-    txtCpfCnpjProprietario: cpfCnpj,
+    txtCpfCnpjProprietario: cpfCnpj || "",
     txtNumeroApf: numeroApf,
-    rblNumeroCar: "FEDERAL",
+    rblNumeroCar: ct,
     __EVENTTARGET: eventTarget,
     __EVENTARGUMENT: "",
     __LASTFOCUS: "",
     txtCpfResponsavel: "",
-    txtNumeroSicar: "",
+    txtNumeroSicar: carNumber || "",
   };
 
   const downloadBody = buildFormBody(hidden2, downloadOverrides);
@@ -318,7 +392,7 @@ export function registerApfReceiptRoutes(app: Express) {
       const cpfResponsavel = normalizeCpf(req.body?.cpfResponsavel);
       const numeroApf = normalizeApfNumber(req.body?.numeroApf);
       const carNumber = normalizeCarNumber(req.body?.carNumber);
-      const carType = req.body?.carType === "ESTADUAL" ? "ESTADUAL" : "FEDERAL";
+      const carType = req.body?.carType === "FEDERAL" ? "FEDERAL" : "ESTADUAL";
 
       if (!cpfCnpj && !cpfResponsavel && !numeroApf && !carNumber) {
         res.status(400).json({
@@ -355,14 +429,16 @@ export function registerApfReceiptRoutes(app: Express) {
     const numeroApf = normalizeApfNumber(req.query.numeroApf);
     const cpfCnpj = normalizeCpfCnpj(req.query.cpfCnpj);
     const pdfType = req.query.type === "termo" ? "termo" : "apf";
+    const carNumber = normalizeCarNumber(req.query.carNumber);
+    const carType = req.query.carType === "FEDERAL" ? "FEDERAL" : "ESTADUAL";
 
-    if (!numeroApf || !cpfCnpj) {
-      res.status(400).json({ error: "Informe número da APF e CPF/CNPJ." });
+    if (!numeroApf) {
+      res.status(400).json({ error: "Informe o número da APF." });
       return;
     }
 
     try {
-      const pdf = await downloadApfPdf(numeroApf, cpfCnpj, pdfType);
+      const pdf = await downloadApfPdf(numeroApf, cpfCnpj, pdfType, carNumber, carType);
       const filename = safeFilename(
         req.query.filename,
         `apf_${pdfType}_${numeroApf.replace("/", "_")}.pdf`,
