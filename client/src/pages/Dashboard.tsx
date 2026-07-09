@@ -85,6 +85,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MapView } from '@/components/Map';
 import TermsOfUseDialog from '@/components/TermsOfUseDialog';
+import SimcarReceiptDownloader from '@/components/SimcarReceiptDownloader';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog';
@@ -1301,7 +1302,7 @@ function CbersMapPreview({
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activeView, setActiveView] = useState<'simcar-clip' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'features' | 'settings'>('simcar-clip');
+  const [activeView, setActiveView] = useState<'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'features' | 'settings'>('simcar-clip');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -7585,14 +7586,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         <div className="px-3 mb-3 space-y-2">
           {/* ─── Abas — Segmented Control Moderno ─── */}
           <div className="relative p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm">
-            <div className="grid grid-cols-4 gap-0.5 relative">
+            <div className="grid grid-cols-5 gap-0.5 relative">
               {/* Active tab background slider */}
               <div
-                className="absolute top-0.5 bottom-0.5 left-0.5 w-[calc(25%-2px)] rounded-xl transition-all duration-400 ease-[cubic-bezier(0.4,0,0.2,1)] z-0"
+                className="absolute top-0.5 bottom-0.5 left-0.5 w-[calc(20%-2px)] rounded-xl transition-all duration-400 ease-[cubic-bezier(0.4,0,0.2,1)] z-0"
                 style={{
-                  transform: `translateX(${activeView === 'simcar-clip' ? 0 : activeView === 'cbers-wpm' ? 100 : activeView === 'landsat' ? 200 : 300}%)`,
+                  transform: `translateX(${activeView === 'simcar-clip' ? 0 : activeView === 'simcar-receipts' ? 100 : activeView === 'cbers-wpm' ? 200 : activeView === 'landsat' ? 300 : 400}%)`,
                   background: activeView === 'simcar-clip' 
                     ? 'linear-gradient(135deg, #7c3aed, #6366f1)' 
+                    : activeView === 'simcar-receipts'
+                    ? 'linear-gradient(135deg, #059669, #84cc16)'
                     : activeView === 'cbers-wpm' 
                     ? 'linear-gradient(135deg, #06b6d4, #10b981)'
                     : activeView === 'landsat'
@@ -7616,6 +7619,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               >
                 <Scissors size={16} className={activeView === 'simcar-clip' ? 'drop-shadow-[0_0_6px_rgba(167,139,250,0.5)]' : ''} />
                 <span className="block lg:hidden xl:block leading-none text-[10px] tracking-wide">SIMCAR</span>
+              </button>
+              <button
+                onClick={() => setActiveView('simcar-receipts')}
+                className={`relative z-10 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                  activeView === 'simcar-receipts'
+                    ? 'text-white'
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
+                }`}
+              >
+                <Receipt size={16} className={activeView === 'simcar-receipts' ? 'drop-shadow-[0_0_6px_rgba(16,185,129,0.5)]' : ''} />
+                <span className="block lg:hidden xl:block leading-none text-[10px] tracking-wide">Recibos</span>
               </button>
               <button
                 onClick={() => setActiveView('cbers-wpm')}
@@ -8090,7 +8104,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2 min-w-0">
               <Zap size={16} className="text-emerald-400 fill-current shrink-0" />
               <span className="font-medium text-slate-200 text-sm sm:text-base truncate">
-                {activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'landsat' ? 'Landsat WMS' : activeView === 'vertices-proximas' ? 'Vértices Próximas' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
+                {activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'simcar-receipts' ? 'Recibos SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'landsat' ? 'Landsat WMS' : activeView === 'vertices-proximas' ? 'Vértices Próximas' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
               </span>
             </div>
           </div>
@@ -9801,6 +9815,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               })()}
             </div>
           </div>
+        ) : activeView === 'simcar-receipts' ? (
+          <SimcarReceiptDownloader apiFetch={apiFetch} />
         ) : activeView === 'cbers-wpm' ? (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
             <div className="max-w-6xl mx-auto space-y-5 sm:space-y-6">

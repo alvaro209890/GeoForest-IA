@@ -15,11 +15,20 @@
           ]
         },
         {
+          "regex": "^/[^.]*$",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            }
+          ]
+        },
+        {
           "source": "**/*.@(html)",
           "headers": [
             {
               "key": "Cache-Control",
-              "value": "no-cache"
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
             }
           ]
         },
@@ -66,11 +75,20 @@
           ]
         },
         {
+          "regex": "^/[^.]*$",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
+            }
+          ]
+        },
+        {
           "source": "**/*.@(html)",
           "headers": [
             {
               "key": "Cache-Control",
-              "value": "no-cache"
+              "value": "no-cache, no-store, max-age=0, must-revalidate"
             }
           ]
         },

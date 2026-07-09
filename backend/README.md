@@ -53,6 +53,15 @@ https://geoforest-api.cursar.space → Cloudflare Tunnel → localhost:3001
 - `POST /api/simcar/clip/import-vectorized` — Importa ZIP pré-vetorizado
 - `GET /api/simcar/gemini/config` — Config Gemini (+ `?probe=1`)
 
+### SIMCAR Recibos
+- `POST /api/simcar/receipts/search` - Busca requerimentos por CPF, numero estadual do CAR ou recibo federal
+  - body: `{ cpf?: string, carNumber?: string }`
+  - resposta: `{ total, items: [{ id, rid, numeroCompleto, numeroReciboFederal, propriedadeNome, municipioTexto, situacaoCompleta, dataUltimoEnvio }] }`
+- `GET /api/simcar/receipts/download/:id` - Baixa o PDF oficial do recibo pelo Id do requerimento
+  - query opcional: `filename`
+
+Detalhes tecnicos: [`../docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md`](../docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md).
+
 ### Vértices Próximas
 - `POST /api/vertices/upload` — Upload ZIP e listagem de camadas poligonais
 - `POST /api/vertices/process` — Processamento assíncrono de vértices próximas

@@ -570,6 +570,7 @@ Arquivo de referência: [`config/geoforest-backend.env.example`](config/geofores
 
 ## Documentação Adicional
 
+- [`docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md`](docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md) — Recibos SIMCAR, cache Firebase e deploy de 2026-07-09
 - [`docs/WMS_CBERS.md`](docs/WMS_CBERS.md) — WMS local, CBERS, acervo permanente
 - [`docs/WMS_LANDSAT.md`](docs/WMS_LANDSAT.md) — WMS local, Landsat e reuso/publicação automática
 - [`README_PROJETO.md`](README_PROJETO.md) — Documentação original (frontend)

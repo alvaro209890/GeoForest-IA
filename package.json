@@ -5,10 +5,10 @@
   "license": "MIT",
   "scripts": {
     "dev": "vite --host",
-    "dev:server": "NODE_ENV=development tsx backend/index.ts",
-    "build": "vite build && GEOFOREST_BUILD_TARGET=admin vite build && esbuild backend/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "dev:server": "node scripts/dev-server.mjs",
+    "build": "vite build && node scripts/build-admin.mjs && esbuild backend/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "build:app": "vite build",
-    "build:admin": "GEOFOREST_BUILD_TARGET=admin vite build",
+    "build:admin": "node scripts/build-admin.mjs",
     "start": "NODE_ENV=production node dist/index.js",
     "preview": "vite preview --host",
     "check": "tsc --noEmit",

@@ -39,6 +39,7 @@ import {
 } from "./geo-utils";
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
+import { registerSimcarReceiptRoutes } from "./simcar-receipts";
 import { registerCbersWpmRoutes } from "./cbers-wpm";
 import { registerLandsatRoutes } from "./landsat";
 import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-archive";
@@ -495,6 +496,8 @@ async function startServer() {
       "/api/simcar/clip/analyze-auas",
       "/api/simcar/clip/analyze/chat",
       "/api/simcar/clip/report",
+      "/api/simcar/receipts/search",
+      /^\/api\/simcar\/receipts\/download\/[^/]+$/,
       "/api/cbers-wpm/search",
       "/api/cbers-wpm/estimate",
       "/api/cbers-wpm/jobs",
@@ -649,6 +652,7 @@ async function startServer() {
 
   registerWfsIntersectionRoutes(app);
   registerSimcarClipRoutes(app);
+  registerSimcarReceiptRoutes(app);
   registerCbersWpmRoutes(app);
   registerLandsatRoutes(app);
   registerVerticesRoutes(app);
