@@ -40,6 +40,7 @@ import {
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerSimcarReceiptRoutes } from "./simcar-receipts";
+import { registerApfReceiptRoutes } from "./apf-receipts";
 import { registerCbersWpmRoutes } from "./cbers-wpm";
 import { registerLandsatRoutes } from "./landsat";
 import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-archive";
@@ -653,6 +654,7 @@ async function startServer() {
   registerWfsIntersectionRoutes(app);
   registerSimcarClipRoutes(app);
   registerSimcarReceiptRoutes(app);
+  registerApfReceiptRoutes(app);
   registerCbersWpmRoutes(app);
   registerLandsatRoutes(app);
   registerVerticesRoutes(app);

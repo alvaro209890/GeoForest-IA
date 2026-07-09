@@ -85,7 +85,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MapView } from '@/components/Map';
 import TermsOfUseDialog from '@/components/TermsOfUseDialog';
-import SimcarReceiptDownloader from '@/components/SimcarReceiptDownloader';
+import ReceiptsHub from '@/components/ReceiptsHub';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog';
@@ -9816,7 +9816,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           </div>
         ) : activeView === 'simcar-receipts' ? (
-          <SimcarReceiptDownloader apiFetch={apiFetch} />
+          <ReceiptsHub apiFetch={apiFetch} />
         ) : activeView === 'cbers-wpm' ? (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
             <div className="max-w-6xl mx-auto space-y-5 sm:space-y-6">
