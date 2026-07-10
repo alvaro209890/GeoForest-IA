@@ -1330,34 +1330,33 @@ async function fetchWfsClipFeatures(
     polygonWkt: string,
     srsName: string = "EPSG:4674",
 ): Promise<WfsClipFetchResult> {
-    if (polygonWkt.length > 4000) {
-        const bbox = bboxFromWkt(polygonWkt);
-        if (bbox) {
-            console.log(`[SIMCAR CLIP] Polígono de consulta complexo (${polygonWkt.length} caracteres). Otimizando com fallback BBOX.`);
-            const res = await fetchWfsBboxFeatures(wfsLayerName, bbox, srsName);
-            res.warnings.push(`Polígono complexo de consulta (${polygonWkt.length} caracteres). A busca foi otimizada via Bbox.`);
-            return res;
+    // O GeoServer da SEMA-MT tem INTERSECTS não confiável — frequentemente
+    // retorna menos features do que o BBOX (ex: 27 vs 75 para AREA_CONSOLIDADA).
+    // Usamos BBOX como método primário (mais confiável) e clipamos localmente.
+    // Só usamos INTERSECTS quando o WKT é muito grande e otimizar faz diferença.
+    const bbox = bboxFromWkt(polygonWkt);
+    if (!bbox) {
+        // Sem bbox, tenta INTERSECTS como fallback
+        return await fetchWfsIntersectsFeatures(wfsLayerName, polygonWkt, srsName);
+    }
+
+    // BBOX primeiro (confiável) — o clip fino é feito localmente depois
+    const bboxRes = await fetchWfsBboxFeatures(wfsLayerName, bbox, srsName);
+
+    // Se veio vazio, tenta INTERSECTS como complemento (caso raro de BBOX não cobrir)
+    if (!bboxRes.features.length && polygonWkt.length <= 4000) {
+        try {
+            const intersectsRes = await fetchWfsIntersectsFeatures(wfsLayerName, polygonWkt, srsName);
+            if (intersectsRes.features.length > 0) {
+                bboxRes.features.push(...intersectsRes.features);
+                bboxRes.warnings.push(...intersectsRes.warnings);
+            }
+        } catch {
+            // INTERSECTS falhou, usa só BBOX (vazio)
         }
     }
 
-    // O GeoServer da SEMA-MT às vezes rejeita o INTERSECTS com HTTP 400 mesmo
-    // para WKTs abaixo de 4000 caracteres (geometria com muitos vértices ou
-    // múltiplos lotes). Nesse caso caímos para a consulta por BBOX, que é
-    // tolerante — o recorte fino é refeito localmente, lote a lote.
-    try {
-        return await fetchWfsIntersectsFeatures(wfsLayerName, polygonWkt, srsName);
-    } catch (error: any) {
-        if (error instanceof ClientAbortError) throw error;
-        const msg = String(error?.message || "");
-        const bbox = bboxFromWkt(polygonWkt);
-        if (/WFS 400/i.test(msg) && bbox) {
-            console.log(`[SIMCAR CLIP] INTERSECTS rejeitado (${msg.slice(0, 80)}). Fallback BBOX para ${wfsLayerName}.`);
-            const res = await fetchWfsBboxFeatures(wfsLayerName, bbox, srsName);
-            res.warnings.push("Consulta INTERSECTS rejeitada pelo WFS; busca otimizada via Bbox (recorte refeito localmente).");
-            return res;
-        }
-        throw error;
-    }
+    return bboxRes;
 }
 
 async function fetchWfsIntersectsFeatures(
