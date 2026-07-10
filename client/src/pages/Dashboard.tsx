@@ -7591,23 +7591,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           {/* ─── Abas — Segmented Control Moderno ─── */}
           <div className="relative p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm overflow-hidden">
             <div className="flex sm:grid sm:grid-cols-5 gap-0.5 relative scroll-tabs">
-              {/* Active tab background slider */}
-              <div
-                className="absolute top-0.5 bottom-0.5 left-0.5 w-[calc(20%-2px)] rounded-xl transition-all duration-400 ease-[cubic-bezier(0.4,0,0.2,1)] z-0"
-                style={{
-                  transform: `translateX(${activeView === 'simcar-clip' ? 0 : activeView === 'simcar-receipts' ? 100 : activeView === 'cbers-wpm' ? 200 : activeView === 'landsat' ? 300 : 400}%)`,
-                  background: activeView === 'simcar-clip' 
-                    ? 'linear-gradient(135deg, #7c3aed, #6366f1)' 
-                    : activeView === 'simcar-receipts'
-                    ? 'linear-gradient(135deg, #059669, #84cc16)'
-                    : activeView === 'cbers-wpm' 
-                    ? 'linear-gradient(135deg, #06b6d4, #10b981)'
-                    : activeView === 'landsat'
-                    ? 'linear-gradient(135deg, #0ea5e9, #10b981)'
-                    : 'linear-gradient(135deg, #8b5cf6, #10b981)',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)',
-                }}
-              />
+              {/* Fundo ativo aplicado direto no botão — alinhamento perfeito, sem slider frágil */}
               <button
                 onClick={() => {
                   setActiveView('simcar-clip');
@@ -7615,9 +7599,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     loadSimcarClipLayers();
                   }
                 }}
-                className={`relative z-10 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
-                  activeView === 'simcar-clip' 
-                    ? 'text-white' 
+                style={activeView === 'simcar-clip' ? { background: 'linear-gradient(135deg, #7c3aed, #6366f1)', boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)' } : undefined}
+                className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                  activeView === 'simcar-clip'
+                    ? 'text-white'
                     : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
                 }`}
               >
@@ -7626,7 +7611,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </button>
               <button
                 onClick={() => setActiveView('simcar-receipts')}
-                className={`relative z-10 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                style={activeView === 'simcar-receipts' ? { background: 'linear-gradient(135deg, #059669, #84cc16)', boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)' } : undefined}
+                className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
                   activeView === 'simcar-receipts'
                     ? 'text-white'
                     : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
@@ -7637,9 +7623,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </button>
               <button
                 onClick={() => setActiveView('cbers-wpm')}
-                className={`relative z-10 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
-                  activeView === 'cbers-wpm' 
-                    ? 'text-white' 
+                style={activeView === 'cbers-wpm' ? { background: 'linear-gradient(135deg, #06b6d4, #10b981)', boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)' } : undefined}
+                className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                  activeView === 'cbers-wpm'
+                    ? 'text-white'
                     : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
                 }`}
               >
@@ -7648,9 +7635,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </button>
               <button
                 onClick={() => setActiveView('landsat')}
-                className={`relative z-10 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
-                  activeView === 'landsat' 
-                    ? 'text-white' 
+                style={activeView === 'landsat' ? { background: 'linear-gradient(135deg, #0ea5e9, #10b981)', boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)' } : undefined}
+                className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                  activeView === 'landsat'
+                    ? 'text-white'
                     : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
                 }`}
               >
@@ -7659,9 +7647,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </button>
               <button
                 onClick={() => setActiveView('vertices-proximas')}
-                className={`relative z-10 flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
-                  activeView === 'vertices-proximas' 
-                    ? 'text-white' 
+                style={activeView === 'vertices-proximas' ? { background: 'linear-gradient(135deg, #8b5cf6, #10b981)', boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)' } : undefined}
+                className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                  activeView === 'vertices-proximas'
+                    ? 'text-white'
                     : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
                 }`}
               >
