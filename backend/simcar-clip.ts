@@ -1409,11 +1409,16 @@ async function fetchWfsIntersectsFeatures(
             page = await fetchJsonWithTimeout<any>(url, WFS_TIMEOUT_MS);
         } catch (error: any) {
             const msg = String(error?.message || "");
-            if (
-                (/natural order without a primary key/i.test(msg) || /WFS 400/i.test(msg)) &&
-                !usedFallback
-            ) {
-                // Retry without startIndex
+            const isPagingError =
+                /natural order without a primary key/i.test(msg) ||
+                /WFS 400/i.test(msg) ||
+                /timeout/i.test(msg) ||
+                /abort/i.test(msg) ||
+                /ETIMEDOUT/i.test(msg) ||
+                /ECONNRESET/i.test(msg) ||
+                /fetch failed/i.test(msg);
+            if (isPagingError && !usedFallback) {
+                // Retry without startIndex — GeoServer doesn't support paging
                 usedFallback = true;
                 const fallbackCount = Math.min(WFS_MAX_FEATURES, WFS_PAGE_SIZE);
                 const fallbackUrl = buildWfsUrl({

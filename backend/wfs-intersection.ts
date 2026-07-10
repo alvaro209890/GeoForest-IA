@@ -432,7 +432,13 @@ async function computeIntersectionForLayer(args: {
         const requiresManualSorting =
           /natural order without a primary key/i.test(message) ||
           /Cannot do natural order without a primary key/i.test(message);
-        if ((!requiresManualSorting && !isBadRequest) || usedSinglePageFallback) {
+        const isTimeoutOrNetwork =
+          /timeout/i.test(message) ||
+          /abort/i.test(message) ||
+          /ETIMEDOUT/i.test(message) ||
+          /ECONNRESET/i.test(message) ||
+          /fetch failed/i.test(message);
+        if ((!requiresManualSorting && !isBadRequest && !isTimeoutOrNetwork) || usedSinglePageFallback) {
           throw error;
         }
 
