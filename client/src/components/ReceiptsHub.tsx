@@ -11,6 +11,15 @@ type ApiFetch = (
 
 type Props = {
   apiFetch: ApiFetch;
+  onReceiptDownloaded?: (receipt: {
+    type: 'simcar' | 'apf';
+    filename: string;
+    cpf?: string;
+    car?: string;
+    downloadUrl?: string;
+    sizeBytes?: number;
+    error?: string;
+  }) => void;
 };
 
 type SubTab = 'simcar' | 'apf';
@@ -32,7 +41,7 @@ const tabs: { id: SubTab; icon: React.ReactNode; label: string; subtitle: string
   },
 ];
 
-export default function ReceiptsHub({ apiFetch }: Props) {
+export default function ReceiptsHub({ apiFetch, onReceiptDownloaded }: Props) {
   const [subTab, setSubTab] = useState<SubTab>('simcar');
   const [indicatorStyle, setIndicatorStyle] = useState<React.CSSProperties>({});
   const tabsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -101,9 +110,9 @@ export default function ReceiptsHub({ apiFetch }: Props) {
         {/* Content */}
         <div className="min-h-[400px]">
           {subTab === 'simcar' ? (
-            <SimcarReceiptDownloader apiFetch={apiFetch} />
+            <SimcarReceiptDownloader apiFetch={apiFetch} onDownloaded={onReceiptDownloaded} />
           ) : (
-            <ApfReceiptDownloader apiFetch={apiFetch} />
+            <ApfReceiptDownloader apiFetch={apiFetch} onDownloaded={onReceiptDownloaded} />
           )}
         </div>
       </div>

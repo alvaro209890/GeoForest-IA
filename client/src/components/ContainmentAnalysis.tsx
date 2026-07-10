@@ -32,7 +32,7 @@ type ContainmentLayer = {
   ignoredReason?: string;
 };
 
-type ContainmentRow = {
+export type ContainmentRow = {
   alvo: string;
   feicao: number;
   parte: number;
@@ -49,7 +49,7 @@ type ContainmentProgress = {
   message?: string;
 };
 
-type ContainmentSummary = {
+export type ContainmentSummary = {
   targetName?: string;
   containerNames?: string[];
   totalTargetFeatures?: number;
@@ -61,6 +61,7 @@ type ContainmentSummary = {
 
 type Props = {
   apiFetch: ApiFetch;
+  onJobSnapshot?: (job: Record<string, unknown>) => void;
 };
 
 function fileToBase64(file: File): Promise<string> {
@@ -90,7 +91,7 @@ async function readApiError(response: Response): Promise<string> {
   }
 }
 
-const ContainmentAnalysis: React.FC<Props> = ({ apiFetch }) => {
+const ContainmentAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) => {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadId, setUploadId] = useState<string | null>(null);
@@ -232,7 +233,9 @@ const ContainmentAnalysis: React.FC<Props> = ({ apiFetch }) => {
     } else if (status === 'failed') {
       setError(job.error || job.message || 'Falha ao processar análise.');
     }
-  }, []);
+    // Report snapshot to parent (Dashboard) for sidebar history persistence
+    onJobSnapshot?.(job);
+  }, [onJobSnapshot]);
 
   const connectEvents = useCallback(
     async (id: string) => {

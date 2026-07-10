@@ -90,7 +90,7 @@ import ReceiptsHub from '@/components/ReceiptsHub';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog';
-import ContainmentAnalysis from '@/components/ContainmentAnalysis';
+import ContainmentAnalysis, { type ContainmentRow, type ContainmentSummary } from '@/components/ContainmentAnalysis';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
 
@@ -618,7 +618,7 @@ type VerticesHistoryItem = {
   jobId: string;
   filename: string;
   timestamp: string;
-  status: 'processing' | 'completed' | 'failed' | 'cancelled' | 'uploaded' | 'deleted';
+  status: 'processing' | 'completed' | 'failed' | 'cancelled' | 'uploaded' | 'deleted' | 'queued';
   stage?: string;
   percent: number;
   message?: string;
@@ -630,6 +630,40 @@ type VerticesHistoryItem = {
   warnings?: string[];
   analyzedLayers?: Array<{ name: string; requested: number; found: number; crsLabel?: string; metricCrsLabel?: string }>;
   conversationId?: string;
+};
+
+type ContainmentHistoryItem = {
+  id: string;
+  jobId: string;
+  filename: string;
+  timestamp: string;
+  status: 'processing' | 'completed' | 'failed' | 'cancelled' | 'uploaded' | 'deleted' | 'queued';
+  stage?: string;
+  percent: number;
+  message?: string;
+  error?: string;
+  downloadUrl?: string;
+  outputUrl?: string;
+  outputBytes?: number;
+  resultRows?: ContainmentRow[];
+  summary?: ContainmentSummary;
+  warnings?: string[];
+  targetLayerName?: string;
+  containerCount?: number;
+};
+
+type ReceiptHistoryItem = {
+  id: string;
+  receiptId: string;
+  type: 'simcar' | 'apf';
+  filename: string;
+  timestamp: string;
+  status: 'completed' | 'failed';
+  downloadUrl?: string;
+  error?: string;
+  cpf?: string;
+  car?: string;
+  sizeBytes?: number;
 };
 
 const DEFAULT_SETTINGS: UserSettings = {
@@ -1461,6 +1495,8 @@ export default function Dashboard() {
   const [verticesRows, setVerticesRows] = useState<VerticesResultRow[]>([]);
   const [verticesDownloadUrl, setVerticesDownloadUrl] = useState<string | null>(null);
   const [verticesHistory, setVerticesHistory] = useState<VerticesHistoryItem[]>([]);
+  const [containmentHistory, setContainmentHistory] = useState<ContainmentHistoryItem[]>([]);
+  const [containmentJobId, setContainmentJobId] = useState<string | null>(null);
   const [verticesIncludeOriginals, setVerticesIncludeOriginals] = useState(true);
   const [verticesIncludeReport, setVerticesIncludeReport] = useState(true);
   const [verticesIncludeCsv, setVerticesIncludeCsv] = useState(true);
@@ -1690,6 +1726,9 @@ export default function Dashboard() {
   } | null>(null);
   const [simcarClipsRef, setSimcarClipsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [verticesJobsRef, setVerticesJobsRef] = useState<ReturnType<typeof collection> | null>(null);
+  const [containmentJobsRef, setContainmentJobsRef] = useState<ReturnType<typeof collection> | null>(null);
+  const [receiptHistory, setReceiptHistory] = useState<ReceiptHistoryItem[]>([]);
+  const [receiptsRef, setReceiptsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
   const [settingsRef, setSettingsRef] = useState<DocumentReference | null>(null);
   const settingsImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -2258,6 +2297,33 @@ export default function Dashboard() {
         metricCrsLabel: item?.metricCrsLabel ? String(item.metricCrsLabel) : undefined,
       })) : undefined,
       conversationId: data?.conversationId ? String(data.conversationId) : undefined,
+    };
+  }, []);
+
+  const mapContainmentDocToHistoryItem = useCallback((docId: string, data: any): ContainmentHistoryItem => {
+    const rawStatus = String(data?.status || '').trim().toLowerCase();
+    const status: ContainmentHistoryItem['status'] =
+      rawStatus === 'completed' || rawStatus === 'failed' || rawStatus === 'cancelled' || rawStatus === 'uploaded' || rawStatus === 'deleted'
+        ? rawStatus
+        : 'processing';
+    return {
+      id: String(data?.id || docId),
+      jobId: String(data?.jobId || docId),
+      filename: String(data?.filename || 'Áreas Não Contidas'),
+      timestamp: toIsoDateFromUnknown(data?.completedAt || data?.updatedAt || data?.createdAt || data?.timestamp),
+      status,
+      stage: data?.stage ? String(data.stage) : undefined,
+      percent: Math.max(0, Math.min(100, Math.round(Number(data?.percent || (status === 'completed' ? 100 : 0))))),
+      message: data?.message ? String(data.message) : undefined,
+      error: data?.error ? String(data.error) : undefined,
+      downloadUrl: data?.downloadUrl ? resolveBackendUrl(String(data.downloadUrl)) : undefined,
+      outputUrl: data?.outputUrl ? resolveBackendUrl(String(data.outputUrl)) : undefined,
+      outputBytes: Number.isFinite(Number(data?.outputBytes)) ? Number(data.outputBytes) : undefined,
+      resultRows: Array.isArray(data?.resultRows) ? data.resultRows as ContainmentRow[] : undefined,
+      summary: data?.summary && typeof data.summary === 'object' ? data.summary as ContainmentSummary : undefined,
+      warnings: Array.isArray(data?.warnings) ? data.warnings.map((item: any) => String(item)) : undefined,
+      targetLayerName: data?.targetLayerName ? String(data.targetLayerName) : undefined,
+      containerCount: Number.isFinite(Number(data?.containerCount)) ? Number(data.containerCount) : undefined,
     };
   }, []);
 
@@ -3955,9 +4021,14 @@ export default function Dashboard() {
         if (!currentUser) {
           setSimcarClipsRef(null);
           setVerticesJobsRef(null);
+          setContainmentJobsRef(null);
+          setReceiptsRef(null);
           setCbersHistory([]);
           setLandsatHistory([]);
           setVerticesHistory([]);
+          setContainmentHistory([]);
+          setContainmentJobId(null);
+          setReceiptHistory([]);
           setCbersJobId(null);
           setCbersProcessing(false);
           setLandsatJobId(null);
@@ -3982,6 +4053,10 @@ export default function Dashboard() {
         setSimcarClipsRef(simcarRef);
         const verticesRef = collection(db, 'users', currentUser.uid, 'vertices_jobs');
         setVerticesJobsRef(verticesRef);
+        const containmentRef = collection(db, 'users', currentUser.uid, 'containment_jobs');
+        setContainmentJobsRef(containmentRef);
+        const receiptsColRef = collection(db, 'users', currentUser.uid, 'receipts');
+        setReceiptsRef(receiptsColRef);
         const cbersRef = collection(db, 'users', currentUser.uid, 'cbers_wpm_jobs');
         const landsatRef = collection(db, 'users', currentUser.uid, 'landsat_jobs');
 
@@ -4145,6 +4220,49 @@ export default function Dashboard() {
           }
         } catch (error) {
           console.warn('Falha ao carregar histórico de vértices salvo:', error);
+        }
+
+        try {
+          const containmentSnap = await getDocs(query(containmentRef, orderBy('updatedAtMs', 'desc')));
+          const containmentEntries: ContainmentHistoryItem[] = [];
+          containmentSnap.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            const item = mapContainmentDocToHistoryItem(docSnap.id, data);
+            if (item.status !== 'uploaded' && item.status !== 'deleted') containmentEntries.push(item);
+          });
+          setContainmentHistory(containmentEntries);
+          const runningContainment = containmentEntries.find((entry) => entry.status === 'processing');
+          if (runningContainment) {
+            setActiveView('vertices-proximas');
+            setErrorAnalysisTab('containment');
+            setContainmentJobId(runningContainment.jobId);
+          }
+        } catch (error) {
+          console.warn('Falha ao carregar histórico de containment salvo:', error);
+        }
+
+        try {
+          const receiptsSnap = await getDocs(query(receiptsColRef, orderBy('updatedAtMs', 'desc')));
+          const receiptsEntries: ReceiptHistoryItem[] = [];
+          receiptsSnap.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            receiptsEntries.push({
+              id: String(data?.id || docSnap.id),
+              receiptId: String(data?.receiptId || docSnap.id),
+              type: data?.type === 'apf' ? 'apf' : 'simcar',
+              filename: String(data?.filename || 'Recibo'),
+              timestamp: String(data?.timestamp || data?.updatedAt || new Date().toISOString()),
+              status: data?.status === 'failed' ? 'failed' : 'completed',
+              downloadUrl: data?.downloadUrl ? String(data.downloadUrl) : undefined,
+              error: data?.error ? String(data.error) : undefined,
+              cpf: data?.cpf ? String(data.cpf) : undefined,
+              car: data?.car ? String(data.car) : undefined,
+              sizeBytes: Number.isFinite(Number(data?.sizeBytes)) ? Number(data.sizeBytes) : undefined,
+            });
+          });
+          setReceiptHistory(receiptsEntries);
+        } catch (error) {
+          console.warn('Falha ao carregar histórico de recibos:', error);
         }
 
         try {
@@ -7827,6 +7945,71 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </div>
             )
           ) : activeView === 'vertices-proximas' ? (
+            errorAnalysisTab === 'containment' ? (
+              containmentHistory.length > 0 ? (
+                containmentHistory.map((entry) => (
+                  <div
+                    key={entry.jobId}
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${containmentJobId === entry.jobId ? 'bg-rose-500/10 border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.06)]' : 'bg-[#100d18]/70 hover:bg-[#171322] hover:border-rose-500/20'}`}
+                    onClick={() => {
+                      setContainmentJobId(entry.jobId);
+                      setErrorAnalysisTab('containment');
+                    }}
+                  >
+                    <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${containmentJobId === entry.jobId ? 'bg-gradient-to-br from-rose-500 to-emerald-500 text-white shadow-md shadow-rose-900/40' : 'bg-white/5 text-slate-400 group-hover:text-rose-300 group-hover:bg-rose-500/10'}`}>
+                      <ShieldAlert size={18} />
+                    </div>
+                    <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                      <p className={`text-sm truncate font-medium ${containmentJobId === entry.jobId ? 'text-rose-100' : 'text-slate-200 group-hover:text-rose-100'}`}>{entry.filename}</p>
+                      <div className="flex items-center gap-2 mt-1 opacity-80">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold text-rose-300">
+                          {entry.percent}%
+                        </span>
+                        <span
+                          className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
+                            ? 'text-amber-300'
+                            : entry.status === 'completed'
+                              ? 'text-emerald-300'
+                              : entry.status === 'cancelled'
+                                ? 'text-orange-300'
+                                : 'text-red-300'
+                            }`}
+                        >
+                          {entry.status === 'processing'
+                            ? 'Processando'
+                            : entry.status === 'completed'
+                              ? 'Concluído'
+                              : entry.status === 'cancelled'
+                                ? 'Cancelado'
+                                : 'Falhou'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-0.5 truncate">
+                        {(entry.resultRows?.length || 0)} áreas • {entry.containerCount ?? '?'} continentes
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (containmentJobsRef) void deleteDoc(doc(containmentJobsRef, entry.jobId)).catch(() => {});
+                        setContainmentHistory((prev) => prev.filter((item) => item.jobId !== entry.jobId));
+                        if (containmentJobId === entry.jobId) setContainmentJobId(null);
+                      }}
+                      className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                      title="Excluir análise"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <ShieldAlert size={32} className="text-slate-600 mb-3" />
+                  <p className="text-sm text-slate-400">Nenhuma análise de áreas não contidas</p>
+                  <p className="text-[10px] text-slate-600 mt-1">Use a aba para fazer upload</p>
+                </div>
+              )
+            ) : (
             verticesHistory.length > 0 ? (
               verticesHistory.map((entry) => (
                 <div
@@ -7885,7 +8068,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 <p className="text-[10px] text-slate-600 mt-1">Clique em "Nova Análise" para começar</p>
               </div>
             )
-          ) : activeView === 'simcar-clip' ? (
+          )) : activeView === 'simcar-clip' ? (
             /* ─── SIMCAR Clip History Cards ─── */
             simcarClipHistory.length > 0 ? (
               simcarClipHistory.map((clip) => (
@@ -8024,6 +8207,62 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 <Scissors size={32} className="text-slate-600 mb-3" />
                 <p className="text-sm text-slate-400">Nenhum recorte ainda</p>
                 <p className="text-[10px] text-slate-600 mt-1">Clique em "Novo Recorte" para começar</p>
+              </div>
+            )
+          ) : activeView === 'simcar-receipts' ? (
+            receiptHistory.length > 0 ? (
+              receiptHistory.map((receipt) => (
+                <div
+                  key={receipt.id}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors group cursor-pointer mb-1"
+                >
+                  <div className={`p-2 rounded-lg shrink-0 ${receipt.type === 'apf' ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                    <Receipt size={16} />
+                  </div>
+                  <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                    <p className="text-sm text-slate-200 truncate">{receipt.filename}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className={`text-[10px] font-semibold uppercase tracking-wider ${receipt.type === 'apf' ? 'text-amber-300' : 'text-emerald-300'}`}>
+                        {receipt.type === 'apf' ? 'APF' : 'SIMCAR'}
+                      </span>
+                      {receipt.cpf && <span className="text-[10px] text-slate-500">CPF: {receipt.cpf}</span>}
+                      {receipt.car && <span className="text-[10px] text-slate-500">CAR: {receipt.car}</span>}
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      {receipt.status === 'completed' ? 'Baixado' : 'Falhou'}
+                      {receipt.sizeBytes ? ` • ${(receipt.sizeBytes / 1024).toFixed(0)} KB` : ''}
+                    </p>
+                  </div>
+                  {receipt.downloadUrl && (
+                    <a
+                      href={receipt.downloadUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="p-2 rounded-lg text-emerald-300 hover:text-white hover:bg-emerald-500/20 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Download"
+                    >
+                      <Download size={14} />
+                    </a>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (receiptsRef) void deleteDoc(doc(receiptsRef, receipt.receiptId)).catch(() => {});
+                      setReceiptHistory((prev) => prev.filter((item) => item.receiptId !== receipt.receiptId));
+                    }}
+                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                    title="Excluir"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Receipt size={32} className="text-slate-600 mb-3" />
+                <p className="text-sm text-slate-400">Nenhum recibo baixado</p>
+                <p className="text-[10px] text-slate-600 mt-1">Os recibos aparecem aqui</p>
               </div>
             )
           ) : (
@@ -9809,7 +10048,30 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           </div>
         ) : activeView === 'simcar-receipts' ? (
-          <ReceiptsHub apiFetch={apiFetch} />
+          <ReceiptsHub
+            apiFetch={apiFetch}
+            onReceiptDownloaded={(receipt) => {
+              const id = nanoid();
+              const item: ReceiptHistoryItem = {
+                id,
+                receiptId: id,
+                type: receipt.type,
+                filename: receipt.filename,
+                timestamp: new Date().toISOString(),
+                status: 'completed',
+                cpf: receipt.cpf,
+                car: receipt.car,
+                sizeBytes: receipt.sizeBytes,
+              };
+              setReceiptHistory((prev) => [item, ...prev]);
+              if (receiptsRef) {
+                void setDoc(doc(receiptsRef, id), {
+                  ...item,
+                  updatedAtMs: Date.now(),
+                }, { merge: true }).catch(() => {});
+              }
+            }}
+          />
         ) : activeView === 'cbers-wpm' ? (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
             <div className="max-w-6xl mx-auto space-y-5 sm:space-y-6">
@@ -11258,7 +11520,32 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </div>
 
               {errorAnalysisTab === 'containment' ? (
-                <ContainmentAnalysis apiFetch={apiFetch} />
+                <ContainmentAnalysis
+                  apiFetch={apiFetch}
+                  onJobSnapshot={(job) => {
+                    const item = mapContainmentDocToHistoryItem(String(job?.jobId || job?.id || ''), job);
+                    setContainmentHistory((prev) => {
+                      const idx = prev.findIndex((e) => e.jobId === item.jobId);
+                      if (idx >= 0) {
+                        const copy = [...prev];
+                        copy[idx] = item;
+                        return copy;
+                      }
+                      return [item, ...prev];
+                    });
+                    if (item.status !== 'processing' && item.status !== 'queued') {
+                      setContainmentJobId(null);
+                    } else {
+                      setContainmentJobId(item.jobId);
+                    }
+                    if (containmentJobsRef) {
+                      void setDoc(doc(containmentJobsRef, item.jobId), {
+                        ...job,
+                        updatedAtMs: Date.now(),
+                      }, { merge: true }).catch(() => {});
+                    }
+                  }}
+                />
               ) : (
               <>
               <section className="rounded-2xl border border-violet-500/15 bg-[#0b1110]/80 p-5 sm:p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">

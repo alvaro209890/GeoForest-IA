@@ -45,6 +45,15 @@ type SearchResponse = {
 
 type Props = {
   apiFetch: ApiFetch;
+  onDownloaded?: (receipt: {
+    type: 'simcar' | 'apf';
+    filename: string;
+    cpf?: string;
+    car?: string;
+    downloadUrl?: string;
+    sizeBytes?: number;
+    error?: string;
+  }) => void;
 };
 
 type StatusBadge = {
@@ -98,7 +107,7 @@ function getStatusBadge(situacao: string): StatusBadge {
   };
 }
 
-export default function ApfReceiptDownloader({ apiFetch }: Props) {
+export default function ApfReceiptDownloader({ apiFetch, onDownloaded }: Props) {
   const [cpfCnpj, setCpfCnpj] = useState('');
   const [cpfResponsavel, setCpfResponsavel] = useState('');
   const [numeroApf, setNumeroApf] = useState('');
@@ -183,13 +192,20 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
         URL.revokeObjectURL(url);
 
         toast.success(`${type === 'termo' ? 'Termo' : 'APF'} baixado com sucesso`);
+        onDownloaded?.({
+          type: 'apf',
+          filename: params.get('filename') || `apf_${item.numero}.pdf`,
+          cpf: cpfCnpj || cpfResponsavel,
+          car: carNumber,
+          sizeBytes: blob.size,
+        });
       } catch (err: any) {
         toast.error(err?.message || 'Falha ao baixar APF');
       } finally {
         setDownloadingId(null);
       }
     },
-    [cpfCnpj, carNumber, carType, apiFetch],
+    [cpfCnpj, carNumber, carType, apiFetch, onDownloaded],
   );
 
   const clearFilters = () => {

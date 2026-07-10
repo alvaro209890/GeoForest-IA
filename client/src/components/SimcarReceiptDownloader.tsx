@@ -45,6 +45,15 @@ type SearchResponse = {
 
 type Props = {
   apiFetch: ApiFetch;
+  onDownloaded?: (receipt: {
+    type: 'simcar' | 'apf';
+    filename: string;
+    cpf?: string;
+    car?: string;
+    downloadUrl?: string;
+    sizeBytes?: number;
+    error?: string;
+  }) => void;
 };
 
 function formatDateTime(value: string): string {
@@ -87,7 +96,7 @@ async function readJsonError(response: Response): Promise<string> {
   }
 }
 
-export default function SimcarReceiptDownloader({ apiFetch }: Props) {
+export default function SimcarReceiptDownloader({ apiFetch, onDownloaded }: Props) {
   const [cpf, setCpf] = useState('');
   const [carNumber, setCarNumber] = useState('');
   const [items, setItems] = useState<SimcarReceiptItem[]>([]);
@@ -182,6 +191,13 @@ export default function SimcarReceiptDownloader({ apiFetch }: Props) {
         document.body.removeChild(anchor);
         window.setTimeout(() => window.URL.revokeObjectURL(url), 250);
         toast.success(`Recibo ${item.numeroCompleto || item.id} baixado.`);
+        onDownloaded?.({
+          type: 'simcar',
+          filename,
+          cpf,
+          car: item.carCodigo || carNumber,
+          sizeBytes: blob.size,
+        });
       } catch (err: any) {
         const message = String(err?.message || 'Falha ao baixar recibo.');
         setError(message);
@@ -190,7 +206,7 @@ export default function SimcarReceiptDownloader({ apiFetch }: Props) {
         setDownloadingId(null);
       }
     },
-    [apiFetch],
+    [apiFetch, cpf, carNumber, onDownloaded],
   );
 
   const onKeyDown = useCallback(
