@@ -156,12 +156,36 @@ export default defineConfig(({ mode }) => {
   const buildTarget = env.GEOFOREST_BUILD_TARGET || process.env.GEOFOREST_BUILD_TARGET || "app";
   const isAdminBuild = buildTarget === "admin";
   const apiTarget = env.VITE_API_BASE || "http://localhost:3001";
+  // Identificador único deste build. Exposto ao app (__APP_BUILD_ID__) e gravado
+  // em version.json para que abas já abertas detectem uma nova versão e recarreguem
+  // sozinhas (sem Ctrl+F5). Ver client/src/lib/autoUpdate.ts.
+  const buildId = `${Date.now()}`;
   const plugins = [react(), tailwindcss(), jsxLocPlugin()] as Plugin[];
   if (!isProduction) {
     plugins.push(vitePluginManusRuntime(), vitePluginManusDebugCollector());
   }
+  // Emite version.json no diretório de saída após o bundle.
+  plugins.push({
+    name: "geoforest-version-json",
+    apply: "build",
+    closeBundle() {
+      const outDir = path.resolve(import.meta.dirname, isAdminBuild ? "dist/admin" : "dist/public");
+      try {
+        fs.mkdirSync(outDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(outDir, "version.json"),
+          JSON.stringify({ buildId, builtAt: new Date().toISOString() }),
+        );
+      } catch {
+        // não bloqueia o build se a escrita falhar
+      }
+    },
+  } as Plugin);
   return {
   plugins,
+  define: {
+    __APP_BUILD_ID__: JSON.stringify(buildId),
+  },
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client", "src"),

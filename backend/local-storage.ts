@@ -33,6 +33,8 @@ const USER_DIRS = [
   "simcar/analysis",
   "vertices/input",
   "vertices/output",
+  "containment/input",
+  "containment/output",
   "cbers/output",
   "trash",
 ] as const;
@@ -274,6 +276,8 @@ export function saveUserBuffer(args: {
     | "simcar/analysis"
     | "vertices/input"
     | "vertices/output"
+    | "containment/input"
+    | "containment/output"
     | "auas/input"
     | "auas/output"
     | "auas/context"

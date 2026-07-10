@@ -45,6 +45,7 @@ import { registerCbersWpmRoutes } from "./cbers-wpm";
 import { registerLandsatRoutes } from "./landsat";
 import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-archive";
 import { registerVerticesRoutes } from "./vertices-proximas";
+import { registerContainmentRoutes } from "./containment-analysis";
 import {
   JobCancelledError,
   finishJob,
@@ -658,6 +659,7 @@ async function startServer() {
   registerCbersWpmRoutes(app);
   registerLandsatRoutes(app);
   registerVerticesRoutes(app);
+  registerContainmentRoutes(app);
   registerCbersArchiveAdminRoutes(app);
 
   const MODEL_CATALOG = [

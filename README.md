@@ -20,6 +20,8 @@ Sistema de apoio à Engenharia Florestal com inteligência artificial, voltado p
 - [Pipeline SIMCAR Clip](#pipeline-simcar-clip)
 - [Camadas SIMCAR Recortadas](#camadas-simcar-recortadas)
 - [Vértices Próximas](#vértices-próximas)
+- [Áreas Não Contidas (Containment SIMCAR)](#áreas-não-contidas-containment-simcar)
+- [Auto-update do Frontend (sem Ctrl+F5)](#auto-update-do-frontend-sem-ctrlf5)
 - [CBERS e WMS Local](#cbers-e-wms-local)
 - [Banco de Conhecimento](#banco-de-conhecimento)
 - [API - Endpoints](#api---endpoints)
@@ -117,6 +119,7 @@ GeoForest-IA/
 │   ├── cbers-wpm.ts           # CBERS-4A WPM (2.693 linhas)
 │   ├── landsat.ts             # Landsat Collection 2 SR + WMS local (1.621 linhas)
 │   ├── vertices-proximas.ts   # Análise de vértices próximas em shapefiles
+│   ├── containment-analysis.ts # Áreas não contidas (containment SIMCAR)
 │   ├── knowledge-base.ts      # RAG base conhecimento (1.064 linhas)
 │   ├── cbers-archive.ts       # Acervo permanente CBERS (1.105 linhas)
 │   ├── wfs-intersection.ts    # Interseção WFS (660 linhas)
@@ -306,6 +309,34 @@ Módulo para localizar pares de vértices muito próximos em shapefiles poligona
 
 **Arquivos:** `backend/vertices-proximas.ts`, `backend/vertices-proximas.test.ts`, `client/src/pages/Dashboard.tsx`
 
+> A aba **Vértices Próximas** foi reorganizada como sub-aba de **Análise de Erros** (ver abaixo).
+
+---
+
+## Áreas Não Contidas (Containment SIMCAR)
+
+Diagnostica o erro do validador da SEMA *"Geometria deve ser completamente contida por AVN, AUAS ou AREA_CONSOLIDADA"*. É **genérico**: o usuário escolhe a camada-alvo e as camadas-continente.
+
+**Regra:** para cada feição do alvo calcula `alvo − união(continentes)`; o que sobra são as áreas não contidas. Área medida no CRS métrico (UTM 22S) e frestas de borda abaixo da **área mínima** (padrão 1 m²) são descartadas.
+
+**Onde:** aba **Análise de Erros** → sub-aba **Áreas Não Contidas** (ao lado de **Vértices Próximas**).
+
+**Fluxo:** upload ZIP → definir regra (radio = alvo, checkbox = continentes) → processamento SSE → cards de resumo + tabela → download do ZIP.
+
+**Saídas:** `areas_nao_contidas.shp` (polígonos), `pontos_nao_contidos.shp`, `resumo_nao_contidas.csv`, `relatorio_nao_contidas.txt`.
+
+**Documentação:** [`docs/AREAS_NAO_CONTIDAS.md`](docs/AREAS_NAO_CONTIDAS.md)
+
+**Arquivos:** `backend/containment-analysis.ts`, `client/src/components/ContainmentAnalysis.tsx`, `client/src/pages/Dashboard.tsx`
+
+---
+
+## Auto-update do Frontend (sem Ctrl+F5)
+
+Cada build injeta um `__APP_BUILD_ID__` e grava `version.json`. O módulo `client/src/lib/autoUpdate.ts` compara periodicamente (e ao focar a aba) o `buildId` servido; se mudou, recarrega a página uma vez. Combinado com o `no-cache` do HTML e o hash imutável dos bundles, garante que tanto novos logins quanto abas já abertas recebam a versão nova sem refresh manual.
+
+**Arquivos:** `vite.config.ts`, `client/src/lib/autoUpdate.ts`, `client/src/main.tsx`, `firebase.json`
+
 ---
 
 ## CBERS, Landsat e WMS Local
@@ -378,6 +409,16 @@ Sistema **RAG** próprio: carrega apenas documentos relevantes para otimizar tok
 | GET | `/api/vertices/jobs/:jobId/status` | Status do job |
 | GET | `/api/vertices/download/:jobId` | Download ZIP final |
 | DELETE | `/api/vertices/jobs/:jobId` | Cancela/remove job |
+
+### Áreas Não Contidas (Containment)
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| POST | `/api/containment/upload` | Upload ZIP e listagem de camadas poligonais |
+| POST | `/api/containment/process` | Inicia análise (alvo + continentes + área mínima) |
+| GET | `/api/containment/jobs/:jobId/events` | Progresso via SSE |
+| GET | `/api/containment/jobs/:jobId/status` | Status do job |
+| GET | `/api/containment/download/:jobId` | Download ZIP final |
+| DELETE | `/api/containment/jobs/:jobId` | Cancela/remove job |
 
 ### CBERS-4A/WPM
 | Método | Rota | Descrição |
@@ -570,6 +611,8 @@ Arquivo de referência: [`config/geoforest-backend.env.example`](config/geofores
 
 ## Documentação Adicional
 
+- [`docs/AREAS_NAO_CONTIDAS.md`](docs/AREAS_NAO_CONTIDAS.md) — Áreas não contidas (containment SIMCAR)
+- [`docs/CHANGELOG_2026-07-10_AREAS_NAO_CONTIDAS.md`](docs/CHANGELOG_2026-07-10_AREAS_NAO_CONTIDAS.md) — Áreas não contidas + auto-update sem Ctrl+F5
 - [`docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md`](docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md) — Recibos SIMCAR, cache Firebase e deploy de 2026-07-09
 - [`docs/WMS_CBERS.md`](docs/WMS_CBERS.md) — WMS local, CBERS, acervo permanente
 - [`docs/WMS_LANDSAT.md`](docs/WMS_LANDSAT.md) — WMS local, Landsat e reuso/publicação automática

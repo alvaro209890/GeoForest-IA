@@ -25,12 +25,12 @@ proj4.defs("EPSG:4674", "+proj=longlat +ellps=GRS80 +no_defs +type=crs");
 proj4.defs("EPSG:4326", "+proj=longlat +datum=WGS84 +no_defs +type=crs");
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const SIRGAS_2000_PRJ =
+export const SIRGAS_2000_PRJ =
   'GEOGCS["SIRGAS 2000",DATUM["Sistema_de_Referencia_Geocentrico_para_las_AmericaS_2000",SPHEROID["GRS 1980",6378137,298.257222101]],PRIMEM["Greenwich",0],UNIT["Degree",0.0174532925199433]]';
-const WGS84_PRJ =
+export const WGS84_PRJ =
   'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",0.0174532925199433]]';
 
-type ZipEntry = { name: string; data: Buffer };
+export type ZipEntry = { name: string; data: Buffer };
 
 export type VerticesLayerInfo = {
   id: string;
@@ -64,12 +64,12 @@ type VertexPair = {
   midOriginal: [number, number];
 };
 
-type ParsedPolygonRecord = {
+export type ParsedPolygonRecord = {
   feature: number;
   rings: number[][][];
 };
 
-type CodedCrs = {
+export type CodedCrs = {
   label: string;
   kind: "geographic" | "projected" | "unknown";
   projDef?: string;
@@ -139,7 +139,7 @@ function readMainShapeType(shp: Buffer): number {
   return shp.readInt32LE(32);
 }
 
-function parsePolygonRecords(shpBuffer: Buffer): ParsedPolygonRecord[] {
+export function parsePolygonRecords(shpBuffer: Buffer): ParsedPolygonRecord[] {
   const records: ParsedPolygonRecord[] = [];
   if (shpBuffer.length < 100) return records;
 
@@ -186,7 +186,7 @@ function parsePolygonRecords(shpBuffer: Buffer): ParsedPolygonRecord[] {
   return records;
 }
 
-function getZipLayerGroups(zipBuffer: Buffer): Array<{
+export function getZipLayerGroups(zipBuffer: Buffer): Array<{
   id: string;
   name: string;
   key: string;
@@ -240,7 +240,7 @@ function parseEpsgOverride(raw: string): CodedCrs | null {
   return { label: `EPSG:${epsg}`, kind: "unknown", missing: false };
 }
 
-function detectCrs(prjTextRaw?: string, override?: string): CodedCrs {
+export function detectCrs(prjTextRaw?: string, override?: string): CodedCrs {
   const overridden = parseEpsgOverride(String(override || ""));
   if (overridden) return overridden;
 
@@ -365,7 +365,7 @@ function ringDepth(ring: number[][], index: number, rings: number[][][]): number
   return depth;
 }
 
-function ringGroupsForRecord(record: ParsedPolygonRecord): Array<{ part: number; ring: number; coords: number[][] }> {
+export function ringGroupsForRecord(record: ParsedPolygonRecord): Array<{ part: number; ring: number; coords: number[][] }> {
   const rings = record.rings.map(removeNaturalClosure).filter((ring) => ring.length >= 2);
   if (!rings.length) return [];
 
@@ -407,7 +407,7 @@ function ringGroupsForRecord(record: ParsedPolygonRecord): Array<{ part: number;
   return groups;
 }
 
-function layerBbox(records: ParsedPolygonRecord[]): [number, number, number, number] | null {
+export function layerBbox(records: ParsedPolygonRecord[]): [number, number, number, number] | null {
   const xs: number[] = [];
   const ys: number[] = [];
   for (const record of records) {
@@ -424,7 +424,7 @@ function layerBbox(records: ParsedPolygonRecord[]): [number, number, number, num
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 }
 
-function estimateUtmProjFromLonLat(lon: number, lat: number): { label: string; projDef: string } {
+export function estimateUtmProjFromLonLat(lon: number, lat: number): { label: string; projDef: string } {
   const zone = Math.max(1, Math.min(60, Math.floor((lon + 180) / 6) + 1));
   const south = lat < 0;
   return {
