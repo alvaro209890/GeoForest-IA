@@ -7583,10 +7583,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           </div>
         </div>
 
-        <div className="px-3 mb-3 space-y-2">
+        <div className="px-1 sm:px-3 mb-3 space-y-2">
           {/* ─── Abas — Segmented Control Moderno ─── */}
-          <div className="relative p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm">
-            <div className="grid grid-cols-5 gap-0.5 relative">
+          <div className="relative p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm overflow-hidden">
+            <div className="flex sm:grid sm:grid-cols-5 gap-0.5 relative scroll-tabs">
               {/* Active tab background slider */}
               <div
                 className="absolute top-0.5 bottom-0.5 left-0.5 w-[calc(20%-2px)] rounded-xl transition-all duration-400 ease-[cubic-bezier(0.4,0,0.2,1)] z-0"
@@ -8093,11 +8093,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       <main
         className="flex-1 flex flex-col relative h-full w-full overflow-hidden z-10"
       >
-        <header className="h-14 sm:h-16 flex-shrink-0 flex items-center justify-between px-3 sm:px-6 border-b border-white/5 bg-[#050b08]/50 backdrop-blur-md">
+        <header className="h-14 sm:h-16 flex-shrink-0 flex items-center justify-between px-3 sm:px-4 lg:px-6 border-b border-white/5 bg-[#050b08]/50 backdrop-blur-md safe-top">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="lg:hidden p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors shrink-0"
+              className="lg:hidden p-2 -ml-1 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center"
             >
               <Menu size={20} />
             </button>
@@ -8112,9 +8112,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         </header>
 
         {activeView === 'simcar-clip' ? (
-          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
-            <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6 animate-fade-in-up">
-              <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-4 sm:p-6">
+          <div className="flex-1 overflow-y-auto px-2 sm:px-4 lg:px-6 py-3 sm:py-6 lg:py-8 custom-scrollbar">
+            <div className="max-w-4xl mx-auto space-y-3 sm:space-y-5 lg:space-y-6 animate-fade-in-up">
+              <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-3 sm:p-5 lg:p-6">
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
                   <div className="flex items-center gap-3">
                     <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 shrink-0">

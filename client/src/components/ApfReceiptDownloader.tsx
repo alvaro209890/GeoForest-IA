@@ -12,7 +12,7 @@ import {
   MapPin,
   RefreshCw,
   Search,
-  ShieldCheck,
+  Shield,
   User,
   X,
 } from 'lucide-react';
@@ -108,7 +108,7 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
   const [items, setItems] = useState<ApfReceiptItem[]>([]);
   const [total, setTotal] = useState(0);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const hasActiveFilters = useMemo(
     () => !!(cpfCnpj.trim() || cpfResponsavel.trim() || numeroApf.trim() || carNumber.trim()),
@@ -230,10 +230,10 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
 
       {/* ── Search Bar ── */}
       <div className="rounded-2xl border border-slate-700/50 bg-slate-900/40 backdrop-blur-sm overflow-hidden">
-        {/* Quick search row */}
-        <div className="flex items-center gap-3 p-3">
-          <div className="flex-1 flex items-center gap-2">
-            <div className="flex items-center gap-2 flex-1 bg-slate-800/60 rounded-xl border border-slate-700/40 px-3 py-2.5 focus-within:border-blue-500/50 transition-colors">
+        {/* Quick search row — responsive: wraps on mobile */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-3">
+          <div className="flex-1 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="flex items-center gap-2 flex-1 bg-slate-800/60 rounded-xl border border-slate-700/40 px-3 py-2.5 focus-within:border-blue-500/50 transition-colors min-h-[44px]">
               <Search size={15} className="text-slate-500 shrink-0" />
               <input
                 type="text"
@@ -244,13 +244,13 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
                 onKeyDown={(e) => e.key === 'Enter' && search()}
               />
               {numeroApf && (
-                <button onClick={() => setNumeroApf('')} className="shrink-0 text-slate-500 hover:text-slate-300">
+                <button onClick={() => setNumeroApf('')} className="shrink-0 text-slate-500 hover:text-slate-300 min-w-[28px] min-h-[28px] flex items-center justify-center">
                   <X size={14} />
                 </button>
               )}
             </div>
-            <span className="text-[10px] text-slate-600 font-medium uppercase tracking-wider">ou</span>
-            <div className="flex items-center gap-2 flex-1 bg-slate-800/60 rounded-xl border border-slate-700/40 px-3 py-2.5 focus-within:border-blue-500/50 transition-colors">
+            <span className="text-[10px] text-slate-600 font-medium uppercase tracking-wider text-center py-1 sm:py-0">ou</span>
+            <div className="flex items-center gap-2 flex-1 bg-slate-800/60 rounded-xl border border-slate-700/40 px-3 py-2.5 focus-within:border-blue-500/50 transition-colors min-h-[44px]">
               <Leaf size={15} className="text-slate-500 shrink-0" />
               <input
                 type="text"
@@ -261,80 +261,137 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
                 onKeyDown={(e) => e.key === 'Enter' && search()}
               />
               {carNumber && (
-                <button onClick={() => setCarNumber('')} className="shrink-0 text-slate-500 hover:text-slate-300">
+                <button onClick={() => setCarNumber('')} className="shrink-0 text-slate-500 hover:text-slate-300 min-w-[28px] min-h-[28px] flex items-center justify-center">
                   <X size={14} />
                 </button>
               )}
             </div>
           </div>
-          <button
-            onClick={search}
-            disabled={!canSearch || loading}
-            className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-600/20 active:scale-95"
-          >
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-            Buscar
-          </button>
-          {hasActiveFilters && (
+          <div className="flex gap-2">
             <button
-              onClick={clearFilters}
-              className="flex items-center gap-1.5 rounded-xl bg-slate-800/60 border border-slate-700/40 px-3 py-2.5 text-xs text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
+              onClick={search}
+              disabled={!canSearch || loading}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-600/20 active:scale-95 min-h-[44px]"
             >
-              <RefreshCw size={13} />
-              Limpar
+              {loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+              Buscar
             </button>
-          )}
+            {hasActiveFilters && (
+              <button
+                onClick={clearFilters}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 rounded-xl bg-slate-800/60 border border-slate-700/40 px-3 py-2.5 text-xs text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors min-h-[44px]"
+              >
+                <RefreshCw size={13} />
+                Limpar
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Expandable filters */}
+        {/* Expandable filters toggle */}
         <button
           onClick={() => setFiltersOpen(!filtersOpen)}
-          className="w-full flex items-center justify-center gap-1.5 py-1.5 border-t border-slate-700/30 text-[11px] text-slate-500 hover:text-slate-300 transition-colors bg-slate-900/20"
+          className="w-full flex items-center justify-center gap-2 py-1.5 border-t border-slate-700/30 text-[11px] text-slate-500 hover:text-slate-300 transition-colors bg-slate-900/20 group"
         >
+          <span>{filtersOpen ? 'Ocultar' : 'Mostrar'} filtros avançados</span>
           <ChevronDown
-            size={14}
-            className={`transition-transform duration-200 ${filtersOpen ? 'rotate-180' : ''}`}
+            size={13}
+            className={`transition-transform duration-300 ${filtersOpen ? 'rotate-180' : ''} group-hover:text-slate-400`}
           />
-          Filtros avançados
         </button>
 
-        {filtersOpen && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 pt-2 border-t border-slate-700/20">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] text-slate-500 font-medium">CPF/CNPJ Proprietário</span>
-              <input
-                type="text"
-                value={cpfCnpj}
-                onChange={(e) => setCpfCnpj(e.target.value)}
-                placeholder="000.000.001-91"
-                className="rounded-lg border border-slate-700/50 bg-slate-800/40 px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:border-blue-500/50 focus:outline-none transition-colors"
-                onKeyDown={(e) => e.key === 'Enter' && search()}
-              />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] text-slate-500 font-medium">CPF Responsável</span>
-              <input
-                type="text"
-                value={cpfResponsavel}
-                onChange={(e) => setCpfResponsavel(e.target.value)}
-                placeholder="000.000.000-00"
-                className="rounded-lg border border-slate-700/50 bg-slate-800/40 px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:border-blue-500/50 focus:outline-none transition-colors"
-                onKeyDown={(e) => e.key === 'Enter' && search()}
-              />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] text-slate-500 font-medium">Tipo do CAR</span>
-              <select
-                value={carType}
-                onChange={(e) => setCarType(e.target.value as 'FEDERAL' | 'ESTADUAL')}
-                className="rounded-lg border border-slate-700/50 bg-slate-800/40 px-3 py-2 text-sm text-white focus:border-blue-500/50 focus:outline-none transition-colors"
-              >
-                <option value="ESTADUAL">Estadual</option>
-                <option value="FEDERAL">Federal</option>
-              </select>
-            </label>
+        {/* Expandable filters panel */}
+        <div
+          className={`grid transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] overflow-hidden ${
+            filtersOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+          }`}
+        >
+          <div className="overflow-hidden">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3 p-4 pt-2 border-t border-slate-700/20">
+              {/* CPF/CNPJ */}
+              <label className="flex flex-col gap-1.5 md:col-span-4">
+                <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
+                  <User size={10} />
+                  CPF/CNPJ Proprietário
+                </span>
+                <div className="flex items-center gap-2 rounded-lg border border-slate-700/50 bg-slate-800/40 px-3 py-2 focus-within:border-blue-500/50 transition-colors">
+                  <input
+                    type="text"
+                    value={cpfCnpj}
+                    onChange={(e) => setCpfCnpj(e.target.value)}
+                    placeholder="000.000.001-91"
+                    className="flex-1 bg-transparent text-sm text-white placeholder:text-slate-600 outline-none border-none p-0"
+                    onKeyDown={(e) => e.key === 'Enter' && search()}
+                  />
+                  {cpfCnpj && (
+                    <button onClick={() => setCpfCnpj('')} className="shrink-0 text-slate-500 hover:text-slate-300">
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+              </label>
+
+              {/* CPF Responsável */}
+              <label className="flex flex-col gap-1.5 md:col-span-4">
+                <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
+                  <User size={10} />
+                  CPF Responsável
+                </span>
+                <div className="flex items-center gap-2 rounded-lg border border-slate-700/50 bg-slate-800/40 px-3 py-2 focus-within:border-blue-500/50 transition-colors">
+                  <input
+                    type="text"
+                    value={cpfResponsavel}
+                    onChange={(e) => setCpfResponsavel(e.target.value)}
+                    placeholder="000.000.000-00"
+                    className="flex-1 bg-transparent text-sm text-white placeholder:text-slate-600 outline-none border-none p-0"
+                    onKeyDown={(e) => e.key === 'Enter' && search()}
+                  />
+                  {cpfResponsavel && (
+                    <button onClick={() => setCpfResponsavel('')} className="shrink-0 text-slate-500 hover:text-slate-300">
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+              </label>
+
+              {/* CAR Type — Segmented Control */}
+              <div className="flex flex-col gap-1.5 md:col-span-4">
+                <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
+                  <Shield size={10} />
+                  Tipo do CAR
+                </span>
+                <div className="relative flex items-center gap-0.5 p-0.5 rounded-lg border border-slate-700/50 bg-slate-800/60">
+                  {/* Sliding indicator */}
+                  <div
+                    className={`absolute top-0.5 bottom-0.5 w-[calc(50%-2px)] rounded-md bg-blue-500/20 border border-blue-500/30 shadow-sm transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${
+                      carType === 'FEDERAL' ? 'translate-x-[calc(100%+1px)]' : 'translate-x-0'
+                    }`}
+                  />
+                  <button
+                    onClick={() => setCarType('ESTADUAL')}
+                    className={`relative z-10 flex-1 py-2 text-xs font-semibold rounded-md transition-all duration-300 ${
+                      carType === 'ESTADUAL'
+                        ? 'text-blue-200'
+                        : 'text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    Estadual
+                  </button>
+                  <button
+                    onClick={() => setCarType('FEDERAL')}
+                    className={`relative z-10 flex-1 py-2 text-xs font-semibold rounded-md transition-all duration-300 ${
+                      carType === 'FEDERAL'
+                        ? 'text-blue-200'
+                        : 'text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    Federal
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
-        )}
+        </div>
       </div>
 
       {/* ── Results ── */}
@@ -380,7 +437,7 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
                         ? 'bg-red-500/10 border border-red-500/15'
                         : 'bg-blue-500/10 border border-blue-500/15'
                     }`}>
-                      <ShieldCheck size={18} className={isCancelled ? 'text-red-400/60' : 'text-blue-400'} />
+                      <Shield size={18} className={isCancelled ? 'text-red-400/60' : 'text-blue-400'} />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -453,11 +510,11 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
                     Esta APF está cancelada e não permite download de documentos.
                   </div>
                 ) : (
-                  <div className="flex gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2">
                     <button
                       onClick={() => download(item, 'apf')}
                       disabled={downloadingId === downloadKeyApf}
-                      className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 px-4 py-2 text-xs font-semibold text-white hover:from-blue-500 hover:to-blue-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-600/10 active:scale-[0.97]"
+                      className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 px-4 py-2.5 text-xs font-semibold text-white hover:from-blue-500 hover:to-blue-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-600/10 active:scale-[0.97] min-h-[44px]"
                     >
                       {downloadingId === downloadKeyApf ? (
                         <Loader2 size={13} className="animate-spin" />
@@ -469,7 +526,7 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
                     <button
                       onClick={() => download(item, 'termo')}
                       disabled={downloadingId === downloadKeyTermo}
-                      className="flex items-center gap-1.5 rounded-xl bg-emerald-600/20 border border-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-600/30 hover:border-emerald-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-[0.97]"
+                      className="flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600/20 border border-emerald-500/20 px-4 py-2.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-600/30 hover:border-emerald-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-[0.97] min-h-[44px]"
                     >
                       {downloadingId === downloadKeyTermo ? (
                         <Loader2 size={13} className="animate-spin" />
@@ -502,36 +559,18 @@ export default function ApfReceiptDownloader({ apiFetch }: Props) {
         </div>
       )}
 
-      {!loading && items.length === 0 && !hasActiveFilters && (
-        <div className="flex flex-col items-center gap-4 py-16">
-          <div className="w-16 h-16 rounded-2xl bg-slate-800/60 border border-slate-700/30 flex items-center justify-center">
-            <FileText size={28} className="text-slate-600" />
+      {!loading && total === 0 && !hasActiveFilters && (
+        <div className="flex flex-col items-center gap-3 py-16 text-center">
+          <div className="w-14 h-14 rounded-2xl bg-slate-800/60 border border-slate-700/30 flex items-center justify-center">
+            <Search size={24} className="text-slate-600" />
           </div>
-          <div className="text-center max-w-xs">
-            <p className="text-sm text-slate-400 font-medium">Consultar APF Rural</p>
-            <p className="text-[11px] text-slate-600 mt-1.5 leading-relaxed">
-              Preencha o número da APF, CAR, CPF/CNPJ ou CPF do responsável e clique em Buscar.
+          <div>
+            <p className="text-sm text-slate-400 font-medium">
+              Busque por número da APF, CAR, CPF ou CNPJ
             </p>
-          </div>
-        </div>
-      )}
-
-      {!loading && items.length === 0 && hasActiveFilters && total === 0 && (
-        <div className="flex flex-col items-center gap-4 py-16">
-          <div className="w-16 h-16 rounded-2xl bg-slate-800/60 border border-slate-700/30 flex items-center justify-center">
-            <Search size={28} className="text-slate-600" />
-          </div>
-          <div className="text-center max-w-xs">
-            <p className="text-sm text-slate-400 font-medium">Nenhum resultado</p>
-            <p className="text-[11px] text-slate-600 mt-1.5 leading-relaxed">
-              Nenhuma APF encontrada para os filtros informados. Tente outros parâmetros.
+            <p className="text-[11px] text-slate-600 mt-1">
+              Os filtros avançados permitem refinar por CPF do responsável e tipo do CAR
             </p>
-            <button
-              onClick={clearFilters}
-              className="mt-3 text-[11px] text-blue-400 hover:text-blue-300 transition-colors"
-            >
-              Limpar filtros
-            </button>
           </div>
         </div>
       )}
