@@ -195,7 +195,7 @@ export default function SimcarReceiptDownloader({ apiFetch, onDownloaded }: Prop
           type: 'simcar',
           filename,
           cpf,
-          car: item.carCodigo || carNumber,
+          car: item.numeroCompleto || carNumber,
           sizeBytes: blob.size,
         });
       } catch (err: any) {
