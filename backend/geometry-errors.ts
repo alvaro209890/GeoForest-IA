@@ -82,6 +82,7 @@ import {
   checkSimcarConformity,
   recognizeSimcarLayer,
   SIMCAR_CONTAINMENT_RULES,
+  SIMCAR_FORBIDDEN_OVERLAP_PAIRS,
   type SimcarLayerCode,
 } from "./simcar-rules";
 
@@ -95,6 +96,7 @@ export type GeometryChecks = {
   overlaps?: boolean;
   simcarConformity?: boolean;
   simcarContainment?: boolean;
+  simcarCrossOverlaps?: boolean;
 };
 
 export type RuleViolationPolygon = {
@@ -701,6 +703,103 @@ export function detectSimcarContainment(args: {
   return { rows, violations, warnings };
 }
 
+/**
+ * Aplica as regras de SOBREPOSIÇÃO PROIBIDA entre feições DIFERENTES do
+ * Anexo 01 (ex.: AVN não pode sobrepor AUAS nem AREA_CONSOLIDADA). As
+ * camadas são reconhecidas pela nomenclatura oficial; a interseção de cada
+ * par de feições vira polígono de violação com área métrica.
+ */
+export function detectSimcarForbiddenOverlaps(args: {
+  layers: SimcarRuleLayer[];
+  minAreaM2?: number;
+}): { rows: GeometryErrorRow[]; violations: RuleViolationPolygon[]; warnings: string[] } {
+  const rows: GeometryErrorRow[] = [];
+  const violations: RuleViolationPolygon[] = [];
+  const warnings: string[] = [];
+  const minArea = Number.isFinite(Number(args.minAreaM2)) ? Math.max(0, Number(args.minAreaM2)) : 1;
+
+  const byCode = groupLayersByCode(args.layers);
+  const bboxCache = new Map<CodedFeature, [number, number, number, number]>();
+  const bboxOf = (item: CodedFeature): [number, number, number, number] => {
+    let bbox = bboxCache.get(item);
+    if (!bbox) {
+      bbox = geometryBbox(item.geometry);
+      bboxCache.set(item, bbox);
+    }
+    return bbox;
+  };
+
+  for (const [codeA, codeB] of SIMCAR_FORBIDDEN_OVERLAP_PAIRS) {
+    const featuresA = byCode.get(codeA);
+    const featuresB = byCode.get(codeB);
+    if (!featuresA?.length || !featuresB?.length) continue;
+
+    for (const a of featuresA) {
+      for (const b of featuresB) {
+        if (!bboxesTouch(bboxOf(a), bboxOf(b))) continue;
+        let intersection: Feature<Polygon | MultiPolygon> | null = null;
+        try {
+          intersection = turfIntersect(
+            turfFeatureCollection([
+              { type: "Feature", properties: {}, geometry: a.geometry } as Feature<Polygon | MultiPolygon>,
+              { type: "Feature", properties: {}, geometry: b.geometry } as Feature<Polygon | MultiPolygon>,
+            ]) as any,
+          ) as Feature<Polygon | MultiPolygon> | null;
+        } catch (error: any) {
+          warnings.push(
+            `Regras SIMCAR: falha ao cruzar ${codeA} feição ${a.feature} com ${codeB} feição ${b.feature} (${error?.message || "geometria inválida"}); corrija a geometria antes.`,
+          );
+          continue;
+        }
+        if (!intersection?.geometry) continue;
+
+        const polygons =
+          intersection.geometry.type === "Polygon"
+            ? [intersection.geometry.coordinates]
+            : intersection.geometry.coordinates;
+        let pairAreaM2 = 0;
+        const pairViolations: RuleViolationPolygon[] = [];
+        for (const polygon of polygons) {
+          const areaM2 = polygonMetricAreaM2(polygon as number[][][], a.crs, a.metricProjDef);
+          if (areaM2 < minArea) continue;
+          pairAreaM2 += areaM2;
+          pairViolations.push({
+            camadaA: a.layerName,
+            feicaoA: a.feature,
+            camadaB: b.layerName,
+            regra: "sobreposicao",
+            areaM2,
+            geometry: { type: "Polygon", coordinates: polygon as number[][][] },
+          });
+        }
+        if (!pairViolations.length) continue;
+        violations.push(...pairViolations);
+
+        let x = NaN;
+        let y = NaN;
+        try {
+          const point = turfPointOnFeature({ type: "Feature", properties: {}, geometry: pairViolations[0].geometry } as any);
+          [x, y] = point.geometry.coordinates as [number, number];
+        } catch {
+          [x, y] = pairViolations[0].geometry.coordinates[0][0] as [number, number];
+        }
+        rows.push({
+          camada: a.layerName,
+          tipo: "sobreposicao_proibida",
+          feicao: a.feature,
+          parte: 0,
+          anel: 0,
+          x: Number(x),
+          y: Number(y),
+          detalhe: `${codeA} sobrepõe ${codeB} (feição ${b.feature}) em ${(pairAreaM2 / 10000).toFixed(4)} ha (validação IMPEDITIVA do Anexo 01 do SIMCAR).`,
+        });
+      }
+    }
+  }
+
+  return { rows, violations, warnings };
+}
+
 /* ─────────────────────── análise por camada ─────────────────────── */
 
 export function analyzeLayerGeometry(args: {
@@ -817,9 +916,9 @@ function buildReport(args: {
     lines.push("");
     lines.push("Sobreposicoes: os poligonos exatos estao em poligonos_sobreposicao.shp (sem correcao automatica; decida no SIG qual feicao recortar).");
   }
-  if (args.rows.some((row) => row.tipo === "fora_do_continente")) {
+  if (args.rows.some((row) => row.tipo === "fora_do_continente" || row.tipo === "sobreposicao_proibida")) {
     lines.push("");
-    lines.push("Regras SIMCAR (Anexo 01): os poligonos das violacoes estao em poligonos_regras_simcar.shp.");
+    lines.push("Regras SIMCAR (Anexo 01): os poligonos das violacoes estao em poligonos_regras_simcar.shp (regra=contencao|sobreposicao).");
   }
   if (args.warnings.length) {
     lines.push("");
@@ -1017,31 +1116,46 @@ async function runGeometryJob(args: {
     }
 
     // Regras topológicas do Anexo 01 também usam o ZIP inteiro: os pares
-    // (ex.: AVN ⊂ AIR) independem de quais camadas foram marcadas.
-    if (checks.simcarContainment !== false) {
+    // (ex.: AVN ⊂ AIR, AVN × AUAS) independem de quais camadas foram marcadas.
+    if (checks.simcarContainment !== false || checks.simcarCrossOverlaps !== false) {
       progress(uid, jobId, {
         status: "processing",
         stage: "simcar-rules",
         percent: 8,
-        message: "Aplicando regras de contenção do Anexo 01 (SIMCAR).",
+        message: "Aplicando regras do Anexo 01 (SIMCAR).",
       });
-      try {
-        const ruleLayers: SimcarRuleLayer[] = groups
-          .filter((group) => group.shp)
-          .map((group) => ({
-            name: group.name,
-            records: parsePolygonRecords(group.shp!.data),
-            crs: detectCrs(group.prj?.data.toString("utf8")),
-          }));
-        const containmentResult = detectSimcarContainment({
-          layers: ruleLayers,
-          minAreaM2: settings.minOverlapM2,
-        });
-        allRows.push(...containmentResult.rows);
-        allRuleViolations.push(...containmentResult.violations);
-        allWarnings.push(...containmentResult.warnings);
-      } catch (error: any) {
-        allWarnings.push(`Regras SIMCAR (contenção): ${error?.message || "falha na verificação"}`);
+      const ruleLayers: SimcarRuleLayer[] = groups
+        .filter((group) => group.shp)
+        .map((group) => ({
+          name: group.name,
+          records: parsePolygonRecords(group.shp!.data),
+          crs: detectCrs(group.prj?.data.toString("utf8")),
+        }));
+      if (checks.simcarContainment !== false) {
+        try {
+          const containmentResult = detectSimcarContainment({
+            layers: ruleLayers,
+            minAreaM2: settings.minOverlapM2,
+          });
+          allRows.push(...containmentResult.rows);
+          allRuleViolations.push(...containmentResult.violations);
+          allWarnings.push(...containmentResult.warnings);
+        } catch (error: any) {
+          allWarnings.push(`Regras SIMCAR (contenção): ${error?.message || "falha na verificação"}`);
+        }
+      }
+      if (checks.simcarCrossOverlaps !== false) {
+        try {
+          const crossResult = detectSimcarForbiddenOverlaps({
+            layers: ruleLayers,
+            minAreaM2: settings.minOverlapM2,
+          });
+          allRows.push(...crossResult.rows);
+          allRuleViolations.push(...crossResult.violations);
+          allWarnings.push(...crossResult.warnings);
+        } catch (error: any) {
+          allWarnings.push(`Regras SIMCAR (sobreposição): ${error?.message || "falha na verificação"}`);
+        }
       }
     }
 
@@ -1235,7 +1349,8 @@ export function registerGeometryErrorsRoutes(app: Express): void {
         checks.duplicateVertices !== false ||
         checks.overlaps !== false ||
         checks.simcarConformity !== false ||
-        checks.simcarContainment !== false;
+        checks.simcarContainment !== false ||
+        checks.simcarCrossOverlaps !== false;
       if (!hasAnyCheck) {
         res.status(400).json({ error: "Selecione ao menos um tipo de erro para verificar." });
         return;

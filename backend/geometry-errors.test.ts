@@ -7,6 +7,7 @@ import {
   detectOverlaps,
   detectSelfIntersections,
   detectSimcarContainment,
+  detectSimcarForbiddenOverlaps,
   fixLayerGeometry,
   recordToGeoJSON,
 } from "./geometry-errors";
@@ -337,6 +338,84 @@ describe("detectSimcarContainment", () => {
         { name: "CAMADA_QUALQUER", records: [airOutside], crs: projectedCrs },
         { name: "AVN", records: [airInside], crs: projectedCrs },
       ],
+    });
+    expect(result.rows).toHaveLength(0);
+  });
+});
+
+describe("detectSimcarForbiddenOverlaps", () => {
+  // AVN 100×100 sobrepondo AUAS num retângulo 20×10 = 200 m².
+  const avn: ParsedPolygonRecord = {
+    feature: 1,
+    rings: [
+      [
+        [0, 0],
+        [0, 100],
+        [100, 100],
+        [100, 0],
+        [0, 0],
+      ],
+    ],
+  };
+  const auasOverlapping: ParsedPolygonRecord = {
+    feature: 1,
+    rings: [
+      [
+        [90, 40],
+        [90, 50],
+        [110, 50],
+        [110, 40],
+        [90, 40],
+      ],
+    ],
+  };
+  const auasDisjoint: ParsedPolygonRecord = {
+    feature: 2,
+    rings: [
+      [
+        [200, 200],
+        [200, 210],
+        [210, 210],
+        [210, 200],
+        [200, 200],
+      ],
+    ],
+  };
+
+  it("reports the AVN × AUAS forbidden overlap with metric area", () => {
+    const result = detectSimcarForbiddenOverlaps({
+      layers: [
+        { name: "AVN", records: [avn], crs: projectedCrs },
+        { name: "AUAS", records: [auasOverlapping, auasDisjoint], crs: projectedCrs },
+      ],
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].tipo).toBe("sobreposicao_proibida");
+    expect(result.rows[0].detalhe).toContain("AVN");
+    expect(result.rows[0].detalhe).toContain("AUAS");
+    expect(result.violations).toHaveLength(1);
+    // Interseção: 10 m × 10 m = 100 m² (AVN vai até x=100)
+    expect(result.violations[0].areaM2).toBeCloseTo(100, 1);
+    expect(result.violations[0].regra).toBe("sobreposicao");
+  });
+
+  it("ignores pairs not listed as forbidden (ex.: AVN × ARL pode)", () => {
+    const result = detectSimcarForbiddenOverlaps({
+      layers: [
+        { name: "AVN", records: [avn], crs: projectedCrs },
+        { name: "ARL", records: [auasOverlapping], crs: projectedCrs },
+      ],
+    });
+    expect(result.rows).toHaveLength(0);
+  });
+
+  it("respects the minimum area threshold", () => {
+    const result = detectSimcarForbiddenOverlaps({
+      layers: [
+        { name: "AVN", records: [avn], crs: projectedCrs },
+        { name: "AUAS", records: [auasOverlapping], crs: projectedCrs },
+      ],
+      minAreaM2: 500,
     });
     expect(result.rows).toHaveLength(0);
   });

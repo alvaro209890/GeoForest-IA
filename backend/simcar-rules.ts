@@ -152,6 +152,52 @@ export const SIMCAR_CONTAINMENT_RULES: Array<{ child: SimcarLayerCode; parent: S
   { child: "AREA_ALTITUDE_1800", parent: "ATP" },
 ];
 
+/* ────────── ANEXO 01 — sobreposições proibidas entre camadas ────────── */
+
+/** Feições de "área inundada" citadas no Anexo 01 (rio, lagoa, reservatório). */
+export const SIMCAR_INUNDADA: SimcarLayerCode[] = [
+  "RIO_MENOR_10",
+  "RIO_10_ATE_50",
+  "RIO_50_ATE_200",
+  "RIO_200_ATE_600",
+  "RIO_MAIOR_600",
+  "LAGO_LAGOA_NATURAL",
+  "RESERVATORIO_ARTIFICIAL",
+];
+
+const SIMCAR_RELEVO: SimcarLayerCode[] = [
+  "AREA_DECLIVIDADE",
+  "BORDA_CHAPADA",
+  "AREA_TOPO_MORRO",
+  "AREA_ALTITUDE_1800",
+];
+
+/**
+ * Pares de feições DIFERENTES cuja sobreposição gera validação IMPEDITIVA
+ * (Anexo 01 "Validações GEO"). Sobreposição dentro da MESMA feição
+ * (AVN×AVN, AIR×AIR, ...) é coberta pelo check "sobreposição entre feições
+ * da mesma camada".
+ */
+export const SIMCAR_FORBIDDEN_OVERLAP_PAIRS: Array<[SimcarLayerCode, SimcarLayerCode]> = [
+  ["AVN", "AUAS"],
+  ["AVN", "AREA_CONSOLIDADA"],
+  ["AVN", "AREA_PANTANEIRA"],
+  ...SIMCAR_INUNDADA.map((code): [SimcarLayerCode, SimcarLayerCode] => ["AVN", code]),
+  ["AUAS", "AREA_CONSOLIDADA"],
+  ...SIMCAR_INUNDADA.map((code): [SimcarLayerCode, SimcarLayerCode] => ["AUAS", code]),
+  ["VEREDA", "MANGUEZAL"],
+  ["VEREDA", "RESTINGA"],
+  ["MANGUEZAL", "RESTINGA"],
+  ...SIMCAR_RELEVO.map((code): [SimcarLayerCode, SimcarLayerCode] => ["AREA_PANTANEIRA", code]),
+  ["AREA_DECLIVIDADE", "BORDA_CHAPADA"],
+  ["AREA_DECLIVIDADE", "AREA_TOPO_MORRO"],
+  ["AREA_DECLIVIDADE", "AREA_ALTITUDE_1800"],
+  ["BORDA_CHAPADA", "AREA_TOPO_MORRO"],
+  ["BORDA_CHAPADA", "AREA_ALTITUDE_1800"],
+  ["AREA_TOPO_MORRO", "AREA_ALTITUDE_1800"],
+  ["AREA_UTILIDADE_PUBLICA", "AREA_INTERESSE_SOCIAL"],
+];
+
 /* ─────────────────────── conformidade ─────────────────────── */
 
 export type SimcarLayerInput = {

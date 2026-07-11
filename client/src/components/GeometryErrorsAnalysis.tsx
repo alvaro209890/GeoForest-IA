@@ -91,6 +91,12 @@ const CHECKS: CheckDef[] = [
     description:
       'Regras de contenção impeditivas do Anexo 01 "Validações GEO" do SIMCAR, aplicadas automaticamente pela nomenclatura: AIR dentro da ATP; AVN/AUAS/ÁREA CONSOLIDADA/PANTANEIRA dentro da AIR; VEREDA/MANGUEZAL/RESTINGA/ARL dentro da AIR e da AVN; relevo dentro da ATP. Gera poligonos_regras_simcar.shp com as sobras. Verifica o ZIP inteiro.',
   },
+  {
+    id: 'simcarCrossOverlaps',
+    label: 'Sobreposições proibidas do Anexo 01 (AVN × AUAS, ...)',
+    description:
+      'Pares de feições diferentes que não podem se sobrepor (impeditiva): AVN × AUAS/ÁREA CONSOLIDADA/PANTANEIRA/rios/lagoas/reservatórios; AUAS × CONSOLIDADA/inundadas; VEREDA × MANGUEZAL × RESTINGA; relevo entre si; UTILIDADE PÚBLICA × INTERESSE SOCIAL. Gera poligonos_regras_simcar.shp. Verifica o ZIP inteiro.',
+  },
 ];
 
 const TIPO_LABEL: Record<string, string> = {
@@ -107,6 +113,7 @@ const TIPO_LABEL: Record<string, string> = {
   atributo_ausente: 'Atributo obrigatório ausente',
   feicao_obrigatoria_ausente: 'Feição obrigatória ausente',
   fora_do_continente: 'Fora do continente (Anexo 01)',
+  sobreposicao_proibida: 'Sobreposição proibida (Anexo 01)',
 };
 
 type Props = {
