@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   analyzeLayerGeometry,
+  cleanRecordRings,
+  detectDuplicateVertices,
   detectSelfIntersections,
   fixLayerGeometry,
   recordToGeoJSON,
@@ -96,6 +98,87 @@ describe("fixLayerGeometry", () => {
       const rows = detectSelfIntersections("AVN", [{ feature: index + 1, rings: record.rings }]);
       expect(rows).toHaveLength(0);
     }
+  });
+});
+
+// Quadrado com o vértice (10, 14) repetido em sequência.
+const squareWithDuplicate: ParsedPolygonRecord = {
+  feature: 3,
+  rings: [
+    [
+      [10, 10],
+      [10, 14],
+      [10, 14],
+      [14, 14],
+      [14, 10],
+      [10, 10],
+    ],
+  ],
+};
+
+// Anel colapsado: só 2 vértices distintos.
+const degenerateRing: ParsedPolygonRecord = {
+  feature: 4,
+  rings: [
+    [
+      [0, 0],
+      [1, 1],
+      [0, 0],
+    ],
+  ],
+};
+
+describe("detectDuplicateVertices", () => {
+  it("finds consecutive duplicated vertices", () => {
+    const rows = detectDuplicateVertices("APP", [squareWithDuplicate]);
+    const duplicates = rows.filter((row) => row.tipo === "vertice_duplicado");
+    expect(duplicates).toHaveLength(1);
+    expect(duplicates[0].feicao).toBe(3);
+    expect(duplicates[0].x).toBeCloseTo(10, 9);
+    expect(duplicates[0].y).toBeCloseTo(14, 9);
+  });
+
+  it("flags rings with fewer than 3 distinct vertices", () => {
+    const rows = detectDuplicateVertices("APP", [degenerateRing]);
+    expect(rows.some((row) => row.tipo === "anel_degenerado")).toBe(true);
+  });
+
+  it("reports nothing for a clean square", () => {
+    expect(detectDuplicateVertices("APP", [square])).toHaveLength(0);
+  });
+});
+
+describe("cleanRecordRings", () => {
+  it("removes consecutive duplicated vertices and keeps ring closed", () => {
+    const result = cleanRecordRings(squareWithDuplicate);
+    expect(result.removedVertices).toBe(1);
+    expect(result.droppedRings).toBe(0);
+    const ring = result.record.rings[0];
+    expect(ring[0]).toEqual(ring[ring.length - 1]);
+    expect(ring).toHaveLength(5); // quadrado fechado sem o vértice repetido
+  });
+
+  it("drops degenerate rings entirely", () => {
+    const result = cleanRecordRings(degenerateRing);
+    expect(result.droppedRings).toBe(1);
+    expect(result.record.rings).toHaveLength(0);
+  });
+});
+
+describe("fixLayerGeometry with cleanDuplicates", () => {
+  it("marks cleaned features as corrigido=S without unkink", () => {
+    const result = fixLayerGeometry({
+      layerName: "APP",
+      records: [squareWithDuplicate, square],
+      errorFeatureIds: new Set<number>(),
+      cleanDuplicates: true,
+    });
+    expect(result.fixedFeatures).toBe(1);
+    const fixed = result.records.filter((record) => record.attributes.corrigido === "S");
+    expect(fixed).toHaveLength(1);
+    expect(fixed[0].attributes.feicao).toBe(3);
+    // Depois da limpeza, a feição não tem mais vértices duplicados.
+    expect(detectDuplicateVertices("APP", [{ feature: 3, rings: fixed[0].rings }])).toHaveLength(0);
   });
 });
 

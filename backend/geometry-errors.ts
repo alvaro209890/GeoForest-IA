@@ -8,6 +8,12 @@
  *     Detecção via cruzamento de segmentos do mesmo anel (turf kinks) e
  *     correção via divisão do polígono em polígonos simples (turf unkink).
  *
+ *   • vertice_duplicado — vértices consecutivos idênticos no mesmo anel
+ *     ("Vértices duplicados" no validador). Correção: remoção dos repetidos.
+ *
+ *   • anel_degenerado — anel com menos de 3 vértices distintos (colapsado em
+ *     ponto/linha). Correção: o anel é descartado da camada corrigida.
+ *
  * A saída é um ZIP com:
  *   • pontos_erros_geometria.shp — um ponto por erro encontrado
  *   • corrigido_<camada>.shp     — camada corrigida (opcional)
@@ -63,6 +69,7 @@ const subscribers = new Map<string, Set<Response>>();
 
 export type GeometryChecks = {
   selfIntersection?: boolean;
+  duplicateVertices?: boolean;
 };
 
 export type GeometrySettings = {
@@ -139,6 +146,107 @@ export function recordToGeoJSON(record: ParsedPolygonRecord): Polygon | MultiPol
   return { type: "MultiPolygon", coordinates: polygons };
 }
 
+/* ─────────── check: vértices duplicados / anel degenerado ─────────── */
+
+function sameCoordinate(a: number[], b: number[]): boolean {
+  return Math.abs(a[0] - b[0]) <= 1e-12 && Math.abs(a[1] - b[1]) <= 1e-12;
+}
+
+/**
+ * Encontra vértices consecutivos idênticos no mesmo anel ("Vértices
+ * duplicados") e anéis colapsados com menos de 3 vértices distintos
+ * ("anel degenerado"). Trabalha sobre os anéis SEM o fechamento natural
+ * (ringGroupsForRecord já o remove), então o par último→primeiro também
+ * é verificado.
+ */
+export function detectDuplicateVertices(layerName: string, records: ParsedPolygonRecord[]): GeometryErrorRow[] {
+  const rows: GeometryErrorRow[] = [];
+  for (const record of records) {
+    for (const group of ringGroupsForRecord(record)) {
+      const coords = group.coords;
+      if (!coords.length) continue;
+      const distinct: number[][] = [];
+      for (let i = 0; i < coords.length; i += 1) {
+        const prev = i === 0 ? coords[coords.length - 1] : coords[i - 1];
+        if (i > 0 && sameCoordinate(coords[i], prev)) {
+          rows.push({
+            camada: layerName,
+            tipo: "vertice_duplicado",
+            feicao: record.feature,
+            parte: group.part,
+            anel: group.ring,
+            x: Number(coords[i][0]),
+            y: Number(coords[i][1]),
+            detalhe: `Vértices ${i} e ${i + 1} do anel são idênticos.`,
+          });
+          continue;
+        }
+        if (i === coords.length - 1 && coords.length > 1 && sameCoordinate(coords[i], coords[0])) {
+          rows.push({
+            camada: layerName,
+            tipo: "vertice_duplicado",
+            feicao: record.feature,
+            parte: group.part,
+            anel: group.ring,
+            x: Number(coords[i][0]),
+            y: Number(coords[i][1]),
+            detalhe: `Vértice ${i + 1} repete o primeiro vértice além do fechamento do anel.`,
+          });
+          continue;
+        }
+        distinct.push(coords[i]);
+      }
+      if (distinct.length < 3) {
+        const [x, y] = coords[0];
+        rows.push({
+          camada: layerName,
+          tipo: "anel_degenerado",
+          feicao: record.feature,
+          parte: group.part,
+          anel: group.ring,
+          x: Number(x),
+          y: Number(y),
+          detalhe: `Anel com apenas ${distinct.length} vértice(s) distinto(s); polígono válido exige 3 ou mais.`,
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+/**
+ * Limpa os anéis de um registro: remove vértices consecutivos duplicados e
+ * descarta anéis degenerados (menos de 3 vértices distintos).
+ */
+export function cleanRecordRings(record: ParsedPolygonRecord): {
+  record: ParsedPolygonRecord;
+  removedVertices: number;
+  droppedRings: number;
+} {
+  const rings: number[][][] = [];
+  let removedVertices = 0;
+  let droppedRings = 0;
+  for (const ring of record.rings) {
+    const out: number[][] = [];
+    for (const point of ring) {
+      const prev = out[out.length - 1];
+      if (prev && sameCoordinate(prev, point)) {
+        removedVertices += 1;
+        continue;
+      }
+      out.push(point);
+    }
+    // Remove fechamento natural para contar vértices distintos e depois refecha.
+    const open = out.length >= 2 && sameCoordinate(out[0], out[out.length - 1]) ? out.slice(0, -1) : out;
+    if (open.length < 3) {
+      droppedRings += 1;
+      continue;
+    }
+    rings.push(ensureClosed(open));
+  }
+  return { record: { feature: record.feature, rings }, removedVertices, droppedRings };
+}
+
 /* ─────────────── check: borda de polígono se cruza ─────────────── */
 
 /**
@@ -185,29 +293,44 @@ export function detectSelfIntersections(layerName: string, records: ParsedPolygo
 }
 
 /**
- * Gera a versão corrigida da camada: feições com auto-interseção são divididas
- * em polígonos simples (unkink); as demais são copiadas como estão. O atributo
- * `corrigido` marca o que mudou e `feicao` preserva o número original para
- * re-associação de atributos no SIG.
+ * Gera a versão corrigida da camada: vértices duplicados e anéis degenerados
+ * são limpos (quando `cleanDuplicates`), e feições com auto-interseção são
+ * divididas em polígonos simples (unkink). As demais são copiadas como estão.
+ * O atributo `corrigido` marca o que mudou e `feicao` preserva o número
+ * original para re-associação de atributos no SIG.
  */
 export function fixLayerGeometry(args: {
   layerName: string;
   records: ParsedPolygonRecord[];
   errorFeatureIds: Set<number>;
+  cleanDuplicates?: boolean;
 }): LayerFixResult {
   const warnings: string[] = [];
   const outRecords: ShpRecord[] = [];
   let fixedFeatures = 0;
 
-  for (const record of args.records) {
+  for (const rawRecord of args.records) {
+    let record = rawRecord;
+    let cleanedSomething = false;
+    if (args.cleanDuplicates) {
+      const cleaned = cleanRecordRings(rawRecord);
+      record = cleaned.record;
+      cleanedSomething = cleaned.removedVertices > 0 || cleaned.droppedRings > 0;
+      if (cleaned.droppedRings > 0) {
+        warnings.push(
+          `${args.layerName}: feição ${rawRecord.feature} teve ${cleaned.droppedRings} anel(is) degenerado(s) descartado(s) na camada corrigida.`,
+        );
+      }
+    }
     const geometry = recordToGeoJSON(record);
     if (!geometry) {
-      warnings.push(`${args.layerName}: feição ${record.feature} sem anéis válidos foi descartada da camada corrigida.`);
+      warnings.push(`${args.layerName}: feição ${rawRecord.feature} sem anéis válidos foi descartada da camada corrigida.`);
       continue;
     }
-    const baseAttrs = { feicao: record.feature, camada: args.layerName };
-    if (!args.errorFeatureIds.has(record.feature)) {
-      outRecords.push(...geojsonToShpRecords(geometry, { ...baseAttrs, corrigido: "N" }));
+    const baseAttrs = { feicao: rawRecord.feature, camada: args.layerName };
+    if (!args.errorFeatureIds.has(rawRecord.feature)) {
+      if (cleanedSomething) fixedFeatures += 1;
+      outRecords.push(...geojsonToShpRecords(geometry, { ...baseAttrs, corrigido: cleanedSomething ? "S" : "N" }));
       continue;
     }
     try {
@@ -241,6 +364,9 @@ export function analyzeLayerGeometry(args: {
   const rows: GeometryErrorRow[] = [];
   if (args.checks.selfIntersection !== false) {
     rows.push(...detectSelfIntersections(args.layerName, args.records));
+  }
+  if (args.checks.duplicateVertices !== false) {
+    rows.push(...detectDuplicateVertices(args.layerName, args.records));
   }
   return rows;
 }
@@ -480,8 +606,13 @@ async function runGeometryJob(args: {
           crsLabel: crs.label,
         });
         if (settings.generateFixed !== false && rows.length > 0) {
-          const errorFeatureIds = new Set(rows.map((row) => row.feicao));
-          const fix = fixLayerGeometry({ layerName: group.name, records, errorFeatureIds });
+          const errorFeatureIds = new Set(rows.filter((row) => row.tipo === "borda_se_cruza").map((row) => row.feicao));
+          const fix = fixLayerGeometry({
+            layerName: group.name,
+            records,
+            errorFeatureIds,
+            cleanDuplicates: checks.duplicateVertices !== false,
+          });
           fixes.push(fix);
           allWarnings.push(...fix.warnings);
         }
@@ -619,7 +750,7 @@ export function registerGeometryErrorsRoutes(app: Express): void {
         return;
       }
       const checks = ((req.body as any)?.checks || {}) as GeometryChecks;
-      const hasAnyCheck = checks.selfIntersection !== false;
+      const hasAnyCheck = checks.selfIntersection !== false || checks.duplicateVertices !== false;
       if (!hasAnyCheck) {
         res.status(400).json({ error: "Selecione ao menos um tipo de erro para verificar." });
         return;

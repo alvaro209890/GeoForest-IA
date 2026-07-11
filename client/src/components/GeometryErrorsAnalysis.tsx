@@ -67,10 +67,18 @@ const CHECKS: CheckDef[] = [
     label: 'Borda de polígono se cruza',
     description: 'Auto-interseção: segmentos do mesmo anel se cruzam. O SIMCAR reprova com "Borda de polígono se cruza".',
   },
+  {
+    id: 'duplicateVertices',
+    label: 'Vértices duplicados / anéis degenerados',
+    description:
+      'Vértices consecutivos idênticos no mesmo anel e anéis colapsados com menos de 3 vértices distintos. A correção remove os repetidos e descarta anéis inválidos.',
+  },
 ];
 
 const TIPO_LABEL: Record<string, string> = {
   borda_se_cruza: 'Borda se cruza',
+  vertice_duplicado: 'Vértice duplicado',
+  anel_degenerado: 'Anel degenerado',
 };
 
 type Props = {
@@ -595,8 +603,9 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch }) => {
                 </span>
                 <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">
                   Para cada camada com erro o ZIP inclui <code className="text-emerald-200">corrigido_&lt;camada&gt;.shp</code>:
-                  polígonos com borda cruzada são divididos em polígonos simples. O atributo <code>feicao</code> preserva o
-                  número original para re-associar os atributos no SIG.
+                  polígonos com borda cruzada são divididos em polígonos simples, vértices duplicados são removidos e anéis
+                  degenerados são descartados. O atributo <code>feicao</code> preserva o número original para re-associar os
+                  atributos no SIG.
                 </span>
               </span>
             </button>
