@@ -14,6 +14,10 @@
  *   • anel_degenerado — anel com menos de 3 vértices distintos (colapsado em
  *     ponto/linha). Correção: o anel é descartado da camada corrigida.
  *
+ *   • sobreposicao — feições da MESMA camada se sobrepõem ("Sobreposição de
+ *     polígonos" no validador). Sem correção automática (é ambíguo qual feição
+ *     recortar); o ZIP traz os polígonos exatos da sobreposição.
+ *
  * A saída é um ZIP com:
  *   • pontos_erros_geometria.shp — um ponto por erro encontrado
  *   • corrigido_<camada>.shp     — camada corrigida (opcional)
@@ -31,17 +35,27 @@ import type { Express, Request, Response } from "express";
 import archiver from "archiver";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import { kinks as turfKinks, unkinkPolygon as turfUnkink } from "@turf/turf";
+import proj4 from "proj4";
+import {
+  featureCollection as turfFeatureCollection,
+  intersect as turfIntersect,
+  kinks as turfKinks,
+  pointOnFeature as turfPointOnFeature,
+  unkinkPolygon as turfUnkink,
+} from "@turf/turf";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 import {
   detectCrs,
+  estimateUtmProjFromLonLat,
   getZipLayerGroups,
+  layerBbox,
   listPolygonLayersFromZip,
   parsePolygonRecords,
   ringGroupsForRecord,
   SIRGAS_2000_PRJ,
   WGS84_PRJ,
   visibleVerticesLayers,
+  type CodedCrs,
   type ParsedPolygonRecord,
 } from "./vertices-proximas";
 import {
@@ -70,10 +84,20 @@ const subscribers = new Map<string, Set<Response>>();
 export type GeometryChecks = {
   selfIntersection?: boolean;
   duplicateVertices?: boolean;
+  overlaps?: boolean;
 };
 
 export type GeometrySettings = {
   generateFixed?: boolean;
+  minOverlapM2?: number;
+};
+
+export type OverlapPolygon = {
+  camada: string;
+  feicaoA: number;
+  feicaoB: number;
+  areaM2: number;
+  geometry: Polygon;
 };
 
 export type GeometryErrorRow = {
@@ -354,6 +378,153 @@ export function fixLayerGeometry(args: {
   return { layerName: args.layerName, records: outRecords, fixedFeatures, warnings };
 }
 
+/* ─────────── check: sobreposição entre feições da mesma camada ─────────── */
+
+function geometryBbox(geometry: Polygon | MultiPolygon): [number, number, number, number] {
+  let xMin = Infinity;
+  let yMin = Infinity;
+  let xMax = -Infinity;
+  let yMax = -Infinity;
+  const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  for (const polygon of polygons) {
+    for (const ring of polygon) {
+      for (const [x, y] of ring) {
+        if (x < xMin) xMin = x;
+        if (y < yMin) yMin = y;
+        if (x > xMax) xMax = x;
+        if (y > yMax) yMax = y;
+      }
+    }
+  }
+  return [xMin, yMin, xMax, yMax];
+}
+
+function bboxesTouch(a: [number, number, number, number], b: [number, number, number, number]): boolean {
+  return a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
+}
+
+function ringPlanarArea(ring: number[][]): number {
+  let area = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    area += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+  }
+  return area / 2;
+}
+
+/** Área (m²) de um Polygon reprojetado para CRS métrico (cascas − buracos). */
+function polygonMetricAreaM2(polygon: number[][][], crs: CodedCrs, metricProjDef: string): number {
+  const toMetric = (pt: number[]): number[] => {
+    if (crs.kind === "geographic") {
+      const src = crs.projDef || "EPSG:4326";
+      const out = proj4(src, metricProjDef, [pt[0], pt[1]]) as [number, number];
+      return Number.isFinite(out[0]) && Number.isFinite(out[1]) ? out : pt;
+    }
+    return pt;
+  };
+  let total = 0;
+  polygon.forEach((ring, idx) => {
+    const projected = ring.map(toMetric);
+    const a = Math.abs(ringPlanarArea(projected));
+    total += idx === 0 ? a : -a;
+  });
+  return Math.max(0, total);
+}
+
+function metricProjForCrs(crs: CodedCrs, records: ParsedPolygonRecord[]): string {
+  if (crs.kind === "projected" && crs.projDef) return crs.projDef;
+  const bbox = layerBbox(records);
+  const center: [number, number] = bbox ? [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2] : [0, 0];
+  return estimateUtmProjFromLonLat(center[0], center[1]).projDef;
+}
+
+/**
+ * Detecta pares de feições da MESMA camada cujos polígonos se sobrepõem
+ * (interseção com área acima de `minOverlapM2`). Sobreposições de borda com
+ * área ínfima são ruído numérico e ficam abaixo do limiar padrão de 1 m².
+ */
+export function detectOverlaps(args: {
+  layerName: string;
+  records: ParsedPolygonRecord[];
+  crs: CodedCrs;
+  minOverlapM2?: number;
+}): { rows: GeometryErrorRow[]; overlapPolygons: OverlapPolygon[]; warnings: string[] } {
+  const rows: GeometryErrorRow[] = [];
+  const overlapPolygons: OverlapPolygon[] = [];
+  const warnings: string[] = [];
+  const minArea = Number.isFinite(Number(args.minOverlapM2)) ? Math.max(0, Number(args.minOverlapM2)) : 1;
+  const metricProjDef = metricProjForCrs(args.crs, args.records);
+
+  const features = args.records
+    .map((record) => {
+      const geometry = recordToGeoJSON(record);
+      if (!geometry) return null;
+      return { feature: record.feature, geometry, bbox: geometryBbox(geometry) };
+    })
+    .filter((item): item is { feature: number; geometry: Polygon | MultiPolygon; bbox: [number, number, number, number] } => Boolean(item));
+
+  for (let i = 0; i < features.length; i += 1) {
+    for (let j = i + 1; j < features.length; j += 1) {
+      const a = features[i];
+      const b = features[j];
+      if (!bboxesTouch(a.bbox, b.bbox)) continue;
+      let intersection: Feature<Polygon | MultiPolygon> | null = null;
+      try {
+        intersection = turfIntersect(
+          turfFeatureCollection([
+            { type: "Feature", properties: {}, geometry: a.geometry } as Feature<Polygon | MultiPolygon>,
+            { type: "Feature", properties: {}, geometry: b.geometry } as Feature<Polygon | MultiPolygon>,
+          ]) as any,
+        ) as Feature<Polygon | MultiPolygon> | null;
+      } catch (error: any) {
+        warnings.push(
+          `${args.layerName}: não foi possível comparar as feições ${a.feature} e ${b.feature} (${error?.message || "geometria inválida"}); corrija a auto-interseção antes.`,
+        );
+        continue;
+      }
+      if (!intersection?.geometry) continue;
+      const polygons =
+        intersection.geometry.type === "Polygon"
+          ? [intersection.geometry.coordinates]
+          : intersection.geometry.coordinates;
+      let pairAreaM2 = 0;
+      const pairPolygons: OverlapPolygon[] = [];
+      for (const polygon of polygons) {
+        const areaM2 = polygonMetricAreaM2(polygon as number[][][], args.crs, metricProjDef);
+        if (areaM2 < minArea) continue;
+        pairAreaM2 += areaM2;
+        pairPolygons.push({
+          camada: args.layerName,
+          feicaoA: a.feature,
+          feicaoB: b.feature,
+          areaM2,
+          geometry: { type: "Polygon", coordinates: polygon as number[][][] },
+        });
+      }
+      if (!pairPolygons.length) continue;
+      overlapPolygons.push(...pairPolygons);
+      let x = NaN;
+      let y = NaN;
+      try {
+        const point = turfPointOnFeature({ type: "Feature", properties: {}, geometry: pairPolygons[0].geometry } as any);
+        [x, y] = point.geometry.coordinates as [number, number];
+      } catch {
+        [x, y] = pairPolygons[0].geometry.coordinates[0][0] as [number, number];
+      }
+      rows.push({
+        camada: args.layerName,
+        tipo: "sobreposicao",
+        feicao: a.feature,
+        parte: 0,
+        anel: 0,
+        x: Number(x),
+        y: Number(y),
+        detalhe: `Sobrepõe a feição ${b.feature} da mesma camada em ${(pairAreaM2 / 10000).toFixed(4)} ha (${pairAreaM2.toFixed(2)} m²).`,
+      });
+    }
+  }
+  return { rows, overlapPolygons, warnings };
+}
+
 /* ─────────────────────── análise por camada ─────────────────────── */
 
 export function analyzeLayerGeometry(args: {
@@ -388,6 +559,14 @@ const fixedLayerFields: DbfFieldDef[] = [
   { name: "camada", type: "C", length: 40, decimals: 0 },
   { name: "feicao", type: "N", length: 8, decimals: 0 },
   { name: "corrigido", type: "C", length: 1, decimals: 0 },
+];
+
+const overlapFields: DbfFieldDef[] = [
+  { name: "camada", type: "C", length: 40, decimals: 0 },
+  { name: "feicao_a", type: "N", length: 8, decimals: 0 },
+  { name: "feicao_b", type: "N", length: 8, decimals: 0 },
+  { name: "area_m2", type: "F", length: 18, decimals: 2 },
+  { name: "area_ha", type: "F", length: 18, decimals: 6 },
 ];
 
 function rowToPointRecord(row: GeometryErrorRow): PointShpRecord {
@@ -449,6 +628,10 @@ function buildReport(args: {
       lines.push(`- corrigido_${fix.layerName}.shp: ${fix.fixedFeatures} feicao(oes) corrigida(s). Atributo 'feicao' preserva o numero original para re-associar atributos no SIG.`);
     }
   }
+  if (args.rows.some((row) => row.tipo === "sobreposicao")) {
+    lines.push("");
+    lines.push("Sobreposicoes: os poligonos exatos estao em poligonos_sobreposicao.shp (sem correcao automatica; decida no SIG qual feicao recortar).");
+  }
   if (args.warnings.length) {
     lines.push("");
     lines.push("Avisos:");
@@ -461,6 +644,7 @@ function buildReport(args: {
 function buildResultZip(args: {
   rows: GeometryErrorRow[];
   fixes: LayerFixResult[];
+  overlapPolygons: OverlapPolygon[];
   prjText: string;
   filename: string;
   analyzedLayers: Array<{ name: string; featureCount: number; errors: number; crsLabel: string }>;
@@ -482,6 +666,25 @@ function buildResultZip(args: {
       name: "pontos_erros_geometria.dbf",
     });
     archive.append(Buffer.from(args.prjText, "utf8"), { name: "pontos_erros_geometria.prj" });
+
+    if (args.overlapPolygons.length > 0) {
+      const overlapRecords: ShpRecord[] = args.overlapPolygons.flatMap((overlap) =>
+        geojsonToShpRecords(overlap.geometry, {
+          camada: overlap.camada,
+          feicao_a: overlap.feicaoA,
+          feicao_b: overlap.feicaoB,
+          area_m2: overlap.areaM2,
+          area_ha: overlap.areaM2 / 10000,
+        }),
+      );
+      const built = buildShpAndShx(overlapRecords, 5);
+      archive.append(built.shp, { name: "poligonos_sobreposicao.shp" });
+      archive.append(built.shx, { name: "poligonos_sobreposicao.shx" });
+      archive.append(buildDbfBuffer(overlapRecords.map((item) => item.attributes), overlapFields), {
+        name: "poligonos_sobreposicao.dbf",
+      });
+      archive.append(Buffer.from(args.prjText, "utf8"), { name: "poligonos_sobreposicao.prj" });
+    }
 
     for (const fix of args.fixes) {
       const base = `corrigido_${safeSegment(fix.layerName) || "camada"}`;
@@ -569,6 +772,7 @@ async function runGeometryJob(args: {
     const allRows: GeometryErrorRow[] = [];
     const allWarnings: string[] = [];
     const fixes: LayerFixResult[] = [];
+    const allOverlaps: OverlapPolygon[] = [];
     const analyzedLayers: Array<{ name: string; featureCount: number; errors: number; crsLabel: string }> = [];
     let outputPrjText = "";
 
@@ -598,6 +802,17 @@ async function runGeometryJob(args: {
           outputPrjText = crs.prjText || (crs.label === "EPSG:4326" ? WGS84_PRJ : SIRGAS_2000_PRJ);
         }
         const rows = analyzeLayerGeometry({ layerName: group.name, records, checks });
+        if (checks.overlaps !== false) {
+          const overlapResult = detectOverlaps({
+            layerName: group.name,
+            records,
+            crs,
+            minOverlapM2: settings.minOverlapM2,
+          });
+          rows.push(...overlapResult.rows);
+          allOverlaps.push(...overlapResult.overlapPolygons);
+          allWarnings.push(...overlapResult.warnings);
+        }
         allRows.push(...rows);
         analyzedLayers.push({
           name: group.name,
@@ -605,7 +820,8 @@ async function runGeometryJob(args: {
           errors: rows.length,
           crsLabel: crs.label,
         });
-        if (settings.generateFixed !== false && rows.length > 0) {
+        // Sobreposição não tem correção automática; só gera camada corrigida p/ erros corrigíveis.
+        if (settings.generateFixed !== false && rows.some((row) => row.tipo !== "sobreposicao")) {
           const errorFeatureIds = new Set(rows.filter((row) => row.tipo === "borda_se_cruza").map((row) => row.feicao));
           const fix = fixLayerGeometry({
             layerName: group.name,
@@ -631,6 +847,7 @@ async function runGeometryJob(args: {
     const zip = await buildResultZip({
       rows: allRows,
       fixes,
+      overlapPolygons: allOverlaps,
       prjText: outputPrjText || SIRGAS_2000_PRJ,
       filename: String(upload.filename || "geometria.zip"),
       analyzedLayers,
@@ -750,7 +967,8 @@ export function registerGeometryErrorsRoutes(app: Express): void {
         return;
       }
       const checks = ((req.body as any)?.checks || {}) as GeometryChecks;
-      const hasAnyCheck = checks.selfIntersection !== false || checks.duplicateVertices !== false;
+      const hasAnyCheck =
+        checks.selfIntersection !== false || checks.duplicateVertices !== false || checks.overlaps !== false;
       if (!hasAnyCheck) {
         res.status(400).json({ error: "Selecione ao menos um tipo de erro para verificar." });
         return;

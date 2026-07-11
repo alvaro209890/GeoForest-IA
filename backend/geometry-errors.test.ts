@@ -4,10 +4,12 @@ import {
   analyzeLayerGeometry,
   cleanRecordRings,
   detectDuplicateVertices,
+  detectOverlaps,
   detectSelfIntersections,
   fixLayerGeometry,
   recordToGeoJSON,
 } from "./geometry-errors";
+import { detectCrs } from "./vertices-proximas";
 import type { ParsedPolygonRecord } from "./vertices-proximas";
 
 // Polígono "gravata borboleta": a borda se cruza em (1, 1).
@@ -179,6 +181,85 @@ describe("fixLayerGeometry with cleanDuplicates", () => {
     expect(fixed[0].attributes.feicao).toBe(3);
     // Depois da limpeza, a feição não tem mais vértices duplicados.
     expect(detectDuplicateVertices("APP", [{ feature: 3, rings: fixed[0].rings }])).toHaveLength(0);
+  });
+});
+
+// CRS projetado (UTM 21S SIRGAS) para as contas de área em metros.
+const projectedCrs = detectCrs(undefined, "EPSG:31981");
+
+const squareA: ParsedPolygonRecord = {
+  feature: 1,
+  rings: [
+    [
+      [0, 0],
+      [0, 10],
+      [10, 10],
+      [10, 0],
+      [0, 0],
+    ],
+  ],
+};
+
+// Sobrepõe squareA num quadrado de 2×2 m (4 m²).
+const squareB: ParsedPolygonRecord = {
+  feature: 2,
+  rings: [
+    [
+      [8, 8],
+      [8, 18],
+      [18, 18],
+      [18, 8],
+      [8, 8],
+    ],
+  ],
+};
+
+const squareFar: ParsedPolygonRecord = {
+  feature: 3,
+  rings: [
+    [
+      [100, 100],
+      [100, 110],
+      [110, 110],
+      [110, 100],
+      [100, 100],
+    ],
+  ],
+};
+
+describe("detectOverlaps", () => {
+  it("finds overlapping feature pairs with metric area", () => {
+    const result = detectOverlaps({
+      layerName: "AUAS",
+      records: [squareA, squareB, squareFar],
+      crs: projectedCrs,
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].tipo).toBe("sobreposicao");
+    expect(result.rows[0].feicao).toBe(1);
+    expect(result.rows[0].detalhe).toContain("feição 2");
+    expect(result.overlapPolygons).toHaveLength(1);
+    expect(result.overlapPolygons[0].areaM2).toBeCloseTo(4, 3);
+  });
+
+  it("ignores overlaps below the minimum area threshold", () => {
+    const result = detectOverlaps({
+      layerName: "AUAS",
+      records: [squareA, squareB],
+      crs: projectedCrs,
+      minOverlapM2: 10,
+    });
+    expect(result.rows).toHaveLength(0);
+    expect(result.overlapPolygons).toHaveLength(0);
+  });
+
+  it("reports nothing for disjoint features", () => {
+    const result = detectOverlaps({
+      layerName: "AUAS",
+      records: [squareA, squareFar],
+      crs: projectedCrs,
+    });
+    expect(result.rows).toHaveLength(0);
   });
 });
 

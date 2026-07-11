@@ -73,12 +73,19 @@ const CHECKS: CheckDef[] = [
     description:
       'Vértices consecutivos idênticos no mesmo anel e anéis colapsados com menos de 3 vértices distintos. A correção remove os repetidos e descarta anéis inválidos.',
   },
+  {
+    id: 'overlaps',
+    label: 'Sobreposição entre feições da mesma camada',
+    description:
+      'Feições de uma mesma camada que se sobrepõem. O ZIP inclui poligonos_sobreposicao.shp com a área exata de cada sobreposição (sem correção automática — decida no SIG qual feição recortar).',
+  },
 ];
 
 const TIPO_LABEL: Record<string, string> = {
   borda_se_cruza: 'Borda se cruza',
   vertice_duplicado: 'Vértice duplicado',
   anel_degenerado: 'Anel degenerado',
+  sobreposicao: 'Sobreposição',
 };
 
 type Props = {
@@ -122,6 +129,7 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch }) => {
   const [selectedLayerIds, setSelectedLayerIds] = useState<Set<string>>(new Set());
   const [enabledChecks, setEnabledChecks] = useState<Set<string>>(new Set(CHECKS.map((c) => c.id)));
   const [generateFixed, setGenerateFixed] = useState(true);
+  const [minOverlapM2, setMinOverlapM2] = useState<string>('1');
 
   const [processing, setProcessing] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -152,6 +160,7 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch }) => {
     setSelectedLayerIds(new Set());
     setEnabledChecks(new Set(CHECKS.map((c) => c.id)));
     setGenerateFixed(true);
+    setMinOverlapM2('1');
     setProcessing(false);
     setJobId(null);
     setProgress(null);
@@ -322,7 +331,7 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch }) => {
           uploadId,
           layerIds: [...selectedLayerIds],
           checks,
-          settings: { generateFixed },
+          settings: { generateFixed, minOverlapM2: Number(minOverlapM2) || 0 },
         }),
       });
       if (!response.ok) throw new Error(await readApiError(response));
@@ -334,7 +343,7 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch }) => {
       setProcessing(false);
       setError(err?.message || 'Falha ao iniciar análise.');
     }
-  }, [apiFetch, connectEvents, enabledChecks, generateFixed, selectedLayerIds, uploadId]);
+  }, [apiFetch, connectEvents, enabledChecks, generateFixed, minOverlapM2, selectedLayerIds, uploadId]);
 
   const downloadZip = useCallback(async () => {
     if (!downloadUrl) return;
@@ -577,6 +586,28 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch }) => {
                 );
               })}
             </div>
+
+            {/* Área mínima de sobreposição */}
+            {enabledChecks.has('overlaps') && (
+              <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="max-w-md">
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Sobreposição mínima (m²)</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                    Sobreposições menores que este valor são descartadas. Bordas quase coincidentes geram interseções de
+                    poucos cm² que não são erros reais — o padrão de <strong className="text-slate-300">1 m²</strong> filtra
+                    esse ruído. Use <strong className="text-slate-300">0</strong> para ver absolutamente tudo.
+                  </p>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={minOverlapM2}
+                  onChange={(e) => setMinOverlapM2(e.target.value)}
+                  className="w-28 shrink-0 rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm font-semibold text-slate-100 outline-none transition focus:border-amber-400/60 focus:bg-amber-500/10"
+                />
+              </div>
+            )}
 
             {/* Correção automática */}
             <button
