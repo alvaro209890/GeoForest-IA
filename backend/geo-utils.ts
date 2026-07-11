@@ -100,6 +100,47 @@ export function isLatLonBbox(bbox: [number, number, number, number]) {
     );
 }
 
+/* ─── Datum detection ────────────────────────────────────────── */
+
+export type PrjDatum = {
+    id: "sirgas2000" | "wgs84" | "sad69" | "corrego_alegre";
+    label: string;
+    /** Fragmento proj4 (elipsoide + towgs84 rumo ao WGS84 ≈ SIRGAS 2000). */
+    fragment: string;
+};
+
+// Parâmetros oficiais IBGE de transformação para SIRGAS 2000
+// (EPSG:15485 SAD69→SIRGAS 2000 e EPSG:15486 Córrego Alegre→SIRGAS 2000).
+const DATUM_SIRGAS: PrjDatum = {
+    id: "sirgas2000",
+    label: "SIRGAS 2000",
+    fragment: "+ellps=GRS80 +towgs84=0,0,0",
+};
+const DATUM_WGS84: PrjDatum = {
+    id: "wgs84",
+    label: "WGS 84",
+    fragment: "+datum=WGS84",
+};
+const DATUM_SAD69: PrjDatum = {
+    id: "sad69",
+    label: "SAD69",
+    fragment: "+ellps=aust_SA +towgs84=-67.35,3.88,-38.22",
+};
+const DATUM_CORREGO: PrjDatum = {
+    id: "corrego_alegre",
+    label: "Córrego Alegre",
+    fragment: "+ellps=intl +towgs84=-206.05,168.28,-3.82",
+};
+
+export function detectPrjDatum(prjText: string): PrjDatum | null {
+    const upper = prjText.toUpperCase();
+    if (upper.includes("SIRGAS") || upper.includes("4674")) return DATUM_SIRGAS;
+    if (upper.includes("CORREGO") || upper.includes("CÓRREGO")) return DATUM_CORREGO;
+    if (/SAD[\s_-]*(19)?69/.test(upper) || /SOUTH[\s_-]*AMERICAN/.test(upper)) return DATUM_SAD69;
+    if (upper.includes("WGS") && upper.includes("84")) return DATUM_WGS84;
+    return null;
+}
+
 export function detectUtmProj(prjText: string) {
     const upper = prjText.toUpperCase();
     const zoneMatch =
@@ -116,8 +157,53 @@ export function detectUtmProj(prjText: string) {
             ? "S"
             : "N");
     const south = hemisphere === "S";
-    const proj = `+proj=utm +zone=${zone} ${south ? "+south " : ""}+datum=WGS84 +units=m +no_defs`;
+    // Datum extraído do próprio .prj; assumir WGS84 para SAD69/Córrego Alegre
+    // deslocava o resultado em ~65 m / ~200 m. Fallback WGS84 só p/ datum
+    // desconhecido (usos aproximados: bbox de recibos, pré-visualizações).
+    const datum = detectPrjDatum(prjText) ?? DATUM_WGS84;
+    const proj = `+proj=utm +zone=${zone} ${south ? "+south " : ""}${datum.fragment} +units=m +no_defs`;
     return proj.trim();
+}
+
+/**
+ * Resolve o CRS de um .prj para o recorte SIMCAR (precisão obrigatória).
+ * Retorna `projDef` (origem → reprojetar p/ EPSG:4326≈4674) ou null quando o
+ * shapefile já está em graus SIRGAS 2000/WGS84. Lança erro para datum
+ * desconhecido ou projeção não-UTM.
+ */
+export function resolveShapefileCrs(prjText: string): { projDef: string | null; datum: PrjDatum } {
+    const datum = detectPrjDatum(prjText);
+    const utmDef = detectUtmProj(prjText);
+    if (utmDef) {
+        if (!datum) {
+            throw new Error(
+                "O datum do shapefile (UTM) não foi reconhecido no arquivo .prj. " +
+                    "Converta o arquivo para SIRGAS 2000 (EPSG:4674 ou " +
+                    "SIRGAS 2000 UTM zona 21S/22S) e tente novamente.",
+            );
+        }
+        return { projDef: utmDef, datum };
+    }
+    if (/PROJCS/i.test(prjText)) {
+        throw new Error(
+            "A projeção do shapefile não é suportada (use UTM ou coordenadas geográficas). " +
+                "Converta o arquivo para SIRGAS 2000 (EPSG:4674 ou " +
+                "SIRGAS 2000 UTM zona 21S/22S) e tente novamente.",
+        );
+    }
+    if (!datum) {
+        throw new Error(
+            "O sistema de coordenadas do shapefile não é SIRGAS 2000. " +
+                "Converta o arquivo para SIRGAS 2000 (EPSG:4674 ou " +
+                "SIRGAS 2000 UTM zona 21S/22S) e tente novamente.",
+        );
+    }
+    if (datum.id === "sad69" || datum.id === "corrego_alegre") {
+        // Geográfico em datum antigo: aplica a transformação de datum.
+        return { projDef: `+proj=longlat ${datum.fragment} +no_defs`, datum };
+    }
+    // SIRGAS 2000 / WGS84 geográfico: já compatível com EPSG:4674.
+    return { projDef: null, datum };
 }
 
 export function reprojectPolygon(polygon: Array<[number, number]>, projDef: string) {

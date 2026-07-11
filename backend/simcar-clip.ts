@@ -39,7 +39,7 @@ import type {
 import { fileURLToPath } from "url";
 
 // Internal modules
-import { extractZipEntries, detectUtmProj, reprojectBbox } from "./geo-utils";
+import { extractZipEntries, detectUtmProj, reprojectBbox, resolveShapefileCrs } from "./geo-utils";
 import {
     buildWfsUrl,
     fetchJsonWithTimeout,
@@ -1090,30 +1090,17 @@ export function parseUserShapefile(zipBuffer: Buffer): {
     const allPolygons = readFullShapefile(shpEntry.data);
     if (!allPolygons.length) throw new Error("Shapefile não contém polígonos válidos.");
 
-    // Detect CRS from .prj and reproject if needed
+    // Detect CRS from .prj and reproject if needed.
+    // resolveShapefileCrs valida datum + projeção: SAD69/Córrego Alegre são
+    // transformados com os parâmetros oficiais (antes eram tratados como
+    // WGS84, deslocando o recorte em ~65 m / ~200 m); datum desconhecido ou
+    // projeção não-UTM são rejeitados com erro claro.
     let needsReproject = false;
     let projDef: string | null = null;
     if (prjEntry) {
         const prjText = prjEntry.data.toString("utf8");
-        projDef = detectUtmProj(prjText);
-        if (projDef) {
-            needsReproject = true;
-        } else {
-            // Check if it's already SIRGAS 2000 / EPSG:4674 or WGS84
-            const upper = prjText.toUpperCase();
-            if (upper.includes("SIRGAS") || upper.includes("4674")) {
-                needsReproject = false;
-            } else if (upper.includes("WGS") && upper.includes("84")) {
-                // WGS84 ≈ EPSG:4674 for practical purposes
-                needsReproject = false;
-            } else {
-                throw new Error(
-                    "O sistema de coordenadas do shapefile não é SIRGAS 2000. " +
-                    "Converta o arquivo para SIRGAS 2000 (EPSG:4674 ou " +
-                    "SIRGAS 2000 UTM zona 22S/23S) e tente novamente."
-                );
-            }
-        }
+        projDef = resolveShapefileCrs(prjText).projDef;
+        needsReproject = projDef !== null;
     } else {
         // No .prj file — check if coordinates look like geographic (lat/lon)
         const hasLatLonExtent = allPolygons.some(polygon =>
