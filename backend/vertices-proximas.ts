@@ -192,12 +192,13 @@ export function getZipLayerGroups(zipBuffer: Buffer): Array<{
   key: string;
   shp?: ZipEntry;
   prj?: ZipEntry;
+  dbf?: ZipEntry;
 }> {
   const entries = extractZipEntries(zipBuffer).filter((entry) => !entry.name.endsWith("/"));
-  const groups = new Map<string, { id: string; name: string; key: string; shp?: ZipEntry; prj?: ZipEntry }>();
+  const groups = new Map<string, { id: string; name: string; key: string; shp?: ZipEntry; prj?: ZipEntry; dbf?: ZipEntry }>();
   for (const entry of entries) {
     const ext = path.extname(entry.name).toLowerCase();
-    if (![".shp", ".prj"].includes(ext)) continue;
+    if (![".shp", ".prj", ".dbf"].includes(ext)) continue;
     const key = basenameKey(entry.name);
     const current = groups.get(key) || {
       id: layerIdForPath(entry.name),
@@ -206,9 +207,10 @@ export function getZipLayerGroups(zipBuffer: Buffer): Array<{
     };
     if (ext === ".shp") current.shp = entry;
     if (ext === ".prj") current.prj = entry;
+    if (ext === ".dbf") current.dbf = entry;
     groups.set(key, current);
   }
-  return [...groups.values()];
+  return [...groups.values()].filter((group) => group.shp || group.prj);
 }
 
 function parseEpsgOverride(raw: string): CodedCrs | null {

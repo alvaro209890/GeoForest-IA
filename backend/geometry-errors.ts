@@ -76,6 +76,7 @@ import {
   writeDocBySegments,
 } from "./local-storage";
 import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
+import { checkSimcarConformity } from "./simcar-rules";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -85,7 +86,23 @@ export type GeometryChecks = {
   selfIntersection?: boolean;
   duplicateVertices?: boolean;
   overlaps?: boolean;
+  simcarConformity?: boolean;
 };
+
+/**
+ * Tipos de erro em nível de CAMADA (sem feição/coordenada específica).
+ * Ficam fora do shapefile de pontos, mas entram no CSV/relatório/tabela.
+ */
+export const LAYER_LEVEL_TIPOS = new Set([
+  "nomenclatura_desconhecida",
+  "crs_ausente",
+  "crs_nao_conforme",
+  "dimensao_nao_2d",
+  "primitiva_incorreta",
+  "atp_multipla",
+  "atributo_ausente",
+  "feicao_obrigatoria_ausente",
+]);
 
 export type GeometrySettings = {
   generateFixed?: boolean;
@@ -658,7 +675,9 @@ function buildResultZip(args: {
     archive.on("error", reject);
     archive.on("end", () => resolve(Buffer.concat(chunks)));
 
-    const pointRecords = args.rows.map(rowToPointRecord);
+    const pointRecords = args.rows
+      .filter((row) => !LAYER_LEVEL_TIPOS.has(row.tipo))
+      .map(rowToPointRecord);
     const points = buildPointShpAndShx(pointRecords, 1);
     archive.append(points.shp, { name: "pontos_erros_geometria.shp" });
     archive.append(points.shx, { name: "pontos_erros_geometria.shx" });
@@ -782,6 +801,26 @@ async function runGeometryJob(args: {
       percent: 5,
       message: "Iniciando análise de geometria.",
     });
+
+    // Conformidade SIMCAR é verificada no ZIP inteiro (todas as camadas),
+    // pois nomenclatura/CRS/feições obrigatórias são regras do projeto todo.
+    if (checks.simcarConformity !== false) {
+      try {
+        const conformityRows = checkSimcarConformity(
+          groups
+            .filter((group) => group.shp)
+            .map((group) => ({
+              name: group.name,
+              shp: group.shp!.data,
+              prjText: group.prj?.data.toString("utf8"),
+              dbf: group.dbf?.data,
+            })),
+        );
+        allRows.push(...conformityRows);
+      } catch (error: any) {
+        allWarnings.push(`Conformidade SIMCAR: ${error?.message || "falha na verificação"}`);
+      }
+    }
 
     for (let index = 0; index < selectedGroups.length; index += 1) {
       if (isCancelRequested(jobId)) throw new Error("cancel_requested");
@@ -968,7 +1007,10 @@ export function registerGeometryErrorsRoutes(app: Express): void {
       }
       const checks = ((req.body as any)?.checks || {}) as GeometryChecks;
       const hasAnyCheck =
-        checks.selfIntersection !== false || checks.duplicateVertices !== false || checks.overlaps !== false;
+        checks.selfIntersection !== false ||
+        checks.duplicateVertices !== false ||
+        checks.overlaps !== false ||
+        checks.simcarConformity !== false;
       if (!hasAnyCheck) {
         res.status(400).json({ error: "Selecione ao menos um tipo de erro para verificar." });
         return;

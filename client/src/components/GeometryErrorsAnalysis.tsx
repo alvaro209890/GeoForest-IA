@@ -79,6 +79,12 @@ const CHECKS: CheckDef[] = [
     description:
       'Feições de uma mesma camada que se sobrepõem. O ZIP inclui poligonos_sobreposicao.shp com a área exata de cada sobreposição (sem correção automática — decida no SIG qual feição recortar).',
   },
+  {
+    id: 'simcarConformity',
+    label: 'Conformidade SIMCAR (CRS, 2D, nomenclatura, atributos)',
+    description:
+      'Estrutura padrão do Importador GEO da SEMA-MT: SIRGAS 2000 geográfico, shapefile 2D, primitiva correta (rio = polígono), nomenclatura oficial (ATP, AIR, AVN, AUAS...), ATP única e atributos obrigatórios no .dbf. Verifica o ZIP inteiro, independentemente das camadas marcadas.',
+  },
 ];
 
 const TIPO_LABEL: Record<string, string> = {
@@ -86,6 +92,14 @@ const TIPO_LABEL: Record<string, string> = {
   vertice_duplicado: 'Vértice duplicado',
   anel_degenerado: 'Anel degenerado',
   sobreposicao: 'Sobreposição',
+  nomenclatura_desconhecida: 'Nomenclatura fora do padrão',
+  crs_ausente: 'CRS ausente',
+  crs_nao_conforme: 'CRS não conforme',
+  dimensao_nao_2d: 'Shapefile não é 2D',
+  primitiva_incorreta: 'Primitiva incorreta',
+  atp_multipla: 'ATP com várias feições',
+  atributo_ausente: 'Atributo obrigatório ausente',
+  feicao_obrigatoria_ausente: 'Feição obrigatória ausente',
 };
 
 type Props = {
