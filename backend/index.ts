@@ -46,6 +46,7 @@ import { registerLandsatRoutes } from "./landsat";
 import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-archive";
 import { registerVerticesRoutes } from "./vertices-proximas";
 import { registerContainmentRoutes } from "./containment-analysis";
+import { registerGeometryErrorsRoutes } from "./geometry-errors";
 import {
   JobCancelledError,
   finishJob,
@@ -524,6 +525,12 @@ async function startServer() {
       /^\/api\/containment\/jobs\/[^/]+\/events$/,
       /^\/api\/containment\/download\/[^/]+$/,
       /^\/api\/containment\/jobs\/[^/]+$/,
+      "/api/geometry-errors/upload",
+      "/api/geometry-errors/process",
+      /^\/api\/geometry-errors\/jobs\/[^/]+\/status$/,
+      /^\/api\/geometry-errors\/jobs\/[^/]+\/events$/,
+      /^\/api\/geometry-errors\/download\/[^/]+$/,
+      /^\/api\/geometry-errors\/jobs\/[^/]+$/,
       "/api/process/cancel",
       "/api/account/bootstrap",
       "/api/me",
@@ -666,6 +673,7 @@ async function startServer() {
   registerLandsatRoutes(app);
   registerVerticesRoutes(app);
   registerContainmentRoutes(app);
+  registerGeometryErrorsRoutes(app);
   registerCbersArchiveAdminRoutes(app);
 
   const MODEL_CATALOG = [

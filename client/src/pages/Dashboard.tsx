@@ -91,6 +91,7 @@ import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog';
 import ContainmentAnalysis, { type ContainmentRow, type ContainmentSummary } from '@/components/ContainmentAnalysis';
+import GeometryErrorsAnalysis from '@/components/GeometryErrorsAnalysis';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
 
@@ -1339,8 +1340,8 @@ export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeView, setActiveView] = useState<'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'features' | 'settings'>('simcar-clip');
-  // Sub-abas dentro de "Análise de Erros": vértices próximas x áreas não contidas (containment)
-  const [errorAnalysisTab, setErrorAnalysisTab] = useState<'vertices' | 'containment'>('vertices');
+  // Sub-abas dentro de "Análise de Erros": vértices próximas x áreas não contidas (containment) x erros de geometria
+  const [errorAnalysisTab, setErrorAnalysisTab] = useState<'vertices' | 'containment' | 'geometry'>('vertices');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -11491,7 +11492,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="max-w-6xl mx-auto space-y-5 sm:space-y-6">
               {/* ─── Sub-abas: Vértices Próximas × Áreas Não Contidas ─── */}
               <div className="relative p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm">
-                <div className="grid grid-cols-2 gap-1">
+                <div className="grid grid-cols-3 gap-1">
                   <button
                     type="button"
                     onClick={() => setErrorAnalysisTab('vertices')}
@@ -11516,10 +11517,24 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <ShieldAlert size={15} />
                     <span>Áreas Não Contidas</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setErrorAnalysisTab('geometry')}
+                    className={`relative z-10 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                      errorAnalysisTab === 'geometry'
+                        ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-lg shadow-amber-900/30'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+                    }`}
+                  >
+                    <AlertTriangle size={15} />
+                    <span>Erros de Geometria</span>
+                  </button>
                 </div>
               </div>
 
-              {errorAnalysisTab === 'containment' ? (
+              {errorAnalysisTab === 'geometry' ? (
+                <GeometryErrorsAnalysis apiFetch={apiFetch} />
+              ) : errorAnalysisTab === 'containment' ? (
                 <ContainmentAnalysis
                   apiFetch={apiFetch}
                   onJobSnapshot={(job) => {

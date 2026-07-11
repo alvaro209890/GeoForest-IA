@@ -35,6 +35,8 @@ const USER_DIRS = [
   "vertices/output",
   "containment/input",
   "containment/output",
+  "geometry-errors/input",
+  "geometry-errors/output",
   "cbers/output",
   "trash",
 ] as const;
@@ -278,6 +280,8 @@ export function saveUserBuffer(args: {
     | "vertices/output"
     | "containment/input"
     | "containment/output"
+    | "geometry-errors/input"
+    | "geometry-errors/output"
     | "auas/input"
     | "auas/output"
     | "auas/context"
