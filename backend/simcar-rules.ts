@@ -124,6 +124,34 @@ export function simcarLayerMeta(code: SimcarLayerCode): LayerMeta {
   return layerByExact.get(code)!;
 }
 
+/* ────────────── ANEXO 01 — regras de contenção ────────────── */
+
+/**
+ * Regras de contenção do Anexo 01 "Validações GEO": a feição `child`
+ * vetorizada fora da feição `parent` gera validação IMPEDITIVA no SIMCAR.
+ */
+export const SIMCAR_CONTAINMENT_RULES: Array<{ child: SimcarLayerCode; parent: SimcarLayerCode }> = [
+  { child: "AIR", parent: "ATP" },
+  { child: "AVN", parent: "AIR" },
+  { child: "AUAS", parent: "AIR" },
+  { child: "AREA_CONSOLIDADA", parent: "AIR" },
+  { child: "AREA_PANTANEIRA", parent: "AIR" },
+  { child: "VEREDA", parent: "AIR" },
+  { child: "VEREDA", parent: "AVN" },
+  { child: "MANGUEZAL", parent: "AIR" },
+  { child: "MANGUEZAL", parent: "AVN" },
+  { child: "RESTINGA", parent: "AIR" },
+  { child: "RESTINGA", parent: "AVN" },
+  { child: "ARL", parent: "AIR" },
+  { child: "ARL", parent: "AVN" },
+  { child: "AREA_UTILIDADE_PUBLICA", parent: "AIR" },
+  { child: "AREA_INTERESSE_SOCIAL", parent: "AIR" },
+  { child: "AREA_DECLIVIDADE", parent: "ATP" },
+  { child: "AREA_TOPO_MORRO", parent: "ATP" },
+  { child: "BORDA_CHAPADA", parent: "ATP" },
+  { child: "AREA_ALTITUDE_1800", parent: "ATP" },
+];
+
 /* ─────────────────────── conformidade ─────────────────────── */
 
 export type SimcarLayerInput = {

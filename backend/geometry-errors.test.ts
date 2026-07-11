@@ -6,6 +6,7 @@ import {
   detectDuplicateVertices,
   detectOverlaps,
   detectSelfIntersections,
+  detectSimcarContainment,
   fixLayerGeometry,
   recordToGeoJSON,
 } from "./geometry-errors";
@@ -258,6 +259,84 @@ describe("detectOverlaps", () => {
       layerName: "AUAS",
       records: [squareA, squareFar],
       crs: projectedCrs,
+    });
+    expect(result.rows).toHaveLength(0);
+  });
+});
+
+describe("detectSimcarContainment", () => {
+  const atp: ParsedPolygonRecord = {
+    feature: 1,
+    rings: [
+      [
+        [0, 0],
+        [0, 100],
+        [100, 100],
+        [100, 0],
+        [0, 0],
+      ],
+    ],
+  };
+  // AIR parcialmente fora da ATP: metade direita (100→150) sobra.
+  const airOutside: ParsedPolygonRecord = {
+    feature: 1,
+    rings: [
+      [
+        [50, 20],
+        [50, 40],
+        [150, 40],
+        [150, 20],
+        [50, 20],
+      ],
+    ],
+  };
+  const airInside: ParsedPolygonRecord = {
+    feature: 2,
+    rings: [
+      [
+        [10, 60],
+        [10, 80],
+        [40, 80],
+        [40, 60],
+        [10, 60],
+      ],
+    ],
+  };
+
+  it("reports the part of AIR outside ATP with metric area", () => {
+    const result = detectSimcarContainment({
+      layers: [
+        { name: "ATP", records: [atp], crs: projectedCrs },
+        { name: "AIR_MATRICULA_1", records: [airOutside, airInside], crs: projectedCrs },
+      ],
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].tipo).toBe("fora_do_continente");
+    expect(result.rows[0].feicao).toBe(1);
+    expect(result.rows[0].detalhe).toContain("AIR");
+    expect(result.rows[0].detalhe).toContain("ATP");
+    expect(result.violations).toHaveLength(1);
+    // Sobra: 50 m × 20 m = 1000 m²
+    expect(result.violations[0].areaM2).toBeCloseTo(1000, 1);
+    expect(result.violations[0].regra).toBe("contencao");
+  });
+
+  it("reports nothing when the child is fully contained", () => {
+    const result = detectSimcarContainment({
+      layers: [
+        { name: "ATP", records: [atp], crs: projectedCrs },
+        { name: "AIR", records: [airInside], crs: projectedCrs },
+      ],
+    });
+    expect(result.rows).toHaveLength(0);
+  });
+
+  it("skips rules whose layers are absent and ignores unknown layer names", () => {
+    const result = detectSimcarContainment({
+      layers: [
+        { name: "CAMADA_QUALQUER", records: [airOutside], crs: projectedCrs },
+        { name: "AVN", records: [airInside], crs: projectedCrs },
+      ],
     });
     expect(result.rows).toHaveLength(0);
   });

@@ -37,10 +37,12 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import proj4 from "proj4";
 import {
+  difference as turfDifference,
   featureCollection as turfFeatureCollection,
   intersect as turfIntersect,
   kinks as turfKinks,
   pointOnFeature as turfPointOnFeature,
+  union as turfUnion,
   unkinkPolygon as turfUnkink,
 } from "@turf/turf";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
@@ -76,7 +78,12 @@ import {
   writeDocBySegments,
 } from "./local-storage";
 import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
-import { checkSimcarConformity } from "./simcar-rules";
+import {
+  checkSimcarConformity,
+  recognizeSimcarLayer,
+  SIMCAR_CONTAINMENT_RULES,
+  type SimcarLayerCode,
+} from "./simcar-rules";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -87,6 +94,16 @@ export type GeometryChecks = {
   duplicateVertices?: boolean;
   overlaps?: boolean;
   simcarConformity?: boolean;
+  simcarContainment?: boolean;
+};
+
+export type RuleViolationPolygon = {
+  camadaA: string;
+  feicaoA: number;
+  camadaB: string;
+  regra: string;
+  areaM2: number;
+  geometry: Polygon;
 };
 
 /**
@@ -542,6 +559,148 @@ export function detectOverlaps(args: {
   return { rows, overlapPolygons, warnings };
 }
 
+/* ────────── check: regras de contenção do Anexo 01 (SIMCAR) ────────── */
+
+export type SimcarRuleLayer = {
+  name: string;
+  records: ParsedPolygonRecord[];
+  crs: CodedCrs;
+};
+
+type CodedFeature = {
+  layerName: string;
+  feature: number;
+  geometry: Polygon | MultiPolygon;
+  crs: CodedCrs;
+  metricProjDef: string;
+};
+
+function groupLayersByCode(layers: SimcarRuleLayer[]): Map<SimcarLayerCode, CodedFeature[]> {
+  const byCode = new Map<SimcarLayerCode, CodedFeature[]>();
+  for (const layer of layers) {
+    const code = recognizeSimcarLayer(layer.name);
+    if (!code || !layer.records.length) continue;
+    const metricProjDef = metricProjForCrs(layer.crs, layer.records);
+    const list = byCode.get(code) || [];
+    for (const record of layer.records) {
+      const geometry = recordToGeoJSON(record);
+      if (!geometry) continue;
+      list.push({ layerName: layer.name, feature: record.feature, geometry, crs: layer.crs, metricProjDef });
+    }
+    if (list.length) byCode.set(code, list);
+  }
+  return byCode;
+}
+
+/** União robusta; feições problemáticas são ignoradas (com aviso do chamador). */
+function unionFeatures(features: CodedFeature[]): Feature<Polygon | MultiPolygon> | null {
+  let acc: Feature<Polygon | MultiPolygon> | null = null;
+  for (const item of features) {
+    const feat: Feature<Polygon | MultiPolygon> = { type: "Feature", properties: {}, geometry: item.geometry };
+    if (!acc) {
+      acc = feat;
+      continue;
+    }
+    try {
+      const merged = turfUnion(turfFeatureCollection([acc, feat]) as any) as Feature<Polygon | MultiPolygon> | null;
+      if (merged?.geometry) acc = merged;
+    } catch {
+      // mantém acumulado parcial
+    }
+  }
+  return acc;
+}
+
+/**
+ * Aplica as regras de CONTENÇÃO do Anexo 01 "Validações GEO" do SIMCAR:
+ * para cada regra (ex.: AVN deve estar dentro da AIR), calcula
+ * child − união(parent) e reporta as sobras como validação impeditiva.
+ * As camadas são reconhecidas pela nomenclatura oficial.
+ */
+export function detectSimcarContainment(args: {
+  layers: SimcarRuleLayer[];
+  minAreaM2?: number;
+}): { rows: GeometryErrorRow[]; violations: RuleViolationPolygon[]; warnings: string[] } {
+  const rows: GeometryErrorRow[] = [];
+  const violations: RuleViolationPolygon[] = [];
+  const warnings: string[] = [];
+  const minArea = Number.isFinite(Number(args.minAreaM2)) ? Math.max(0, Number(args.minAreaM2)) : 1;
+
+  const byCode = groupLayersByCode(args.layers);
+  const unionCache = new Map<SimcarLayerCode, Feature<Polygon | MultiPolygon> | null>();
+
+  for (const rule of SIMCAR_CONTAINMENT_RULES) {
+    const children = byCode.get(rule.child);
+    const parents = byCode.get(rule.parent);
+    if (!children?.length || !parents?.length) continue;
+
+    if (!unionCache.has(rule.parent)) unionCache.set(rule.parent, unionFeatures(parents));
+    const parentUnion = unionCache.get(rule.parent);
+    if (!parentUnion) {
+      warnings.push(`Regras SIMCAR: não foi possível unir as feições de ${rule.parent}; regra ${rule.child} ⊂ ${rule.parent} não verificada.`);
+      continue;
+    }
+
+    for (const child of children) {
+      let diff: Feature<Polygon | MultiPolygon> | null = null;
+      try {
+        diff = turfDifference(
+          turfFeatureCollection([
+            { type: "Feature", properties: {}, geometry: child.geometry } as Feature<Polygon | MultiPolygon>,
+            parentUnion,
+          ]) as any,
+        ) as Feature<Polygon | MultiPolygon> | null;
+      } catch (error: any) {
+        warnings.push(
+          `Regras SIMCAR: falha ao comparar ${rule.child} feição ${child.feature} com ${rule.parent} (${error?.message || "geometria inválida"}); corrija a geometria antes.`,
+        );
+        continue;
+      }
+      if (!diff?.geometry) continue; // totalmente contida
+
+      const polygons = diff.geometry.type === "Polygon" ? [diff.geometry.coordinates] : diff.geometry.coordinates;
+      let totalAreaM2 = 0;
+      const featureViolations: RuleViolationPolygon[] = [];
+      for (const polygon of polygons) {
+        const areaM2 = polygonMetricAreaM2(polygon as number[][][], child.crs, child.metricProjDef);
+        if (areaM2 < minArea) continue;
+        totalAreaM2 += areaM2;
+        featureViolations.push({
+          camadaA: child.layerName,
+          feicaoA: child.feature,
+          camadaB: rule.parent,
+          regra: "contencao",
+          areaM2,
+          geometry: { type: "Polygon", coordinates: polygon as number[][][] },
+        });
+      }
+      if (!featureViolations.length) continue;
+      violations.push(...featureViolations);
+
+      let x = NaN;
+      let y = NaN;
+      try {
+        const point = turfPointOnFeature({ type: "Feature", properties: {}, geometry: featureViolations[0].geometry } as any);
+        [x, y] = point.geometry.coordinates as [number, number];
+      } catch {
+        [x, y] = featureViolations[0].geometry.coordinates[0][0] as [number, number];
+      }
+      rows.push({
+        camada: child.layerName,
+        tipo: "fora_do_continente",
+        feicao: child.feature,
+        parte: 0,
+        anel: 0,
+        x: Number(x),
+        y: Number(y),
+        detalhe: `${rule.child} vetorizada fora da ${rule.parent}: ${(totalAreaM2 / 10000).toFixed(4)} ha fora (validação IMPEDITIVA do Anexo 01 do SIMCAR).`,
+      });
+    }
+  }
+
+  return { rows, violations, warnings };
+}
+
 /* ─────────────────────── análise por camada ─────────────────────── */
 
 export function analyzeLayerGeometry(args: {
@@ -582,6 +741,15 @@ const overlapFields: DbfFieldDef[] = [
   { name: "camada", type: "C", length: 40, decimals: 0 },
   { name: "feicao_a", type: "N", length: 8, decimals: 0 },
   { name: "feicao_b", type: "N", length: 8, decimals: 0 },
+  { name: "area_m2", type: "F", length: 18, decimals: 2 },
+  { name: "area_ha", type: "F", length: 18, decimals: 6 },
+];
+
+const ruleViolationFields: DbfFieldDef[] = [
+  { name: "camada_a", type: "C", length: 40, decimals: 0 },
+  { name: "feicao_a", type: "N", length: 8, decimals: 0 },
+  { name: "camada_b", type: "C", length: 40, decimals: 0 },
+  { name: "regra", type: "C", length: 12, decimals: 0 },
   { name: "area_m2", type: "F", length: 18, decimals: 2 },
   { name: "area_ha", type: "F", length: 18, decimals: 6 },
 ];
@@ -649,6 +817,10 @@ function buildReport(args: {
     lines.push("");
     lines.push("Sobreposicoes: os poligonos exatos estao em poligonos_sobreposicao.shp (sem correcao automatica; decida no SIG qual feicao recortar).");
   }
+  if (args.rows.some((row) => row.tipo === "fora_do_continente")) {
+    lines.push("");
+    lines.push("Regras SIMCAR (Anexo 01): os poligonos das violacoes estao em poligonos_regras_simcar.shp.");
+  }
   if (args.warnings.length) {
     lines.push("");
     lines.push("Avisos:");
@@ -662,6 +834,7 @@ function buildResultZip(args: {
   rows: GeometryErrorRow[];
   fixes: LayerFixResult[];
   overlapPolygons: OverlapPolygon[];
+  ruleViolations: RuleViolationPolygon[];
   prjText: string;
   filename: string;
   analyzedLayers: Array<{ name: string; featureCount: number; errors: number; crsLabel: string }>;
@@ -703,6 +876,26 @@ function buildResultZip(args: {
         name: "poligonos_sobreposicao.dbf",
       });
       archive.append(Buffer.from(args.prjText, "utf8"), { name: "poligonos_sobreposicao.prj" });
+    }
+
+    if (args.ruleViolations.length > 0) {
+      const ruleRecords: ShpRecord[] = args.ruleViolations.flatMap((violation) =>
+        geojsonToShpRecords(violation.geometry, {
+          camada_a: violation.camadaA,
+          feicao_a: violation.feicaoA,
+          camada_b: violation.camadaB,
+          regra: violation.regra,
+          area_m2: violation.areaM2,
+          area_ha: violation.areaM2 / 10000,
+        }),
+      );
+      const built = buildShpAndShx(ruleRecords, 5);
+      archive.append(built.shp, { name: "poligonos_regras_simcar.shp" });
+      archive.append(built.shx, { name: "poligonos_regras_simcar.shx" });
+      archive.append(buildDbfBuffer(ruleRecords.map((item) => item.attributes), ruleViolationFields), {
+        name: "poligonos_regras_simcar.dbf",
+      });
+      archive.append(Buffer.from(args.prjText, "utf8"), { name: "poligonos_regras_simcar.prj" });
     }
 
     for (const fix of args.fixes) {
@@ -792,6 +985,7 @@ async function runGeometryJob(args: {
     const allWarnings: string[] = [];
     const fixes: LayerFixResult[] = [];
     const allOverlaps: OverlapPolygon[] = [];
+    const allRuleViolations: RuleViolationPolygon[] = [];
     const analyzedLayers: Array<{ name: string; featureCount: number; errors: number; crsLabel: string }> = [];
     let outputPrjText = "";
 
@@ -819,6 +1013,35 @@ async function runGeometryJob(args: {
         allRows.push(...conformityRows);
       } catch (error: any) {
         allWarnings.push(`Conformidade SIMCAR: ${error?.message || "falha na verificação"}`);
+      }
+    }
+
+    // Regras topológicas do Anexo 01 também usam o ZIP inteiro: os pares
+    // (ex.: AVN ⊂ AIR) independem de quais camadas foram marcadas.
+    if (checks.simcarContainment !== false) {
+      progress(uid, jobId, {
+        status: "processing",
+        stage: "simcar-rules",
+        percent: 8,
+        message: "Aplicando regras de contenção do Anexo 01 (SIMCAR).",
+      });
+      try {
+        const ruleLayers: SimcarRuleLayer[] = groups
+          .filter((group) => group.shp)
+          .map((group) => ({
+            name: group.name,
+            records: parsePolygonRecords(group.shp!.data),
+            crs: detectCrs(group.prj?.data.toString("utf8")),
+          }));
+        const containmentResult = detectSimcarContainment({
+          layers: ruleLayers,
+          minAreaM2: settings.minOverlapM2,
+        });
+        allRows.push(...containmentResult.rows);
+        allRuleViolations.push(...containmentResult.violations);
+        allWarnings.push(...containmentResult.warnings);
+      } catch (error: any) {
+        allWarnings.push(`Regras SIMCAR (contenção): ${error?.message || "falha na verificação"}`);
       }
     }
 
@@ -887,6 +1110,7 @@ async function runGeometryJob(args: {
       rows: allRows,
       fixes,
       overlapPolygons: allOverlaps,
+      ruleViolations: allRuleViolations,
       prjText: outputPrjText || SIRGAS_2000_PRJ,
       filename: String(upload.filename || "geometria.zip"),
       analyzedLayers,
@@ -1010,7 +1234,8 @@ export function registerGeometryErrorsRoutes(app: Express): void {
         checks.selfIntersection !== false ||
         checks.duplicateVertices !== false ||
         checks.overlaps !== false ||
-        checks.simcarConformity !== false;
+        checks.simcarConformity !== false ||
+        checks.simcarContainment !== false;
       if (!hasAnyCheck) {
         res.status(400).json({ error: "Selecione ao menos um tipo de erro para verificar." });
         return;

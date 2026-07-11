@@ -85,6 +85,12 @@ const CHECKS: CheckDef[] = [
     description:
       'Estrutura padrão do Importador GEO da SEMA-MT: SIRGAS 2000 geográfico, shapefile 2D, primitiva correta (rio = polígono), nomenclatura oficial (ATP, AIR, AVN, AUAS...), ATP única e atributos obrigatórios no .dbf. Verifica o ZIP inteiro, independentemente das camadas marcadas.',
   },
+  {
+    id: 'simcarContainment',
+    label: 'Contenção do Anexo 01 (AVN ⊂ AIR, AIR ⊂ ATP, ...)',
+    description:
+      'Regras de contenção impeditivas do Anexo 01 "Validações GEO" do SIMCAR, aplicadas automaticamente pela nomenclatura: AIR dentro da ATP; AVN/AUAS/ÁREA CONSOLIDADA/PANTANEIRA dentro da AIR; VEREDA/MANGUEZAL/RESTINGA/ARL dentro da AIR e da AVN; relevo dentro da ATP. Gera poligonos_regras_simcar.shp com as sobras. Verifica o ZIP inteiro.',
+  },
 ];
 
 const TIPO_LABEL: Record<string, string> = {
@@ -100,6 +106,7 @@ const TIPO_LABEL: Record<string, string> = {
   atp_multipla: 'ATP com várias feições',
   atributo_ausente: 'Atributo obrigatório ausente',
   feicao_obrigatoria_ausente: 'Feição obrigatória ausente',
+  fora_do_continente: 'Fora do continente (Anexo 01)',
 };
 
 type Props = {
