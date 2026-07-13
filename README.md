@@ -202,6 +202,32 @@ Sistema interno de cobrança:
 - Estorno automático em caso de erro
 - Histórico por sessão
 
+### `local-storage.ts` (Armazenamento)
+**⚠️ Não é Cloud Firestore real** — este projeto não tem seção `firestore` no
+`firebase.json`. Firebase aqui só cuida de Auth e Hosting. Todo dado de usuário (perfil,
+conversas, jobs de SIMCAR/vértices/containment/erros de geometria/CBERS/Landsat, recibos)
+é um arquivo JSON em disco, em `STORAGE_ROOT` (padrão
+`/media/server/HD Backup/Servidores_NAO_MEXA/Banco_de_dados/GeoForest`, HD de backup, não a
+SSD do servidor).
+
+- `writeDocBySegments`/`readDocBySegments`/`listCollectionBySegments` resolvem
+  `["users", uid, "colecao", "docId"]` para um caminho de arquivo. Módulos de job
+  (`simcar-clip.ts`, `geometry-errors.ts`, `vertices-proximas.ts`,
+  `containment-analysis.ts`...) chamam essas funções direto para salvar progresso/resultado.
+- O frontend usa `client/src/lib/localFirestore.ts` — um shim que **imita a API do SDK do
+  Firestore** (`collection()`, `doc()`, `getDoc()`, `setDoc()`, `query()`, `orderBy()`) mas
+  na real faz `fetch()` para `GET/PUT/DELETE /api/store/doc` e `GET /api/store/collection`
+  (`backend/index.ts`), que caem nas mesmas funções acima. `client/src/lib/firebase.ts`
+  exporta `db = {}` só por compatibilidade de assinatura — **não é usado para nada**.
+- **Pegadinha:** só é possível ler/escrever uma collection se o nome dela estiver na lista
+  `allowed` (duplicada em `resolveDocPathFromSegments` e
+  `resolveCollectionDirFromSegments`). Esquecer de adicionar uma collection nova nessa lista
+  gera `INVALID_DOC_PATH` sem aviso claro — foi exatamente o bug corrigido em
+  `docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md`.
+
+**Documentação completa (arquitetura, checklist para novas abas de análise, auth):**
+[`docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md`](docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md)
+
 ---
 
 ## Correções Recentes
@@ -240,6 +266,27 @@ Sistema interno de cobrança:
 **Documentação:** [`docs/SIMCAR_MULTIPOLYGON_AIR_ATP.md`](docs/SIMCAR_MULTIPOLYGON_AIR_ATP.md)
 
 **Arquivos:** `backend/shapefile-writer.ts`, `backend/simcar-clip.ts`, `backend/shapefile-writer.test.ts`
+
+---
+
+### v4 — `INVALID_DOC_PATH` no import de ZIP + histórico da aba Erros de Geometria (2026-07-13)
+**Problema:** upload de `.zip` na aba "Erros de Geometria" falhava na hora com
+`INVALID_DOC_PATH`. A collection `geometry_errors_jobs` nunca tinha sido adicionada à
+whitelist de collections permitidas no armazenamento local (`backend/local-storage.ts`) —
+diferente de `simcar_clips`, `vertices_jobs`, `containment_jobs` etc. Além disso, a aba não
+reportava o snapshot do job pro Dashboard, então as análises concluídas não apareciam no
+histórico como nas outras abas.
+
+**Correção:**
+- `"geometry_errors_jobs"` adicionada à whitelist em `backend/local-storage.ts`
+- `GeometryErrorsAnalysis.tsx` ganhou a prop `onJobSnapshot` (mesmo padrão de
+  `ContainmentAnalysis`)
+- `Dashboard.tsx` ganhou estado, mapeamento, espelhamento em `/api/store/doc` e item na
+  lista lateral de histórico para a aba de erros de geometria
+
+**Documentação:** [`docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md`](docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md) · [`docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md`](docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md) (arquitetura completa do armazenamento)
+
+**Arquivos:** `backend/local-storage.ts`, `client/src/components/GeometryErrorsAnalysis.tsx`, `client/src/pages/Dashboard.tsx`
 
 ---
 
@@ -611,6 +658,8 @@ Arquivo de referência: [`config/geoforest-backend.env.example`](config/geofores
 
 ## Documentação Adicional
 
+- [`docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md`](docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md) — **Leia primeiro se for mexer em qualquer dado de usuário/job:** como funciona o armazenamento local (JSON em disco, não é Firestore real), o shim `localFirestore.ts`, a whitelist de collections e o checklist para adicionar uma nova aba de análise
+- [`docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md`](docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md) — Fix `INVALID_DOC_PATH` no import de ZIP (Erros de Geometria) + paridade de histórico
 - [`docs/AREAS_NAO_CONTIDAS.md`](docs/AREAS_NAO_CONTIDAS.md) — Áreas não contidas (containment SIMCAR)
 - [`docs/CHANGELOG_2026-07-10_AREAS_NAO_CONTIDAS.md`](docs/CHANGELOG_2026-07-10_AREAS_NAO_CONTIDAS.md) — Áreas não contidas + auto-update sem Ctrl+F5
 - [`docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md`](docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md) — Recibos SIMCAR, cache Firebase e deploy de 2026-07-09

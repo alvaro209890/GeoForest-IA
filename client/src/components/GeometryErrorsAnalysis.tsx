@@ -48,7 +48,7 @@ type GeometryProgress = {
   message?: string;
 };
 
-type GeometrySummary = {
+export type GeometrySummary = {
   totalErrors?: number;
   featuresWithErrors?: number;
   analyzedLayers?: Array<{ name: string; featureCount: number; errors: number; crsLabel: string }>;
@@ -118,6 +118,7 @@ const TIPO_LABEL: Record<string, string> = {
 
 type Props = {
   apiFetch: ApiFetch;
+  onJobSnapshot?: (job: Record<string, unknown>) => void;
 };
 
 function fileToBase64(file: File): Promise<string> {
@@ -147,7 +148,7 @@ async function readApiError(response: Response): Promise<string> {
   }
 }
 
-const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch }) => {
+const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) => {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadId, setUploadId] = useState<string | null>(null);
@@ -282,7 +283,8 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch }) => {
     } else if (status === 'failed') {
       setError(job.error || job.message || 'Falha ao processar análise.');
     }
-  }, []);
+    onJobSnapshot?.(job);
+  }, [onJobSnapshot]);
 
   const connectEvents = useCallback(
     async (id: string) => {

@@ -91,7 +91,7 @@ import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog';
 import ContainmentAnalysis, { type ContainmentRow, type ContainmentSummary } from '@/components/ContainmentAnalysis';
-import GeometryErrorsAnalysis from '@/components/GeometryErrorsAnalysis';
+import GeometryErrorsAnalysis, { type GeometryErrorRow, type GeometrySummary } from '@/components/GeometryErrorsAnalysis';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
 
@@ -651,6 +651,22 @@ type ContainmentHistoryItem = {
   warnings?: string[];
   targetLayerName?: string;
   containerCount?: number;
+};
+
+type GeometryHistoryItem = {
+  id: string;
+  jobId: string;
+  filename: string;
+  timestamp: string;
+  status: 'processing' | 'completed' | 'failed' | 'cancelled' | 'uploaded' | 'deleted' | 'queued';
+  stage?: string;
+  percent: number;
+  message?: string;
+  error?: string;
+  downloadUrl?: string;
+  resultRows?: GeometryErrorRow[];
+  warnings?: string[];
+  summary?: GeometrySummary;
 };
 
 type ReceiptHistoryItem = {
@@ -1498,6 +1514,8 @@ export default function Dashboard() {
   const [verticesHistory, setVerticesHistory] = useState<VerticesHistoryItem[]>([]);
   const [containmentHistory, setContainmentHistory] = useState<ContainmentHistoryItem[]>([]);
   const [containmentJobId, setContainmentJobId] = useState<string | null>(null);
+  const [geometryHistory, setGeometryHistory] = useState<GeometryHistoryItem[]>([]);
+  const [geometryJobId, setGeometryJobId] = useState<string | null>(null);
   const [verticesIncludeOriginals, setVerticesIncludeOriginals] = useState(true);
   const [verticesIncludeReport, setVerticesIncludeReport] = useState(true);
   const [verticesIncludeCsv, setVerticesIncludeCsv] = useState(true);
@@ -1728,6 +1746,7 @@ export default function Dashboard() {
   const [simcarClipsRef, setSimcarClipsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [verticesJobsRef, setVerticesJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [containmentJobsRef, setContainmentJobsRef] = useState<ReturnType<typeof collection> | null>(null);
+  const [geometryJobsRef, setGeometryJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [receiptHistory, setReceiptHistory] = useState<ReceiptHistoryItem[]>([]);
   const [receiptsRef, setReceiptsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
@@ -2325,6 +2344,34 @@ export default function Dashboard() {
       warnings: Array.isArray(data?.warnings) ? data.warnings.map((item: any) => String(item)) : undefined,
       targetLayerName: data?.targetLayerName ? String(data.targetLayerName) : undefined,
       containerCount: Number.isFinite(Number(data?.containerCount)) ? Number(data.containerCount) : undefined,
+    };
+  }, []);
+
+  const mapGeometryDocToHistoryItem = useCallback((docId: string, data: any): GeometryHistoryItem => {
+    const rawStatus = String(data?.status || '').trim().toLowerCase();
+    const status: GeometryHistoryItem['status'] =
+      rawStatus === 'completed' || rawStatus === 'failed' || rawStatus === 'cancelled' || rawStatus === 'uploaded' || rawStatus === 'deleted'
+        ? rawStatus
+        : 'processing';
+    return {
+      id: String(data?.id || docId),
+      jobId: String(data?.jobId || docId),
+      filename: String(data?.filename || 'Erros de Geometria'),
+      timestamp: toIsoDateFromUnknown(data?.completedAt || data?.updatedAt || data?.createdAt || data?.timestamp),
+      status,
+      stage: data?.stage ? String(data.stage) : undefined,
+      percent: Math.max(0, Math.min(100, Math.round(Number(data?.percent || (status === 'completed' ? 100 : 0))))),
+      message: data?.message ? String(data.message) : undefined,
+      error: data?.error ? String(data.error) : undefined,
+      downloadUrl: data?.downloadUrl ? resolveBackendUrl(String(data.downloadUrl)) : undefined,
+      resultRows: Array.isArray(data?.resultRows) ? data.resultRows as GeometryErrorRow[] : undefined,
+      warnings: Array.isArray(data?.warnings) ? data.warnings.map((item: any) => String(item)) : undefined,
+      summary: status === 'completed' ? {
+        totalErrors: Number(data?.totalErrors || 0),
+        featuresWithErrors: Number(data?.featuresWithErrors || 0),
+        analyzedLayers: Array.isArray(data?.analyzedLayers) ? data.analyzedLayers : [],
+        fixedLayers: Array.isArray(data?.fixedLayers) ? data.fixedLayers : [],
+      } : undefined,
     };
   }, []);
 
@@ -4023,12 +4070,15 @@ export default function Dashboard() {
           setSimcarClipsRef(null);
           setVerticesJobsRef(null);
           setContainmentJobsRef(null);
+          setGeometryJobsRef(null);
           setReceiptsRef(null);
           setCbersHistory([]);
           setLandsatHistory([]);
           setVerticesHistory([]);
           setContainmentHistory([]);
           setContainmentJobId(null);
+          setGeometryHistory([]);
+          setGeometryJobId(null);
           setReceiptHistory([]);
           setCbersJobId(null);
           setCbersProcessing(false);
@@ -4056,6 +4106,8 @@ export default function Dashboard() {
         setVerticesJobsRef(verticesRef);
         const containmentRef = collection(db, 'users', currentUser.uid, 'containment_jobs');
         setContainmentJobsRef(containmentRef);
+        const geometryRef = collection(db, 'users', currentUser.uid, 'geometry_errors_jobs');
+        setGeometryJobsRef(geometryRef);
         const receiptsColRef = collection(db, 'users', currentUser.uid, 'receipts');
         setReceiptsRef(receiptsColRef);
         const cbersRef = collection(db, 'users', currentUser.uid, 'cbers_wpm_jobs');
@@ -4240,6 +4292,25 @@ export default function Dashboard() {
           }
         } catch (error) {
           console.warn('Falha ao carregar histórico de containment salvo:', error);
+        }
+
+        try {
+          const geometrySnap = await getDocs(query(geometryRef, orderBy('updatedAtMs', 'desc')));
+          const geometryEntries: GeometryHistoryItem[] = [];
+          geometrySnap.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            const item = mapGeometryDocToHistoryItem(docSnap.id, data);
+            if (item.status !== 'uploaded' && item.status !== 'deleted') geometryEntries.push(item);
+          });
+          setGeometryHistory(geometryEntries);
+          const runningGeometry = geometryEntries.find((entry) => entry.status === 'processing');
+          if (runningGeometry) {
+            setActiveView('vertices-proximas');
+            setErrorAnalysisTab('geometry');
+            setGeometryJobId(runningGeometry.jobId);
+          }
+        } catch (error) {
+          console.warn('Falha ao carregar histórico de erros de geometria salvo:', error);
         }
 
         try {
@@ -8010,6 +8081,70 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <p className="text-[10px] text-slate-600 mt-1">Use a aba para fazer upload</p>
                 </div>
               )
+            ) : errorAnalysisTab === 'geometry' ? (
+              geometryHistory.length > 0 ? (
+                geometryHistory.map((entry) => (
+                  <div
+                    key={entry.jobId}
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${geometryJobId === entry.jobId ? 'bg-amber-500/10 border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.06)]' : 'bg-[#100d18]/70 hover:bg-[#171322] hover:border-amber-500/20'}`}
+                    onClick={() => {
+                      setGeometryJobId(entry.jobId);
+                      setErrorAnalysisTab('geometry');
+                    }}
+                  >
+                    <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${geometryJobId === entry.jobId ? 'bg-gradient-to-br from-amber-500 to-emerald-500 text-white shadow-md shadow-amber-900/40' : 'bg-white/5 text-slate-400 group-hover:text-amber-300 group-hover:bg-amber-500/10'}`}>
+                      <AlertTriangle size={18} />
+                    </div>
+                    <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                      <p className={`text-sm truncate font-medium ${geometryJobId === entry.jobId ? 'text-amber-100' : 'text-slate-200 group-hover:text-amber-100'}`}>{entry.filename}</p>
+                      <div className="flex items-center gap-2 mt-1 opacity-80">
+                        <span className="text-[10px] uppercase tracking-wider font-semibold text-amber-300">
+                          {entry.percent}%
+                        </span>
+                        <span
+                          className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
+                            ? 'text-amber-300'
+                            : entry.status === 'completed'
+                              ? 'text-emerald-300'
+                              : entry.status === 'cancelled'
+                                ? 'text-orange-300'
+                                : 'text-red-300'
+                            }`}
+                        >
+                          {entry.status === 'processing'
+                            ? 'Processando'
+                            : entry.status === 'completed'
+                              ? 'Concluído'
+                              : entry.status === 'cancelled'
+                                ? 'Cancelado'
+                                : 'Falhou'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-0.5 truncate">
+                        {entry.summary?.totalErrors ?? (entry.resultRows?.length || 0)} erros • {entry.summary?.analyzedLayers?.length ?? '?'} camadas
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (geometryJobsRef) void deleteDoc(doc(geometryJobsRef, entry.jobId)).catch(() => {});
+                        setGeometryHistory((prev) => prev.filter((item) => item.jobId !== entry.jobId));
+                        if (geometryJobId === entry.jobId) setGeometryJobId(null);
+                      }}
+                      className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                      title="Excluir análise"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <AlertTriangle size={32} className="text-slate-600 mb-3" />
+                  <p className="text-sm text-slate-400">Nenhuma análise de erros de geometria</p>
+                  <p className="text-[10px] text-slate-600 mt-1">Use a aba para fazer upload</p>
+                </div>
+              )
             ) : (
             verticesHistory.length > 0 ? (
               verticesHistory.map((entry) => (
@@ -11533,7 +11668,32 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </div>
 
               {errorAnalysisTab === 'geometry' ? (
-                <GeometryErrorsAnalysis apiFetch={apiFetch} />
+                <GeometryErrorsAnalysis
+                  apiFetch={apiFetch}
+                  onJobSnapshot={(job) => {
+                    const item = mapGeometryDocToHistoryItem(String(job?.jobId || job?.id || ''), job);
+                    setGeometryHistory((prev) => {
+                      const idx = prev.findIndex((e) => e.jobId === item.jobId);
+                      if (idx >= 0) {
+                        const copy = [...prev];
+                        copy[idx] = item;
+                        return copy;
+                      }
+                      return [item, ...prev];
+                    });
+                    if (item.status !== 'processing' && item.status !== 'queued') {
+                      setGeometryJobId(null);
+                    } else {
+                      setGeometryJobId(item.jobId);
+                    }
+                    if (geometryJobsRef) {
+                      void setDoc(doc(geometryJobsRef, item.jobId), {
+                        ...job,
+                        updatedAtMs: Date.now(),
+                      }, { merge: true }).catch(() => {});
+                    }
+                  }}
+                />
               ) : errorAnalysisTab === 'containment' ? (
                 <ContainmentAnalysis
                   apiFetch={apiFetch}
