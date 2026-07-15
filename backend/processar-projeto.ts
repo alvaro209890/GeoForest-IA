@@ -83,6 +83,32 @@ export type ImportPhaseResult = {
   warnings: string[];
 };
 
+/** Camada pronta para gravação em shapefile (processado / conferência). */
+export type ProcessedLayerOut = {
+  name: string;
+  records: ShpRecord[];
+  fixedFeatures: number;
+  featureCount: number;
+};
+
+/** Cópia dos arquivos originais do ZIP de entrada (arquivo enviado). */
+export type OriginalLayerOut = {
+  name: string;
+  shp: Buffer;
+  dbf?: Buffer;
+  prjText: string;
+};
+
+export type QuadroAreaRow = {
+  camada: string;
+  codigo: string;
+  feicoes: number;
+  erros: number;
+  corrigidas: number;
+  area_m2: number;
+  area_ha: number;
+};
+
 export type ProcessPhaseResult = {
   rows: GeometryErrorRow[];
   warnings: string[];
@@ -92,9 +118,29 @@ export type ProcessPhaseResult = {
   gapPolygons: GapPolygon[];
   ruleViolations: RuleViolationPolygon[];
   fixes: LayerFixResult[];
+  /** Sempre preenchido: camadas limpas (unkink + vértices) = base do arquivo processado. */
+  processedLayers: ProcessedLayerOut[];
+  /** Camadas originais do ZIP (arquivo enviado). */
+  originalLayers: OriginalLayerOut[];
+  quadroAreas: QuadroAreaRow[];
   prjText: string;
   relatorioTexto: string;
 };
+
+/** Área planar aproximada (m² se CRS métrico; senão unidade do CRS). */
+function ringsAreaAbs(rings: number[][][]): number {
+  let total = 0;
+  for (let r = 0; r < rings.length; r += 1) {
+    const ring = rings[r];
+    let a = 0;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      a += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+    }
+    const abs = Math.abs(a / 2);
+    total += r === 0 ? abs : -abs;
+  }
+  return Math.max(0, total);
+}
 
 function groupsFromZip(zipBuffer: Buffer) {
   return getZipLayerGroups(zipBuffer);
@@ -196,6 +242,9 @@ export function runProcessPhase(
   const allGaps: GapPolygon[] = [];
   const allRuleViolations: RuleViolationPolygon[] = [];
   const analyzedLayers: Array<{ name: string; featureCount: number; errors: number; crsLabel: string }> = [];
+  const processedLayers: ProcessedLayerOut[] = [];
+  const originalLayers: OriginalLayerOut[] = [];
+  const quadroAreas: QuadroAreaRow[] = [];
   let outputPrjText = "";
   const minArea = Number.isFinite(Number(settings.minOverlapM2)) ? Math.max(0, Number(settings.minOverlapM2)) : 1;
 
@@ -290,20 +339,46 @@ export function runProcessPhase(
         crsLabel: crs.label,
       });
 
-      const nonFixable = new Set(["sobreposicao", "vazio"]);
-      if (settings.generateFixed !== false && rows.some((row) => !nonFixable.has(row.tipo))) {
-        const errorFeatureIds = new Set(
-          rows.filter((row) => row.tipo === "borda_se_cruza").map((row) => row.feicao),
-        );
-        const fix = fixLayerGeometry({
-          layerName: group.name,
-          records,
-          errorFeatureIds,
-          cleanDuplicates: true,
-        });
-        fixes.push(fix);
-        allWarnings.push(...fix.warnings);
+      // Sempre gera camada processada (arquivo processado SIMCAR-like),
+      // mesmo sem erros: limpa vértices e unkink de auto-interseções.
+      const errorFeatureIds = new Set(
+        rows.filter((row) => row.tipo === "borda_se_cruza").map((row) => row.feicao),
+      );
+      const fix = fixLayerGeometry({
+        layerName: group.name,
+        records,
+        errorFeatureIds,
+        cleanDuplicates: true,
+      });
+      fixes.push(fix);
+      allWarnings.push(...fix.warnings);
+      processedLayers.push({
+        name: group.name,
+        records: fix.records,
+        fixedFeatures: fix.fixedFeatures,
+        featureCount: fix.records.length,
+      });
+
+      originalLayers.push({
+        name: group.name,
+        shp: group.shp!.data,
+        dbf: group.dbf?.data,
+        prjText: crs.prjText || outputPrjText || SIRGAS_2000_PRJ,
+      });
+
+      let layerArea = 0;
+      for (const rec of fix.records) {
+        layerArea += ringsAreaAbs(rec.rings || []);
       }
+      quadroAreas.push({
+        camada: group.name,
+        codigo: recognizeSimcarLayer(group.name) || "",
+        feicoes: records.length,
+        erros: rows.length,
+        corrigidas: fix.fixedFeatures,
+        area_m2: layerArea,
+        area_ha: layerArea / 10000,
+      });
     } catch (error: any) {
       allWarnings.push(`${group.name}: ${error?.message || "erro ao processar camada"}`);
       analyzedLayers.push({ name: group.name, featureCount: 0, errors: 0, crsLabel: "erro" });
@@ -321,6 +396,7 @@ export function runProcessPhase(
   }
   lines.push("");
   lines.push(`Total de inconsistencias: ${allRows.length}`);
+  lines.push(`Camadas no arquivo processado: ${processedLayers.length}`);
   lines.push("");
   if (!allRows.length) {
     lines.push("Processamento realizado com sucesso, nenhum erro encontrado.");
@@ -332,17 +408,21 @@ export function runProcessPhase(
       );
     }
   }
+  lines.push("");
+  lines.push("Artefatos gerados (estilo SIMCAR):");
+  lines.push("- arquivo_enviado/ e arquivo_enviado.zip — shapefiles originais do ZIP");
+  lines.push("- arquivo_processado/ e arquivo_processado.zip — projeto limpo (vertices + unkink)");
+  lines.push("- arquivo_conferencia/ e arquivo_conferencia.zip — camadas com area_m2/area_ha");
+  lines.push("- erros/ e erros_processamento.zip — pontos e poligonos de inconsistencias");
+  lines.push("- quadro_areas.csv — resumo de areas por camada");
   if (allRows.some((r) => r.tipo === "sobreposicao")) {
-    lines.push("");
-    lines.push("Sobreposicoes: poligonos_sobreposicao.shp");
+    lines.push("- erros/poligonos_sobreposicao.shp");
   }
   if (allRows.some((r) => r.tipo === "vazio")) {
-    lines.push("");
-    lines.push("Vazios/gaps: poligonos_vazios.shp");
+    lines.push("- erros/poligonos_vazios.shp");
   }
   if (allRows.some((r) => r.tipo === "fora_do_continente" || r.tipo === "sobreposicao_proibida")) {
-    lines.push("");
-    lines.push("Anexo 01: poligonos_regras_simcar.shp");
+    lines.push("- erros/poligonos_regras_simcar.shp");
   }
   if (allRows.some((r) => r.tipo === "air_atp_area")) {
     lines.push("");
@@ -366,6 +446,9 @@ export function runProcessPhase(
     gapPolygons: allGaps,
     ruleViolations: allRuleViolations,
     fixes,
+    processedLayers,
+    originalLayers,
+    quadroAreas,
     prjText: outputPrjText || SIRGAS_2000_PRJ,
     relatorioTexto: lines.join("\n"),
   };
@@ -414,6 +497,20 @@ const fixedLayerFields: DbfFieldDef[] = [
   { name: "corrigido", type: "C", length: 1, decimals: 0 },
 ];
 
+const processadoFields: DbfFieldDef[] = [
+  { name: "camada", type: "C", length: 40, decimals: 0 },
+  { name: "feicao", type: "N", length: 8, decimals: 0 },
+  { name: "corrigido", type: "C", length: 1, decimals: 0 },
+];
+
+const conferenciaFields: DbfFieldDef[] = [
+  { name: "camada", type: "C", length: 40, decimals: 0 },
+  { name: "feicao", type: "N", length: 8, decimals: 0 },
+  { name: "corrigido", type: "C", length: 1, decimals: 0 },
+  { name: "area_m2", type: "F", length: 18, decimals: 2 },
+  { name: "area_ha", type: "F", length: 18, decimals: 6 },
+];
+
 function safeSegment(input: string): string {
   return String(input || "")
     .trim()
@@ -433,11 +530,240 @@ function buildCsv(rows: GeometryErrorRow[]): Buffer {
   return Buffer.from([headers.join(";"), ...lines].join("\n"), "utf8");
 }
 
-export function buildProcessarProjetoZip(args: {
+function buildQuadroCsv(rows: QuadroAreaRow[]): Buffer {
+  const headers = ["camada", "codigo", "feicoes", "erros", "corrigidas", "area_m2", "area_ha"];
+  const lines = rows.map((row) =>
+    headers.map((h) => csvEscape((row as any)[h])).join(";"),
+  );
+  return Buffer.from([headers.join(";"), ...lines].join("\n"), "utf8");
+}
+
+function appendPointSet(
+  archive: { append: (data: Buffer, opts: { name: string }) => void },
+  folder: string,
+  baseName: string,
+  records: PointShpRecord[],
+  fields: DbfFieldDef[],
+  prj: string,
+): void {
+  const base = folder ? `${folder}/${baseName}` : baseName;
+  const points = buildPointShpAndShx(records, 1);
+  archive.append(points.shp, { name: `${base}.shp` });
+  archive.append(points.shx, { name: `${base}.shx` });
+  archive.append(buildDbfBuffer(records.map((p) => p.attributes), fields), { name: `${base}.dbf` });
+  archive.append(Buffer.from(prj, "utf8"), { name: `${base}.prj` });
+}
+
+/** Monta um ZIP interno (ex.: arquivo_processado.zip) a partir de entradas buffer. */
+function buildNestedZip(files: Array<{ name: string; data: Buffer }>): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const archive = archiver("zip", { zlib: { level: 6 } });
+    const chunks: Buffer[] = [];
+    archive.on("data", (c: Buffer) => chunks.push(c));
+    archive.on("error", reject);
+    archive.on("end", () => resolve(Buffer.concat(chunks)));
+    for (const f of files) archive.append(f.data, { name: f.name });
+    archive.finalize().catch(reject);
+  });
+}
+
+function layerShpFiles(
+  name: string,
+  records: ShpRecord[],
+  fields: DbfFieldDef[],
+  prj: string,
+): Array<{ name: string; data: Buffer }> {
+  const safe = safeSegment(name) || "camada";
+  const built = buildShpAndShx(records, 5);
+  return [
+    { name: `${safe}.shp`, data: built.shp },
+    { name: `${safe}.shx`, data: built.shx },
+    { name: `${safe}.dbf`, data: buildDbfBuffer(records.map((r) => r.attributes), fields) },
+    { name: `${safe}.prj`, data: Buffer.from(prj, "utf8") },
+  ];
+}
+
+/**
+ * ZIP completo no espírito SIMCAR:
+ * - arquivo_enviado (+ .zip)
+ * - arquivo_processado (+ .zip)
+ * - arquivo_conferencia (+ .zip)
+ * - erros / erros_processamento.zip
+ * - relatórios e quadro de áreas
+ */
+export async function buildProcessarProjetoZip(args: {
   importRelatorio: string;
   process: ProcessPhaseResult;
   importRows?: GeometryErrorRow[];
 }): Promise<Buffer> {
+  const allRows = [...(args.importRows || []), ...args.process.rows];
+  const prj = args.process.prjText || SIRGAS_2000_PRJ;
+  const proc = args.process;
+
+  const pointRecords: PointShpRecord[] = proc.rows
+    .filter((row) => !LAYER_LEVEL_TIPOS.has(row.tipo))
+    .map((row) => ({
+      coordinates: [row.x, row.y] as [number, number],
+      attributes: {
+        camada: row.camada,
+        tipo: row.tipo,
+        feicao: row.feicao,
+        parte: row.parte,
+        anel: row.anel,
+        x: row.x,
+        y: row.y,
+        detalhe: row.detalhe,
+      },
+    }));
+
+  // Nested: arquivo_processado.zip
+  const processadoFiles: Array<{ name: string; data: Buffer }> = [];
+  for (const layer of proc.processedLayers) {
+    processadoFiles.push(...layerShpFiles(layer.name, layer.records, processadoFields, prj));
+  }
+  const processadoZip = await buildNestedZip(processadoFiles);
+
+  // Nested: arquivo_conferencia.zip (mesmas geometrias + áreas)
+  const conferenciaFiles: Array<{ name: string; data: Buffer }> = [];
+  for (const layer of proc.processedLayers) {
+    const withArea: ShpRecord[] = layer.records.map((rec) => {
+      const areaM2 = ringsAreaAbs(rec.rings || []);
+      return {
+        ...rec,
+        attributes: {
+          ...rec.attributes,
+          area_m2: Number(areaM2.toFixed(2)),
+          area_ha: Number((areaM2 / 10000).toFixed(6)),
+        },
+      };
+    });
+    conferenciaFiles.push(...layerShpFiles(layer.name, withArea, conferenciaFields, prj));
+  }
+  const conferenciaZip = await buildNestedZip(conferenciaFiles);
+
+  // Nested: arquivo_enviado.zip (originais)
+  const enviadoFiles: Array<{ name: string; data: Buffer }> = [];
+  for (const layer of proc.originalLayers) {
+    const safe = safeSegment(layer.name) || "camada";
+    // Reconstrói shx a partir do shp parseado
+    const records = parsePolygonRecords(layer.shp);
+    const shpRecords: ShpRecord[] = records.map((r) => ({
+      type: "polygon" as const,
+      rings: r.rings,
+      attributes: { feicao: r.feature },
+    }));
+    if (shpRecords.length) {
+      const built = buildShpAndShx(shpRecords, 5);
+      enviadoFiles.push({ name: `${safe}.shp`, data: layer.shp });
+      enviadoFiles.push({ name: `${safe}.shx`, data: built.shx });
+    } else {
+      enviadoFiles.push({ name: `${safe}.shp`, data: layer.shp });
+    }
+    if (layer.dbf) enviadoFiles.push({ name: `${safe}.dbf`, data: layer.dbf });
+    else {
+      enviadoFiles.push({
+        name: `${safe}.dbf`,
+        data: buildDbfBuffer(
+          records.map((r) => ({ feicao: r.feature })),
+          [{ name: "feicao", type: "N", length: 8, decimals: 0 }],
+        ),
+      });
+    }
+    enviadoFiles.push({ name: `${safe}.prj`, data: Buffer.from(layer.prjText || prj, "utf8") });
+  }
+  const enviadoZip = await buildNestedZip(enviadoFiles);
+
+  // Nested: erros_processamento.zip
+  const errosFiles: Array<{ name: string; data: Buffer }> = [];
+  {
+    const points = buildPointShpAndShx(pointRecords, 1);
+    errosFiles.push({ name: "pontos_erros.shp", data: points.shp });
+    errosFiles.push({ name: "pontos_erros.shx", data: points.shx });
+    errosFiles.push({
+      name: "pontos_erros.dbf",
+      data: buildDbfBuffer(pointRecords.map((p) => p.attributes), errorPointFields),
+    });
+    errosFiles.push({ name: "pontos_erros.prj", data: Buffer.from(prj, "utf8") });
+  }
+  if (proc.overlapPolygons.length) {
+    const records: ShpRecord[] = proc.overlapPolygons.flatMap((o) =>
+      geojsonToShpRecords(o.geometry, {
+        camada: o.camada,
+        feicao_a: o.feicaoA,
+        feicao_b: o.feicaoB,
+        area_m2: o.areaM2,
+        area_ha: o.areaM2 / 10000,
+      }),
+    );
+    const built = buildShpAndShx(records, 5);
+    errosFiles.push({ name: "poligonos_sobreposicao.shp", data: built.shp });
+    errosFiles.push({ name: "poligonos_sobreposicao.shx", data: built.shx });
+    errosFiles.push({
+      name: "poligonos_sobreposicao.dbf",
+      data: buildDbfBuffer(records.map((r) => r.attributes), overlapFields),
+    });
+    errosFiles.push({ name: "poligonos_sobreposicao.prj", data: Buffer.from(prj, "utf8") });
+  }
+  if (proc.gapPolygons.length) {
+    const records: ShpRecord[] = proc.gapPolygons.flatMap((g) =>
+      geojsonToShpRecords(g.geometry, {
+        camada: g.camada,
+        feicoes: g.feicoes.join(",").slice(0, 40),
+        area_m2: g.areaM2,
+        area_ha: g.areaM2 / 10000,
+      }),
+    );
+    const built = buildShpAndShx(records, 5);
+    errosFiles.push({ name: "poligonos_vazios.shp", data: built.shp });
+    errosFiles.push({ name: "poligonos_vazios.shx", data: built.shx });
+    errosFiles.push({
+      name: "poligonos_vazios.dbf",
+      data: buildDbfBuffer(records.map((r) => r.attributes), gapFields),
+    });
+    errosFiles.push({ name: "poligonos_vazios.prj", data: Buffer.from(prj, "utf8") });
+  }
+  if (proc.ruleViolations.length) {
+    const records: ShpRecord[] = proc.ruleViolations.flatMap((v) =>
+      geojsonToShpRecords(v.geometry, {
+        camada_a: v.camadaA,
+        feicao_a: v.feicaoA,
+        camada_b: v.camadaB,
+        regra: v.regra,
+        area_m2: v.areaM2,
+        area_ha: v.areaM2 / 10000,
+      }),
+    );
+    const built = buildShpAndShx(records, 5);
+    errosFiles.push({ name: "poligonos_regras_simcar.shp", data: built.shp });
+    errosFiles.push({ name: "poligonos_regras_simcar.shx", data: built.shx });
+    errosFiles.push({
+      name: "poligonos_regras_simcar.dbf",
+      data: buildDbfBuffer(records.map((r) => r.attributes), ruleViolationFields),
+    });
+    errosFiles.push({ name: "poligonos_regras_simcar.prj", data: Buffer.from(prj, "utf8") });
+  }
+  const errosZip = await buildNestedZip(errosFiles);
+
+  const inventario = [
+    "Inventario de saidas — Processar projeto (estilo SIMCAR)",
+    "",
+    "arquivo_enviado.zip          — shapefiles originais enviados",
+    "arquivo_processado.zip       — projeto processado (geometria limpa)",
+    "arquivo_conferencia.zip      — camadas processadas com area_m2/area_ha",
+    "erros_processamento.zip      — pontos e poligonos de inconsistencias",
+    "relatorio_importacao.txt     — fase Importar",
+    "relatorio_processamento.txt  — fase Processar",
+    "resumo_erros.csv             — tabela unificada de erros",
+    "quadro_areas.csv             — areas por camada",
+    "",
+    "Pastas espelhadas (mesmos arquivos, para abrir direto no SIG):",
+    "  arquivo_enviado/",
+    "  arquivo_processado/",
+    "  arquivo_conferencia/",
+    "  erros/",
+    "",
+  ].join("\n");
+
   return new Promise((resolve, reject) => {
     const archive = archiver("zip", { zlib: { level: 6 } });
     const chunks: Buffer[] = [];
@@ -445,103 +771,25 @@ export function buildProcessarProjetoZip(args: {
     archive.on("error", reject);
     archive.on("end", () => resolve(Buffer.concat(chunks)));
 
-    const allRows = [...(args.importRows || []), ...args.process.rows];
-    const prj = args.process.prjText || SIRGAS_2000_PRJ;
-
     archive.append(Buffer.from(args.importRelatorio, "utf8"), { name: "relatorio_importacao.txt" });
-    archive.append(Buffer.from(args.process.relatorioTexto, "utf8"), { name: "relatorio_processamento.txt" });
+    archive.append(Buffer.from(proc.relatorioTexto, "utf8"), { name: "relatorio_processamento.txt" });
     archive.append(buildCsv(allRows), { name: "resumo_erros.csv" });
+    archive.append(buildQuadroCsv(proc.quadroAreas), { name: "quadro_areas.csv" });
+    archive.append(Buffer.from(inventario, "utf8"), { name: "inventario_saidas.txt" });
 
-    const pointRecords: PointShpRecord[] = args.process.rows
-      .filter((row) => !LAYER_LEVEL_TIPOS.has(row.tipo))
-      .map((row) => ({
-        coordinates: [row.x, row.y],
-        attributes: {
-          camada: row.camada,
-          tipo: row.tipo,
-          feicao: row.feicao,
-          parte: row.parte,
-          anel: row.anel,
-          x: row.x,
-          y: row.y,
-          detalhe: row.detalhe,
-        },
-      }));
-    const points = buildPointShpAndShx(pointRecords, 1);
-    archive.append(points.shp, { name: "pontos_erros.shp" });
-    archive.append(points.shx, { name: "pontos_erros.shx" });
-    archive.append(buildDbfBuffer(pointRecords.map((p) => p.attributes), errorPointFields), {
-      name: "pontos_erros.dbf",
-    });
-    archive.append(Buffer.from(prj, "utf8"), { name: "pontos_erros.prj" });
+    archive.append(enviadoZip, { name: "arquivo_enviado.zip" });
+    archive.append(processadoZip, { name: "arquivo_processado.zip" });
+    archive.append(conferenciaZip, { name: "arquivo_conferencia.zip" });
+    archive.append(errosZip, { name: "erros_processamento.zip" });
 
-    if (args.process.overlapPolygons.length) {
-      const records: ShpRecord[] = args.process.overlapPolygons.flatMap((o) =>
-        geojsonToShpRecords(o.geometry, {
-          camada: o.camada,
-          feicao_a: o.feicaoA,
-          feicao_b: o.feicaoB,
-          area_m2: o.areaM2,
-          area_ha: o.areaM2 / 10000,
-        }),
-      );
-      const built = buildShpAndShx(records, 5);
-      archive.append(built.shp, { name: "poligonos_sobreposicao.shp" });
-      archive.append(built.shx, { name: "poligonos_sobreposicao.shx" });
-      archive.append(buildDbfBuffer(records.map((r) => r.attributes), overlapFields), {
-        name: "poligonos_sobreposicao.dbf",
-      });
-      archive.append(Buffer.from(prj, "utf8"), { name: "poligonos_sobreposicao.prj" });
-    }
+    // Pastas planas (mesmos conteúdos)
+    for (const f of enviadoFiles) archive.append(f.data, { name: `arquivo_enviado/${f.name}` });
+    for (const f of processadoFiles) archive.append(f.data, { name: `arquivo_processado/${f.name}` });
+    for (const f of conferenciaFiles) archive.append(f.data, { name: `arquivo_conferencia/${f.name}` });
+    for (const f of errosFiles) archive.append(f.data, { name: `erros/${f.name}` });
 
-    if (args.process.gapPolygons.length) {
-      const records: ShpRecord[] = args.process.gapPolygons.flatMap((g) =>
-        geojsonToShpRecords(g.geometry, {
-          camada: g.camada,
-          feicoes: g.feicoes.join(",").slice(0, 40),
-          area_m2: g.areaM2,
-          area_ha: g.areaM2 / 10000,
-        }),
-      );
-      const built = buildShpAndShx(records, 5);
-      archive.append(built.shp, { name: "poligonos_vazios.shp" });
-      archive.append(built.shx, { name: "poligonos_vazios.shx" });
-      archive.append(buildDbfBuffer(records.map((r) => r.attributes), gapFields), {
-        name: "poligonos_vazios.dbf",
-      });
-      archive.append(Buffer.from(prj, "utf8"), { name: "poligonos_vazios.prj" });
-    }
-
-    if (args.process.ruleViolations.length) {
-      const records: ShpRecord[] = args.process.ruleViolations.flatMap((v) =>
-        geojsonToShpRecords(v.geometry, {
-          camada_a: v.camadaA,
-          feicao_a: v.feicaoA,
-          camada_b: v.camadaB,
-          regra: v.regra,
-          area_m2: v.areaM2,
-          area_ha: v.areaM2 / 10000,
-        }),
-      );
-      const built = buildShpAndShx(records, 5);
-      archive.append(built.shp, { name: "poligonos_regras_simcar.shp" });
-      archive.append(built.shx, { name: "poligonos_regras_simcar.shx" });
-      archive.append(buildDbfBuffer(records.map((r) => r.attributes), ruleViolationFields), {
-        name: "poligonos_regras_simcar.dbf",
-      });
-      archive.append(Buffer.from(prj, "utf8"), { name: "poligonos_regras_simcar.prj" });
-    }
-
-    for (const fix of args.process.fixes) {
-      const base = `corrigido_${safeSegment(fix.layerName) || "camada"}`;
-      const built = buildShpAndShx(fix.records, 5);
-      archive.append(built.shp, { name: `${base}.shp` });
-      archive.append(built.shx, { name: `${base}.shx` });
-      archive.append(buildDbfBuffer(fix.records.map((r) => r.attributes), fixedLayerFields), {
-        name: `${base}.dbf`,
-      });
-      archive.append(Buffer.from(prj, "utf8"), { name: `${base}.prj` });
-    }
+    // Também na raiz para quem espera só pontos_erros.shp
+    appendPointSet(archive, "", "pontos_erros", pointRecords, errorPointFields, prj);
 
     archive.finalize().catch(reject);
   });

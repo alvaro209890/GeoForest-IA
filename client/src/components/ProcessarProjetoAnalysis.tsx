@@ -403,9 +403,10 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
             <p className="max-w-3xl text-sm text-slate-400">
               Pré-validação local em <strong className="text-cyan-200">dois passos</strong>, como no Importador GEO da
               SEMA: <strong className="text-slate-200">Importar</strong> (estrutura: CRS, 2D, nomenclatura, atributos) e{' '}
-              <strong className="text-slate-200">Processar</strong> (topologia, Anexo 01, soma AIR×ATP). Gera relatórios
-              e shapefiles de erro. <strong className="text-amber-200">Não substitui</strong> o validador oficial da
-              SEMA.
+              <strong className="text-slate-200">Processar</strong> (topologia, Anexo 01, soma AIR×ATP). O ZIP de saída
+              inclui <strong className="text-emerald-200">arquivo processado</strong>, arquivo enviado, conferência,
+              erros e quadro de áreas (estilo SIMCAR).{' '}
+              <strong className="text-amber-200">Não substitui</strong> o validador oficial da SEMA.
             </p>
           </div>
           <div className="grid grid-cols-3 gap-2 text-center">
@@ -676,10 +677,34 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
                 className="inline-flex items-center gap-2 rounded-xl border border-cyan-400/30 bg-cyan-500/15 px-4 py-2.5 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/25"
               >
                 <Download size={16} />
-                Baixar ZIP
+                Baixar ZIP completo
               </button>
             )}
           </div>
+
+          {downloadUrl && (
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-100/90 space-y-1">
+              <p className="font-semibold text-emerald-100">Conteúdo do ZIP (estilo SIMCAR)</p>
+              <ul className="list-disc pl-4 space-y-0.5 text-slate-300">
+                <li>
+                  <code className="text-emerald-200">arquivo_processado.zip</code> — projeto limpo (vértices +
+                  unkink)
+                </li>
+                <li>
+                  <code className="text-emerald-200">arquivo_enviado.zip</code> — shapefiles originais
+                </li>
+                <li>
+                  <code className="text-emerald-200">arquivo_conferencia.zip</code> — camadas com area_m2 / area_ha
+                </li>
+                <li>
+                  <code className="text-emerald-200">erros_processamento.zip</code> — pontos e polígonos de erro
+                </li>
+                <li>
+                  <code className="text-slate-200">quadro_areas.csv</code>, relatórios e pastas espelhadas no SIG
+                </li>
+              </ul>
+            </div>
+          )}
 
           {warnings.length > 0 && (
             <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-100/90 space-y-1 max-h-32 overflow-y-auto">

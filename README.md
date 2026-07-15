@@ -387,7 +387,7 @@ Pré-validação local do **Projeto Geográfico** em dois passos, no espírito d
 
 **Onde:** aba **Análise de Erros** → sub-aba **Processar projeto**.
 
-**Saídas:** `relatorio_importacao.txt`, `relatorio_processamento.txt`, `resumo_erros.csv`, shapefiles de pontos/polígonos de erro.
+**Saídas (estilo SIMCAR):** `arquivo_processado.zip`, `arquivo_enviado.zip`, `arquivo_conferencia.zip`, `erros_processamento.zip`, relatórios, `quadro_areas.csv` e pastas espelhadas para o SIG.
 
 **Documentação:** [`docs/PROCESSAR_PROJETO_SIMCAR.md`](docs/PROCESSAR_PROJETO_SIMCAR.md)
 

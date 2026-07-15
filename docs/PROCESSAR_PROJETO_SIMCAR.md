@@ -58,16 +58,22 @@ GET    /api/processar-projeto/download/:id
 DELETE /api/processar-projeto/jobs/:id
 ```
 
-## ZIP de resultado
+## ZIP de resultado (estilo SIMCAR)
 
-- `relatorio_importacao.txt`
-- `relatorio_processamento.txt`
-- `resumo_erros.csv`
-- `pontos_erros.shp` (+ .shx/.dbf/.prj)
-- `poligonos_sobreposicao.shp` (se houver)
-- `poligonos_vazios.shp` (se houver)
-- `poligonos_regras_simcar.shp` (se houver)
-- `corrigido_<camada>.shp` (opcional)
+| Artefato | Equivalente SIMCAR | Conteúdo |
+|----------|--------------------|----------|
+| `arquivo_processado.zip` + pasta `arquivo_processado/` | `[ARQUIVO_PROCESSADO]` | Todas as camadas com geometria limpa (vértices duplicados removidos, auto-interseção unkink) |
+| `arquivo_enviado.zip` + pasta `arquivo_enviado/` | `[ARQUIVO_ENVIADO]` | Cópia dos shapefiles originais do ZIP |
+| `arquivo_conferencia.zip` + pasta `arquivo_conferencia/` | `[ARQUIVO_CONFERENCIA]` | Camadas processadas com `area_m2` / `area_ha` |
+| `erros_processamento.zip` + pasta `erros/` | `[ARQUIVO_ERROS_PROCESSAMENTO]` | `pontos_erros`, sobreposições, vazios, regras Anexo 01 |
+| `relatorio_importacao.txt` | PDF importação | Fase Importar (texto) |
+| `relatorio_processamento.txt` | PDF processamento | Fase Processar (texto) |
+| `resumo_erros.csv` | — | Tabela unificada de erros |
+| `quadro_areas.csv` | quadro de áreas | Área / feições / erros por camada |
+| `inventario_saidas.txt` | — | Índice do que veio no ZIP |
+| `pontos_erros.shp` (raiz) | pontos de erro | Atalho na raiz do ZIP |
+
+O **arquivo processado é sempre gerado**, mesmo quando não há erros (geometria apenas sanitizada).
 
 ## Backend / deploy
 

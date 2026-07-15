@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
 
-import { runImportPhase, runProcessPhase } from "./processar-projeto";
+import { buildProcessarProjetoZip, runImportPhase, runProcessPhase } from "./processar-projeto";
 import { SIRGAS_2000_PRJ } from "./vertices-proximas";
 import { buildDbfBuffer, buildShpAndShx, type ShpRecord } from "./shapefile-writer";
 import { detectCrs } from "./vertices-proximas";
@@ -219,5 +219,43 @@ describe("runProcessPhase", () => {
     const result = runProcessPhase(zip, { minOverlapM2: 1, generateFixed: false });
     expect(result.rows.some((r) => r.tipo === "sobreposicao_proibida")).toBe(true);
     expect(result.ruleViolations.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("always builds arquivo processado layers and nested ZIPs", async () => {
+    const zip = await zipFromLayers([
+      {
+        name: "ATP",
+        records: [polyRecord(1, [square(0, 0, 100)])],
+      },
+      {
+        name: "AIR",
+        records: [polyRecord(1, [square(0, 0, 50)])],
+        dbfAttrs: [{ TIPO: "M", IDENTIFIC: "1" }],
+        dbfFields: [
+          { name: "TIPO", type: "C", length: 1, decimals: 0 },
+          { name: "IDENTIFIC", type: "C", length: 40, decimals: 0 },
+        ],
+      },
+    ]);
+    const process = runProcessPhase(zip, { minOverlapM2: 1 });
+    expect(process.processedLayers.length).toBeGreaterThanOrEqual(2);
+    expect(process.originalLayers.length).toBeGreaterThanOrEqual(2);
+    expect(process.quadroAreas.length).toBeGreaterThanOrEqual(2);
+
+    const importPhase = runImportPhase(zip);
+    const outZip = await buildProcessarProjetoZip({
+      importRelatorio: importPhase.relatorioTexto,
+      process,
+      importRows: importPhase.rows,
+    });
+    const jszip = await JSZip.loadAsync(outZip);
+    const names = Object.keys(jszip.files);
+    expect(names).toContain("arquivo_processado.zip");
+    expect(names).toContain("arquivo_enviado.zip");
+    expect(names).toContain("arquivo_conferencia.zip");
+    expect(names).toContain("erros_processamento.zip");
+    expect(names).toContain("quadro_areas.csv");
+    expect(names).toContain("inventario_saidas.txt");
+    expect(names.some((n) => n.startsWith("arquivo_processado/") && n.endsWith(".shp"))).toBe(true);
   });
 });
