@@ -59,6 +59,7 @@ const TIPO_LABEL: Record<string, string> = {
   sobreposicao: 'Sobreposição',
   vazio: 'Vazio/gap',
   air_atp_area: 'Soma AIR ≠ ATP',
+  erro_calculo_app: 'Erro de cálculo de APP',
   nomenclatura_desconhecida: 'Nomenclatura fora do padrão',
   crs_ausente: 'CRS ausente',
   crs_nao_conforme: 'CRS não conforme',
@@ -401,12 +402,11 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
               Projeto Geográfico (estilo SIMCAR)
             </h2>
             <p className="max-w-3xl text-sm text-slate-400">
-              Pré-validação local em <strong className="text-cyan-200">dois passos</strong>, como no Importador GEO da
-              SEMA: <strong className="text-slate-200">Importar</strong> (estrutura: CRS, 2D, nomenclatura, atributos) e{' '}
-              <strong className="text-slate-200">Processar</strong> (topologia, Anexo 01, soma AIR×ATP). O ZIP de saída
-              inclui <strong className="text-emerald-200">arquivo processado</strong>, arquivo enviado, conferência,
-              erros e quadro de áreas (estilo SIMCAR).{' '}
-              <strong className="text-amber-200">Não substitui</strong> o validador oficial da SEMA.
+              Fluxo completo no espírito do SIMCAR: <strong className="text-slate-200">Importar</strong> e{' '}
+              <strong className="text-slate-200">Processar</strong> (ProcessarGeo). O processamento gera{' '}
+              <strong className="text-emerald-200">APP, APPP, APPD, APPRL, AURD, ARLDR</strong> por buffers oficiais
+              do Código Florestal + topologia/Anexo 01, e empacota arquivo processado, enviado, conferência e erros
+              de APP.
             </p>
           </div>
           <div className="grid grid-cols-3 gap-2 text-center">
@@ -687,8 +687,8 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
               <p className="font-semibold text-emerald-100">Conteúdo do ZIP (estilo SIMCAR)</p>
               <ul className="list-disc pl-4 space-y-0.5 text-slate-300">
                 <li>
-                  <code className="text-emerald-200">arquivo_processado.zip</code> — projeto limpo (vértices +
-                  unkink)
+                  <code className="text-emerald-200">arquivo_processado.zip</code> — limpos +{' '}
+                  <strong>APP / APPP / APPD / APPRL / AURD / ARLDR</strong>
                 </li>
                 <li>
                   <code className="text-emerald-200">arquivo_enviado.zip</code> — shapefiles originais
@@ -697,10 +697,13 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
                   <code className="text-emerald-200">arquivo_conferencia.zip</code> — camadas com area_m2 / area_ha
                 </li>
                 <li>
-                  <code className="text-emerald-200">erros_processamento.zip</code> — pontos e polígonos de erro
+                  <code className="text-emerald-200">erros_processamento.zip</code> — topologia / Anexo 01
                 </li>
                 <li>
-                  <code className="text-slate-200">quadro_areas.csv</code>, relatórios e pastas espelhadas no SIG
+                  <code className="text-emerald-200">erros_processamento_app.zip</code> — erros de cálculo de APP
+                </li>
+                <li>
+                  <code className="text-slate-200">quadro_areas.csv</code> (inclui APP*) + relatórios
                 </li>
               </ul>
             </div>

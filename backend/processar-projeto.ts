@@ -52,6 +52,11 @@ import {
   recognizeSimcarLayer,
 } from "./simcar-rules";
 import {
+  generateSimcarDerivedLayers,
+  parsePointRecords,
+  type ProcessarGeoInputLayer,
+} from "./simcar-processar-geo";
+import {
   buildDbfBuffer,
   buildPointShpAndShx,
   buildShpAndShx,
@@ -224,8 +229,9 @@ export function runImportPhase(zipBuffer: Buffer, filename = "projeto.zip"): Imp
 }
 
 /**
- * Fase Processar: topologia + Anexo 01 + AIR×ATP em todas as camadas poligonais do ZIP.
- * Corresponde conceitualmente a [CAR_PROCESSAR_GEOMETRIAS] do SIMCAR.
+ * Fase Processar — espelha [CAR_PROCESSAR_GEOMETRIAS] / ProcessarGeo:
+ * topologia + Anexo 01 + AIR×ATP + geração de APP/APPD/APPP/APPRL/AURD/ARLDR
+ * e empacotamento do arquivo processado completo.
  */
 export function runProcessPhase(
   zipBuffer: Buffer,
@@ -284,6 +290,44 @@ export function runProcessPhase(
     allWarnings.push(...airAtpResult.warnings);
   } catch (error: any) {
     allWarnings.push(`Soma AIR vs ATP: ${error?.message || "falha"}`);
+  }
+
+  // ─── ProcessarGeo: deriva APP, APPD, APPP, APPRL, AURD, ARLDR ───
+  onProgress?.({ percent: 12, message: "Calculando APP / APPD / APPP / APPRL (ProcessarGeo).", stage: "app" });
+  let derivedLayers: ReturnType<typeof generateSimcarDerivedLayers>["derived"] = [];
+  try {
+    const geoInputs: ProcessarGeoInputLayer[] = groups.map((group) => {
+      const crs = detectCrs(group.prj?.data.toString("utf8"));
+      const records = parsePolygonRecords(group.shp!.data);
+      const points =
+        records.length === 0 ? parsePointRecords(group.shp!.data) : undefined;
+      return { name: group.name, records, crs, points };
+    });
+    // Also attach points for NASCENTE even if polygon parse found something wrong
+    for (const input of geoInputs) {
+      const code = recognizeSimcarLayer(input.name);
+      if (code === "NASCENTE" && !input.points?.length) {
+        const group = groups.find((g) => g.name === input.name);
+        if (group?.shp) input.points = parsePointRecords(group.shp.data);
+      }
+    }
+    const derivedResult = generateSimcarDerivedLayers(geoInputs);
+    derivedLayers = derivedResult.derived;
+    allRows.push(...derivedResult.errorRows);
+    allWarnings.push(...derivedResult.warnings);
+    for (const q of derivedResult.quadroApp) {
+      quadroAreas.push({
+        camada: q.feicao,
+        codigo: q.feicao,
+        feicoes: 1,
+        erros: 0,
+        corrigidas: 0,
+        area_m2: q.area_m2,
+        area_ha: q.area_ha,
+      });
+    }
+  } catch (error: any) {
+    allWarnings.push(`ProcessarGeo (APP): ${error?.message || "falha no cálculo de APP"}`);
   }
 
   const checks = {
@@ -385,18 +429,36 @@ export function runProcessPhase(
     }
   }
 
+  // Inclui camadas derivadas (APP, APPD…) no arquivo processado
+  for (const d of derivedLayers) {
+    processedLayers.push({
+      name: d.name,
+      records: d.records,
+      fixedFeatures: 0,
+      featureCount: d.featureCount,
+    });
+    analyzedLayers.push({
+      name: d.name,
+      featureCount: d.featureCount,
+      errors: 0,
+      crsLabel: "derivada (ProcessarGeo)",
+    });
+  }
+
   const lines: string[] = [];
-  lines.push("Relatorio de processamento — Processar projeto (GeoForest / estilo SIMCAR)");
+  lines.push("Relatorio de processamento — Processar projeto (GeoForest / ProcessarGeo local)");
   lines.push(`Arquivo: ${filename}`);
   lines.push(`Gerado em: ${new Date().toISOString()}`);
   lines.push("");
-  lines.push("Camadas analisadas:");
+  lines.push("Camadas analisadas / geradas:");
   for (const layer of analyzedLayers) {
     lines.push(`- ${layer.name}: feicoes=${layer.featureCount}; erros=${layer.errors}; CRS=${layer.crsLabel}`);
   }
   lines.push("");
   lines.push(`Total de inconsistencias: ${allRows.length}`);
   lines.push(`Camadas no arquivo processado: ${processedLayers.length}`);
+  const derivedNames = derivedLayers.map((d) => d.code).join(", ") || "(nenhuma — falta hidrografia)";
+  lines.push(`Camadas derivadas ProcessarGeo: ${derivedNames}`);
   lines.push("");
   if (!allRows.length) {
     lines.push("Processamento realizado com sucesso, nenhum erro encontrado.");
@@ -409,21 +471,13 @@ export function runProcessPhase(
     }
   }
   lines.push("");
-  lines.push("Artefatos gerados (estilo SIMCAR):");
-  lines.push("- arquivo_enviado/ e arquivo_enviado.zip — shapefiles originais do ZIP");
-  lines.push("- arquivo_processado/ e arquivo_processado.zip — projeto limpo (vertices + unkink)");
-  lines.push("- arquivo_conferencia/ e arquivo_conferencia.zip — camadas com area_m2/area_ha");
-  lines.push("- erros/ e erros_processamento.zip — pontos e poligonos de inconsistencias");
-  lines.push("- quadro_areas.csv — resumo de areas por camada");
-  if (allRows.some((r) => r.tipo === "sobreposicao")) {
-    lines.push("- erros/poligonos_sobreposicao.shp");
-  }
-  if (allRows.some((r) => r.tipo === "vazio")) {
-    lines.push("- erros/poligonos_vazios.shp");
-  }
-  if (allRows.some((r) => r.tipo === "fora_do_continente" || r.tipo === "sobreposicao_proibida")) {
-    lines.push("- erros/poligonos_regras_simcar.shp");
-  }
+  lines.push("Artefatos gerados (fluxo SIMCAR completo):");
+  lines.push("- arquivo_enviado.zip — shapes enviados");
+  lines.push("- arquivo_processado.zip — projeto processado (limpos + APP/APPD/APPP/APPRL/AURD/ARLDR)");
+  lines.push("- arquivo_conferencia.zip — areas por feicao");
+  lines.push("- erros_processamento.zip — sobreposicao/vazios/anexo 01");
+  lines.push("- erros_processamento_app.zip — pontos de erro de calculo de APP");
+  lines.push("- quadro_areas.csv — quadro de areas (inclui APP*)");
   if (allRows.some((r) => r.tipo === "air_atp_area")) {
     lines.push("");
     lines.push("Soma AIR vs ATP divergente (Manual Projeto Geografico).");
@@ -434,7 +488,8 @@ export function runProcessPhase(
     for (const w of allWarnings) lines.push(`- ${w}`);
   }
   lines.push("");
-  lines.push("Nota: pre-validacao local. Nao substitui ProcessarGeo oficial da SEMA.");
+  lines.push("Motor local alinhado ao fluxo Importar→ProcessarGeo do SIMCAR/SEMA-MT.");
+  lines.push("Faixas de APP: Codigo Florestal (Art. 4). Detalhes de dominio SEMA podem divergir.");
   lines.push("");
 
   return {
@@ -744,23 +799,40 @@ export async function buildProcessarProjetoZip(args: {
   }
   const errosZip = await buildNestedZip(errosFiles);
 
+  // erros_processamento_app.zip — pontos de erro de cálculo de APP (artefato SIMCAR)
+  const appErrorPoints = pointRecords.filter((p) => String(p.attributes.tipo) === "erro_calculo_app");
+  const appErrosFiles: Array<{ name: string; data: Buffer }> = [];
+  {
+    const pts = buildPointShpAndShx(appErrorPoints, 1);
+    appErrosFiles.push({ name: "pontos_erro_app.shp", data: pts.shp });
+    appErrosFiles.push({ name: "pontos_erro_app.shx", data: pts.shx });
+    appErrosFiles.push({
+      name: "pontos_erro_app.dbf",
+      data: buildDbfBuffer(appErrorPoints.map((p) => p.attributes), errorPointFields),
+    });
+    appErrosFiles.push({ name: "pontos_erro_app.prj", data: Buffer.from(prj, "utf8") });
+  }
+  const appErrosZip = await buildNestedZip(appErrosFiles);
+
   const inventario = [
-    "Inventario de saidas — Processar projeto (estilo SIMCAR)",
+    "Inventario de saidas — Processar projeto (fluxo completo SIMCAR / ProcessarGeo local)",
     "",
-    "arquivo_enviado.zip          — shapefiles originais enviados",
-    "arquivo_processado.zip       — projeto processado (geometria limpa)",
-    "arquivo_conferencia.zip      — camadas processadas com area_m2/area_ha",
-    "erros_processamento.zip      — pontos e poligonos de inconsistencias",
-    "relatorio_importacao.txt     — fase Importar",
-    "relatorio_processamento.txt  — fase Processar",
-    "resumo_erros.csv             — tabela unificada de erros",
-    "quadro_areas.csv             — areas por camada",
+    "arquivo_enviado.zip            — shapefiles originais enviados",
+    "arquivo_processado.zip         — projeto processado: limpos + APP/APPD/APPP/APPRL/AURD/ARLDR",
+    "arquivo_conferencia.zip        — camadas com area_m2/area_ha",
+    "erros_processamento.zip        — sobreposicao, vazios, anexo 01, topologia",
+    "erros_processamento_app.zip    — pontos de erro de calculo de APP",
+    "relatorio_importacao.txt       — fase Importar",
+    "relatorio_processamento.txt    — fase Processar",
+    "resumo_erros.csv               — tabela unificada de erros",
+    "quadro_areas.csv               — areas por camada (inclui APP*)",
     "",
     "Pastas espelhadas (mesmos arquivos, para abrir direto no SIG):",
     "  arquivo_enviado/",
-    "  arquivo_processado/",
+    "  arquivo_processado/   ← aqui entram APP.shp, APPD.shp, APPP.shp, …",
     "  arquivo_conferencia/",
     "  erros/",
+    "  erros_app/",
     "",
   ].join("\n");
 
@@ -781,12 +853,14 @@ export async function buildProcessarProjetoZip(args: {
     archive.append(processadoZip, { name: "arquivo_processado.zip" });
     archive.append(conferenciaZip, { name: "arquivo_conferencia.zip" });
     archive.append(errosZip, { name: "erros_processamento.zip" });
+    archive.append(appErrosZip, { name: "erros_processamento_app.zip" });
 
     // Pastas planas (mesmos conteúdos)
     for (const f of enviadoFiles) archive.append(f.data, { name: `arquivo_enviado/${f.name}` });
     for (const f of processadoFiles) archive.append(f.data, { name: `arquivo_processado/${f.name}` });
     for (const f of conferenciaFiles) archive.append(f.data, { name: `arquivo_conferencia/${f.name}` });
     for (const f of errosFiles) archive.append(f.data, { name: `erros/${f.name}` });
+    for (const f of appErrosFiles) archive.append(f.data, { name: `erros_app/${f.name}` });
 
     // Também na raiz para quem espera só pontos_erros.shp
     appendPointSet(archive, "", "pontos_erros", pointRecords, errorPointFields, prj);

@@ -1,107 +1,122 @@
-# Aba "Processar projeto" — fluxo Projeto Geográfico (estilo SIMCAR)
+# Processar projeto — fluxo completo Importar → ProcessarGeo (SIMCAR)
 
-Sub-aba da **Análise de Erros** do GeoForest que espelha o fluxo oficial do
-**Importador GEO / Projeto Geográfico do SIMCAR** em dois passos:
+Sub-aba **Análise de Erros → Processar projeto** que recria o fluxo oficial do
+**Importador GEO / Projeto Geográfico do SIMCAR** (SEMA-MT):
 
-1. **Importar** — conformidade estrutural do ZIP  
-2. **Processar** — topologia + Anexo 01 + soma AIR×ATP  
+1. **Importar** shapefile (conformidade estrutural)
+2. **Processar** projeto (`ProcessarGeo`): topologia + Anexo 01 + **camadas derivadas**
+   (APP, APPP, APPD, APPRL, AURD, ARLDR) + pacotes de saída
 
-Motor **local** (mesmo backend do recorte SIMCAR neste PC / host com Cloudflare
-Tunnel). **Não** substitui o validador oficial da SEMA-MT.
+Motor **local** no mesmo backend do recorte SIMCAR (PC + Cloudflare Tunnel).
 
-## Onde fica na UI
+## Fluxo SIMCAR vs GeoForest
 
-**Análise de Erros** → 4ª sub-aba **Processar projeto** (ao lado de Vértices
-Próximas, Áreas Não Contidas e Erros de Geometria).
+| Etapa | SIMCAR (oficial) | GeoForest |
+|-------|------------------|-----------|
+| Importar | `[CAR_IMPORTAR_SHAPEFILE]` | `POST /api/processar-projeto/importar` |
+| Processar | `POST …/ProcessarGeo/{id}` | `POST /api/processar-projeto/processar` |
+| Arquivo processado | ZIP com projeto **+ APP*** | `arquivo_processado.zip` com limpos **+ APP*** |
+| Erros APP | `[ARQUIVO_ERROS_PROCESSAMENTO_APP]` | `erros_processamento_app.zip` |
+| Erros topologia | `[ARQUIVO_ERROS_PROCESSAMENTO]` | `erros_processamento.zip` |
 
-## Relação com "Erros de Geometria"
+## O que o ProcessarGeo local calcula
 
-| | Erros de Geometria | Processar projeto |
-|--|--------------------|-------------------|
-| UX | Checks opcionais por camada | Fluxo fixo Importar → Processar (ZIP inteiro) |
-| Motor | Mesmas funções `detect*` / `checkSimcarConformity` | Orquestra as mesmas funções em 2 fases |
-| Saída | ZIP de erros | ZIP com relatórios de importação + processamento |
+### Camadas de entrada (técnico envia)
 
-Use **Erros de Geometria** para análises pontuais; use **Processar projeto**
-quando quiser o fluxo completo no espírito do SIMCAR.
+ATP, AIR, AVN, AUAS, AREA_CONSOLIDADA, ARL, rios por faixa, NASCENTE, lagoa,
+reservatório, vereda, relevo, etc. (nomenclatura oficial + aliases do modelo clip:
+`RIO_ATE_10`, `RIO_10_A_50`, …).
 
-## Fases
+### Camadas **derivadas** (geradas no processar)
 
-### 1. Importar (`POST /api/processar-projeto/importar`)
+| Código | Fórmula (local) | Base legal / regra |
+|--------|-----------------|--------------------|
+| **APP** | união dos buffers de hidrografia ∩ AIR (ou ATP) | Código Florestal Art. 4º |
+| **APPP** | APP ∩ AVN | APP preservada (aprox.) |
+| **APPD** | APP − APPP | APP degradada / passivo (aprox.) |
+| **APPRL** | APP ∩ ARL | APP em Reserva Legal |
+| **AURD** | (AREA_DECLIVIDADE ∪ AREA_PANTANEIRA) ∩ AUAS | Uso restrito degradado (aprox.) |
+| **ARLDR** | ARL ∩ AUAS | RL a recuperar (aprox.) |
 
-Equivalente conceitual a `[CAR_IMPORTAR_SHAPEFILE]`:
+### Buffers oficiais de APP (metros)
 
-- Inventário de camadas + reconhecimento de nomenclatura SIMCAR  
-- `checkSimcarConformity`: CRS (EPSG:4674), 2D, primitiva, ATP única, atributos  
+| Origem | Buffer |
+|--------|--------|
+| Rio &lt; 10 m (`RIO_MENOR_10` / `RIO_ATE_10`) | **30 m** |
+| Rio 10–50 m | **50 m** |
+| Rio 50–200 m | **100 m** |
+| Rio 200–600 m | **200 m** |
+| Rio &gt; 600 m | **500 m** |
+| Nascente | **50 m** (raio) |
+| Lagoa natural | **50 m** (padrão rural) |
+| Reservatório artificial | **30 m** (padrão rural) |
+| Vereda | **50 m** |
 
-Artefatos: `relatorio_importacao.txt` (no ZIP final) e tabela na UI.
+Sem camadas hidrográficas no ZIP, APP* não é gerada (aviso no relatório).
 
-### 2. Processar (`POST /api/processar-projeto/processar`)
+## Validações (fase Processar)
 
-Equivalente conceitual a `[CAR_PROCESSAR_GEOMETRIAS]`:
+Além da derivação:
 
-- Auto-interseção, vértices duplicados, sobreposição, vazios/gaps  
+- Auto-interseção, vértices duplicados, anéis degenerados  
+- Sobreposição mesma camada, vazios/gaps  
 - Contenção e sobreposições proibidas do Anexo 01  
-- Soma das AIRs vs ATP  
+- Soma AIR vs ATP  
+- Pontos `erro_calculo_app` se o buffer falhar  
 
-Job assíncrono com SSE; download do ZIP ao concluir.
+## ZIP de saída
+
+| Arquivo | Conteúdo |
+|---------|----------|
+| `arquivo_processado.zip` | Camadas limpas **+ APP / APPP / APPD / APPRL / AURD / ARLDR** |
+| `arquivo_enviado.zip` | Originais |
+| `arquivo_conferencia.zip` | Processadas com `area_m2` / `area_ha` |
+| `erros_processamento.zip` | Topologia / Anexo 01 |
+| `erros_processamento_app.zip` | Erros de cálculo de APP |
+| `quadro_areas.csv` | Inclui linhas APP* |
+| Relatórios + pastas espelhadas | Para abrir no SIG |
 
 ## API
 
 ```
-POST   /api/processar-projeto/upload
-POST   /api/processar-projeto/importar
-POST   /api/processar-projeto/processar   → 202 { jobId }
-GET    /api/processar-projeto/jobs/:id/status
-GET    /api/processar-projeto/jobs/:id/events
-GET    /api/processar-projeto/download/:id
-DELETE /api/processar-projeto/jobs/:id
+POST /api/processar-projeto/upload
+POST /api/processar-projeto/importar
+POST /api/processar-projeto/processar   → job SSE
+GET  /api/processar-projeto/download/:id
 ```
-
-## ZIP de resultado (estilo SIMCAR)
-
-| Artefato | Equivalente SIMCAR | Conteúdo |
-|----------|--------------------|----------|
-| `arquivo_processado.zip` + pasta `arquivo_processado/` | `[ARQUIVO_PROCESSADO]` | Todas as camadas com geometria limpa (vértices duplicados removidos, auto-interseção unkink) |
-| `arquivo_enviado.zip` + pasta `arquivo_enviado/` | `[ARQUIVO_ENVIADO]` | Cópia dos shapefiles originais do ZIP |
-| `arquivo_conferencia.zip` + pasta `arquivo_conferencia/` | `[ARQUIVO_CONFERENCIA]` | Camadas processadas com `area_m2` / `area_ha` |
-| `erros_processamento.zip` + pasta `erros/` | `[ARQUIVO_ERROS_PROCESSAMENTO]` | `pontos_erros`, sobreposições, vazios, regras Anexo 01 |
-| `relatorio_importacao.txt` | PDF importação | Fase Importar (texto) |
-| `relatorio_processamento.txt` | PDF processamento | Fase Processar (texto) |
-| `resumo_erros.csv` | — | Tabela unificada de erros |
-| `quadro_areas.csv` | quadro de áreas | Área / feições / erros por camada |
-| `inventario_saidas.txt` | — | Índice do que veio no ZIP |
-| `pontos_erros.shp` (raiz) | pontos de erro | Atalho na raiz do ZIP |
-
-O **arquivo processado é sempre gerado**, mesmo quando não há erros (geometria apenas sanitizada).
-
-## Backend / deploy
-
-O backend roda no **mesmo host físico do recorte SIMCAR** (não Render). Após
-`git pull`, reinicie o processo Node; o front no Firebase Hosting continua
-apontando para o backend via **Cloudflare Tunnel**.
 
 ## Arquitetura
 
-- `backend/processar-projeto.ts` — rotas + `runImportPhase` / `runProcessPhase`
-- `client/src/components/ProcessarProjetoAnalysis.tsx` — UI
-- Reuso: `geometry-errors.ts`, `simcar-rules.ts`, `vertices-proximas.ts`
+| Módulo | Papel |
+|--------|-------|
+| `backend/simcar-processar-geo.ts` | Buffers APP + APPP/APPD/APPRL/AURD/ARLDR |
+| `backend/processar-projeto.ts` | Orquestra import/process + ZIP |
+| `backend/geometry-errors.ts` | Topologia / Anexo 01 / AIR×ATP |
+| `backend/simcar-rules.ts` | Nomenclatura, conformidade, regras Anexo 01 |
+| `client/.../ProcessarProjetoAnalysis.tsx` | UI |
 
 ## Testes
 
 ```bash
-npx vitest run --root . backend/processar-projeto.test.ts
+npx vitest run --root . \
+  backend/simcar-processar-geo.test.ts \
+  backend/processar-projeto.test.ts \
+  backend/simcar-rules.test.ts
 ```
 
-## Calibração com API SEMA (opcional)
+## Limites (honestidade)
 
-Ver `tools/simcar-parity/README.md`. Credenciais **nunca** vão para o repositório;
-use variáveis de ambiente locais (`SIMCAR_LOGIN`, `SIMCAR_SENHA`,
-`SIMCAR_REQUERIMENTO_ID`) apenas no PC de desenvolvimento.
+- APPP/APPD/AURD/ARLDR são **aproximações** das regras oficiais (o servidor SEMA usa
+  mais atributos de domínio, consolidada 2008, módulos fiscais, etc.).
+- Lagoa &gt; 20 ha deveria usar 100 m de APP — hoje usa 50 m padrão.
+- Não gera croqui PDF nem envio CAR federal.
+- Continua útil como **pré-validação local completa do fluxo** Importar→Processar.
 
-## Limites de paridade
+## Deploy
 
-- Sem cálculo completo de APP/buffers oficiais  
-- Sem bases externas (TI, UC, embargo, CAR aprovado)  
-- Tolerâncias e casos limítrofes podem divergir do `tecnico.api` v1.57.x  
-- Posicione a ferramenta como **pré-validação**
+No PC do backend (Cloudflare Tunnel):
+
+```bash
+git pull origin main
+# reiniciar o Node
+```

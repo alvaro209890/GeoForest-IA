@@ -380,14 +380,14 @@ Diagnostica o erro do validador da SEMA *"Geometria deve ser completamente conti
 
 ## Processar projeto (fluxo SIMCAR Importar → Processar)
 
-Pré-validação local do **Projeto Geográfico** em dois passos, no espírito do Importador GEO da SEMA:
+Fluxo completo **Importar → ProcessarGeo** no espírito do Importador GEO da SEMA:
 
 1. **Importar** — conformidade estrutural (CRS SIRGAS 2000, 2D, nomenclatura, ATP única, atributos)
-2. **Processar** — topologia, Anexo 01 e soma AIR×ATP
+2. **Processar** — topologia, Anexo 01, soma AIR×ATP **e geração de APP / APPP / APPD / APPRL / AURD / ARLDR** (buffers do Código Florestal)
 
 **Onde:** aba **Análise de Erros** → sub-aba **Processar projeto**.
 
-**Saídas (estilo SIMCAR):** `arquivo_processado.zip`, `arquivo_enviado.zip`, `arquivo_conferencia.zip`, `erros_processamento.zip`, relatórios, `quadro_areas.csv` e pastas espelhadas para o SIG.
+**Saídas (estilo SIMCAR):** `arquivo_processado.zip` (inclui shapes APP*), `arquivo_enviado.zip`, `arquivo_conferencia.zip`, `erros_processamento.zip`, `erros_processamento_app.zip`, `quadro_areas.csv`, relatórios e pastas no SIG.
 
 **Documentação:** [`docs/PROCESSAR_PROJETO_SIMCAR.md`](docs/PROCESSAR_PROJETO_SIMCAR.md)
 
