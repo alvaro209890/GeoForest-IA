@@ -54,9 +54,20 @@ reservatório, vereda, relevo, etc. (nomenclatura oficial + aliases do modelo cl
 
 Sem camadas hidrográficas no ZIP, APP* não é gerada (aviso no relatório).
 
+## Validações (fase Importar) — alinhadas ao PDF SEMA
+
+A importação **reprova** e **bloqueia o Processar** se houver qualquer erro:
+
+- Conformidade estrutural (CRS, 2D, nomenclatura, atributos, ATP)
+- **Borda do polígono se cruza** (`borda_se_cruza`) — cluster ~0,05 m em UTM
+- **A geometria contém pontos repetidos** (`vertice_duplicado`) — vértices consecutivos ≤ ~0,1 m
+
+Oráculo: `teste_1/Recorte_13.07.26_CORRIGIDO_SIMCAR.zip` + PDF SEMA
+(ARL: 4 bordas + 2 pontos repetidos).
+
 ## Validações (fase Processar)
 
-Além da derivação:
+Só roda com importação **OK**. Além da derivação:
 
 - Auto-interseção, vértices duplicados, anéis degenerados  
 - Sobreposição mesma camada, vazios/gaps  
@@ -161,4 +172,5 @@ Front (Firebase Hosting): rebuild + deploy para a UI da sub-aba.
 
 ## Changelog
 
-Ver [`CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md`](CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md).
+- [`CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md`](CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md) — ProcessarGeo / APP* / pacotes de saída
+- [`CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md`](CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md) — paridade de importação com PDF SEMA (teste_1)

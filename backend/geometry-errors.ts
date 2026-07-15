@@ -236,13 +236,117 @@ function sameCoordinate(a: number[], b: number[]): boolean {
 }
 
 /**
- * Encontra vértices consecutivos idênticos no mesmo anel ("Vértices
- * duplicados") e anéis colapsados com menos de 3 vértices distintos
- * ("anel degenerado"). Trabalha sobre os anéis SEM o fechamento natural
- * (ringGroupsForRecord já o remove), então o par último→primeiro também
- * é verificado.
+ * Tolerâncias do importador SIMCAR/SEMA (oráculo PDF teste_1 / ARL):
+ *  - pontos repetidos: vértices consecutivos a ≤ ~0,1 m
+ *  - borda se cruza: auto-interseção após cluster/snap ~0,05 m
+ *
+ * Calibrado em 2026-07-15 contra `Relatorio de Importacao (1).pdf`
+ * (4 bordas + 2 pontos repetidos no ARL do Recorte_13.07.26_CORRIGIDO_SIMCAR.zip).
  */
-export function detectDuplicateVertices(layerName: string, records: ParsedPolygonRecord[]): GeometryErrorRow[] {
+export const SIMCAR_IMPORT_DUP_TOLERANCE_M = 0.1;
+export const SIMCAR_IMPORT_SNAP_TOLERANCE_M = 0.05;
+
+export type TopologyDetectOptions = {
+  /** Distância máxima (m) entre vértices consecutivos para "pontos repetidos". Default SIMCAR. */
+  duplicateToleranceM?: number;
+  /** Cluster/snap (m) antes de detectar auto-interseção. Default SIMCAR. */
+  selfIntersectionSnapM?: number;
+};
+
+function sampleLooksGeographic(records: ParsedPolygonRecord[]): boolean {
+  let n = 0;
+  for (const rec of records) {
+    for (const ring of rec.rings) {
+      for (const p of ring) {
+        n += 1;
+        if (Math.abs(p[0]) > 180 || Math.abs(p[1]) > 90) return false;
+        if (n >= 40) return true;
+      }
+    }
+  }
+  return n > 0;
+}
+
+function ringCentroid(coords: number[][]): [number, number] {
+  let sx = 0;
+  let sy = 0;
+  const n = Math.max(1, coords.length);
+  for (const p of coords) {
+    sx += p[0];
+    sy += p[1];
+  }
+  return [sx / n, sy / n];
+}
+
+type MetricBridge = {
+  toMetric: (p: number[]) => [number, number];
+  fromMetric: (p: number[]) => [number, number];
+};
+
+function buildMetricBridge(records: ParsedPolygonRecord[]): MetricBridge {
+  const identity: MetricBridge = {
+    toMetric: (p) => [Number(p[0]), Number(p[1])],
+    fromMetric: (p) => [Number(p[0]), Number(p[1])],
+  };
+  if (!records.length || !sampleLooksGeographic(records)) return identity;
+
+  let lon = 0;
+  let lat = 0;
+  let n = 0;
+  for (const rec of records) {
+    for (const ring of rec.rings) {
+      if (!ring.length) continue;
+      const c = ringCentroid(ring);
+      lon += c[0];
+      lat += c[1];
+      n += 1;
+      if (n >= 20) break;
+    }
+    if (n >= 20) break;
+  }
+  if (!n) return identity;
+  lon /= n;
+  lat /= n;
+  const { projDef } = estimateUtmProjFromLonLat(lon, lat);
+  try {
+    return {
+      toMetric: (p) => {
+        const out = proj4("EPSG:4326", projDef, [Number(p[0]), Number(p[1])]) as [number, number];
+        return Number.isFinite(out[0]) && Number.isFinite(out[1]) ? out : [Number(p[0]), Number(p[1])];
+      },
+      fromMetric: (p) => {
+        const out = proj4(projDef, "EPSG:4326", [Number(p[0]), Number(p[1])]) as [number, number];
+        return Number.isFinite(out[0]) && Number.isFinite(out[1]) ? out : [Number(p[0]), Number(p[1])];
+      },
+    };
+  } catch {
+    return identity;
+  }
+}
+
+function metricDistance(a: number[], b: number[], bridge: MetricBridge): number {
+  const ma = bridge.toMetric(a);
+  const mb = bridge.toMetric(b);
+  return Math.hypot(ma[0] - mb[0], ma[1] - mb[1]);
+}
+
+/**
+ * Encontra vértices consecutivos idênticos **ou** a menos de ~0,1 m
+ * ("A geometria contém pontos repetidos" no importador SIMCAR) e anéis
+ * colapsados com menos de 3 vértices distintos ("anel degenerado").
+ * Trabalha sobre os anéis SEM o fechamento natural (ringGroupsForRecord
+ * já o remove), então o par último→primeiro também é verificado.
+ */
+export function detectDuplicateVertices(
+  layerName: string,
+  records: ParsedPolygonRecord[],
+  options: TopologyDetectOptions = {},
+): GeometryErrorRow[] {
+  const tolM =
+    options.duplicateToleranceM === undefined
+      ? SIMCAR_IMPORT_DUP_TOLERANCE_M
+      : Math.max(0, Number(options.duplicateToleranceM));
+  const bridge = buildMetricBridge(records);
   const rows: GeometryErrorRow[] = [];
   for (const record of records) {
     for (const group of ringGroupsForRecord(record)) {
@@ -251,7 +355,10 @@ export function detectDuplicateVertices(layerName: string, records: ParsedPolygo
       const distinct: number[][] = [];
       for (let i = 0; i < coords.length; i += 1) {
         const prev = i === 0 ? coords[coords.length - 1] : coords[i - 1];
-        if (i > 0 && sameCoordinate(coords[i], prev)) {
+        const exact = sameCoordinate(coords[i], prev);
+        const near = !exact && tolM > 0 && metricDistance(coords[i], prev, bridge) <= tolM;
+        if (i > 0 && (exact || near)) {
+          const distM = exact ? 0 : metricDistance(coords[i], prev, bridge);
           rows.push({
             camada: layerName,
             tipo: "vertice_duplicado",
@@ -260,22 +367,29 @@ export function detectDuplicateVertices(layerName: string, records: ParsedPolygo
             anel: group.ring,
             x: Number(coords[i][0]),
             y: Number(coords[i][1]),
-            detalhe: `Vértices ${i} e ${i + 1} do anel são idênticos.`,
+            detalhe: exact
+              ? `Vértices ${i} e ${i + 1} do anel são idênticos.`
+              : `Vértices ${i} e ${i + 1} do anel estão a ${distM.toFixed(3)} m (limite SIMCAR ${tolM} m — pontos repetidos).`,
           });
           continue;
         }
-        if (i === coords.length - 1 && coords.length > 1 && sameCoordinate(coords[i], coords[0])) {
-          rows.push({
-            camada: layerName,
-            tipo: "vertice_duplicado",
-            feicao: record.feature,
-            parte: group.part,
-            anel: group.ring,
-            x: Number(coords[i][0]),
-            y: Number(coords[i][1]),
-            detalhe: `Vértice ${i + 1} repete o primeiro vértice além do fechamento do anel.`,
-          });
-          continue;
+        if (i === coords.length - 1 && coords.length > 1) {
+          const exactClose = sameCoordinate(coords[i], coords[0]);
+          const nearClose =
+            !exactClose && tolM > 0 && metricDistance(coords[i], coords[0], bridge) <= tolM;
+          if (exactClose || nearClose) {
+            rows.push({
+              camada: layerName,
+              tipo: "vertice_duplicado",
+              feicao: record.feature,
+              parte: group.part,
+              anel: group.ring,
+              x: Number(coords[i][0]),
+              y: Number(coords[i][1]),
+              detalhe: `Vértice ${i + 1} repete o primeiro vértice além do fechamento do anel.`,
+            });
+            continue;
+          }
         }
         distinct.push(coords[i]);
       }
@@ -333,26 +447,75 @@ export function cleanRecordRings(record: ParsedPolygonRecord): {
 /* ─────────────── check: borda de polígono se cruza ─────────────── */
 
 /**
- * Encontra os pontos onde segmentos do MESMO anel se cruzam ("Borda de
- * polígono se cruza" no validador do SIMCAR). Cada anel é analisado
- * isoladamente para atribuir feição/parte/anel corretos ao ponto de erro.
+ * Encontra os pontos onde segmentos do MESMO anel se cruzam ("Borda do
+ * polígono se cruza" no importador SIMCAR). Cada anel é analisado
+ * isoladamente. Em coordenadas geográficas, projeta para UTM e aplica
+ * cluster/snap (~0,05 m) antes do kinks — calibração do oráculo SEMA.
  */
-export function detectSelfIntersections(layerName: string, records: ParsedPolygonRecord[]): GeometryErrorRow[] {
+export function detectSelfIntersections(
+  layerName: string,
+  records: ParsedPolygonRecord[],
+  options: TopologyDetectOptions = {},
+): GeometryErrorRow[] {
+  const snapM =
+    options.selfIntersectionSnapM === undefined
+      ? SIMCAR_IMPORT_SNAP_TOLERANCE_M
+      : Math.max(0, Number(options.selfIntersectionSnapM));
+  const bridge = buildMetricBridge(records);
   const rows: GeometryErrorRow[] = [];
+
   for (const record of records) {
     for (const group of ringGroupsForRecord(record)) {
-      const ring = ensureClosed(group.coords);
-      if (ring.length < 4) continue;
+      const raw = ensureClosed(group.coords);
+      if (raw.length < 4) continue;
+
+      // 1) kinks no anel original (casos óbvios / testes sintéticos)
       let found: Array<[number, number]> = [];
       try {
-        const collection = turfKinks({ type: "Polygon", coordinates: [ring] });
+        const collection = turfKinks({ type: "Polygon", coordinates: [raw] });
         found = collection.features.map((feature) => [
           Number(feature.geometry.coordinates[0]),
           Number(feature.geometry.coordinates[1]),
         ]);
       } catch {
-        continue;
+        // segue para caminho com snap
       }
+
+      // 2) caminho SIMCAR: snap em metros + limpeza de dups + kinks
+      if (snapM > 0) {
+        try {
+          const metric = raw.map((p) => bridge.toMetric(p));
+          const snapped = metric.map(
+            (p) =>
+              [Math.round(p[0] / snapM) * snapM, Math.round(p[1] / snapM) * snapM] as [number, number],
+          );
+          const cleaned: Array<[number, number]> = [snapped[0]];
+          for (let i = 1; i < snapped.length; i += 1) {
+            const prev = cleaned[cleaned.length - 1];
+            if (snapped[i][0] !== prev[0] || snapped[i][1] !== prev[1]) cleaned.push(snapped[i]);
+          }
+          if (cleaned.length >= 2) {
+            const first = cleaned[0];
+            const last = cleaned[cleaned.length - 1];
+            if (first[0] !== last[0] || first[1] !== last[1]) cleaned.push([first[0], first[1]]);
+          }
+          if (cleaned.length >= 4) {
+            const collection = turfKinks({ type: "Polygon", coordinates: [cleaned] });
+            for (const feature of collection.features) {
+              const m: [number, number] = [
+                Number(feature.geometry.coordinates[0]),
+                Number(feature.geometry.coordinates[1]),
+              ];
+              if (!Number.isFinite(m[0]) || !Number.isFinite(m[1])) continue;
+              const lonlat = bridge.fromMetric(m);
+              found.push([Number(lonlat[0]), Number(lonlat[1])]);
+            }
+          }
+        } catch {
+          // ignora falha de snap; mantém o que o kinks original encontrou
+        }
+      }
+
       const seen = new Set<string>();
       for (const [x, y] of found) {
         if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
@@ -367,7 +530,10 @@ export function detectSelfIntersections(layerName: string, records: ParsedPolygo
           anel: group.ring,
           x,
           y,
-          detalhe: "Segmentos do mesmo anel se cruzam neste ponto (auto-interseção).",
+          detalhe:
+            snapM > 0
+              ? `Segmentos do mesmo anel se cruzam (auto-interseção; cluster SIMCAR ${snapM} m).`
+              : "Segmentos do mesmo anel se cruzam neste ponto (auto-interseção).",
         });
       }
     }
@@ -1061,13 +1227,14 @@ export function analyzeLayerGeometry(args: {
   layerName: string;
   records: ParsedPolygonRecord[];
   checks: GeometryChecks;
+  topology?: TopologyDetectOptions;
 }): GeometryErrorRow[] {
   const rows: GeometryErrorRow[] = [];
   if (args.checks.selfIntersection !== false) {
-    rows.push(...detectSelfIntersections(args.layerName, args.records));
+    rows.push(...detectSelfIntersections(args.layerName, args.records, args.topology));
   }
   if (args.checks.duplicateVertices !== false) {
-    rows.push(...detectDuplicateVertices(args.layerName, args.records));
+    rows.push(...detectDuplicateVertices(args.layerName, args.records, args.topology));
   }
   return rows;
 }

@@ -382,29 +382,34 @@ Diagnostica o erro do validador da SEMA *"Geometria deve ser completamente conti
 
 Fluxo completo **Importar → ProcessarGeo** no espírito do Importador GEO da SEMA:
 
-1. **Importar** — conformidade estrutural (CRS SIRGAS 2000, 2D, nomenclatura, ATP única, atributos)
-2. **Processar** — topologia, Anexo 01, soma AIR×ATP **e geração de APP / APPP / APPD / APPRL / AURD / ARLDR** (buffers do Código Florestal)
+1. **Importar** — conformidade estrutural **+ topologia do importador** (borda se cruza / pontos repetidos). Se reprovar, o **Processar não libera** (igual ao PDF SEMA).
+2. **Processar** — topologia adicional, Anexo 01, soma AIR×ATP **e geração de APP / APPP / APPD / APPRL / AURD / ARLDR** (buffers do Código Florestal) — só com importação OK.
 
 **Onde:** aba **Análise de Erros** → sub-aba **Processar projeto**.
+
+**Paridade de importação (2026-07-15):** calibrado no ZIP `backend/fixtures/teste_1/Recorte_13.07.26_CORRIGIDO_SIMCAR.zip` contra o PDF SEMA — ARL com **4** bordas se cruzam e **2** pontos repetidos; situação **Reprovado**. Tolerâncias: snap **0,05 m** (borda), dups **0,1 m** (pontos).
 
 **Saídas (estilo SIMCAR):** `arquivo_processado.zip` (inclui shapes APP*), `arquivo_enviado.zip`, `arquivo_conferencia.zip`, `erros_processamento.zip`, `erros_processamento_app.zip`, `quadro_areas.csv`, relatórios e pastas no SIG.
 
 **Documentação:**
 - Manual: [`docs/PROCESSAR_PROJETO_SIMCAR.md`](docs/PROCESSAR_PROJETO_SIMCAR.md)
-- Changelog: [`docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md`](docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md)
+- Changelog ProcessarGeo: [`docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md`](docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md)
+- Changelog paridade importação: [`docs/CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md`](docs/CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md)
 
 **Arquivos:**
-- `backend/processar-projeto.ts` — orquestração + rotas + ZIP
+- `backend/processar-projeto.ts` — orquestração + rotas + ZIP + gate de importação
 - `backend/simcar-processar-geo.ts` — motor APP* (ProcessarGeo)
-- `backend/simcar-rules.ts` / `backend/geometry-errors.ts` — regras e topologia
+- `backend/simcar-rules.ts` / `backend/geometry-errors.ts` — regras e topologia (tolerâncias SIMCAR)
+- `backend/fixtures/teste_1/` — ZIP oráculo SEMA
 - `client/src/components/ProcessarProjetoAnalysis.tsx` — UI
 
 **Testes:**
 ```bash
-npx vitest run --root . backend/simcar-processar-geo.test.ts backend/processar-projeto.test.ts
+npx vitest run --root . backend/simcar-processar-geo.test.ts backend/processar-projeto.test.ts backend/geometry-errors.test.ts
 ```
 
 **Deploy do backend:** mesmo host físico do recorte SIMCAR (Cloudflare Tunnel → Firebase Hosting). Após `git pull`, reinicie o processo Node.
+
 
 ---
 
@@ -690,6 +695,8 @@ Arquivo de referência: [`config/geoforest-backend.env.example`](config/geofores
 
 - [`docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md`](docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md) — **Leia primeiro se for mexer em qualquer dado de usuário/job:** como funciona o armazenamento local (JSON em disco, não é Firestore real), o shim `localFirestore.ts`, a whitelist de collections e o checklist para adicionar uma nova aba de análise
 - [`docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md`](docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md) — Fix `INVALID_DOC_PATH` no import de ZIP (Erros de Geometria) + paridade de histórico
+- [`docs/CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md`](docs/CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md) — Paridade de importação Processar Projeto com PDF SEMA (teste_1: ARL 4 bordas + 2 pontos repetidos)
+- [`docs/PROCESSAR_PROJETO_SIMCAR.md`](docs/PROCESSAR_PROJETO_SIMCAR.md) — Manual Processar Projeto (Importar → ProcessarGeo)
 - [`docs/AREAS_NAO_CONTIDAS.md`](docs/AREAS_NAO_CONTIDAS.md) — Áreas não contidas (containment SIMCAR)
 - [`docs/CHANGELOG_2026-07-10_AREAS_NAO_CONTIDAS.md`](docs/CHANGELOG_2026-07-10_AREAS_NAO_CONTIDAS.md) — Áreas não contidas + auto-update sem Ctrl+F5
 - [`docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md`](docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md) — Recibos SIMCAR, cache Firebase e deploy de 2026-07-09

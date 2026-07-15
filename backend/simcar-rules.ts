@@ -43,7 +43,18 @@ export type SimcarLayerCode =
   | "AREA_ALTITUDE_1800"
   | "ARL"
   | "AREA_UTILIDADE_PUBLICA"
-  | "AREA_INTERESSE_SOCIAL";
+  | "AREA_INTERESSE_SOCIAL"
+  /** Camadas do inventário do Importador GEO / ProcessarGeo (PDF SEMA). */
+  | "AREA_UMIDA"
+  | "AREA_USO_RESTRITO"
+  | "AURD"
+  | "ARLDR"
+  | "ARLREM"
+  | "ARCUC"
+  | "APP"
+  | "APPP"
+  | "APPD"
+  | "APPRL";
 
 type LayerMeta = {
   code: SimcarLayerCode;
@@ -103,6 +114,17 @@ export const SIMCAR_LAYERS: LayerMeta[] = [
   { code: "ARL", primitive: "polygon", requiredFields: ["IDENTIFIC", "AVERBACAO", "SITUACAO"], aliases: ["AREA_DE_RESERVA_LEGAL", "AREA_RESERVA_LEGAL", "RESERVA_LEGAL"] },
   { code: "AREA_UTILIDADE_PUBLICA", primitive: "polygon", aliases: ["AREA_DE_UTILIDADE_PUBLICA", "UTILIDADE_PUBLICA"] },
   { code: "AREA_INTERESSE_SOCIAL", primitive: "polygon", aliases: ["AREA_DE_INTERESSE_SOCIAL", "INTERESSE_SOCIAL"] },
+  // Inventário do Importador GEO (Relatório de importação SEMA) + camadas derivadas ProcessarGeo
+  { code: "AREA_UMIDA", primitive: "polygon", aliases: ["AREA_DE_UMIDA", "AREA_UMIDA_NATURAL"] },
+  { code: "AREA_USO_RESTRITO", primitive: "polygon", aliases: ["AREA_DE_USO_RESTRITO", "USO_RESTRITO"] },
+  { code: "AURD", primitive: "polygon", aliases: ["AREA_USO_RESTRITO_DEGRADADA", "AREA_DE_USO_RESTRITO_DEGRADADA"] },
+  { code: "ARLDR", primitive: "polygon", aliases: ["ARL_A_RECUPERAR", "AREA_RESERVA_LEGAL_DEGRADADA"] },
+  { code: "ARLREM", primitive: "polygon", aliases: ["ARL_REALOCADA_EXPLORACAO_MINERAL", "AREA_RESERVA_LEGAL_REALOCADA"] },
+  { code: "ARCUC", primitive: "polygon", aliases: ["AREA_RESERVADA_COMPENSACAO_UC", "AREA_COMPENSACAO_UC"] },
+  { code: "APP", primitive: "polygon" },
+  { code: "APPP", primitive: "polygon" },
+  { code: "APPD", primitive: "polygon" },
+  { code: "APPRL", primitive: "polygon" },
 ];
 
 /** Normaliza nome de camada: caixa alta, sem acentos, separadores → "_". */

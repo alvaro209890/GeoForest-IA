@@ -1,10 +1,34 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
 
-import { buildProcessarProjetoZip, runImportPhase, runProcessPhase } from "./processar-projeto";
+import {
+  assertImportAllowsProcess,
+  buildProcessarProjetoZip,
+  IMPORT_REPROVADO_MSG,
+  runImportPhase,
+  runProcessPhase,
+} from "./processar-projeto";
 import { SIRGAS_2000_PRJ } from "./vertices-proximas";
 import { buildDbfBuffer, buildShpAndShx, type ShpRecord } from "./shapefile-writer";
 import { detectCrs } from "./vertices-proximas";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Fixture real (PDF SEMA: ARL com 4 bordas cruzadas + 2 pontos repetidos). */
+function resolveTeste1Zip(): string | null {
+  const candidates = [
+    path.join(__dirname, "fixtures", "teste_1", "Recorte_13.07.26_CORRIGIDO_SIMCAR.zip"),
+    path.join("/mnt/c/Users/Usuario/Downloads/teste_1", "Recorte_13.07.26_CORRIGIDO_SIMCAR.zip"),
+    path.join("C:", "Users", "Usuario", "Downloads", "teste_1", "Recorte_13.07.26_CORRIGIDO_SIMCAR.zip"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
 
 const projectedCrs = detectCrs(undefined, "EPSG:31981");
 
@@ -85,6 +109,104 @@ describe("runImportPhase", () => {
     expect(result.ok).toBe(true);
     expect(result.rows).toHaveLength(0);
     expect(result.camadasReconhecidas.map((c) => c.code).sort()).toEqual(["AIR", "ATP"]);
+  });
+
+  it("reprova importação quando há borda se cruza / pontos repetidos (topologia SIMCAR)", async () => {
+    // Bowtie = auto-interseção; ring com vértice duplicado consecutivo.
+    const bowtie = polyRecord(1, [
+      [
+        [0, 0],
+        [2, 2],
+        [2, 0],
+        [0, 2],
+        [0, 0],
+      ],
+    ]);
+    const withDup = polyRecord(2, [
+      [
+        [10, 10],
+        [10, 14],
+        [10, 14], // ponto repetido
+        [14, 14],
+        [14, 10],
+        [10, 10],
+      ],
+    ]);
+    const zip = await zipFromLayers([
+      { name: "ATP", records: [polyRecord(1, [square(-55, -12, 0.1)])] },
+      {
+        name: "AIR",
+        records: [polyRecord(1, [square(-55, -12, 0.05)])],
+        dbfAttrs: [{ TIPO: "M", IDENTIFIC: "1" }],
+        dbfFields: [
+          { name: "TIPO", type: "C", length: 1, decimals: 0 },
+          { name: "IDENTIFIC", type: "C", length: 40, decimals: 0 },
+        ],
+      },
+      { name: "ARL", records: [bowtie, withDup] },
+    ]);
+    const result = runImportPhase(zip, "arl_sujo.zip");
+    expect(result.ok).toBe(false);
+    expect(result.rows.some((r) => r.tipo === "borda_se_cruza")).toBe(true);
+    expect(result.rows.some((r) => r.tipo === "vertice_duplicado")).toBe(true);
+    expect(result.relatorioTexto).toMatch(/Reprovado/i);
+    expect(() => assertImportAllowsProcess(result)).toThrow(/Reprovado/i);
+  });
+});
+
+describe("assertImportAllowsProcess", () => {
+  it("bloqueia processar quando importação falhou", () => {
+    expect(() => assertImportAllowsProcess({ ok: false, status: "import_failed", rows: [] })).toThrow(
+      IMPORT_REPROVADO_MSG,
+    );
+    expect(() => assertImportAllowsProcess(null)).toThrow(/importação/i);
+  });
+
+  it("libera processar quando importação OK", () => {
+    expect(() => assertImportAllowsProcess({ ok: true, status: "import_ok", rows: [] })).not.toThrow();
+  });
+});
+
+describe("paridade SIMCAR — fixture teste_1 (PDF SEMA importação)", () => {
+  const zipPath = resolveTeste1Zip();
+  const hasFixture = Boolean(zipPath);
+
+  it.skipIf(!hasFixture)(
+    "reprova o ZIP real com borda se cruza e pontos repetidos no ARL (oráculo PDF)",
+    () => {
+      const buf = fs.readFileSync(zipPath!);
+      const result = runImportPhase(buf, "Recorte_13.07.26_CORRIGIDO_SIMCAR.zip");
+
+      // Critério 1: importação reprovada
+      expect(result.ok).toBe(false);
+      expect(result.relatorioTexto).toMatch(/Reprovado/i);
+
+      const arlRows = result.rows.filter((r) => {
+        const name = String(r.camada || "").toUpperCase();
+        return name === "ARL" || name.includes("ARL") || name.endsWith("_ARL");
+      });
+      const borda = arlRows.filter((r) => r.tipo === "borda_se_cruza");
+      const pontos = arlRows.filter((r) => r.tipo === "vertice_duplicado");
+
+      // Critério 2: tipos do PDF no ARL (oráculo: 4 bordas, 2 pontos repetidos)
+      // Tolerância: ≥1 de cada tipo; contagens exatas documentadas no expect quando possível.
+      expect(borda.length).toBeGreaterThanOrEqual(1);
+      expect(pontos.length).toBeGreaterThanOrEqual(1);
+
+      // Preferência de paridade com o PDF (4 e 2). Se o detector contar por ponto
+      // e o SEMA por feição, o teste ainda passa no ≥1, e contagens ficam no log.
+      // Ajuste de sensibilidade: buscar 4 e 2 quando o detector estiver alinhado.
+      expect(borda.length).toBeGreaterThanOrEqual(4);
+      expect(pontos.length).toBeGreaterThanOrEqual(2);
+
+      // Critério 3: processar bloqueado
+      expect(() => assertImportAllowsProcess(result)).toThrow(IMPORT_REPROVADO_MSG);
+    },
+  );
+
+  it.skipIf(!hasFixture)("fixture path is resolvable for CI/local", () => {
+    expect(zipPath).toBeTruthy();
+    expect(fs.statSync(zipPath!).size).toBeGreaterThan(1000);
   });
 });
 

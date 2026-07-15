@@ -53,8 +53,9 @@ type Progress = {
 };
 
 const TIPO_LABEL: Record<string, string> = {
-  borda_se_cruza: 'Borda se cruza',
-  vertice_duplicado: 'Vértice duplicado',
+  // Rótulos alinhados ao PDF SEMA "Relatório de importação"
+  borda_se_cruza: 'Borda do polígono se cruza',
+  vertice_duplicado: 'A geometria contém pontos repetidos',
   anel_degenerado: 'Anel degenerado',
   sobreposicao: 'Sobreposição',
   vazio: 'Vazio/gap',
@@ -330,8 +331,12 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
       toast.error('Envie e importe o ZIP antes de processar.');
       return;
     }
-    if (importOk === null && !importId) {
-      toast.error('Execute a importação antes de processar.');
+    if (importOk !== true) {
+      toast.error(
+        importOk === false
+          ? 'Situação da importação: Reprovado - Corrija os erros encontrados e envie novamente!'
+          : 'Execute a importação antes de processar.',
+      );
       return;
     }
     setProcessing(true);
@@ -387,7 +392,8 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
   }, [apiFetch, downloadUrl, jobId]);
 
   const canImport = Boolean(uploadId) && !uploading && !importing && !processing;
-  const canProcess = Boolean(uploadId) && importOk !== null && !processing && !importing;
+  // SIMCAR: Processar só libera com importação aprovada.
+  const canProcess = Boolean(uploadId) && importOk === true && !processing && !importing;
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -499,7 +505,8 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
               <h3 className="text-base font-semibold text-white">2. Importar (conformidade estrutural)</h3>
               <p className="text-xs text-slate-500 mt-1">
                 Equivalente à fila <code className="text-cyan-200/80">[CAR_IMPORTAR_SHAPEFILE]</code>: CRS SIRGAS 2000,
-                2D, nomenclatura, ATP única e atributos obrigatórios.
+                2D, nomenclatura, ATP única, atributos e topologia do importador (borda se cruza / pontos repetidos).
+                Se reprovar, o Processar não libera.
               </p>
             </div>
             <button
@@ -524,12 +531,14 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
               {importOk ? <CheckCircle2 size={20} className="shrink-0 mt-0.5" /> : <XCircle size={20} className="shrink-0 mt-0.5" />}
               <div>
                 <p className="text-sm font-semibold">
-                  {importOk ? 'Importação OK' : `Importação com ${importErrors} inconsistência(s)`}
+                  {importOk
+                    ? 'Situação da importação: Aprovado'
+                    : `Situação da importação: Reprovado (${importErrors} erro(s))`}
                 </p>
                 <p className="text-xs opacity-80 mt-0.5">
                   {importOk
-                    ? 'Estrutura do ZIP alinhada às regras de conformidade do Manual SIMCAR.'
-                    : 'Corrija os itens abaixo antes de enviar ao SIMCAR oficial (ou processe mesmo assim para ver topologia).'}
+                    ? 'Importação OK — conformidade e topologia sem inconsistências. O Processar está liberado.'
+                    : 'Corrija os erros encontrados e envie novamente! O processamento não é liberado com importação reprovada (igual ao SIMCAR).'}
                 </p>
               </div>
             </div>
@@ -592,15 +601,28 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
             <div>
               <h3 className="text-base font-semibold text-white">3. Processar Projeto Geográfico</h3>
               <p className="text-xs text-slate-500 mt-1">
-                Equivalente a <code className="text-cyan-200/80">[CAR_PROCESSAR_GEOMETRIAS]</code>: auto-interseção,
-                vértices, sobreposição, vazios, contenção/sobreposição proibida (Anexo 01) e soma AIR×ATP.
+                Equivalente a <code className="text-cyan-200/80">[CAR_PROCESSAR_GEOMETRIAS]</code> / ProcessarGeo:
+                sobreposição, vazios, contenção/sobreposição proibida (Anexo 01), soma AIR×ATP e camadas APP*.
+                Bloqueado enquanto a importação estiver reprovada.
               </p>
+              {importOk === false && (
+                <p className="text-xs text-rose-300 mt-2 font-medium">
+                  Processar desabilitado — corrija os erros de importação primeiro.
+                </p>
+              )}
             </div>
             <button
               type="button"
               disabled={!canProcess}
               onClick={() => void runProcess()}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-900/30 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+              title={
+                importOk === false
+                  ? 'Importação reprovada — processamento não liberado'
+                  : importOk === true
+                    ? 'Processar projeto geográfico'
+                    : 'Importe o ZIP antes de processar'
+              }
             >
               {processing ? <Loader2 size={16} className="animate-spin" /> : <Cpu size={16} />}
               Processar projeto

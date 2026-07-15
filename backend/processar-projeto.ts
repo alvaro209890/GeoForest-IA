@@ -1,8 +1,12 @@
 /**
  * Processar projeto — fluxo em 2 fases no estilo Projeto Geográfico SIMCAR.
  *
- * Fase 1 (Importar): conformidade estrutural (CRS, 2D, nomenclatura, atributos, ATP).
- * Fase 2 (Processar): topologia + Anexo 01 + soma AIR×ATP.
+ * Fase 1 (Importar): conformidade estrutural (CRS, 2D, nomenclatura, atributos, ATP)
+ *   + topologia impeditiva do importador SEMA (borda se cruza / pontos repetidos).
+ *   Se houver qualquer erro, a importação é **Reprovada** e o Processar não libera
+ *   (igual ao PDF "Situação da importação: Reprovado").
+ * Fase 2 (Processar): topologia adicional (overlaps/gaps) + Anexo 01 + AIR×ATP + APP*.
+ *   Só roda após importação OK.
  *
  * Motor local reutiliza geometry-errors.ts / simcar-rules.ts.
  * Não substitui o validador oficial da SEMA; backend roda no mesmo host
@@ -151,47 +155,100 @@ function groupsFromZip(zipBuffer: Buffer) {
   return getZipLayerGroups(zipBuffer);
 }
 
+/** Mensagem espelhando o PDF SEMA quando a importação falha. */
+export const IMPORT_REPROVADO_MSG =
+  "Situação da importação: Reprovado - Corrija os erros encontrados e envie novamente!";
+
 /**
- * Fase Importar: inventário + conformidade estrutural do ZIP inteiro.
- * Corresponde conceitualmente a [CAR_IMPORTAR_SHAPEFILE] do SIMCAR.
+ * Gate duro: Processar só libera com importação OK (como no SIMCAR).
+ * Lança Error se reprovado — usado pela API e por testes unitários.
+ */
+export function assertImportAllowsProcess(importSnapshot: {
+  ok?: boolean;
+  status?: string;
+  rows?: GeometryErrorRow[];
+} | null | undefined): void {
+  if (!importSnapshot) {
+    throw new Error("Execute a importação antes de processar.");
+  }
+  if (importSnapshot.status === "import_ok" || importSnapshot.ok === true) return;
+  if (importSnapshot.status === "import_failed" || importSnapshot.ok === false) {
+    throw new Error(IMPORT_REPROVADO_MSG);
+  }
+  // Snapshot sem flag explícita: qualquer row impede o processar.
+  if (Array.isArray(importSnapshot.rows) && importSnapshot.rows.length > 0) {
+    throw new Error(IMPORT_REPROVADO_MSG);
+  }
+  throw new Error("Execute a importação antes de processar.");
+}
+
+/**
+ * Fase Importar: inventário + conformidade estrutural + topologia do importador.
+ * Corresponde a [CAR_IMPORTAR_SHAPEFILE] do SIMCAR / PDF "Relatório de importação".
+ *
+ * Erros impeditivos na importação (oráculo SEMA teste_1 / ARL):
+ *  - borda_se_cruza → "Borda do polígono se cruza"
+ *  - vertice_duplicado → "A geometria contém pontos repetidos"
  */
 export function runImportPhase(zipBuffer: Buffer, filename = "projeto.zip"): ImportPhaseResult {
   const groups = groupsFromZip(zipBuffer);
   const warnings: string[] = [];
-  const camadasReconhecidas = groups
-    .filter((g) => g.shp)
-    .map((g) => {
-      const records = parsePolygonRecords(g.shp!.data);
-      const crs = detectCrs(g.prj?.data.toString("utf8"));
-      const code = recognizeSimcarLayer(g.name);
-      return {
-        name: g.name,
-        code,
-        featureCount: records.length,
-        crsLabel: crs.missing ? "ausente" : crs.label,
-      };
-    });
+  const layersWithShp = groups.filter((g) => g.shp);
+
+  const camadasReconhecidas = layersWithShp.map((g) => {
+    const records = parsePolygonRecords(g.shp!.data);
+    const crs = detectCrs(g.prj?.data.toString("utf8"));
+    const code = recognizeSimcarLayer(g.name);
+    return {
+      name: g.name,
+      code,
+      featureCount: records.length,
+      crsLabel: crs.missing ? "ausente" : crs.label,
+    };
+  });
 
   let rows: GeometryErrorRow[] = [];
   try {
     rows = checkSimcarConformity(
-      groups
-        .filter((g) => g.shp)
-        .map((g) => ({
-          name: g.name,
-          shp: g.shp!.data,
-          prjText: g.prj?.data.toString("utf8"),
-          dbf: g.dbf?.data,
-        })),
+      layersWithShp.map((g) => ({
+        name: g.name,
+        shp: g.shp!.data,
+        prjText: g.prj?.data.toString("utf8"),
+        dbf: g.dbf?.data,
+      })),
     );
   } catch (error: any) {
     warnings.push(`Importação: ${error?.message || "falha na conformidade"}`);
   }
 
+  // Topologia na importação (SIMCAR reprova aqui — não só no ProcessarGeo).
+  for (const g of layersWithShp) {
+    try {
+      const records = parsePolygonRecords(g.shp!.data);
+      if (!records.length) continue;
+      rows.push(
+        ...analyzeLayerGeometry({
+          layerName: g.name,
+          records,
+          checks: { selfIntersection: true, duplicateVertices: true },
+        }),
+      );
+    } catch (error: any) {
+      warnings.push(`Topologia (${g.name}): ${error?.message || "falha"}`);
+    }
+  }
+
+  const ok = rows.length === 0;
   const lines: string[] = [];
   lines.push("Relatorio de importacao — Processar projeto (GeoForest / estilo SIMCAR)");
   lines.push(`Arquivo: ${filename}`);
   lines.push(`Gerado em: ${new Date().toISOString()}`);
+  lines.push("");
+  lines.push(
+    ok
+      ? "Situação da importação: Aprovado"
+      : IMPORT_REPROVADO_MSG,
+  );
   lines.push("");
   lines.push("Camadas no ZIP:");
   for (const layer of camadasReconhecidas) {
@@ -200,14 +257,31 @@ export function runImportPhase(zipBuffer: Buffer, filename = "projeto.zip"): Imp
     );
   }
   lines.push("");
-  lines.push(`Resultado da importacao: ${rows.length === 0 ? "OK (sem erros estruturais)" : `FALHA (${rows.length} inconsistencia(s))`}`);
+  lines.push(
+    `Resultado da importacao: ${ok ? "OK (sem erros)" : `REPROVADO (${rows.length} inconsistencia(s))`}`,
+  );
   lines.push("");
   if (!rows.length) {
-    lines.push("Nenhum erro de conformidade estrutural.");
+    lines.push("Nenhum erro de importacao.");
   } else {
-    lines.push("Erros de importacao (conformidade SIMCAR):");
+    lines.push("Erros encontrados (importacao SIMCAR):");
+    const counts = new Map<string, number>();
     for (const row of rows) {
-      lines.push(`${row.camada}; tipo=${row.tipo}; ${row.detalhe}`);
+      const key = `${row.camada}\t${row.tipo}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+      lines.push(`${row.camada}; tipo=${row.tipo}; feicao=${row.feicao}; ${row.detalhe}`);
+    }
+    lines.push("");
+    lines.push("Resumo por feicao/tipo:");
+    for (const [key, n] of counts) {
+      const [camada, tipo] = key.split("\t");
+      const label =
+        tipo === "borda_se_cruza"
+          ? "Borda do polígono se cruza"
+          : tipo === "vertice_duplicado"
+            ? "A geometria contém pontos repetidos"
+            : tipo;
+      lines.push(`- ${camada}: ${label} ${n}`);
     }
   }
   if (warnings.length) {
@@ -216,11 +290,11 @@ export function runImportPhase(zipBuffer: Buffer, filename = "projeto.zip"): Imp
     for (const w of warnings) lines.push(`- ${w}`);
   }
   lines.push("");
-  lines.push("Nota: pre-validacao local. O importador oficial da SEMA pode divergir em detalhes.");
+  lines.push("Nota: pre-validacao local alinhada ao importador SEMA (borda se cruza / pontos repetidos / conformidade).");
   lines.push("");
 
   return {
-    ok: rows.length === 0,
+    ok,
     rows,
     camadasReconhecidas,
     relatorioTexto: lines.join("\n"),
@@ -1154,21 +1228,38 @@ export function registerProcessarProjetoRoutes(app: Express): void {
       if (importId) {
         importSnapshot = readDocBySegments(["users", uid, "processar_projeto_jobs", importId]);
       }
-      if (!importSnapshot && upload.lastImportRelatorio) {
+      if (!importSnapshot && (upload.lastImportOk === true || upload.lastImportOk === false)) {
         importSnapshot = {
+          ok: Boolean(upload.lastImportOk),
+          status: upload.lastImportOk ? "import_ok" : "import_failed",
           rows: upload.lastImportRows || [],
           relatorioTexto: upload.lastImportRelatorio,
         };
       }
       if (!importSnapshot) {
-        // Auto-run import if user skipped explicit call
+        // Auto-run import if user skipped explicit call — still gates processar.
         const inputPath = getAbsoluteStoragePath(String(upload.inputRelativePath || ""));
         const zipBuffer = fs.readFileSync(inputPath);
         const autoImport = runImportPhase(zipBuffer, String(upload.filename || "projeto.zip"));
         importSnapshot = {
+          ok: autoImport.ok,
+          status: autoImport.ok ? "import_ok" : "import_failed",
           rows: autoImport.rows,
           relatorioTexto: autoImport.relatorioTexto,
         };
+      }
+
+      try {
+        assertImportAllowsProcess(importSnapshot);
+      } catch (gateError: any) {
+        res.status(400).json({
+          error: gateError?.message || IMPORT_REPROVADO_MSG,
+          code: "IMPORT_FAILED",
+          ok: false,
+          rows: importSnapshot?.rows || [],
+          totalErrors: Array.isArray(importSnapshot?.rows) ? importSnapshot.rows.length : 0,
+        });
+        return;
       }
 
       const settings = ((req.body as any)?.settings || {}) as GeometrySettings;
