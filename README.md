@@ -389,9 +389,20 @@ Fluxo completo **Importar → ProcessarGeo** no espírito do Importador GEO da S
 
 **Saídas (estilo SIMCAR):** `arquivo_processado.zip` (inclui shapes APP*), `arquivo_enviado.zip`, `arquivo_conferencia.zip`, `erros_processamento.zip`, `erros_processamento_app.zip`, `quadro_areas.csv`, relatórios e pastas no SIG.
 
-**Documentação:** [`docs/PROCESSAR_PROJETO_SIMCAR.md`](docs/PROCESSAR_PROJETO_SIMCAR.md)
+**Documentação:**
+- Manual: [`docs/PROCESSAR_PROJETO_SIMCAR.md`](docs/PROCESSAR_PROJETO_SIMCAR.md)
+- Changelog: [`docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md`](docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md)
 
-**Arquivos:** `backend/processar-projeto.ts`, `client/src/components/ProcessarProjetoAnalysis.tsx`
+**Arquivos:**
+- `backend/processar-projeto.ts` — orquestração + rotas + ZIP
+- `backend/simcar-processar-geo.ts` — motor APP* (ProcessarGeo)
+- `backend/simcar-rules.ts` / `backend/geometry-errors.ts` — regras e topologia
+- `client/src/components/ProcessarProjetoAnalysis.tsx` — UI
+
+**Testes:**
+```bash
+npx vitest run --root . backend/simcar-processar-geo.test.ts backend/processar-projeto.test.ts
+```
 
 **Deploy do backend:** mesmo host físico do recorte SIMCAR (Cloudflare Tunnel → Firebase Hosting). Após `git pull`, reinicie o processo Node.
 

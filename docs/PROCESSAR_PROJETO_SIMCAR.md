@@ -112,11 +112,53 @@ npx vitest run --root . \
 - Não gera croqui PDF nem envio CAR federal.
 - Continua útil como **pré-validação local completa do fluxo** Importar→Processar.
 
+## Como usar (passo a passo)
+
+1. Abra o GeoForest → **Análise de Erros** → **Processar projeto**.
+2. Envie o **ZIP** do Projeto Geográfico (mesmo padrão do SIMCAR técnico).
+3. Clique **Importar** — confere estrutura; veja camadas reconhecidas e erros de importação.
+4. Clique **Processar projeto** — roda topologia + Anexo 01 + **ProcessarGeo (APP*)**.
+5. Baixe o **ZIP completo** e abra no SIG:
+   - `arquivo_processado/APP.shp` (e APPD, APPP, …)
+   - `erros/` e `erros_app/` se houver inconsistências
+
+### Pré-requisitos no ZIP para gerar APP*
+
+Pelo menos uma entre:
+
+- rios (`RIO_MENOR_10` / `RIO_ATE_10` / faixas 10–50, 50–200, 200–600, &gt;600)
+- `NASCENTE` (ponto)
+- `LAGOA_NATURAL` / `LAGO_LAGOA_NATURAL`
+- `RESERVATORIO_ARTIFICIAL`
+- `VEREDA`
+
+Recomendado também: **AIR** (ou ATP), **AVN** (para APPP/APPD), **ARL** (para APPRL).
+
+## Tipos de erro (tabela UI)
+
+| `tipo` | Significado |
+|--------|-------------|
+| `borda_se_cruza` | Auto-interseção do anel |
+| `vertice_duplicado` / `anel_degenerado` | Topologia de anel |
+| `sobreposicao` | Feições da mesma camada se sobrepõem |
+| `vazio` | Gap entre polígonos adjacentes |
+| `fora_do_continente` | Anexo 01 contenção |
+| `sobreposicao_proibida` | Anexo 01 pares proibidos |
+| `air_atp_area` | Soma AIR ≠ ATP |
+| `erro_calculo_app` | Buffer APP falhou na feição |
+| `crs_*` / `nomenclatura_*` / `atributo_*` / … | Importação (conformidade) |
+
 ## Deploy
 
-No PC do backend (Cloudflare Tunnel):
+No PC do backend (Cloudflare Tunnel → `geoforest-api` / localhost):
 
 ```bash
 git pull origin main
-# reiniciar o Node
+# reiniciar o processo Node do backend
 ```
+
+Front (Firebase Hosting): rebuild + deploy para a UI da sub-aba.
+
+## Changelog
+
+Ver [`CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md`](CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md).

@@ -72,6 +72,29 @@ Detalhes tecnicos: [`../docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md`](.
 
 Detalhes técnicos: [`../docs/VERTICES_PROXIMAS.md`](../docs/VERTICES_PROXIMAS.md).
 
+### Processar projeto (Importar → ProcessarGeo SIMCAR)
+Fluxo completo do Projeto Geográfico: importação estrutural + processamento com
+geração de **APP / APPP / APPD / APPRL / AURD / ARLDR**, topologia e Anexo 01.
+
+- `POST /api/processar-projeto/upload` — Upload ZIP
+- `POST /api/processar-projeto/importar` — Fase Importar (conformidade)
+- `POST /api/processar-projeto/processar` — Fase Processar (job assíncrono)
+- `GET /api/processar-projeto/jobs/:jobId/events` — SSE
+- `GET /api/processar-projeto/jobs/:jobId/status` — Status
+- `GET /api/processar-projeto/download/:jobId` — ZIP (arquivo processado + APP* + erros)
+- `DELETE /api/processar-projeto/jobs/:jobId` — Remove job
+
+Detalhes: [`../docs/PROCESSAR_PROJETO_SIMCAR.md`](../docs/PROCESSAR_PROJETO_SIMCAR.md) ·  
+Changelog: [`../docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md`](../docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md).
+
+### Erros de Geometria (checks avulsos)
+- `POST /api/geometry-errors/upload`
+- `POST /api/geometry-errors/process`
+- `GET /api/geometry-errors/jobs/:jobId/events|status`
+- `GET /api/geometry-errors/download/:jobId`
+
+Detalhes: [`../docs/ERROS_GEOMETRIA_SIMCAR.md`](../docs/ERROS_GEOMETRIA_SIMCAR.md).
+
 ### CBERS
 - `POST /api/cbers/search` — Busca cenas no STAC INPE
 - `POST /api/cbers/download` — Download + processamento
