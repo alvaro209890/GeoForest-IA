@@ -66,6 +66,7 @@ import {
   Server,
   Radio,
   ShieldAlert,
+  FileStack,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { fetchSignInMethodsForEmail, onAuthStateChanged, sendPasswordResetEmail, signOut } from 'firebase/auth';
@@ -92,6 +93,7 @@ import { nanoid } from 'nanoid';
 import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog';
 import ContainmentAnalysis, { type ContainmentRow, type ContainmentSummary } from '@/components/ContainmentAnalysis';
 import GeometryErrorsAnalysis, { type GeometryErrorRow, type GeometrySummary } from '@/components/GeometryErrorsAnalysis';
+import ProcessarProjetoAnalysis from '@/components/ProcessarProjetoAnalysis';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
 
@@ -1357,7 +1359,7 @@ export default function Dashboard() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeView, setActiveView] = useState<'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'features' | 'settings'>('simcar-clip');
   // Sub-abas dentro de "Análise de Erros": vértices próximas x áreas não contidas (containment) x erros de geometria
-  const [errorAnalysisTab, setErrorAnalysisTab] = useState<'vertices' | 'containment' | 'geometry'>('vertices');
+  const [errorAnalysisTab, setErrorAnalysisTab] = useState<'vertices' | 'containment' | 'geometry' | 'processar-projeto'>('vertices');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -11625,49 +11627,63 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         ) : activeView === 'vertices-proximas' ? (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
             <div className="max-w-6xl mx-auto space-y-5 sm:space-y-6">
-              {/* ─── Sub-abas: Vértices Próximas × Áreas Não Contidas ─── */}
+              {/* ─── Sub-abas: Análise de Erros ─── */}
               <div className="relative p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm">
-                <div className="grid grid-cols-3 gap-1">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1">
                   <button
                     type="button"
                     onClick={() => setErrorAnalysisTab('vertices')}
-                    className={`relative z-10 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                    className={`relative z-10 flex items-center justify-center gap-2 py-2.5 px-2 sm:px-3 rounded-xl transition-all duration-300 text-[11px] sm:text-xs font-semibold ${
                       errorAnalysisTab === 'vertices'
                         ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-lg shadow-violet-900/30'
                         : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
                     }`}
                   >
                     <Network size={15} />
-                    <span>Vértices Próximas</span>
+                    <span className="truncate">Vértices Próximas</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setErrorAnalysisTab('containment')}
-                    className={`relative z-10 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                    className={`relative z-10 flex items-center justify-center gap-2 py-2.5 px-2 sm:px-3 rounded-xl transition-all duration-300 text-[11px] sm:text-xs font-semibold ${
                       errorAnalysisTab === 'containment'
                         ? 'bg-gradient-to-r from-rose-600 to-emerald-600 text-white shadow-lg shadow-rose-900/30'
                         : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
                     }`}
                   >
                     <ShieldAlert size={15} />
-                    <span>Áreas Não Contidas</span>
+                    <span className="truncate">Áreas Não Contidas</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setErrorAnalysisTab('geometry')}
-                    className={`relative z-10 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                    className={`relative z-10 flex items-center justify-center gap-2 py-2.5 px-2 sm:px-3 rounded-xl transition-all duration-300 text-[11px] sm:text-xs font-semibold ${
                       errorAnalysisTab === 'geometry'
                         ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-lg shadow-amber-900/30'
                         : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
                     }`}
                   >
                     <AlertTriangle size={15} />
-                    <span>Erros de Geometria</span>
+                    <span className="truncate">Erros de Geometria</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setErrorAnalysisTab('processar-projeto')}
+                    className={`relative z-10 flex items-center justify-center gap-2 py-2.5 px-2 sm:px-3 rounded-xl transition-all duration-300 text-[11px] sm:text-xs font-semibold ${
+                      errorAnalysisTab === 'processar-projeto'
+                        ? 'bg-gradient-to-r from-cyan-600 to-teal-600 text-white shadow-lg shadow-cyan-900/30'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+                    }`}
+                  >
+                    <FileStack size={15} />
+                    <span className="truncate">Processar projeto</span>
                   </button>
                 </div>
               </div>
 
-              {errorAnalysisTab === 'geometry' ? (
+              {errorAnalysisTab === 'processar-projeto' ? (
+                <ProcessarProjetoAnalysis apiFetch={apiFetch} />
+              ) : errorAnalysisTab === 'geometry' ? (
                 <GeometryErrorsAnalysis
                   apiFetch={apiFetch}
                   onJobSnapshot={(job) => {

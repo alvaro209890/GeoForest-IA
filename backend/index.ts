@@ -47,6 +47,7 @@ import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-arc
 import { registerVerticesRoutes } from "./vertices-proximas";
 import { registerContainmentRoutes } from "./containment-analysis";
 import { registerGeometryErrorsRoutes } from "./geometry-errors";
+import { registerProcessarProjetoRoutes } from "./processar-projeto";
 import {
   JobCancelledError,
   finishJob,
@@ -674,6 +675,7 @@ async function startServer() {
   registerVerticesRoutes(app);
   registerContainmentRoutes(app);
   registerGeometryErrorsRoutes(app);
+  registerProcessarProjetoRoutes(app);
   registerCbersArchiveAdminRoutes(app);
 
   const MODEL_CATALOG = [

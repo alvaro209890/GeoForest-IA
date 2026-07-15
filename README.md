@@ -378,6 +378,25 @@ Diagnostica o erro do validador da SEMA *"Geometria deve ser completamente conti
 
 ---
 
+## Processar projeto (fluxo SIMCAR Importar → Processar)
+
+Pré-validação local do **Projeto Geográfico** em dois passos, no espírito do Importador GEO da SEMA:
+
+1. **Importar** — conformidade estrutural (CRS SIRGAS 2000, 2D, nomenclatura, ATP única, atributos)
+2. **Processar** — topologia, Anexo 01 e soma AIR×ATP
+
+**Onde:** aba **Análise de Erros** → sub-aba **Processar projeto**.
+
+**Saídas:** `relatorio_importacao.txt`, `relatorio_processamento.txt`, `resumo_erros.csv`, shapefiles de pontos/polígonos de erro.
+
+**Documentação:** [`docs/PROCESSAR_PROJETO_SIMCAR.md`](docs/PROCESSAR_PROJETO_SIMCAR.md)
+
+**Arquivos:** `backend/processar-projeto.ts`, `client/src/components/ProcessarProjetoAnalysis.tsx`
+
+**Deploy do backend:** mesmo host físico do recorte SIMCAR (Cloudflare Tunnel → Firebase Hosting). Após `git pull`, reinicie o processo Node.
+
+---
+
 ## Auto-update do Frontend (sem Ctrl+F5)
 
 Cada build injeta um `__APP_BUILD_ID__` e grava `version.json`. O módulo `client/src/lib/autoUpdate.ts` compara periodicamente (e ao focar a aba) o `buildId` servido; se mudou, recarrega a página uma vez. Combinado com o `no-cache` do HTML e o hash imutável dos bundles, garante que tanto novos logins quanto abas já abertas recebam a versão nova sem refresh manual.

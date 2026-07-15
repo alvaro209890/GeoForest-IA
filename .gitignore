@@ -111,3 +111,4 @@ temp/
 # Firebase service account
 *-firebase-adminsdk-*.json
 backend/firebase-service-account.json
+tools/simcar-parity/.scramble.tmp.cjs

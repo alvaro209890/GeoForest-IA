@@ -5,6 +5,7 @@ os erros que o **Importador GEO / processamento do Projeto Geográfico do SIMCAR
 reprova ao receber os shapefiles do CAR estadual de Mato Grosso.
 
 Construída em 2026-07-11 com base em pesquisa das regras oficiais.
+> **Relacionado:** a sub-aba **Processar projeto** (fluxo Importar → Processar no estilo SIMCAR) está documentada em `docs/PROCESSAR_PROJETO_SIMCAR.md`.
 
 ## Fontes
 
