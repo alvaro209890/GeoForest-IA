@@ -93,7 +93,7 @@ import { nanoid } from 'nanoid';
 import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog';
 import ContainmentAnalysis, { type ContainmentRow, type ContainmentSummary } from '@/components/ContainmentAnalysis';
 import GeometryErrorsAnalysis, { type GeometryErrorRow, type GeometrySummary } from '@/components/GeometryErrorsAnalysis';
-import ProcessarProjetoAnalysis from '@/components/ProcessarProjetoAnalysis';
+import ProcessarProjetoAnalysis, { type ProcessarHistoryItem } from '@/components/ProcessarProjetoAnalysis';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
 
@@ -1518,6 +1518,8 @@ export default function Dashboard() {
   const [containmentJobId, setContainmentJobId] = useState<string | null>(null);
   const [geometryHistory, setGeometryHistory] = useState<GeometryHistoryItem[]>([]);
   const [geometryJobId, setGeometryJobId] = useState<string | null>(null);
+  const [processarHistory, setProcessarHistory] = useState<ProcessarHistoryItem[]>([]);
+  const [processarJobId, setProcessarJobId] = useState<string | null>(null);
   const [verticesIncludeOriginals, setVerticesIncludeOriginals] = useState(true);
   const [verticesIncludeReport, setVerticesIncludeReport] = useState(true);
   const [verticesIncludeCsv, setVerticesIncludeCsv] = useState(true);
@@ -1749,6 +1751,7 @@ export default function Dashboard() {
   const [verticesJobsRef, setVerticesJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [containmentJobsRef, setContainmentJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [geometryJobsRef, setGeometryJobsRef] = useState<ReturnType<typeof collection> | null>(null);
+  const [processarJobsRef, setProcessarJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [receiptHistory, setReceiptHistory] = useState<ReceiptHistoryItem[]>([]);
   const [receiptsRef, setReceiptsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
@@ -2374,6 +2377,78 @@ export default function Dashboard() {
         analyzedLayers: Array.isArray(data?.analyzedLayers) ? data.analyzedLayers : [],
         fixedLayers: Array.isArray(data?.fixedLayers) ? data.fixedLayers : [],
       } : undefined,
+    };
+  }, []);
+
+  const mapProcessarDocToHistoryItem = useCallback((docId: string, data: any): ProcessarHistoryItem => {
+    const rawStatus = String(data?.status || '').trim().toLowerCase();
+    const type = String(data?.type || '').trim().toLowerCase();
+    let status: ProcessarHistoryItem['status'] = 'processing';
+    if (
+      rawStatus === 'completed' ||
+      rawStatus === 'failed' ||
+      rawStatus === 'cancelled' ||
+      rawStatus === 'uploaded' ||
+      rawStatus === 'deleted' ||
+      rawStatus === 'queued' ||
+      rawStatus === 'import_ok' ||
+      rawStatus === 'import_failed'
+    ) {
+      status = rawStatus;
+    } else if (type === 'import' && (data?.ok === true || data?.importOk === true)) {
+      status = 'import_ok';
+    } else if (type === 'import') {
+      status = 'import_failed';
+    } else if (type === 'upload') {
+      status = 'uploaded';
+    }
+    const percentFallback =
+      status === 'completed' || status === 'import_ok'
+        ? 100
+        : status === 'import_failed'
+          ? 30
+          : status === 'uploaded'
+            ? 5
+            : 0;
+    return {
+      id: String(data?.id || docId),
+      jobId: String(data?.jobId || docId),
+      filename: String(data?.filename || 'Processar projeto'),
+      timestamp: toIsoDateFromUnknown(data?.completedAt || data?.updatedAt || data?.createdAt || data?.timestamp),
+      status,
+      type: type || undefined,
+      stage: data?.stage ? String(data.stage) : undefined,
+      percent: Math.max(0, Math.min(100, Math.round(Number(data?.percent || percentFallback)))),
+      message: data?.message ? String(data.message) : undefined,
+      error: data?.error ? String(data.error) : undefined,
+      uploadId: data?.uploadId ? String(data.uploadId) : type === 'upload' ? String(data?.jobId || docId) : undefined,
+      importId: data?.importId ? String(data.importId) : type === 'import' ? String(data?.jobId || docId) : undefined,
+      downloadUrl: data?.downloadUrl ? resolveBackendUrl(String(data.downloadUrl)) : undefined,
+      importPdfUrl: data?.importPdfUrl || data?.pdfUrl
+        ? resolveBackendUrl(String(data.importPdfUrl || data.pdfUrl))
+        : undefined,
+      resultRows: Array.isArray(data?.resultRows) ? data.resultRows as ProcessarHistoryItem['resultRows'] : undefined,
+      importRows: Array.isArray(data?.importRows)
+        ? data.importRows as ProcessarHistoryItem['importRows']
+        : Array.isArray(data?.rows)
+          ? data.rows as ProcessarHistoryItem['importRows']
+          : undefined,
+      warnings: Array.isArray(data?.warnings) ? data.warnings.map((item: any) => String(item)) : undefined,
+      camadasReconhecidas: Array.isArray(data?.camadasReconhecidas) ? data.camadasReconhecidas : undefined,
+      importOk:
+        typeof data?.importOk === 'boolean'
+          ? data.importOk
+          : typeof data?.ok === 'boolean'
+            ? data.ok
+            : status === 'import_ok' || status === 'completed' || status === 'processing'
+              ? true
+              : status === 'import_failed'
+                ? false
+                : null,
+      importErrors: Number.isFinite(Number(data?.importErrors)) ? Number(data.importErrors) : undefined,
+      processErrors: Number.isFinite(Number(data?.processErrors)) ? Number(data.processErrors) : undefined,
+      totalErrors: Number.isFinite(Number(data?.totalErrors)) ? Number(data.totalErrors) : undefined,
+      relatorioTexto: data?.relatorioTexto ? String(data.relatorioTexto) : undefined,
     };
   }, []);
 
@@ -4110,6 +4185,8 @@ export default function Dashboard() {
         setContainmentJobsRef(containmentRef);
         const geometryRef = collection(db, 'users', currentUser.uid, 'geometry_errors_jobs');
         setGeometryJobsRef(geometryRef);
+        const processarRef = collection(db, 'users', currentUser.uid, 'processar_projeto_jobs');
+        setProcessarJobsRef(processarRef);
         const receiptsColRef = collection(db, 'users', currentUser.uid, 'receipts');
         setReceiptsRef(receiptsColRef);
         const cbersRef = collection(db, 'users', currentUser.uid, 'cbers_wpm_jobs');
@@ -4313,6 +4390,27 @@ export default function Dashboard() {
           }
         } catch (error) {
           console.warn('Falha ao carregar histórico de erros de geometria salvo:', error);
+        }
+
+        try {
+          const processarSnap = await getDocs(query(processarRef, orderBy('updatedAtMs', 'desc')));
+          const processarEntries: ProcessarHistoryItem[] = [];
+          processarSnap.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            const item = mapProcessarDocToHistoryItem(docSnap.id, data);
+            // Não listar uploads cru no histórico; import e process viram cards.
+            if (item.status === 'deleted' || item.status === 'uploaded') return;
+            processarEntries.push(item);
+          });
+          setProcessarHistory(processarEntries);
+          const runningProcessar = processarEntries.find((entry) => entry.status === 'processing' || entry.status === 'queued');
+          if (runningProcessar) {
+            setActiveView('vertices-proximas');
+            setErrorAnalysisTab('processar-projeto');
+            setProcessarJobId(runningProcessar.jobId);
+          }
+        } catch (error) {
+          console.warn('Falha ao carregar histórico de Processar projeto:', error);
         }
 
         try {
@@ -8147,6 +8245,80 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <p className="text-[10px] text-slate-600 mt-1">Use a aba para fazer upload</p>
                 </div>
               )
+            ) : errorAnalysisTab === 'processar-projeto' ? (
+              processarHistory.length > 0 ? (
+                processarHistory.map((entry) => {
+                  const statusLabel =
+                    entry.status === 'processing' || entry.status === 'queued'
+                      ? 'Processando'
+                      : entry.status === 'completed'
+                        ? 'Concluído'
+                        : entry.status === 'cancelled'
+                          ? 'Cancelado'
+                          : entry.status === 'import_ok'
+                            ? 'Import OK'
+                            : entry.status === 'import_failed'
+                              ? 'Import falhou'
+                              : 'Falhou';
+                  const statusColor =
+                    entry.status === 'processing' || entry.status === 'queued'
+                      ? 'text-amber-300'
+                      : entry.status === 'completed' || entry.status === 'import_ok'
+                        ? 'text-emerald-300'
+                        : entry.status === 'cancelled'
+                          ? 'text-orange-300'
+                          : 'text-red-300';
+                  const detail =
+                    entry.status === 'import_ok' || entry.status === 'import_failed'
+                      ? `${entry.importErrors ?? entry.importRows?.length ?? 0} erro(s) import.`
+                      : `${entry.totalErrors ?? entry.resultRows?.length ?? 0} linha(s) · ${entry.processErrors ?? 0} proc.`;
+                  return (
+                    <div
+                      key={entry.jobId}
+                      className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${processarJobId === entry.jobId ? 'bg-cyan-500/10 border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.06)]' : 'bg-[#100d18]/70 hover:bg-[#171322] hover:border-cyan-500/20'}`}
+                      onClick={() => {
+                        setProcessarJobId(entry.jobId);
+                        setErrorAnalysisTab('processar-projeto');
+                      }}
+                    >
+                      <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${processarJobId === entry.jobId ? 'bg-gradient-to-br from-cyan-500 to-teal-500 text-white shadow-md shadow-cyan-900/40' : 'bg-white/5 text-slate-400 group-hover:text-cyan-300 group-hover:bg-cyan-500/10'}`}>
+                        <FileStack size={18} />
+                      </div>
+                      <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                        <p className={`text-sm truncate font-medium ${processarJobId === entry.jobId ? 'text-cyan-100' : 'text-slate-200 group-hover:text-cyan-100'}`}>{entry.filename}</p>
+                        <div className="flex items-center gap-2 mt-1 opacity-80">
+                          <span className="text-[10px] uppercase tracking-wider font-semibold text-cyan-300">
+                            {entry.percent}%
+                          </span>
+                          <span className={`text-[10px] font-semibold uppercase tracking-wider ${statusColor}`}>
+                            {statusLabel}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-0.5 truncate">{detail}</p>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void apiFetch(`/api/processar-projeto/jobs/${encodeURIComponent(entry.jobId)}`, { method: 'DELETE' }).catch(() => undefined);
+                          if (processarJobsRef) void deleteDoc(doc(processarJobsRef, entry.jobId)).catch(() => {});
+                          setProcessarHistory((prev) => prev.filter((item) => item.jobId !== entry.jobId));
+                          if (processarJobId === entry.jobId) setProcessarJobId(null);
+                        }}
+                        className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                        title="Excluir projeto"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <FileStack size={32} className="text-slate-600 mb-3" />
+                  <p className="text-sm text-slate-400">Nenhum projeto processado</p>
+                  <p className="text-[10px] text-slate-600 mt-1">Importe um ZIP na aba Processar projeto</p>
+                </div>
+              )
             ) : (
             verticesHistory.length > 0 ? (
               verticesHistory.map((entry) => (
@@ -11682,7 +11854,39 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </div>
 
               {errorAnalysisTab === 'processar-projeto' ? (
-                <ProcessarProjetoAnalysis apiFetch={apiFetch} />
+                <ProcessarProjetoAnalysis
+                  apiFetch={apiFetch}
+                  selectedJobId={processarJobId}
+                  historyEntry={processarHistory.find((e) => e.jobId === processarJobId) || null}
+                  onJobSnapshot={(job) => {
+                    const item = mapProcessarDocToHistoryItem(String(job?.jobId || job?.id || ''), job);
+                    // Upload cru não vira card permanente; import e process sim.
+                    if (item.status !== 'uploaded' && item.status !== 'deleted') {
+                      setProcessarHistory((prev) => {
+                        const idx = prev.findIndex((e) => e.jobId === item.jobId);
+                        if (idx >= 0) {
+                          const copy = [...prev];
+                          copy[idx] = item;
+                          return copy;
+                        }
+                        return [item, ...prev];
+                      });
+                    }
+                    if (item.status === 'processing' || item.status === 'queued') {
+                      setProcessarJobId(item.jobId);
+                    } else if (item.jobId) {
+                      setProcessarJobId(item.jobId);
+                    }
+                    if (processarJobsRef && item.jobId) {
+                      void setDoc(doc(processarJobsRef, item.jobId), {
+                        ...job,
+                        jobId: item.jobId,
+                        filename: item.filename,
+                        updatedAtMs: Date.now(),
+                      }, { merge: true }).catch(() => {});
+                    }
+                  }}
+                />
               ) : errorAnalysisTab === 'geometry' ? (
                 <GeometryErrorsAnalysis
                   apiFetch={apiFetch}

@@ -393,6 +393,7 @@ Fluxo completo **Importar → ProcessarGeo** no espírito do Importador GEO da S
 
 **Documentação:**
 - Manual: [`docs/PROCESSAR_PROJETO_SIMCAR.md`](docs/PROCESSAR_PROJETO_SIMCAR.md)
+- Changelog UX/auth/cards: [`docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_UX_AUTH.md`](docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_UX_AUTH.md)
 - Changelog ProcessarGeo: [`docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md`](docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md)
 - Changelog paridade importação: [`docs/CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md`](docs/CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md)
 - Changelog PDF importação: [`docs/CHANGELOG_2026-07-15_IMPORT_PDF_REPORT.md`](docs/CHANGELOG_2026-07-15_IMPORT_PDF_REPORT.md)
@@ -697,6 +698,7 @@ Arquivo de referência: [`config/geoforest-backend.env.example`](config/geofores
 
 - [`docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md`](docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md) — **Leia primeiro se for mexer em qualquer dado de usuário/job:** como funciona o armazenamento local (JSON em disco, não é Firestore real), o shim `localFirestore.ts`, a whitelist de collections e o checklist para adicionar uma nova aba de análise
 - [`docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md`](docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md) — Fix `INVALID_DOC_PATH` no import de ZIP (Erros de Geometria) + paridade de histórico
+- [`docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_UX_AUTH.md`](docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_UX_AUTH.md) — Auth requireAuth, cards de histórico, PDF sem SEMA, reinício com outro ZIP, remoção generateFixed
 - [`docs/CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md`](docs/CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md) — Paridade de importação Processar Projeto com PDF SEMA (teste_1: ARL 4 bordas + 2 pontos repetidos)
 - [`docs/PROCESSAR_PROJETO_SIMCAR.md`](docs/PROCESSAR_PROJETO_SIMCAR.md) — Manual Processar Projeto (Importar → ProcessarGeo)
 - [`docs/AREAS_NAO_CONTIDAS.md`](docs/AREAS_NAO_CONTIDAS.md) — Áreas não contidas (containment SIMCAR)

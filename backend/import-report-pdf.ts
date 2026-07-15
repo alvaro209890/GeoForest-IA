@@ -1,9 +1,9 @@
 /**
- * Relatório PDF de importação — estilo SEMA, identidade visual GeoForest.
+ * Relatório PDF de importação — identidade visual GeoForest.
  *
- * Espelha o "Relatório de importação" do Importador GEO (Situação, erros por
- * feição, inventário de geometrias), com layout moderno (header escuro,
- * accent emerald, cards de métricas).
+ * Espelha o "Relatório de importação" do Importador GEO / SIMCAR (Situação,
+ * erros por feição, inventário de geometrias), com layout moderno (header
+ * escuro, accent emerald, cards de métricas).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -106,8 +106,8 @@ export async function buildImportReportPdf(input: ImportPdfInput): Promise<Buffe
     info: {
       Title: `Relatório de Importação — ${safeText(input.filename, 80)}`,
       Author: "GeoForest IA",
-      Subject: "Relatório de importação do Projeto Geográfico (estilo SIMCAR)",
-      Keywords: "SIMCAR, importação, GeoForest, SEMA-MT",
+      Subject: "Relatório de importação do Projeto Geográfico (GeoForest)",
+      Keywords: "SIMCAR, importação, GeoForest",
     },
   });
 
@@ -176,7 +176,7 @@ export async function buildImportReportPdf(input: ImportPdfInput): Promise<Buffe
     width: contentW - (logoBuffer ? 62 : 0),
   });
   doc.font("Helvetica").fontSize(10).fillColor(colors.primaryLight).text(
-    "GeoForest IA · Projeto Geográfico (estilo SIMCAR / SEMA-MT)",
+    "GeoForest IA · Projeto Geográfico (SIMCAR)",
     titleX,
     60,
     { width: contentW - (logoBuffer ? 62 : 0) },
@@ -240,7 +240,7 @@ export async function buildImportReportPdf(input: ImportPdfInput): Promise<Buffe
   doc.y = metricsY + 72;
   doc.x = margin;
 
-  // ── Erros encontrados (resumo estilo SEMA) ──────────────
+  // ── Erros encontrados ───────────────────────────────────
   ensureSpace(40);
   doc.font("Helvetica-Bold").fontSize(14).fillColor(colors.dark).text("Erros encontrados", margin, doc.y);
   doc.moveTo(margin, doc.y + 6).lineTo(pageW - margin, doc.y + 6).strokeColor(colors.primary).lineWidth(1.5).stroke();
@@ -256,7 +256,7 @@ export async function buildImportReportPdf(input: ImportPdfInput): Promise<Buffe
     );
     doc.moveDown(1);
   } else {
-    // Agrupa por camada como no PDF SEMA
+    // Agrupa por camada
     const byLayer = new Map<string, Array<{ label: string; count: number }>>();
     for (const item of errorSummary) {
       const list = byLayer.get(item.camada) || [];
@@ -337,7 +337,7 @@ export async function buildImportReportPdf(input: ImportPdfInput): Promise<Buffe
     }
   }
 
-  // ── Inventário de geometrias (estilo SEMA) ──────────────
+  // ── Inventário de geometrias ────────────────────────────
   ensureSpace(40);
   doc.font("Helvetica-Bold").fontSize(14).fillColor(colors.dark).text("Geometrias encontradas", margin, doc.y);
   doc.moveTo(margin, doc.y + 6).lineTo(pageW - margin, doc.y + 6).strokeColor(colors.primary).lineWidth(1.5).stroke();
@@ -394,8 +394,8 @@ export async function buildImportReportPdf(input: ImportPdfInput): Promise<Buffe
   ensureSpace(50);
   doc.moveDown(1);
   doc.font("Helvetica").fontSize(8).fillColor(colors.lightText).text(
-    "Pré-validação local GeoForest alinhada ao Importador GEO do SIMCAR (SEMA-MT). " +
-      "Não substitui o processamento oficial da SEMA. Tipos de erro: borda se cruza (cluster ~0,05 m), " +
+    "Pré-validação local GeoForest alinhada ao Importador GEO do SIMCAR. " +
+      "Não substitui o processamento oficial do SIMCAR. Tipos de erro: borda se cruza (cluster ~0,05 m), " +
       "pontos repetidos (≤ 0,1 m), conformidade estrutural (CRS, nomenclatura, atributos).",
     margin,
     doc.y,

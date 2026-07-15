@@ -89,12 +89,32 @@ Só roda com importação **OK**. Além da derivação:
 
 ## API
 
+Todas as rotas exigem **Firebase Bearer** (`requireAuth` em `backend/index.ts`).
+
 ```
-POST /api/processar-projeto/upload
-POST /api/processar-projeto/importar
-POST /api/processar-projeto/processar   → job SSE
-GET  /api/processar-projeto/download/:id
+POST   /api/processar-projeto/upload
+POST   /api/processar-projeto/importar
+POST   /api/processar-projeto/processar          → job SSE
+GET    /api/processar-projeto/import/:id/pdf
+GET    /api/processar-projeto/jobs/:id/status
+GET    /api/processar-projeto/jobs/:id/events
+GET    /api/processar-projeto/download/:id
+DELETE /api/processar-projeto/jobs/:id
 ```
+
+### Persistência / cards
+
+Jobs gravados em `users/{uid}/processar_projeto_jobs` (store local).
+A sidebar da Análise de Erros lista **import** e **process** (não o upload cru).
+Clique no card restaura o estado na UI; excluir remove job + artefatos.
+
+### Settings do processar
+
+| Campo | Uso |
+|-------|-----|
+| `minOverlapM2` | Área mínima (m²) para marcar sobreposição/vazio |
+
+**Não há** `generateFixed` nesta aba (opção só em Erros de Geometria).
 
 ## Arquitetura
 
@@ -104,7 +124,9 @@ GET  /api/processar-projeto/download/:id
 | `backend/processar-projeto.ts` | Orquestra import/process + ZIP |
 | `backend/geometry-errors.ts` | Topologia / Anexo 01 / AIR×ATP |
 | `backend/simcar-rules.ts` | Nomenclatura, conformidade, regras Anexo 01 |
-| `client/.../ProcessarProjetoAnalysis.tsx` | UI |
+| `backend/import-report-pdf.ts` | PDF de importação (identidade GeoForest) |
+| `client/.../ProcessarProjetoAnalysis.tsx` | UI + reinício com outro ZIP |
+| `client/.../Dashboard.tsx` | Cards de histórico na sidebar |
 
 ## Testes
 
@@ -128,10 +150,13 @@ npx vitest run --root . \
 1. Abra o GeoForest → **Análise de Erros** → **Processar projeto**.
 2. Envie o **ZIP** do Projeto Geográfico (mesmo padrão do SIMCAR técnico).
 3. Clique **Importar** — confere estrutura; veja camadas reconhecidas e erros de importação.
-4. Clique **Processar projeto** — roda topologia + Anexo 01 + **ProcessarGeo (APP*)**.
-5. Baixe o **ZIP completo** e abra no SIG:
+4. (Opcional) **Baixar PDF da importação** — relatório GeoForest (situação + erros).
+5. Clique **Processar projeto** — roda topologia + Anexo 01 + **ProcessarGeo (APP*)**.
+6. Baixe o **ZIP completo** e abra no SIG:
    - `arquivo_processado/APP.shp` (e APPD, APPP, …)
    - `erros/` e `erros_app/` se houver inconsistências
+7. Para outro imóvel: **Reiniciar com outro ZIP** / **Novo projeto (outro ZIP)**.
+8. Cards na sidebar guardam importações e processamentos anteriores.
 
 ### Pré-requisitos no ZIP para gerar APP*
 
@@ -172,15 +197,17 @@ Front (Firebase Hosting): rebuild + deploy para a UI da sub-aba.
 
 ## PDF de importação (GeoForest)
 
-Após **Importar**, a API gera um PDF no estilo do relatório SEMA (situação,
-erros por feição, inventário de geometrias) com identidade visual GeoForest.
+Após **Importar**, a API gera um PDF de relatório (situação, erros por feição,
+inventário de geometrias) com **identidade visual GeoForest** (sem marca SEMA
+no layout).
 
-- Download: `GET /api/processar-projeto/import/:importId/pdf`
-- UI: botão **Baixar PDF (estilo SEMA)** no banner de situação
+- Download: `GET /api/processar-projeto/import/:importId/pdf` (auth obrigatória)
+- UI: botão **Baixar PDF da importação** no banner de situação
 - Implementação: `backend/import-report-pdf.ts`
 
 ## Changelog
 
+- [`CHANGELOG_2026-07-15_PROCESSAR_PROJETO_UX_AUTH.md`](CHANGELOG_2026-07-15_PROCESSAR_PROJETO_UX_AUTH.md) — auth, cards, PDF sem SEMA, reinício ZIP, remoção generateFixed
 - [`CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md`](CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md) — ProcessarGeo / APP* / pacotes de saída
 - [`CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md`](CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md) — paridade de importação com PDF SEMA (teste_1)
 - [`CHANGELOG_2026-07-15_IMPORT_PDF_REPORT.md`](CHANGELOG_2026-07-15_IMPORT_PDF_REPORT.md) — PDF de relatório de importação
