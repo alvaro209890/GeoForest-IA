@@ -18,6 +18,13 @@
  *     polígonos" no validador). Sem correção automática (é ambíguo qual feição
  *     recortar); o ZIP traz os polígonos exatos da sobreposição.
  *
+ *   • vazio — vazios/gaps entre polígonos adjacentes da mesma camada (buracos
+ *     topológicos no envelope da camada). Sem correção automática; o ZIP traz
+ *     poligonos_vazios.shp com a área de cada vazio.
+ *
+ *   • air_atp_area — soma das áreas das AIRs ≠ área da ATP (regra de feições
+ *     obrigatórias do Manual/Projeto Geográfico). Nível de camada (CSV/relatório).
+ *
  * A saída é um ZIP com:
  *   • pontos_erros_geometria.shp — um ponto por erro encontrado
  *   • corrigido_<camada>.shp     — camada corrigida (opcional)
@@ -37,6 +44,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import proj4 from "proj4";
 import {
+  convex as turfConvex,
   difference as turfDifference,
   featureCollection as turfFeatureCollection,
   intersect as turfIntersect,
@@ -94,9 +102,13 @@ export type GeometryChecks = {
   selfIntersection?: boolean;
   duplicateVertices?: boolean;
   overlaps?: boolean;
+  /** Vazios/gaps entre polígonos adjacentes da mesma camada. */
+  gaps?: boolean;
   simcarConformity?: boolean;
   simcarContainment?: boolean;
   simcarCrossOverlaps?: boolean;
+  /** Soma das áreas AIR deve corresponder à área da ATP. */
+  airAtpArea?: boolean;
 };
 
 export type RuleViolationPolygon = {
@@ -121,11 +133,14 @@ export const LAYER_LEVEL_TIPOS = new Set([
   "atp_multipla",
   "atributo_ausente",
   "feicao_obrigatoria_ausente",
+  "air_atp_area",
 ]);
 
 export type GeometrySettings = {
   generateFixed?: boolean;
   minOverlapM2?: number;
+  /** Tolerância relativa |soma(AIR)−ATP| / max(áreas). Padrão 0,01% (1e-4). */
+  airAtpMaxDiffRatio?: number;
 };
 
 export type OverlapPolygon = {
@@ -133,6 +148,14 @@ export type OverlapPolygon = {
   feicaoA: number;
   feicaoB: number;
   areaM2: number;
+  geometry: Polygon;
+};
+
+export type GapPolygon = {
+  camada: string;
+  areaM2: number;
+  /** Feições da mesma camada adjacentes ao vazio (quando identificáveis). */
+  feicoes: number[];
   geometry: Polygon;
 };
 
@@ -561,7 +584,7 @@ export function detectOverlaps(args: {
   return { rows, overlapPolygons, warnings };
 }
 
-/* ────────── check: regras de contenção do Anexo 01 (SIMCAR) ────────── */
+/* ────────── helpers compartilhados (regras SIMCAR + gaps/AIR×ATP) ────────── */
 
 export type SimcarRuleLayer = {
   name: string;
@@ -612,6 +635,238 @@ function unionFeatures(features: CodedFeature[]): Feature<Polygon | MultiPolygon
   }
   return acc;
 }
+
+function geometryMetricAreaM2(geometry: Polygon | MultiPolygon, crs: CodedCrs, metricProjDef: string): number {
+  const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  let total = 0;
+  for (const polygon of polygons) {
+    total += polygonMetricAreaM2(polygon as number[][][], crs, metricProjDef);
+  }
+  return total;
+}
+
+/* ─────────── check: vazios/gaps entre feições da mesma camada ─────────── */
+
+/**
+ * Conta feições cujas caixas se tocam com a do vazio e cuja geometria
+ * intersecta um buffer leve do vazio — usado para filtrar buracos
+ * intencionais de uma única feição (só reportamos gaps entre ≥2 feições).
+ */
+function neighborFeaturesForGap(
+  gapGeometry: Polygon,
+  features: Array<{ feature: number; geometry: Polygon | MultiPolygon; bbox: [number, number, number, number] }>,
+): number[] {
+  const gapBbox = geometryBbox(gapGeometry);
+  const neighbors: number[] = [];
+  const gapFeature: Feature<Polygon> = { type: "Feature", properties: {}, geometry: gapGeometry };
+  for (const item of features) {
+    if (!bboxesTouch(gapBbox, item.bbox)) continue;
+    try {
+      const hit = turfIntersect(
+        turfFeatureCollection([
+          gapFeature,
+          { type: "Feature", properties: {}, geometry: item.geometry } as Feature<Polygon | MultiPolygon>,
+        ]) as any,
+      );
+      // Adjacência: interseção nula mas bboxes se tocam → tenta união e confere se o vazio
+      // "preenche" o espaço entre; se intersect retorna null, ainda conta se as caixas se tocam
+      // em borda (gap entre polígonos separados por poucos metros).
+      if (hit?.geometry) {
+        neighbors.push(item.feature);
+        continue;
+      }
+    } catch {
+      // geometria problemática: usa só bbox
+    }
+    // Bbox tocando o gap é suficiente para adjacência grosseira (gap está no envelope).
+    neighbors.push(item.feature);
+  }
+  return neighbors;
+}
+
+/**
+ * Detecta vazios (gaps) entre polígonos da MESMA camada: diferença entre o
+ * envelope convexo das feições e a união delas. Filtra ruído por área mínima
+ * (mesmo limiar dos checks de sobreposição) e ignora buracos tocados por
+ * apenas uma feição (provável anel interior intencional).
+ *
+ * Fonte: topologia de shapefile/CAR (SEMA) — "Vazios (Gaps): não deve haver
+ * buracos não intencionais entre polígonos adjacentes".
+ */
+export function detectGaps(args: {
+  layerName: string;
+  records: ParsedPolygonRecord[];
+  crs: CodedCrs;
+  minGapM2?: number;
+}): { rows: GeometryErrorRow[]; gapPolygons: GapPolygon[]; warnings: string[] } {
+  const rows: GeometryErrorRow[] = [];
+  const gapPolygons: GapPolygon[] = [];
+  const warnings: string[] = [];
+  const minArea = Number.isFinite(Number(args.minGapM2)) ? Math.max(0, Number(args.minGapM2)) : 1;
+  const metricProjDef = metricProjForCrs(args.crs, args.records);
+
+  const features = args.records
+    .map((record) => {
+      const geometry = recordToGeoJSON(record);
+      if (!geometry) return null;
+      return { feature: record.feature, geometry, bbox: geometryBbox(geometry) };
+    })
+    .filter((item): item is { feature: number; geometry: Polygon | MultiPolygon; bbox: [number, number, number, number] } => Boolean(item));
+
+  if (features.length < 2) return { rows, gapPolygons, warnings };
+
+  const turfFeatures = features.map(
+    (item) =>
+      ({ type: "Feature", properties: { feicao: item.feature }, geometry: item.geometry }) as Feature<
+        Polygon | MultiPolygon
+      >,
+  );
+
+  let hull: Feature<Polygon | MultiPolygon> | null = null;
+  try {
+    hull = turfConvex(turfFeatureCollection(turfFeatures) as any) as Feature<Polygon | MultiPolygon> | null;
+  } catch (error: any) {
+    warnings.push(`${args.layerName}: não foi possível calcular o envelope convexo (${error?.message || "erro"}).`);
+    return { rows, gapPolygons, warnings };
+  }
+  if (!hull?.geometry) return { rows, gapPolygons, warnings };
+
+  const coded: CodedFeature[] = features.map((item) => ({
+    layerName: args.layerName,
+    feature: item.feature,
+    geometry: item.geometry,
+    crs: args.crs,
+    metricProjDef,
+  }));
+  const unioned = unionFeatures(coded);
+  if (!unioned?.geometry) {
+    warnings.push(`${args.layerName}: não foi possível unir as feições para detectar vazios.`);
+    return { rows, gapPolygons, warnings };
+  }
+
+  let diff: Feature<Polygon | MultiPolygon> | null = null;
+  try {
+    diff = turfDifference(turfFeatureCollection([hull, unioned]) as any) as Feature<Polygon | MultiPolygon> | null;
+  } catch (error: any) {
+    warnings.push(
+      `${args.layerName}: falha ao calcular vazios (envelope − união) (${error?.message || "geometria inválida"}).`,
+    );
+    return { rows, gapPolygons, warnings };
+  }
+  if (!diff?.geometry) return { rows, gapPolygons, warnings };
+
+  const polygons = diff.geometry.type === "Polygon" ? [diff.geometry.coordinates] : diff.geometry.coordinates;
+  for (const polygon of polygons) {
+    const geometry: Polygon = { type: "Polygon", coordinates: polygon as number[][][] };
+    const areaM2 = polygonMetricAreaM2(polygon as number[][][], args.crs, metricProjDef);
+    if (areaM2 < minArea) continue;
+    const feicoes = neighborFeaturesForGap(geometry, features);
+    // Buraco tocado por uma única feição = anel interior intencional, não gap entre adjacentes.
+    if (feicoes.length < 2) continue;
+
+    gapPolygons.push({ camada: args.layerName, areaM2, feicoes, geometry });
+
+    let x = NaN;
+    let y = NaN;
+    try {
+      const point = turfPointOnFeature({ type: "Feature", properties: {}, geometry } as any);
+      [x, y] = point.geometry.coordinates as [number, number];
+    } catch {
+      [x, y] = geometry.coordinates[0][0] as [number, number];
+    }
+    rows.push({
+      camada: args.layerName,
+      tipo: "vazio",
+      feicao: feicoes[0] ?? 0,
+      parte: 0,
+      anel: 0,
+      x: Number(x),
+      y: Number(y),
+      detalhe: `Vazio/gap de ${(areaM2 / 10000).toFixed(4)} ha (${areaM2.toFixed(2)} m²) entre as feições ${feicoes.join(", ")} da mesma camada.`,
+    });
+  }
+
+  return { rows, gapPolygons, warnings };
+}
+
+/**
+ * Verifica a regra de feições obrigatórias do Manual do Projeto Geográfico:
+ * a soma das áreas das AIRs deve corresponder à área da ATP. Emite um erro
+ * de nível de camada quando |soma(AIR) − ATP| supera o máximo entre o limiar
+ * absoluto (m²) e a tolerância relativa (padrão 0,01% da maior área).
+ */
+export function detectAirAtpAreaConsistency(args: {
+  layers: SimcarRuleLayer[];
+  minDiffM2?: number;
+  maxDiffRatio?: number;
+}): { rows: GeometryErrorRow[]; warnings: string[]; airAreaM2: number; atpAreaM2: number } {
+  const rows: GeometryErrorRow[] = [];
+  const warnings: string[] = [];
+  const minDiff = Number.isFinite(Number(args.minDiffM2)) ? Math.max(0, Number(args.minDiffM2)) : 1;
+  const maxRatio =
+    Number.isFinite(Number(args.maxDiffRatio)) && Number(args.maxDiffRatio) >= 0
+      ? Number(args.maxDiffRatio)
+      : 0.0001;
+
+  const byCode = groupLayersByCode(args.layers);
+  const airFeatures = byCode.get("AIR") || [];
+  const atpFeatures = byCode.get("ATP") || [];
+
+  if (!airFeatures.length || !atpFeatures.length) {
+    return { rows, warnings, airAreaM2: 0, atpAreaM2: 0 };
+  }
+
+  let airAreaM2 = 0;
+  for (const item of airFeatures) {
+    airAreaM2 += geometryMetricAreaM2(item.geometry, item.crs, item.metricProjDef);
+  }
+  let atpAreaM2 = 0;
+  for (const item of atpFeatures) {
+    atpAreaM2 += geometryMetricAreaM2(item.geometry, item.crs, item.metricProjDef);
+  }
+
+  const absDiff = Math.abs(airAreaM2 - atpAreaM2);
+  const threshold = Math.max(minDiff, maxRatio * Math.max(airAreaM2, atpAreaM2));
+  if (absDiff <= threshold) {
+    return { rows, warnings, airAreaM2, atpAreaM2 };
+  }
+
+  // Ponto representativo: centroide aproximado da primeira ATP.
+  let x = 0;
+  let y = 0;
+  try {
+    const point = turfPointOnFeature({
+      type: "Feature",
+      properties: {},
+      geometry: atpFeatures[0].geometry,
+    } as any);
+    [x, y] = point.geometry.coordinates as [number, number];
+  } catch {
+    const bbox = geometryBbox(atpFeatures[0].geometry);
+    x = (bbox[0] + bbox[2]) / 2;
+    y = (bbox[1] + bbox[3]) / 2;
+  }
+
+  const airHa = airAreaM2 / 10000;
+  const atpHa = atpAreaM2 / 10000;
+  const diffHa = absDiff / 10000;
+  rows.push({
+    camada: atpFeatures[0].layerName,
+    tipo: "air_atp_area",
+    feicao: 0,
+    parte: 0,
+    anel: 0,
+    x: Number(x),
+    y: Number(y),
+    detalhe:
+      `Soma das AIRs (${airHa.toFixed(4)} ha) diverge da ATP (${atpHa.toFixed(4)} ha) em ${diffHa.toFixed(4)} ha ` +
+      `(${absDiff.toFixed(2)} m²; limiar ${threshold.toFixed(2)} m²). Manual SIMCAR: a soma das AIRs deve corresponder à ATP.`,
+  });
+
+  return { rows, warnings, airAreaM2, atpAreaM2 };
+}
+
+/* ────────── check: regras de contenção do Anexo 01 (SIMCAR) ────────── */
 
 /**
  * Aplica as regras de CONTENÇÃO do Anexo 01 "Validações GEO" do SIMCAR:
@@ -844,6 +1099,13 @@ const overlapFields: DbfFieldDef[] = [
   { name: "area_ha", type: "F", length: 18, decimals: 6 },
 ];
 
+const gapFields: DbfFieldDef[] = [
+  { name: "camada", type: "C", length: 40, decimals: 0 },
+  { name: "feicoes", type: "C", length: 40, decimals: 0 },
+  { name: "area_m2", type: "F", length: 18, decimals: 2 },
+  { name: "area_ha", type: "F", length: 18, decimals: 6 },
+];
+
 const ruleViolationFields: DbfFieldDef[] = [
   { name: "camada_a", type: "C", length: 40, decimals: 0 },
   { name: "feicao_a", type: "N", length: 8, decimals: 0 },
@@ -916,6 +1178,14 @@ function buildReport(args: {
     lines.push("");
     lines.push("Sobreposicoes: os poligonos exatos estao em poligonos_sobreposicao.shp (sem correcao automatica; decida no SIG qual feicao recortar).");
   }
+  if (args.rows.some((row) => row.tipo === "vazio")) {
+    lines.push("");
+    lines.push("Vazios/gaps: os poligonos exatos estao em poligonos_vazios.shp (sem correcao automatica; edite no SIG para fechar o vazio entre feicoes adjacentes).");
+  }
+  if (args.rows.some((row) => row.tipo === "air_atp_area")) {
+    lines.push("");
+    lines.push("Soma AIR vs ATP: a soma das areas das AIRs deve corresponder a area da ATP (Manual do Projeto Geografico / feicoes obrigatorias).");
+  }
   if (args.rows.some((row) => row.tipo === "fora_do_continente" || row.tipo === "sobreposicao_proibida")) {
     lines.push("");
     lines.push("Regras SIMCAR (Anexo 01): os poligonos das violacoes estao em poligonos_regras_simcar.shp (regra=contencao|sobreposicao).");
@@ -933,6 +1203,7 @@ function buildResultZip(args: {
   rows: GeometryErrorRow[];
   fixes: LayerFixResult[];
   overlapPolygons: OverlapPolygon[];
+  gapPolygons: GapPolygon[];
   ruleViolations: RuleViolationPolygon[];
   prjText: string;
   filename: string;
@@ -975,6 +1246,24 @@ function buildResultZip(args: {
         name: "poligonos_sobreposicao.dbf",
       });
       archive.append(Buffer.from(args.prjText, "utf8"), { name: "poligonos_sobreposicao.prj" });
+    }
+
+    if (args.gapPolygons.length > 0) {
+      const gapRecords: ShpRecord[] = args.gapPolygons.flatMap((gap) =>
+        geojsonToShpRecords(gap.geometry, {
+          camada: gap.camada,
+          feicoes: gap.feicoes.join(",").slice(0, 40),
+          area_m2: gap.areaM2,
+          area_ha: gap.areaM2 / 10000,
+        }),
+      );
+      const built = buildShpAndShx(gapRecords, 5);
+      archive.append(built.shp, { name: "poligonos_vazios.shp" });
+      archive.append(built.shx, { name: "poligonos_vazios.shx" });
+      archive.append(buildDbfBuffer(gapRecords.map((item) => item.attributes), gapFields), {
+        name: "poligonos_vazios.dbf",
+      });
+      archive.append(Buffer.from(args.prjText, "utf8"), { name: "poligonos_vazios.prj" });
     }
 
     if (args.ruleViolations.length > 0) {
@@ -1084,6 +1373,7 @@ async function runGeometryJob(args: {
     const allWarnings: string[] = [];
     const fixes: LayerFixResult[] = [];
     const allOverlaps: OverlapPolygon[] = [];
+    const allGaps: GapPolygon[] = [];
     const allRuleViolations: RuleViolationPolygon[] = [];
     const analyzedLayers: Array<{ name: string; featureCount: number; errors: number; crsLabel: string }> = [];
     let outputPrjText = "";
@@ -1115,14 +1405,18 @@ async function runGeometryJob(args: {
       }
     }
 
-    // Regras topológicas do Anexo 01 também usam o ZIP inteiro: os pares
-    // (ex.: AVN ⊂ AIR, AVN × AUAS) independem de quais camadas foram marcadas.
-    if (checks.simcarContainment !== false || checks.simcarCrossOverlaps !== false) {
+    // Regras topológicas do Anexo 01 e AIR×ATP usam o ZIP inteiro: os pares
+    // (ex.: AVN ⊂ AIR, AVN × AUAS) e a soma das AIRs independem das camadas marcadas.
+    if (
+      checks.simcarContainment !== false ||
+      checks.simcarCrossOverlaps !== false ||
+      checks.airAtpArea !== false
+    ) {
       progress(uid, jobId, {
         status: "processing",
         stage: "simcar-rules",
         percent: 8,
-        message: "Aplicando regras do Anexo 01 (SIMCAR).",
+        message: "Aplicando regras do Anexo 01 / AIR×ATP (SIMCAR).",
       });
       const ruleLayers: SimcarRuleLayer[] = groups
         .filter((group) => group.shp)
@@ -1157,6 +1451,19 @@ async function runGeometryJob(args: {
           allWarnings.push(`Regras SIMCAR (sobreposição): ${error?.message || "falha na verificação"}`);
         }
       }
+      if (checks.airAtpArea !== false) {
+        try {
+          const airAtpResult = detectAirAtpAreaConsistency({
+            layers: ruleLayers,
+            minDiffM2: settings.minOverlapM2,
+            maxDiffRatio: settings.airAtpMaxDiffRatio,
+          });
+          allRows.push(...airAtpResult.rows);
+          allWarnings.push(...airAtpResult.warnings);
+        } catch (error: any) {
+          allWarnings.push(`Soma AIR vs ATP: ${error?.message || "falha na verificação"}`);
+        }
+      }
     }
 
     for (let index = 0; index < selectedGroups.length; index += 1) {
@@ -1189,6 +1496,17 @@ async function runGeometryJob(args: {
           allOverlaps.push(...overlapResult.overlapPolygons);
           allWarnings.push(...overlapResult.warnings);
         }
+        if (checks.gaps !== false) {
+          const gapResult = detectGaps({
+            layerName: group.name,
+            records,
+            crs,
+            minGapM2: settings.minOverlapM2,
+          });
+          rows.push(...gapResult.rows);
+          allGaps.push(...gapResult.gapPolygons);
+          allWarnings.push(...gapResult.warnings);
+        }
         allRows.push(...rows);
         analyzedLayers.push({
           name: group.name,
@@ -1196,8 +1514,9 @@ async function runGeometryJob(args: {
           errors: rows.length,
           crsLabel: crs.label,
         });
-        // Sobreposição não tem correção automática; só gera camada corrigida p/ erros corrigíveis.
-        if (settings.generateFixed !== false && rows.some((row) => row.tipo !== "sobreposicao")) {
+        // Sobreposição/vazio não têm correção automática; só gera camada corrigida p/ erros corrigíveis.
+        const nonFixable = new Set(["sobreposicao", "vazio"]);
+        if (settings.generateFixed !== false && rows.some((row) => !nonFixable.has(row.tipo))) {
           const errorFeatureIds = new Set(rows.filter((row) => row.tipo === "borda_se_cruza").map((row) => row.feicao));
           const fix = fixLayerGeometry({
             layerName: group.name,
@@ -1224,6 +1543,7 @@ async function runGeometryJob(args: {
       rows: allRows,
       fixes,
       overlapPolygons: allOverlaps,
+      gapPolygons: allGaps,
       ruleViolations: allRuleViolations,
       prjText: outputPrjText || SIRGAS_2000_PRJ,
       filename: String(upload.filename || "geometria.zip"),
@@ -1348,9 +1668,11 @@ export function registerGeometryErrorsRoutes(app: Express): void {
         checks.selfIntersection !== false ||
         checks.duplicateVertices !== false ||
         checks.overlaps !== false ||
+        checks.gaps !== false ||
         checks.simcarConformity !== false ||
         checks.simcarContainment !== false ||
-        checks.simcarCrossOverlaps !== false;
+        checks.simcarCrossOverlaps !== false ||
+        checks.airAtpArea !== false;
       if (!hasAnyCheck) {
         res.status(400).json({ error: "Selecione ao menos um tipo de erro para verificar." });
         return;

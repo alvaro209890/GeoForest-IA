@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   analyzeLayerGeometry,
   cleanRecordRings,
+  detectAirAtpAreaConsistency,
   detectDuplicateVertices,
+  detectGaps,
   detectOverlaps,
   detectSelfIntersections,
   detectSimcarContainment,
@@ -416,6 +418,213 @@ describe("detectSimcarForbiddenOverlaps", () => {
         { name: "AUAS", records: [auasOverlapping], crs: projectedCrs },
       ],
       minAreaM2: 500,
+    });
+    expect(result.rows).toHaveLength(0);
+  });
+});
+
+describe("detectGaps", () => {
+  // Dois retângulos 4×10 m separados por um vão de 2 m → gap 2×10 = 20 m².
+  const left: ParsedPolygonRecord = {
+    feature: 1,
+    rings: [
+      [
+        [0, 0],
+        [0, 10],
+        [4, 10],
+        [4, 0],
+        [0, 0],
+      ],
+    ],
+  };
+  const right: ParsedPolygonRecord = {
+    feature: 2,
+    rings: [
+      [
+        [6, 0],
+        [6, 10],
+        [10, 10],
+        [10, 0],
+        [6, 0],
+      ],
+    ],
+  };
+  // Polígono único com buraco interior intencional (não é gap entre feições).
+  const withHole: ParsedPolygonRecord = {
+    feature: 1,
+    rings: [
+      [
+        [0, 0],
+        [0, 20],
+        [20, 20],
+        [20, 0],
+        [0, 0],
+      ],
+      [
+        [5, 5],
+        [15, 5],
+        [15, 15],
+        [5, 15],
+        [5, 5],
+      ],
+    ],
+  };
+
+  it("finds the gap between two adjacent polygons with metric area", () => {
+    const result = detectGaps({
+      layerName: "AIR",
+      records: [left, right],
+      crs: projectedCrs,
+    });
+    expect(result.rows.length).toBeGreaterThanOrEqual(1);
+    expect(result.rows[0].tipo).toBe("vazio");
+    expect(result.rows[0].detalhe).toMatch(/feição|feições/i);
+    expect(result.gapPolygons.length).toBeGreaterThanOrEqual(1);
+    // Vão 2 m × 10 m = 20 m² (derivado da geometria de entrada).
+    const totalGap = result.gapPolygons.reduce((sum, g) => sum + g.areaM2, 0);
+    expect(totalGap).toBeCloseTo(20, 1);
+    expect(result.gapPolygons[0].feicoes.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("ignores gaps below the minimum area threshold", () => {
+    const result = detectGaps({
+      layerName: "AIR",
+      records: [left, right],
+      crs: projectedCrs,
+      minGapM2: 100,
+    });
+    expect(result.rows).toHaveLength(0);
+    expect(result.gapPolygons).toHaveLength(0);
+  });
+
+  it("does not flag an intentional hole of a single feature as a gap", () => {
+    const result = detectGaps({
+      layerName: "AVN",
+      records: [withHole],
+      crs: projectedCrs,
+    });
+    expect(result.rows).toHaveLength(0);
+    expect(result.gapPolygons).toHaveLength(0);
+  });
+
+  it("reports nothing for a continuous pair without gap", () => {
+    const touching: ParsedPolygonRecord = {
+      feature: 2,
+      rings: [
+        [
+          [4, 0],
+          [4, 10],
+          [10, 10],
+          [10, 0],
+          [4, 0],
+        ],
+      ],
+    };
+    const result = detectGaps({
+      layerName: "AIR",
+      records: [left, touching],
+      crs: projectedCrs,
+    });
+    expect(result.rows).toHaveLength(0);
+  });
+});
+
+describe("detectAirAtpAreaConsistency", () => {
+  // ATP 100×100 = 10_000 m².
+  const atp: ParsedPolygonRecord = {
+    feature: 1,
+    rings: [
+      [
+        [0, 0],
+        [0, 100],
+        [100, 100],
+        [100, 0],
+        [0, 0],
+      ],
+    ],
+  };
+  // Duas AIRs que somam 80×50 + 20×50 = 5_000 m² (metade da ATP).
+  const airA: ParsedPolygonRecord = {
+    feature: 1,
+    rings: [
+      [
+        [0, 0],
+        [0, 50],
+        [80, 50],
+        [80, 0],
+        [0, 0],
+      ],
+    ],
+  };
+  const airB: ParsedPolygonRecord = {
+    feature: 2,
+    rings: [
+      [
+        [80, 0],
+        [80, 50],
+        [100, 50],
+        [100, 0],
+        [80, 0],
+      ],
+    ],
+  };
+  // AIRs que preenchem a ATP (mesma geometria decomposta).
+  const airFullA: ParsedPolygonRecord = {
+    feature: 1,
+    rings: [
+      [
+        [0, 0],
+        [0, 100],
+        [50, 100],
+        [50, 0],
+        [0, 0],
+      ],
+    ],
+  };
+  const airFullB: ParsedPolygonRecord = {
+    feature: 2,
+    rings: [
+      [
+        [50, 0],
+        [50, 100],
+        [100, 100],
+        [100, 0],
+        [50, 0],
+      ],
+    ],
+  };
+
+  it("reports when sum(AIR) differs from ATP area", () => {
+    const result = detectAirAtpAreaConsistency({
+      layers: [
+        { name: "ATP", records: [atp], crs: projectedCrs },
+        { name: "AIR", records: [airA, airB], crs: projectedCrs },
+      ],
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].tipo).toBe("air_atp_area");
+    expect(result.rows[0].detalhe).toMatch(/AIR/i);
+    expect(result.rows[0].detalhe).toMatch(/ATP/i);
+    // Áreas derivadas das geometrias de entrada (não hardcoded no detalhe além da conta).
+    expect(result.atpAreaM2).toBeCloseTo(10000, 0);
+    expect(result.airAreaM2).toBeCloseTo(5000, 0);
+    expect(Math.abs(result.airAreaM2 - result.atpAreaM2)).toBeCloseTo(5000, 0);
+  });
+
+  it("reports nothing when sum(AIR) matches ATP within tolerance", () => {
+    const result = detectAirAtpAreaConsistency({
+      layers: [
+        { name: "ATP", records: [atp], crs: projectedCrs },
+        { name: "AIR", records: [airFullA, airFullB], crs: projectedCrs },
+      ],
+    });
+    expect(result.rows).toHaveLength(0);
+    expect(result.airAreaM2).toBeCloseTo(result.atpAreaM2, 0);
+  });
+
+  it("skips when AIR or ATP layer is absent", () => {
+    const result = detectAirAtpAreaConsistency({
+      layers: [{ name: "ATP", records: [atp], crs: projectedCrs }],
     });
     expect(result.rows).toHaveLength(0);
   });

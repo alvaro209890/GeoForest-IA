@@ -80,6 +80,12 @@ const CHECKS: CheckDef[] = [
       'Feições de uma mesma camada que se sobrepõem. O ZIP inclui poligonos_sobreposicao.shp com a área exata de cada sobreposição (sem correção automática — decida no SIG qual feição recortar).',
   },
   {
+    id: 'gaps',
+    label: 'Vazios/gaps entre polígonos da mesma camada',
+    description:
+      'Buracos topológicos entre feições adjacentes (envelope convexo − união). O ZIP inclui poligonos_vazios.shp com a área de cada vazio. Filtra ruído pelo mesmo limiar de área mínima (m²) das sobreposições.',
+  },
+  {
     id: 'simcarConformity',
     label: 'Conformidade SIMCAR (CRS, 2D, nomenclatura, atributos)',
     description:
@@ -97,6 +103,12 @@ const CHECKS: CheckDef[] = [
     description:
       'Pares de feições diferentes que não podem se sobrepor (impeditiva): AVN × AUAS/ÁREA CONSOLIDADA/PANTANEIRA/rios/lagoas/reservatórios; AUAS × CONSOLIDADA/inundadas; VEREDA × MANGUEZAL × RESTINGA; relevo entre si; UTILIDADE PÚBLICA × INTERESSE SOCIAL. Gera poligonos_regras_simcar.shp. Verifica o ZIP inteiro.',
   },
+  {
+    id: 'airAtpArea',
+    label: 'Soma das AIRs vs área da ATP',
+    description:
+      'Regra de feições obrigatórias do Manual do Projeto Geográfico: a soma das áreas das AIRs deve corresponder à área da ATP. Emite erro de conformidade de área quando a diferença supera o limiar (máx. entre 1 m² e 0,01% da maior área). Verifica o ZIP inteiro.',
+  },
 ];
 
 const TIPO_LABEL: Record<string, string> = {
@@ -104,6 +116,8 @@ const TIPO_LABEL: Record<string, string> = {
   vertice_duplicado: 'Vértice duplicado',
   anel_degenerado: 'Anel degenerado',
   sobreposicao: 'Sobreposição',
+  vazio: 'Vazio/gap',
+  air_atp_area: 'Soma AIR ≠ ATP',
   nomenclatura_desconhecida: 'Nomenclatura fora do padrão',
   crs_ausente: 'CRS ausente',
   crs_nao_conforme: 'CRS não conforme',
@@ -617,15 +631,16 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) =>
               })}
             </div>
 
-            {/* Área mínima de sobreposição */}
-            {enabledChecks.has('overlaps') && (
+            {/* Área mínima (sobreposição e vazios) */}
+            {(enabledChecks.has('overlaps') || enabledChecks.has('gaps') || enabledChecks.has('airAtpArea')) && (
               <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="max-w-md">
-                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Sobreposição mínima (m²)</p>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Área mínima (m²)</p>
                   <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                    Sobreposições menores que este valor são descartadas. Bordas quase coincidentes geram interseções de
-                    poucos cm² que não são erros reais — o padrão de <strong className="text-slate-300">1 m²</strong> filtra
-                    esse ruído. Use <strong className="text-slate-300">0</strong> para ver absolutamente tudo.
+                    Sobreposições e vazios menores que este valor são descartados; também é o limiar absoluto de
+                    |soma(AIR) − ATP|. Bordas quase coincidentes geram interseções de poucos cm² que não são erros reais —
+                    o padrão de <strong className="text-slate-300">1 m²</strong> filtra esse ruído. Use{' '}
+                    <strong className="text-slate-300">0</strong> para ver absolutamente tudo.
                   </p>
                 </div>
                 <input

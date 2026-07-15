@@ -62,18 +62,30 @@ Construída em 2026-07-11 com base em pesquisa das regras oficiais.
 | Borda de polígono se cruza | `selfIntersection` | `borda_se_cruza` | unkink → `corrigido_<camada>.shp` | pontos |
 | Vértices duplicados / anéis degenerados | `duplicateVertices` | `vertice_duplicado`, `anel_degenerado` | remoção/descarte na camada corrigida | pontos |
 | Sobreposição na mesma camada | `overlaps` | `sobreposicao` | — | `poligonos_sobreposicao.shp` |
+| Vazios/gaps na mesma camada | `gaps` | `vazio` | — | `poligonos_vazios.shp` |
 | Conformidade SIMCAR | `simcarConformity` | `crs_ausente`, `crs_nao_conforme`, `dimensao_nao_2d`, `primitiva_incorreta`, `nomenclatura_desconhecida`, `atp_multipla`, `atributo_ausente`, `feicao_obrigatoria_ausente` | — | tabela/CSV/relatório (nível de camada) |
 | Contenção do Anexo 01 | `simcarContainment` | `fora_do_continente` | — | `poligonos_regras_simcar.shp` (`regra=contencao`) |
 | Sobreposições proibidas do Anexo 01 | `simcarCrossOverlaps` | `sobreposicao_proibida` | — | `poligonos_regras_simcar.shp` (`regra=sobreposicao`) |
+| Soma AIR vs ATP | `airAtpArea` | `air_atp_area` | — | tabela/CSV/relatório (nível de camada) |
 
 Observações:
 
-- Os checks do SIMCAR (conformidade e Anexo 01) analisam **o ZIP inteiro**,
-  independentemente das camadas marcadas — as regras são do projeto todo.
-- O campo **"Sobreposição mínima (m²)"** (padrão 1 m²) filtra ruído numérico de
-  bordas quase coincidentes em todos os checks de área.
-- Erros em nível de camada (conformidade) não entram no shapefile de pontos —
-  aparecem na tabela, CSV e relatório.
+- Os checks do SIMCAR (conformidade, Anexo 01 e **soma AIR×ATP**) analisam
+  **o ZIP inteiro**, independentemente das camadas marcadas — as regras são do
+  projeto todo. Sobreposição e **vazios/gaps** rodam nas camadas selecionadas.
+- O campo **"Área mínima (m²)"** (padrão 1 m²) filtra ruído numérico de bordas
+  quase coincidentes em checks de área (sobreposição, vazios, Anexo 01) e é o
+  limiar **absoluto** de |soma(AIR) − ATP|.
+- **Vazios/gaps**: diferença entre o envelope convexo das feições da camada e a
+  união delas. Só reporta vazios tocados por **≥ 2 feições** (buraco interior
+  intencional de uma única feição é ignorado). Fonte: topologia de shapefile/CAR
+  (SEMA) — *“não deve haver buracos não intencionais entre polígonos adjacentes”*.
+- **Soma AIR vs ATP**: Manual do Projeto Geográfico — ATP obrigatória (polígono
+  único) e AIR (uma ou mais) com **soma das AIRs correspondente à ATP**. Erro
+  quando `|soma(AIR) − ATP| > max(área mínima m², 0,01% × max(AIR, ATP))`.
+  Tolerância relativa configurável em `settings.airAtpMaxDiffRatio` (padrão `1e-4`).
+- Erros em nível de camada (conformidade, `air_atp_area`) não entram no
+  shapefile de pontos — aparecem na tabela, CSV e relatório.
 - A sub-aba **Áreas Não Contidas** continua existindo para containment *manual*
   (escolher alvo/continentes à mão); a Contenção do Anexo 01 é a versão
   automática pelas regras oficiais.
@@ -82,6 +94,7 @@ Observações:
 
 - `pontos_erros_geometria.shp/.shx/.dbf/.prj` — um ponto por erro pontual;
 - `poligonos_sobreposicao.shp` — sobreposições na mesma camada (`feicao_a`, `feicao_b`, `area_m2`, `area_ha`);
+- `poligonos_vazios.shp` — vazios/gaps na mesma camada (`camada`, `feicoes`, `area_m2`, `area_ha`);
 - `poligonos_regras_simcar.shp` — violações do Anexo 01 (`camada_a`, `feicao_a`, `camada_b`, `regra`, `area_m2`, `area_ha`);
 - `corrigido_<camada>.shp` — camada corrigida (atributo `feicao` preserva o nº original; `corrigido` S/N);
 - `resumo_erros.csv` e `relatorio_erros.txt`.
@@ -100,10 +113,10 @@ Observações:
     (`getZipLayerGroups` agora captura `.dbf`), escrita em `shapefile-writer.ts`.
 - **Frontend**: `client/src/components/GeometryErrorsAnalysis.tsx`, 3ª sub-aba
   da Análise de Erros no `Dashboard.tsx` (`errorAnalysisTab === 'geometry'`).
-- **Testes**: `backend/geometry-errors.test.ts` (22) e
-  `backend/simcar-rules.test.ts` (9). Rodar com
-  `npx vitest run --root . backend/` (o `--root .` é necessário porque o root
-  do vite é `client/`).
+- **Testes**: `backend/geometry-errors.test.ts` e
+  `backend/simcar-rules.test.ts`. Rodar com
+  `npx vitest run --root . backend/geometry-errors.test.ts backend/simcar-rules.test.ts`
+  (o `--root .` é necessário porque o root do vite é `client/`).
 
 ## Como adicionar um novo check
 
@@ -121,3 +134,4 @@ Observações:
 - `546445dc` conformidade SIMCAR (CRS/2D/primitiva/nomenclatura/ATP única/atributos)
 - `6d10e130` contenção do Anexo 01
 - `a581ce2a` sobreposições proibidas do Anexo 01
+- `2026-07-15` vazios/gaps na mesma camada + soma(AIR) vs ATP
