@@ -78,6 +78,7 @@ import {
   WGS84_PRJ,
   visibleVerticesLayers,
 } from "./vertices-proximas";
+import { buildImportReportPdf } from "./import-report-pdf";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const subscribers = new Map<string, Set<Response>>();
@@ -90,6 +91,9 @@ export type ImportPhaseResult = {
   camadasReconhecidas: Array<{ name: string; code: string | null; featureCount: number; crsLabel: string }>;
   relatorioTexto: string;
   warnings: string[];
+  /** Preenchido pela rota de importação quando o PDF é gerado e gravado. */
+  pdfRelativePath?: string;
+  pdfUrl?: string;
 };
 
 /** Camada pronta para gravação em shapefile (processado / conferência). */
@@ -1170,6 +1174,32 @@ export function registerProcessarProjetoRoutes(app: Express): void {
       const zipBuffer = fs.readFileSync(inputPath);
       const result = runImportPhase(zipBuffer, String(upload.filename || "projeto.zip"));
       const importId = crypto.randomUUID();
+
+      // PDF estilo SEMA com identidade GeoForest
+      let pdfRelativePath: string | undefined;
+      let pdfUrl: string | undefined;
+      try {
+        const pdfBuffer = await buildImportReportPdf({
+          filename: String(upload.filename || "projeto.zip"),
+          ok: result.ok,
+          rows: result.rows,
+          camadas: result.camadasReconhecidas,
+          warnings: result.warnings,
+          reportId: importId.slice(0, 8),
+        });
+        const storedPdf = saveUserBuffer({
+          uid,
+          area: "processar-projeto/import-pdf",
+          filename: `relatorio_importacao_${importId.slice(0, 8)}.pdf`,
+          buffer: pdfBuffer,
+        });
+        pdfRelativePath = storedPdf.relativePath;
+        pdfUrl = `/api/processar-projeto/import/${importId}/pdf`;
+      } catch (pdfErr: any) {
+        // Importação continua mesmo se o PDF falhar; aviso no job
+        result.warnings.push(`PDF de importação: ${pdfErr?.message || "falha ao gerar"}`);
+      }
+
       persistJob(uid, importId, {
         type: "import",
         uploadId,
@@ -1180,6 +1210,8 @@ export function registerProcessarProjetoRoutes(app: Express): void {
         relatorioTexto: result.relatorioTexto,
         warnings: result.warnings,
         ok: result.ok,
+        pdfRelativePath: pdfRelativePath || null,
+        pdfUrl: pdfUrl || null,
         createdAt: new Date().toISOString(),
         expiresAtMs: Date.now() + CACHE_TTL_MS,
       });
@@ -1190,6 +1222,7 @@ export function registerProcessarProjetoRoutes(app: Express): void {
         lastImportRows: result.rows,
         lastImportRelatorio: result.relatorioTexto,
         lastImportCamadas: result.camadasReconhecidas,
+        lastImportPdfUrl: pdfUrl || null,
       });
       res.json({
         ok: result.ok,
@@ -1200,9 +1233,61 @@ export function registerProcessarProjetoRoutes(app: Express): void {
         relatorioTexto: result.relatorioTexto,
         warnings: result.warnings,
         totalErrors: result.rows.length,
+        pdfUrl: pdfUrl || null,
       });
     } catch (error: any) {
       res.status(400).json({ error: error?.message || "Falha na importação." });
+    }
+  });
+
+  app.get("/api/processar-projeto/import/:importId/pdf", async (req: Request, res: Response) => {
+    try {
+      const uid = String((req as any).authUid || "").trim();
+      if (!uid) {
+        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      const importId = String(req.params.importId || "").trim();
+      const data = readDocBySegments(["users", uid, "processar_projeto_jobs", importId]);
+      if (!data || data.type !== "import") {
+        res.status(404).json({ error: "Importação não encontrada." });
+        return;
+      }
+
+      let pdfPath = String(data.pdfRelativePath || "").trim();
+      if (!pdfPath || !fs.existsSync(getAbsoluteStoragePath(pdfPath))) {
+        // regenera sob demanda
+        const pdfBuffer = await buildImportReportPdf({
+          filename: String(data.filename || "projeto.zip"),
+          ok: Boolean(data.ok),
+          rows: Array.isArray(data.rows) ? (data.rows as GeometryErrorRow[]) : [],
+          camadas: Array.isArray(data.camadasReconhecidas) ? data.camadasReconhecidas : [],
+          warnings: Array.isArray(data.warnings) ? data.warnings : [],
+          reportId: importId.slice(0, 8),
+        });
+        const stored = saveUserBuffer({
+          uid,
+          area: "processar-projeto/import-pdf",
+          filename: `relatorio_importacao_${importId.slice(0, 8)}.pdf`,
+          buffer: pdfBuffer,
+        });
+        pdfPath = stored.relativePath;
+        persistJob(uid, importId, {
+          pdfRelativePath: pdfPath,
+          pdfUrl: `/api/processar-projeto/import/${importId}/pdf`,
+        });
+      }
+
+      const abs = getAbsoluteStoragePath(pdfPath);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="relatorio_importacao_geoforest_${importId.slice(0, 8)}.pdf"`,
+      );
+      res.setHeader("Cache-Control", "private, max-age=300");
+      fs.createReadStream(abs).pipe(res);
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || "Falha ao baixar PDF de importação." });
     }
   });
 

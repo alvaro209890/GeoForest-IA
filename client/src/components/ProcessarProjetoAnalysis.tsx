@@ -5,6 +5,7 @@ import {
   Cpu,
   Download,
   FileStack,
+  FileText,
   Loader2,
   Play,
   Upload,
@@ -118,6 +119,7 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
   const [importRows, setImportRows] = useState<ErrorRow[]>([]);
   const [camadasRec, setCamadasRec] = useState<CamadaRec[]>([]);
   const [importRelatorio, setImportRelatorio] = useState<string | null>(null);
+  const [importPdfUrl, setImportPdfUrl] = useState<string | null>(null);
 
   const [generateFixed, setGenerateFixed] = useState(true);
   const [minOverlapM2, setMinOverlapM2] = useState('1');
@@ -156,6 +158,7 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
     setImportRows([]);
     setCamadasRec([]);
     setImportRelatorio(null);
+    setImportPdfUrl(null);
     setGenerateFixed(true);
     setMinOverlapM2('1');
     setProcessing(false);
@@ -229,6 +232,7 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
     setError(null);
     setImportRows([]);
     setImportOk(null);
+    setImportPdfUrl(null);
     setCompletedMessage(null);
     setRows([]);
     setDownloadUrl(null);
@@ -246,8 +250,9 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
       setCamadasRec(Array.isArray(payload?.camadasReconhecidas) ? payload.camadasReconhecidas : []);
       setImportRelatorio(payload?.relatorioTexto ? String(payload.relatorioTexto) : null);
       setImportErrors(Number(payload?.totalErrors || 0));
+      setImportPdfUrl(payload?.pdfUrl ? String(payload.pdfUrl) : null);
       if (payload?.ok) toast.success('Importação OK — sem erros estruturais.');
-      else toast.warning(`Importação com ${payload?.totalErrors || 0} inconsistência(s).`);
+      else toast.warning(`Importação com ${payload?.totalErrors || 0} inconsistência(s). PDF do relatório disponível.`);
     } catch (err: any) {
       setError(err?.message || 'Falha na importação.');
     } finally {
@@ -391,6 +396,27 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
     }
   }, [apiFetch, downloadUrl, jobId]);
 
+  const downloadImportPdf = useCallback(async () => {
+    if (!importPdfUrl) return;
+    try {
+      const response = await apiFetch(importPdfUrl);
+      if (!response.ok) throw new Error(await readApiError(response));
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = `relatorio_importacao_geoforest_${(importId || 'import').slice(0, 8)}.pdf`;
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      toast.success('PDF do relatório de importação baixado.');
+    } catch (err: any) {
+      toast.error(err?.message || 'Falha ao baixar PDF de importação.');
+    }
+  }, [apiFetch, importId, importPdfUrl]);
+
   const canImport = Boolean(uploadId) && !uploading && !importing && !processing;
   // SIMCAR: Processar só libera com importação aprovada.
   const canProcess = Boolean(uploadId) && importOk === true && !processing && !importing;
@@ -522,25 +548,37 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) 
 
           {importOk !== null && (
             <div
-              className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${
+              className={`flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between rounded-xl border px-4 py-3 ${
                 importOk
                   ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-100'
                   : 'border-rose-500/25 bg-rose-500/10 text-rose-100'
               }`}
             >
-              {importOk ? <CheckCircle2 size={20} className="shrink-0 mt-0.5" /> : <XCircle size={20} className="shrink-0 mt-0.5" />}
-              <div>
-                <p className="text-sm font-semibold">
-                  {importOk
-                    ? 'Situação da importação: Aprovado'
-                    : `Situação da importação: Reprovado (${importErrors} erro(s))`}
-                </p>
-                <p className="text-xs opacity-80 mt-0.5">
-                  {importOk
-                    ? 'Importação OK — conformidade e topologia sem inconsistências. O Processar está liberado.'
-                    : 'Corrija os erros encontrados e envie novamente! O processamento não é liberado com importação reprovada (igual ao SIMCAR).'}
-                </p>
+              <div className="flex items-start gap-3 min-w-0">
+                {importOk ? <CheckCircle2 size={20} className="shrink-0 mt-0.5" /> : <XCircle size={20} className="shrink-0 mt-0.5" />}
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">
+                    {importOk
+                      ? 'Situação da importação: Aprovado'
+                      : `Situação da importação: Reprovado (${importErrors} erro(s))`}
+                  </p>
+                  <p className="text-xs opacity-80 mt-0.5">
+                    {importOk
+                      ? 'Importação OK — conformidade e topologia sem inconsistências. O Processar está liberado.'
+                      : 'Corrija os erros encontrados e envie novamente! O processamento não é liberado com importação reprovada (igual ao SIMCAR).'}
+                  </p>
+                </div>
               </div>
+              {importPdfUrl && (
+                <button
+                  type="button"
+                  onClick={() => void downloadImportPdf()}
+                  className="inline-flex items-center justify-center gap-2 shrink-0 rounded-xl border border-white/15 bg-black/20 px-4 py-2 text-xs font-semibold text-white hover:bg-white/10 transition-colors"
+                >
+                  <FileText size={14} />
+                  Baixar PDF (estilo SEMA)
+                </button>
+              )}
             </div>
           )}
 

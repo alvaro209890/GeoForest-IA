@@ -395,12 +395,14 @@ Fluxo completo **Importar → ProcessarGeo** no espírito do Importador GEO da S
 - Manual: [`docs/PROCESSAR_PROJETO_SIMCAR.md`](docs/PROCESSAR_PROJETO_SIMCAR.md)
 - Changelog ProcessarGeo: [`docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md`](docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md)
 - Changelog paridade importação: [`docs/CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md`](docs/CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md)
+- Changelog PDF importação: [`docs/CHANGELOG_2026-07-15_IMPORT_PDF_REPORT.md`](docs/CHANGELOG_2026-07-15_IMPORT_PDF_REPORT.md)
 
 **Arquivos:**
 - `backend/processar-projeto.ts` — orquestração + rotas + ZIP + gate de importação
 - `backend/simcar-processar-geo.ts` — motor APP* (ProcessarGeo)
 - `backend/simcar-rules.ts` / `backend/geometry-errors.ts` — regras e topologia (tolerâncias SIMCAR)
 - `backend/fixtures/teste_1/` — ZIP oráculo SEMA
+- `backend/import-report-pdf.ts` — PDF de importação (estilo SEMA / visual GeoForest)
 - `client/src/components/ProcessarProjetoAnalysis.tsx` — UI
 
 **Testes:**

@@ -170,7 +170,17 @@ git pull origin main
 
 Front (Firebase Hosting): rebuild + deploy para a UI da sub-aba.
 
+## PDF de importação (GeoForest)
+
+Após **Importar**, a API gera um PDF no estilo do relatório SEMA (situação,
+erros por feição, inventário de geometrias) com identidade visual GeoForest.
+
+- Download: `GET /api/processar-projeto/import/:importId/pdf`
+- UI: botão **Baixar PDF (estilo SEMA)** no banner de situação
+- Implementação: `backend/import-report-pdf.ts`
+
 ## Changelog
 
 - [`CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md`](CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md) — ProcessarGeo / APP* / pacotes de saída
 - [`CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md`](CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md) — paridade de importação com PDF SEMA (teste_1)
+- [`CHANGELOG_2026-07-15_IMPORT_PDF_REPORT.md`](CHANGELOG_2026-07-15_IMPORT_PDF_REPORT.md) — PDF de relatório de importação
