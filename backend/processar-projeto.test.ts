@@ -233,7 +233,7 @@ describe("paridade SIMCAR — fixture teste_1 (PDF SEMA importação)", () => {
 });
 
 describe("runProcessPhase", () => {
-  it("detects gap between two AIR polygons and air_atp area mismatch", async () => {
+  it("air_atp mismatch reprova; gaps NAO reprovam (paridade ProcessarGeo)", async () => {
     // Metric-like rings in projected-looking coords; use SIRGAS prj so CRS is geographic
     // but area checks still run (UTM estimated from lon/lat). Use projected prj text for clean m².
     const UTM_PRJ =
@@ -321,9 +321,14 @@ describe("runProcessPhase", () => {
 
     const result = runProcessPhase(zip, { minOverlapM2: 1, generateFixed: false });
     expect(result.rows.some((r) => r.tipo === "air_atp_area")).toBe(true);
-    expect(result.rows.some((r) => r.tipo === "vazio")).toBe(true);
+    // ProcessarGeo oficial NÃO valida vazios/gaps (oráculo CAR 270069):
+    // o relatório da SEMA não tem seção de vazios e o processamento não reprova por isso.
+    expect(result.rows.some((r) => r.tipo === "vazio")).toBe(false);
+    expect(result.gapPolygons.length).toBe(0);
     expect(result.relatorioTexto).toMatch(/processamento/i);
-    expect(result.gapPolygons.length).toBeGreaterThanOrEqual(1);
+    // Tabela oficial "Geometrias encontradas" (25 linhas fixas, com zeros)
+    expect(result.geometriasEncontradas.length).toBe(25);
+    expect(result.relatorioTexto).toContain("Área Total da Propriedade");
   });
 
   it("reports forbidden AVN × AUAS overlap", async () => {

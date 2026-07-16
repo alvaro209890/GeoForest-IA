@@ -116,6 +116,8 @@ export type RuleViolationPolygon = {
   camadaA: string;
   feicaoA: number;
   camadaB: string;
+  /** Feição da camada B (quando a regra envolve um par de feições). */
+  feicaoB?: number;
   regra: string;
   areaM2: number;
   geometry: Polygon;
@@ -265,6 +267,16 @@ export const SIMCAR_IMPORT_DUP_TOLERANCE_M = 0.1;
  */
 export const SIMCAR_IMPORT_COLLAPSE_WIDTH_M = 0.02;
 export const SIMCAR_IMPORT_COLLAPSE_AREA_M2 = 0.01;
+
+/**
+ * ProcessarGeo oficial — resolução de relatório de sobreposição: um PAR de
+ * feições só é contado quando a SOMA das interseções do par ≥ 0,01 ha
+ * (100 m²). Derivado dos 222 pontos do ERROS_DE_SOBREPOSICAO oficial do CAR
+ * 270069: pares ≥100 m² = ARL×ARL 106 · AVN×AVN 106 · AVN×AREA_CONSOLIDADA 8
+ * · AUAS×AREA_CONSOLIDADA 2 — todos EXATOS (e consistente com o limiar de
+ * 100 m² da contenção). Áreas em UTM planar (SIRGAS), como a SEMA calcula.
+ */
+export const SIMCAR_PROCESS_PAIR_MIN_M2 = 100;
 
 export type TopologyDetectOptions = {
   /** Distância máxima (m) entre vértices consecutivos para "pontos repetidos". Default SIMCAR. */
@@ -729,6 +741,105 @@ function metricProjForCrs(crs: CodedCrs, records: ParsedPolygonRecord[]): string
   return estimateUtmProjFromLonLat(center[0], center[1]).projDef;
 }
 
+/** Projeção métrica usada nos cálculos (UTM estimado quando o CRS é geográfico). */
+export function metricProjDefFor(crs: CodedCrs, records: ParsedPolygonRecord[]): string {
+  return metricProjForCrs(crs, records);
+}
+
+/**
+ * Como polygonMetricAreaM2, mas DENSIFICA arestas longas (em graus) antes de
+ * projetar. Sem isso, lascas de interseção com uma aresta longa (corda) ganham
+ * área falsa de arco-corda da projeção UTM — oráculo CAR 270069: os pares
+ * ARL 62-64/67-69 (lascas de ~4,5 mm de largura) medem ~600/310 m² sem
+ * densificar e <1 m² densificado, e a SEMA NÃO os conta. Já a tabela
+ * "Geometrias encontradas" bate EXATA sem densificar (vértice-corda) — por
+ * isso esta função é usada só na medição de pares de sobreposição.
+ */
+function polygonMetricAreaDensifiedM2(
+  polygon: number[][][],
+  crs: CodedCrs,
+  metricProjDef: string,
+  stepDeg = 0.001,
+): number {
+  if (crs.kind !== "geographic") return polygonMetricAreaM2(polygon, crs, metricProjDef);
+  const densified = polygon.map((ring) => {
+    const out: number[][] = [];
+    for (let i = 0; i < ring.length - 1; i += 1) {
+      const [x1, y1] = ring[i];
+      const [x2, y2] = ring[i + 1];
+      out.push([x1, y1]);
+      const span = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+      const extra = Math.min(64, Math.floor(span / stepDeg));
+      for (let k = 1; k <= extra; k += 1) {
+        out.push([x1 + ((x2 - x1) * k) / (extra + 1), y1 + ((y2 - y1) * k) / (extra + 1)]);
+      }
+    }
+    out.push(ring[ring.length - 1]);
+    return out;
+  });
+  return polygonMetricAreaM2(densified, crs, metricProjDef);
+}
+
+/**
+ * Área planar (m²) em UTM — MESMO método de área do ProcessarGeo da SEMA
+ * (oráculo CAR 270069: a tabela "Geometrias encontradas" bate a ≤0,0003 ha
+ * com UTM planar SIRGAS; área elipsoidal/esférica NÃO bate).
+ */
+export function geometryPlanarAreaM2(
+  geometry: Polygon | MultiPolygon,
+  crs: CodedCrs,
+  metricProjDef: string,
+): number {
+  const polys = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  let total = 0;
+  for (const poly of polys) total += polygonMetricAreaM2(poly as number[][][], crs, metricProjDef);
+  return total;
+}
+
+/** Resumo por PAR de feições (relatório/ERROS_DE_SOBREPOSICAO do ProcessarGeo). */
+export type OverlapPairSummary = {
+  camadaA: string;
+  camadaB: string;
+  feicaoA: number;
+  feicaoB: number;
+  areaM2: number;
+  /** Maior parte da interseção do par (posiciona o ponto do erro). */
+  geometry: Polygon;
+};
+
+export function summarizeOverlapPairs(
+  overlaps: OverlapPolygon[],
+  violations: RuleViolationPolygon[],
+): OverlapPairSummary[] {
+  const map = new Map<string, OverlapPairSummary & { largestM2: number }>();
+  const push = (
+    camadaA: string,
+    camadaB: string,
+    feicaoA: number,
+    feicaoB: number,
+    areaM2: number,
+    geometry: Polygon,
+  ) => {
+    const key = `${camadaA}\t${camadaB}\t${feicaoA}\t${feicaoB}`;
+    const cur = map.get(key);
+    if (cur) {
+      cur.areaM2 += areaM2;
+      if (areaM2 > cur.largestM2) {
+        cur.largestM2 = areaM2;
+        cur.geometry = geometry;
+      }
+    } else {
+      map.set(key, { camadaA, camadaB, feicaoA, feicaoB, areaM2, geometry, largestM2: areaM2 });
+    }
+  };
+  for (const o of overlaps) push(o.camada, o.camada, o.feicaoA, o.feicaoB, o.areaM2, o.geometry);
+  for (const v of violations) {
+    if (v.regra !== "sobreposicao") continue;
+    push(v.camadaA, v.camadaB, v.feicaoA, v.feicaoB ?? -1, v.areaM2, v.geometry);
+  }
+  return [...map.values()].map(({ largestM2: _largest, ...rest }) => rest);
+}
+
 /**
  * Detecta pares de feições da MESMA camada cujos polígonos se sobrepõem
  * (interseção com área acima de `minOverlapM2`). Sobreposições de borda com
@@ -739,11 +850,18 @@ export function detectOverlaps(args: {
   records: ParsedPolygonRecord[];
   crs: CodedCrs;
   minOverlapM2?: number;
+  /**
+   * Semântica do ProcessarGeo da SEMA: o par só conta se a SOMA das
+   * interseções (sem filtro de parte) ≥ este valor. Quando ausente, mantém o
+   * comportamento clássico (qualquer parte ≥ minOverlapM2 conta).
+   */
+  pairMinAreaM2?: number;
 }): { rows: GeometryErrorRow[]; overlapPolygons: OverlapPolygon[]; warnings: string[] } {
   const rows: GeometryErrorRow[] = [];
   const overlapPolygons: OverlapPolygon[] = [];
   const warnings: string[] = [];
   const minArea = Number.isFinite(Number(args.minOverlapM2)) ? Math.max(0, Number(args.minOverlapM2)) : 1;
+  const pairMin = Number.isFinite(Number(args.pairMinAreaM2)) ? Math.max(0, Number(args.pairMinAreaM2)) : null;
   const metricProjDef = metricProjForCrs(args.crs, args.records);
 
   const features = args.records
@@ -779,9 +897,11 @@ export function detectOverlaps(args: {
           ? [intersection.geometry.coordinates]
           : intersection.geometry.coordinates;
       let pairAreaM2 = 0;
+      let pairTotalM2 = 0;
       const pairPolygons: OverlapPolygon[] = [];
       for (const polygon of polygons) {
-        const areaM2 = polygonMetricAreaM2(polygon as number[][][], args.crs, metricProjDef);
+        const areaM2 = polygonMetricAreaDensifiedM2(polygon as number[][][], args.crs, metricProjDef);
+        pairTotalM2 += areaM2;
         if (areaM2 < minArea) continue;
         pairAreaM2 += areaM2;
         pairPolygons.push({
@@ -793,6 +913,7 @@ export function detectOverlaps(args: {
         });
       }
       if (!pairPolygons.length) continue;
+      if (pairMin !== null && pairTotalM2 < pairMin) continue; // par abaixo da resolução do ProcessarGeo
       overlapPolygons.push(...pairPolygons);
       let x = NaN;
       let y = NaN;
@@ -1202,11 +1323,14 @@ export function detectSimcarContainment(args: {
 export function detectSimcarForbiddenOverlaps(args: {
   layers: SimcarRuleLayer[];
   minAreaM2?: number;
+  /** Semântica do ProcessarGeo: o par só conta se a soma das interseções ≥ este valor. */
+  pairMinAreaM2?: number;
 }): { rows: GeometryErrorRow[]; violations: RuleViolationPolygon[]; warnings: string[] } {
   const rows: GeometryErrorRow[] = [];
   const violations: RuleViolationPolygon[] = [];
   const warnings: string[] = [];
   const minArea = Number.isFinite(Number(args.minAreaM2)) ? Math.max(0, Number(args.minAreaM2)) : 1;
+  const pairMin = Number.isFinite(Number(args.pairMinAreaM2)) ? Math.max(0, Number(args.pairMinAreaM2)) : null;
 
   const byCode = groupLayersByCode(args.layers);
   const bboxCache = new Map<CodedFeature, [number, number, number, number]>();
@@ -1248,21 +1372,25 @@ export function detectSimcarForbiddenOverlaps(args: {
             ? [intersection.geometry.coordinates]
             : intersection.geometry.coordinates;
         let pairAreaM2 = 0;
+        let pairTotalM2 = 0;
         const pairViolations: RuleViolationPolygon[] = [];
         for (const polygon of polygons) {
-          const areaM2 = polygonMetricAreaM2(polygon as number[][][], a.crs, a.metricProjDef);
+          const areaM2 = polygonMetricAreaDensifiedM2(polygon as number[][][], a.crs, a.metricProjDef);
+          pairTotalM2 += areaM2;
           if (areaM2 < minArea) continue;
           pairAreaM2 += areaM2;
           pairViolations.push({
             camadaA: a.layerName,
             feicaoA: a.feature,
             camadaB: b.layerName,
+            feicaoB: b.feature,
             regra: "sobreposicao",
             areaM2,
             geometry: { type: "Polygon", coordinates: polygon as number[][][] },
           });
         }
         if (!pairViolations.length) continue;
+        if (pairMin !== null && pairTotalM2 < pairMin) continue; // par abaixo da resolução do ProcessarGeo
         violations.push(...pairViolations);
 
         let x = NaN;

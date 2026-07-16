@@ -29,20 +29,31 @@ import {
   analyzeLayerGeometry,
   detectAirAtpAreaConsistency,
   detectAirCompositionConsistency,
-  detectGaps,
   detectOverlaps,
   detectReservatorioRules,
   detectSimcarContainment,
   detectSimcarForbiddenOverlaps,
+  geometryPlanarAreaM2,
   LAYER_LEVEL_TIPOS,
+  metricProjDefFor,
+  recordToGeoJSON,
+  SIMCAR_PROCESS_PAIR_MIN_M2,
+  summarizeOverlapPairs,
   type GapPolygon,
   type GeometryErrorRow,
   type GeometrySettings,
   type LayerFixResult,
+  type OverlapPairSummary,
   type OverlapPolygon,
   type RuleViolationPolygon,
   type SimcarRuleLayer,
 } from "./geometry-errors";
+import {
+  difference as turfDifference,
+  featureCollection as turfFeatureCollection,
+  union as turfUnion,
+} from "@turf/turf";
+import type { Feature, MultiPolygon, Polygon } from "geojson";
 import {
   getAbsoluteStoragePath,
   readDocBySegments,
@@ -55,6 +66,7 @@ import { finishJob, isCancelRequested, requestCancel, startJob } from "./process
 import {
   checkSimcarConformity,
   recognizeSimcarLayer,
+  type SimcarLayerCode,
 } from "./simcar-rules";
 import {
   generateSimcarDerivedLayers,
@@ -131,6 +143,10 @@ export type ProcessPhaseResult = {
   overlapPolygons: OverlapPolygon[];
   gapPolygons: GapPolygon[];
   ruleViolations: RuleViolationPolygon[];
+  /** PARES de sobreposição (semântica do relatório da SEMA: soma ≥ 0,01 ha). */
+  overlapPairs: OverlapPairSummary[];
+  /** Tabela "Geometrias encontradas" no formato oficial do relatório SEMA. */
+  geometriasEncontradas: Array<{ rotulo: string; descricao: string; areaHa: number; quantidade: number }>;
   fixes: LayerFixResult[];
   /** Sempre preenchido: camadas limpas (unkink + vértices) = base do arquivo processado. */
   processedLayers: ProcessedLayerOut[];
@@ -141,23 +157,157 @@ export type ProcessPhaseResult = {
   relatorioTexto: string;
 };
 
-/** Área planar aproximada (m² se CRS métrico; senão unidade do CRS). */
-function ringsAreaAbs(rings: number[][][]): number {
-  let total = 0;
-  for (let r = 0; r < rings.length; r += 1) {
-    const ring = rings[r];
-    let a = 0;
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      a += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
-    }
-    const abs = Math.abs(a / 2);
-    total += r === 0 ? abs : -abs;
-  }
-  return Math.max(0, total);
-}
-
 function groupsFromZip(zipBuffer: Buffer) {
   return getZipLayerGroups(zipBuffer);
+}
+
+/* ────────── relatório oficial do ProcessarGeo (oráculo CAR 270069) ────────── */
+
+/** Nomes de exibição que o relatório da SEMA usa nas frases "X está sobrepondo Y". */
+const OVERLAP_DISPLAY_NAME: Partial<Record<SimcarLayerCode, string>> = {
+  AREA_CONSOLIDADA: "Área Consolidada",
+};
+
+function overlapDisplayName(layerName: string): string {
+  const code = recognizeSimcarLayer(layerName);
+  return (code && OVERLAP_DISPLAY_NAME[code]) || code || layerName;
+}
+
+const formatHaBR = new Intl.NumberFormat("pt-BR", {
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 4,
+});
+
+/**
+ * Linhas FIXAS da tabela "Geometrias encontradas" do relatório oficial da
+ * SEMA (mesma ordem/rótulos/descrições do PDF; linhas zeradas aparecem).
+ * RIO agrega todas as classes de curso d'água; NASCENTE conta pontos.
+ */
+const GEOMETRIAS_TABELA: Array<{
+  rotulo: string;
+  descricao: string;
+  codes: SimcarLayerCode[];
+  ponto?: boolean;
+  /** ARL: a SEMA recorta UTILIDADE_PUBLICA/INTERESSE_SOCIAL antes de medir. */
+  recorteUp?: boolean;
+}> = [
+  { rotulo: "ATP", descricao: "Área Total da Propriedade", codes: ["ATP"] },
+  { rotulo: "AIR", descricao: "Área do Imóvel Rural (Matrícula/Posse)", codes: ["AIR"] },
+  { rotulo: "UTILIDADE_PUBLICA", descricao: "Área de Utilidade Pública", codes: ["AREA_UTILIDADE_PUBLICA"] },
+  { rotulo: "INTERESSE_SOCIAL", descricao: "Área de Interesse Social", codes: ["AREA_INTERESSE_SOCIAL"] },
+  { rotulo: "NASCENTE", descricao: "Nascentes e Olhos d’água perenes", codes: ["NASCENTE"], ponto: true },
+  {
+    rotulo: "RIO",
+    descricao: "Área de curso de água",
+    codes: ["RIO_MENOR_10", "RIO_10_ATE_50", "RIO_50_ATE_200", "RIO_200_ATE_600", "RIO_MAIOR_600"],
+  },
+  { rotulo: "LAGOA_NATURAL", descricao: "Área de Lagoa Natural", codes: ["LAGO_LAGOA_NATURAL"] },
+  { rotulo: "RESERVATORIO_ARTIFICIAL", descricao: "Área de Reservatório Artificial", codes: ["RESERVATORIO_ARTIFICIAL"] },
+  { rotulo: "AREA_DECLIVIDADE", descricao: "Área de Declividade", codes: ["AREA_DECLIVIDADE"] },
+  { rotulo: "BORDA_CHAPADA", descricao: "Borda de Chapada", codes: ["BORDA_CHAPADA"] },
+  { rotulo: "AREA_TOPO_MORRO", descricao: "Área de Topo de Morro", codes: ["AREA_TOPO_MORRO"] },
+  { rotulo: "AREA_ALTITUDE_1800", descricao: "Área com altitude acima de 1800m", codes: ["AREA_ALTITUDE_1800"] },
+  { rotulo: "AREA_UMIDA", descricao: "Área Umida", codes: ["AREA_UMIDA"] },
+  { rotulo: "AREA_USO_RESTRITO", descricao: "Área Uso Restrito", codes: ["AREA_USO_RESTRITO"] },
+  { rotulo: "AURD", descricao: "Área Uso Restrito Degradado", codes: ["AURD"] },
+  { rotulo: "AVN", descricao: "Área de Vegetação Nativa", codes: ["AVN"] },
+  { rotulo: "AUAS", descricao: "Área de Uso Antropizado do Solo", codes: ["AUAS"] },
+  { rotulo: "AREA_CONSOLIDADA", descricao: "Área Consolidada", codes: ["AREA_CONSOLIDADA"] },
+  { rotulo: "TIPOLOGIA_VEGETAL", descricao: "Área de Tipologia Vegetal", codes: ["TIPOLOGIA_VEGETAL"] },
+  {
+    rotulo: "RESTINGA",
+    descricao: "Área de Restinga (fixadoras de dunas ou estabilizadora de mangues)",
+    codes: ["RESTINGA"],
+  },
+  { rotulo: "MANGUEZAL", descricao: "Área de Manguezal", codes: ["MANGUEZAL"] },
+  { rotulo: "VEREDA", descricao: "Área de Vereda", codes: ["VEREDA"] },
+  { rotulo: "ARCUC", descricao: "Área Reservada para Compensação em Unidade de Conservação", codes: ["ARCUC"] },
+  { rotulo: "ARLREM", descricao: "Área de Reserva Legal Realocada para Exploração Mineral", codes: ["ARLREM"] },
+  { rotulo: "ARL", descricao: "Área de Reserva Legal", codes: ["ARL"], recorteUp: true },
+];
+
+/**
+ * Calcula a tabela "Geometrias encontradas" como a SEMA: área PLANAR em UTM
+ * (validado a ≤0,0003 ha no oráculo) e, na linha ARL, recorte de
+ * UTILIDADE_PUBLICA/INTERESSE_SOCIAL antes de medir (área e quantidade das
+ * partes resultantes; oráculo: ARL 62.302,3082 ha = ARL − UP).
+ */
+function computeGeometriasEncontradas(args: {
+  ruleLayers: SimcarRuleLayer[];
+  pointCounts: Map<SimcarLayerCode, number>;
+}): Array<{ rotulo: string; descricao: string; areaHa: number; quantidade: number }> {
+  const byCode = new Map<SimcarLayerCode, Array<{ layer: SimcarRuleLayer; metricProjDef: string }>>();
+  for (const layer of args.ruleLayers) {
+    const code = recognizeSimcarLayer(layer.name);
+    if (!code) continue;
+    const entry = { layer, metricProjDef: metricProjDefFor(layer.crs, layer.records) };
+    const list = byCode.get(code);
+    if (list) list.push(entry);
+    else byCode.set(code, [entry]);
+  }
+  const layersOf = (codes: SimcarLayerCode[]) => codes.flatMap((code) => byCode.get(code) || []);
+
+  let eraseUnion: Feature<Polygon | MultiPolygon> | null = null;
+  for (const { layer } of layersOf(["AREA_UTILIDADE_PUBLICA", "AREA_INTERESSE_SOCIAL"])) {
+    for (const rec of layer.records) {
+      const geometry = recordToGeoJSON(rec);
+      if (!geometry) continue;
+      const f = { type: "Feature", properties: {}, geometry } as Feature<Polygon | MultiPolygon>;
+      try {
+        eraseUnion = eraseUnion ? (turfUnion(turfFeatureCollection([eraseUnion, f]) as any) as any) : f;
+      } catch {
+        /* união falhou nesta feição: segue com as demais */
+      }
+    }
+  }
+
+  const rows: Array<{ rotulo: string; descricao: string; areaHa: number; quantidade: number }> = [];
+  for (const def of GEOMETRIAS_TABELA) {
+    if (def.ponto) {
+      const quantidade = def.codes.reduce((sum, code) => sum + (args.pointCounts.get(code) || 0), 0);
+      rows.push({ rotulo: def.rotulo, descricao: def.descricao, areaHa: 0, quantidade });
+      continue;
+    }
+    let areaM2 = 0;
+    let quantidade = 0;
+    for (const { layer, metricProjDef } of layersOf(def.codes)) {
+      for (const rec of layer.records) {
+        const geometry = recordToGeoJSON(rec);
+        if (!geometry) continue;
+        if (def.recorteUp && eraseUnion) {
+          let diff: Feature<Polygon | MultiPolygon> | null;
+          try {
+            diff = turfDifference(
+              turfFeatureCollection([
+                { type: "Feature", properties: {}, geometry } as Feature<Polygon | MultiPolygon>,
+                eraseUnion,
+              ]) as any,
+            ) as Feature<Polygon | MultiPolygon> | null;
+          } catch {
+            diff = { type: "Feature", properties: {}, geometry } as Feature<Polygon | MultiPolygon>;
+          }
+          if (!diff?.geometry) continue; // feição toda dentro do recorte
+          const polys =
+            diff.geometry.type === "Polygon" ? [diff.geometry.coordinates] : diff.geometry.coordinates;
+          for (const poly of polys) {
+            const partM2 = geometryPlanarAreaM2(
+              { type: "Polygon", coordinates: poly as number[][][] },
+              layer.crs,
+              metricProjDef,
+            );
+            if (partM2 < 0.01) continue; // resíduo numérico do recorte
+            areaM2 += partM2;
+            quantidade += 1;
+          }
+        } else {
+          areaM2 += geometryPlanarAreaM2(geometry, layer.crs, metricProjDef);
+          quantidade += 1;
+        }
+      }
+    }
+    rows.push({ rotulo: def.rotulo, descricao: def.descricao, areaHa: areaM2 / 10000, quantidade });
+  }
+  return rows;
 }
 
 /** Mensagem espelhando o PDF SEMA quando a importação falha. */
@@ -343,6 +493,20 @@ export function runProcessPhase(
     dbf: group.dbf?.data,
   }));
 
+  // Camadas de PONTO (NASCENTE): contagem para a tabela "Geometrias encontradas".
+  const pointCounts = new Map<SimcarLayerCode, number>();
+  for (let i = 0; i < groups.length; i += 1) {
+    if (ruleLayers[i].records.length) continue;
+    const code = recognizeSimcarLayer(groups[i].name);
+    if (!code) continue;
+    try {
+      const pts = parsePointRecords(groups[i].shp!.data);
+      if (pts.length) pointCounts.set(code, (pointCounts.get(code) || 0) + pts.length);
+    } catch {
+      /* camada sem pontos */
+    }
+  }
+
   onProgress?.({ percent: 10, message: "Aplicando regras do Anexo 01 / AIR×ATP.", stage: "simcar-rules" });
   // Calibração do ProcessarGeo oficial (oráculo CAR 270069): a SEMA NÃO acusou
   // vazamentos de contenção de até 78 m² (0,0078 ha) — o processamento usa
@@ -357,7 +521,12 @@ export function runProcessPhase(
     allWarnings.push(`Contenção Anexo 01: ${error?.message || "falha"}`);
   }
   try {
-    const crossResult = detectSimcarForbiddenOverlaps({ layers: ruleLayers, minAreaM2: minArea });
+    // Semântica do ProcessarGeo: o PAR de feições só conta com soma ≥ 0,01 ha.
+    const crossResult = detectSimcarForbiddenOverlaps({
+      layers: ruleLayers,
+      minAreaM2: Math.min(minArea, 1),
+      pairMinAreaM2: SIMCAR_PROCESS_PAIR_MIN_M2,
+    });
     // Oráculo: o ProcessarGeo oficial não reporta sobreposição com hidrografia
     // (AVN×RIO etc.) — esses pares ficam só na aba Erros de Geometria.
     const isHydro = (layerName: string) => {
@@ -451,7 +620,7 @@ export function runProcessPhase(
     selfIntersection: true,
     duplicateVertices: true,
     overlaps: true,
-    gaps: true,
+    gaps: false, // ProcessarGeo oficial não valida vazios entre polígonos
   };
 
   for (let index = 0; index < groups.length; index += 1) {
@@ -472,25 +641,19 @@ export function runProcessPhase(
         outputPrjText = crs.prjText || (crs.label === "EPSG:4326" ? WGS84_PRJ : SIRGAS_2000_PRJ);
       }
       const rows = analyzeLayerGeometry({ layerName: group.name, records, checks });
+      // Sobreposição na MESMA camada — semântica do ProcessarGeo: par ≥ 0,01 ha.
+      // (O ProcessarGeo oficial NÃO verifica vazios/gaps — isso fica só na aba
+      // Erros de Geometria.)
       const overlapResult = detectOverlaps({
         layerName: group.name,
         records,
         crs,
-        minOverlapM2: minArea,
+        minOverlapM2: Math.min(minArea, 1),
+        pairMinAreaM2: SIMCAR_PROCESS_PAIR_MIN_M2,
       });
       rows.push(...overlapResult.rows);
       allOverlaps.push(...overlapResult.overlapPolygons);
       allWarnings.push(...overlapResult.warnings);
-
-      const gapResult = detectGaps({
-        layerName: group.name,
-        records,
-        crs,
-        minGapM2: minArea,
-      });
-      rows.push(...gapResult.rows);
-      allGaps.push(...gapResult.gapPolygons);
-      allWarnings.push(...gapResult.warnings);
 
       allRows.push(...rows);
       analyzedLayers.push({
@@ -523,9 +686,13 @@ export function runProcessPhase(
         prjText: crs.prjText || outputPrjText || SIRGAS_2000_PRJ,
       });
 
+      // Área PLANAR em UTM (método da SEMA) — ringsAreaAbs em coords geográficas
+      // devolveria graus², inútil para o quadro.
+      const layerProjDef = metricProjDefFor(crs, records);
       let layerArea = 0;
       for (const rec of records) {
-        layerArea += ringsAreaAbs(rec.rings || []);
+        const geometry = recordToGeoJSON(rec);
+        if (geometry) layerArea += geometryPlanarAreaM2(geometry, crs, layerProjDef);
       }
       quadroAreas.push({
         camada: group.name,
@@ -557,6 +724,10 @@ export function runProcessPhase(
       crsLabel: "derivada (ProcessarGeo)",
     });
   }
+
+  // PARES de sobreposição (semântica de contagem do relatório da SEMA)
+  const overlapPairs = summarizeOverlapPairs(allOverlaps, allRuleViolations);
+  const geometriasEncontradas = computeGeometriasEncontradas({ ruleLayers, pointCounts });
 
   const lines: string[] = [];
   lines.push("Relatório de processamento");
@@ -592,18 +763,23 @@ export function runProcessPhase(
   lines.push("Erros de sobreposição e obrigatoriedades");
   const composicao = allRows.filter((r) => r.tipo === "air_composicao_area" || r.tipo === "air_atp_area");
   for (const row of composicao) lines.push(row.detalhe);
-  // "X está sobrepondo Y n vezes." — mesma camada e pares proibidos
+  // "X está sobrepondo Y n vezes." — n = PARES de feições com soma ≥ 0,01 ha
+  // (oráculo: ARL×ARL 106 · AVN×AVN 106 · AVN×Área Consolidada 8 · AUAS×Área
+  // Consolidada 2, exatos). Nomes de exibição como no PDF da SEMA.
   const overlapCounts = new Map<string, number>();
-  for (const o of allOverlaps) {
-    overlapCounts.set(`${o.camada}\t${o.camada}`, (overlapCounts.get(`${o.camada}\t${o.camada}`) || 0) + 1);
-  }
-  for (const v of allRuleViolations) {
-    if (v.regra !== "sobreposicao") continue;
-    overlapCounts.set(`${v.camadaA}\t${v.camadaB}`, (overlapCounts.get(`${v.camadaA}\t${v.camadaB}`) || 0) + 1);
+  for (const pair of overlapPairs) {
+    const key = `${pair.camadaA}\t${pair.camadaB}`;
+    overlapCounts.set(key, (overlapCounts.get(key) || 0) + 1);
   }
   for (const [key, n] of overlapCounts) {
     const [a, b] = key.split("\t");
-    lines.push(`${a} está sobrepondo ${b} ${n} ${n === 1 ? "vez" : "vezes"}.`);
+    lines.push(`${overlapDisplayName(a)} está sobrepondo ${overlapDisplayName(b)} ${n} ${n === 1 ? "vez" : "vezes"}.`);
+  }
+  if (overlapCounts.size) {
+    lines.push("");
+    lines.push(
+      "* Os locais onde ocorrem as sobreposições podem ser encontrados no arquivo “Pontos de sobreposição” disponível no sistema.",
+    );
   }
   if (!composicao.length && !overlapCounts.size) lines.push("(nenhum)");
   lines.push("");
@@ -617,8 +793,8 @@ export function runProcessPhase(
   lines.push("");
 
   lines.push("Geometrias encontradas");
-  for (const q of quadroAreas) {
-    lines.push(`${q.camada} | ${q.area_ha.toFixed(4)} ha | Quantidade: ${q.feicoes}`);
+  for (const g of geometriasEncontradas) {
+    lines.push(`${g.rotulo} | ${g.descricao} | ${formatHaBR.format(g.areaHa)} | Quantidade: ${g.quantidade}`);
   }
   lines.push("");
 
@@ -645,7 +821,8 @@ export function runProcessPhase(
   lines.push("- arquivo_enviado.zip — shapes enviados");
   lines.push("- arquivo_processado.zip — projeto processado (limpos + APP/APPD/APPP/APPRL/AURD/ARLDR)");
   lines.push("- arquivo_conferencia.zip — areas por feicao");
-  lines.push("- erros_processamento.zip — sobreposicao/vazios/anexo 01");
+  lines.push("- erros_processamento.zip — ERROS_DE_SOBREPOSICAO (artefato oficial SEMA)");
+  lines.push("- erros_diagnostico.zip — diagnosticos extras GeoForest");
   lines.push("- erros_processamento_app.zip — pontos de erro de calculo de APP");
   lines.push("- quadro_areas.csv — quadro de areas (inclui APP*)");
   if (allRows.some((r) => r.tipo === "air_atp_area")) {
@@ -670,6 +847,8 @@ export function runProcessPhase(
     overlapPolygons: allOverlaps,
     gapPolygons: allGaps,
     ruleViolations: allRuleViolations,
+    overlapPairs,
+    geometriasEncontradas,
     fixes,
     processedLayers,
     originalLayers,
@@ -696,13 +875,6 @@ const overlapFields: DbfFieldDef[] = [
   { name: "camada", type: "C", length: 40, decimals: 0 },
   { name: "feicao_a", type: "N", length: 8, decimals: 0 },
   { name: "feicao_b", type: "N", length: 8, decimals: 0 },
-  { name: "area_m2", type: "F", length: 18, decimals: 2 },
-  { name: "area_ha", type: "F", length: 18, decimals: 6 },
-];
-
-const gapFields: DbfFieldDef[] = [
-  { name: "camada", type: "C", length: 40, decimals: 0 },
-  { name: "feicoes", type: "C", length: 40, decimals: 0 },
   { name: "area_m2", type: "F", length: 18, decimals: 2 },
   { name: "area_ha", type: "F", length: 18, decimals: 6 },
 ];
@@ -848,11 +1020,18 @@ export async function buildProcessarProjetoZip(args: {
   }
   const processadoZip = await buildNestedZip(processadoFiles);
 
-  // Nested: arquivo_conferencia.zip (mesmas geometrias + áreas)
+  // Nested: arquivo_conferencia.zip (mesmas geometrias + áreas em UTM planar,
+  // método de área da SEMA)
+  const conferenciaCrs = detectCrs(prj);
   const conferenciaFiles: Array<{ name: string; data: Buffer }> = [];
   for (const layer of proc.processedLayers) {
-    const withArea: ShpRecord[] = layer.records.map((rec) => {
-      const areaM2 = ringsAreaAbs(rec.rings || []);
+    const layerProjDef = metricProjDefFor(
+      conferenciaCrs,
+      layer.records.map((rec, index) => ({ feature: index + 1, rings: rec.rings || [] })) as any,
+    );
+    const withArea: ShpRecord[] = layer.records.map((rec, index) => {
+      const geometry = recordToGeoJSON({ feature: index + 1, rings: rec.rings || [] } as any);
+      const areaM2 = geometry ? geometryPlanarAreaM2(geometry, conferenciaCrs, layerProjDef) : 0;
       return {
         ...rec,
         attributes: {
@@ -898,77 +1077,10 @@ export async function buildProcessarProjetoZip(args: {
   }
   const enviadoZip = await buildNestedZip(enviadoFiles);
 
-  // Nested: erros_processamento.zip
+  // Nested: erros_processamento.zip — SÓ o artefato oficial da SEMA
+  // (ERROS_DE_SOBREPOSICAO: pontos com ID + DETALHES "A com B" em nomes de
+  // código, UM por PAR de feições — mesmo schema do download oficial).
   const errosFiles: Array<{ name: string; data: Buffer }> = [];
-  {
-    const points = buildPointShpAndShx(pointRecords, 1);
-    errosFiles.push({ name: "pontos_erros.shp", data: points.shp });
-    errosFiles.push({ name: "pontos_erros.shx", data: points.shx });
-    errosFiles.push({
-      name: "pontos_erros.dbf",
-      data: buildDbfBuffer(pointRecords.map((p) => p.attributes), errorPointFields),
-    });
-    errosFiles.push({ name: "pontos_erros.prj", data: Buffer.from(prj, "utf8") });
-  }
-  if (proc.overlapPolygons.length) {
-    const records: ShpRecord[] = proc.overlapPolygons.flatMap((o) =>
-      geojsonToShpRecords(o.geometry, {
-        camada: o.camada,
-        feicao_a: o.feicaoA,
-        feicao_b: o.feicaoB,
-        area_m2: o.areaM2,
-        area_ha: o.areaM2 / 10000,
-      }),
-    );
-    const built = buildShpAndShx(records, 5);
-    errosFiles.push({ name: "poligonos_sobreposicao.shp", data: built.shp });
-    errosFiles.push({ name: "poligonos_sobreposicao.shx", data: built.shx });
-    errosFiles.push({
-      name: "poligonos_sobreposicao.dbf",
-      data: buildDbfBuffer(records.map((r) => r.attributes), overlapFields),
-    });
-    errosFiles.push({ name: "poligonos_sobreposicao.prj", data: Buffer.from(prj, "utf8") });
-  }
-  if (proc.gapPolygons.length) {
-    const records: ShpRecord[] = proc.gapPolygons.flatMap((g) =>
-      geojsonToShpRecords(g.geometry, {
-        camada: g.camada,
-        feicoes: g.feicoes.join(",").slice(0, 40),
-        area_m2: g.areaM2,
-        area_ha: g.areaM2 / 10000,
-      }),
-    );
-    const built = buildShpAndShx(records, 5);
-    errosFiles.push({ name: "poligonos_vazios.shp", data: built.shp });
-    errosFiles.push({ name: "poligonos_vazios.shx", data: built.shx });
-    errosFiles.push({
-      name: "poligonos_vazios.dbf",
-      data: buildDbfBuffer(records.map((r) => r.attributes), gapFields),
-    });
-    errosFiles.push({ name: "poligonos_vazios.prj", data: Buffer.from(prj, "utf8") });
-  }
-  if (proc.ruleViolations.length) {
-    const records: ShpRecord[] = proc.ruleViolations.flatMap((v) =>
-      geojsonToShpRecords(v.geometry, {
-        camada_a: v.camadaA,
-        feicao_a: v.feicaoA,
-        camada_b: v.camadaB,
-        regra: v.regra,
-        area_m2: v.areaM2,
-        area_ha: v.areaM2 / 10000,
-      }),
-    );
-    const built = buildShpAndShx(records, 5);
-    errosFiles.push({ name: "poligonos_regras_simcar.shp", data: built.shp });
-    errosFiles.push({ name: "poligonos_regras_simcar.shx", data: built.shx });
-    errosFiles.push({
-      name: "poligonos_regras_simcar.dbf",
-      data: buildDbfBuffer(records.map((r) => r.attributes), ruleViolationFields),
-    });
-    errosFiles.push({ name: "poligonos_regras_simcar.prj", data: Buffer.from(prj, "utf8") });
-  }
-  // ERROS_DE_SOBREPOSICAO — MESMO nome/schema do arquivo oficial da SEMA
-  // (pontos com ID + DETALHES "A com B"), um por incidente de sobreposição.
   {
     const centroidOf = (geometry: { type: string; coordinates: any }): [number, number] => {
       const ring: number[][] =
@@ -982,21 +1094,11 @@ export async function buildProcessarProjetoZip(args: {
       const n = Math.max(1, ring.length);
       return [sx / n, sy / n];
     };
-    const sobreposicaoPoints: PointShpRecord[] = [];
-    let id = 1;
-    for (const o of proc.overlapPolygons) {
-      sobreposicaoPoints.push({
-        coordinates: centroidOf(o.geometry as any),
-        attributes: { ID: id++, DETALHES: `${o.camada} com ${o.camada}` },
-      });
-    }
-    for (const v of proc.ruleViolations) {
-      if (v.regra !== "sobreposicao") continue;
-      sobreposicaoPoints.push({
-        coordinates: centroidOf(v.geometry as any),
-        attributes: { ID: id++, DETALHES: `${v.camadaA} com ${v.camadaB}` },
-      });
-    }
+    const codeOf = (name: string) => recognizeSimcarLayer(name) || name;
+    const sobreposicaoPoints: PointShpRecord[] = proc.overlapPairs.map((pair, index) => ({
+      coordinates: centroidOf(pair.geometry as any),
+      attributes: { ID: index + 1, DETALHES: `${codeOf(pair.camadaA)} com ${codeOf(pair.camadaB)}` },
+    }));
     if (sobreposicaoPoints.length) {
       const built = buildPointShpAndShx(sobreposicaoPoints, 1);
       errosFiles.push({ name: "ERROS_DE_SOBREPOSICAO.shp", data: built.shp });
@@ -1012,6 +1114,60 @@ export async function buildProcessarProjetoZip(args: {
     }
   }
   const errosZip = await buildNestedZip(errosFiles);
+
+  // Nested: erros_diagnostico.zip — diagnósticos EXTRAS do GeoForest (não
+  // existem no download da SEMA; úteis no SIG).
+  const diagFiles: Array<{ name: string; data: Buffer }> = [];
+  {
+    const points = buildPointShpAndShx(pointRecords, 1);
+    diagFiles.push({ name: "pontos_erros.shp", data: points.shp });
+    diagFiles.push({ name: "pontos_erros.shx", data: points.shx });
+    diagFiles.push({
+      name: "pontos_erros.dbf",
+      data: buildDbfBuffer(pointRecords.map((p) => p.attributes), errorPointFields),
+    });
+    diagFiles.push({ name: "pontos_erros.prj", data: Buffer.from(prj, "utf8") });
+  }
+  if (proc.overlapPolygons.length) {
+    const records: ShpRecord[] = proc.overlapPolygons.flatMap((o) =>
+      geojsonToShpRecords(o.geometry, {
+        camada: o.camada,
+        feicao_a: o.feicaoA,
+        feicao_b: o.feicaoB,
+        area_m2: o.areaM2,
+        area_ha: o.areaM2 / 10000,
+      }),
+    );
+    const built = buildShpAndShx(records, 5);
+    diagFiles.push({ name: "poligonos_sobreposicao.shp", data: built.shp });
+    diagFiles.push({ name: "poligonos_sobreposicao.shx", data: built.shx });
+    diagFiles.push({
+      name: "poligonos_sobreposicao.dbf",
+      data: buildDbfBuffer(records.map((r) => r.attributes), overlapFields),
+    });
+    diagFiles.push({ name: "poligonos_sobreposicao.prj", data: Buffer.from(prj, "utf8") });
+  }
+  if (proc.ruleViolations.length) {
+    const records: ShpRecord[] = proc.ruleViolations.flatMap((v) =>
+      geojsonToShpRecords(v.geometry, {
+        camada_a: v.camadaA,
+        feicao_a: v.feicaoA,
+        camada_b: v.camadaB,
+        regra: v.regra,
+        area_m2: v.areaM2,
+        area_ha: v.areaM2 / 10000,
+      }),
+    );
+    const built = buildShpAndShx(records, 5);
+    diagFiles.push({ name: "poligonos_regras_simcar.shp", data: built.shp });
+    diagFiles.push({ name: "poligonos_regras_simcar.shx", data: built.shx });
+    diagFiles.push({
+      name: "poligonos_regras_simcar.dbf",
+      data: buildDbfBuffer(records.map((r) => r.attributes), ruleViolationFields),
+    });
+    diagFiles.push({ name: "poligonos_regras_simcar.prj", data: Buffer.from(prj, "utf8") });
+  }
+  const diagZip = await buildNestedZip(diagFiles);
 
   // erros_processamento_app.zip — pontos de erro de cálculo de APP (artefato SIMCAR)
   const appErrorPoints = pointRecords.filter((p) => String(p.attributes.tipo) === "erro_calculo_app");
@@ -1034,7 +1190,8 @@ export async function buildProcessarProjetoZip(args: {
     "arquivo_enviado.zip            — shapefiles originais enviados",
     "arquivo_processado.zip         — projeto processado: limpos + APP/APPD/APPP/APPRL/AURD/ARLDR",
     "arquivo_conferencia.zip        — camadas com area_m2/area_ha",
-    "erros_processamento.zip        — sobreposicao, vazios, anexo 01, topologia",
+    "erros_processamento.zip        — ERROS_DE_SOBREPOSICAO (mesmo artefato/schema do download da SEMA)",
+    "erros_diagnostico.zip          — diagnosticos extras GeoForest (pontos de erro, poligonos)",
     "erros_processamento_app.zip    — pontos de erro de calculo de APP",
     "relatorio_importacao.txt       — fase Importar",
     "relatorio_processamento.txt    — fase Processar",
@@ -1067,6 +1224,7 @@ export async function buildProcessarProjetoZip(args: {
     archive.append(processadoZip, { name: "arquivo_processado.zip" });
     archive.append(conferenciaZip, { name: "arquivo_conferencia.zip" });
     archive.append(errosZip, { name: "erros_processamento.zip" });
+    archive.append(diagZip, { name: "erros_diagnostico.zip" });
     archive.append(appErrosZip, { name: "erros_processamento_app.zip" });
 
     // Pastas planas (mesmos conteúdos)
@@ -1074,6 +1232,7 @@ export async function buildProcessarProjetoZip(args: {
     for (const f of processadoFiles) archive.append(f.data, { name: `arquivo_processado/${f.name}` });
     for (const f of conferenciaFiles) archive.append(f.data, { name: `arquivo_conferencia/${f.name}` });
     for (const f of errosFiles) archive.append(f.data, { name: `erros/${f.name}` });
+    for (const f of diagFiles) archive.append(f.data, { name: `erros_diagnostico/${f.name}` });
     for (const f of appErrosFiles) archive.append(f.data, { name: `erros_app/${f.name}` });
 
     // Também na raiz para quem espera só pontos_erros.shp
