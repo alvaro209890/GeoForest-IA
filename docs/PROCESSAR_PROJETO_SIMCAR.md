@@ -54,16 +54,21 @@ reservatório, vereda, relevo, etc. (nomenclatura oficial + aliases do modelo cl
 
 Sem camadas hidrográficas no ZIP, APP* não é gerada (aviso no relatório).
 
-## Validações (fase Importar) — alinhadas ao PDF SEMA
+## Validações (fase Importar) — calibradas no importador REAL da SEMA
 
 A importação **reprova** e **bloqueia o Processar** se houver qualquer erro:
 
 - Conformidade estrutural (CRS, 2D, nomenclatura, atributos, ATP)
-- **Borda do polígono se cruza** (`borda_se_cruza`) — cluster ~0,05 m em UTM
+- **Borda do polígono se cruza** (`borda_se_cruza`) — auto-interseção exata
+  (kinks) **ou anel colapsado**: largura mínima ≤ 0,02 m (agulha/sliver) ou
+  área ≤ 0,01 m² (micro-resíduo). Encoste PONTUAL de vértice em borda **não**
+  reprova (regra ESRI, comprovada no oráculo com sondas de 0,015–0,076 m).
 - **A geometria contém pontos repetidos** (`vertice_duplicado`) — vértices consecutivos ≤ ~0,1 m
 
-Oráculo: `teste_1/Recorte_13.07.26_CORRIGIDO_SIMCAR.zip` + PDF SEMA
-(ARL: 4 bordas + 2 pontos repetidos).
+Oráculo: importador real do SIMCAR (CAR 270069/Santa Clara), bissecção com
+camadas-sonda em 2026-07-16 — ver
+[`CHANGELOG_2026-07-16_ORACULO_SEMA_SANTA_CLARA.md`](CHANGELOG_2026-07-16_ORACULO_SEMA_SANTA_CLARA.md)
+(inclui o contrato completo da API de importação/processamento do SIMCAR).
 
 ## Validações (fase Processar)
 
