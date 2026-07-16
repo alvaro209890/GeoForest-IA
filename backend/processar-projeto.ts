@@ -28,11 +28,12 @@ import fs from "node:fs";
 import {
   analyzeLayerGeometry,
   detectAirAtpAreaConsistency,
+  detectAirCompositionConsistency,
   detectGaps,
   detectOverlaps,
+  detectReservatorioRules,
   detectSimcarContainment,
   detectSimcarForbiddenOverlaps,
-  fixLayerGeometry,
   LAYER_LEVEL_TIPOS,
   type GapPolygon,
   type GeometryErrorRow,
@@ -339,6 +340,7 @@ export function runProcessPhase(
     name: group.name,
     records: parsePolygonRecords(group.shp!.data),
     crs: detectCrs(group.prj?.data.toString("utf8")),
+    dbf: group.dbf?.data,
   }));
 
   onProgress?.({ percent: 10, message: "Aplicando regras do Anexo 01 / AIR×ATP.", stage: "simcar-rules" });
@@ -368,6 +370,22 @@ export function runProcessPhase(
     allWarnings.push(...airAtpResult.warnings);
   } catch (error: any) {
     allWarnings.push(`Soma AIR vs ATP: ${error?.message || "falha"}`);
+  }
+  // Regras do ProcessarGeo oficial (oráculo: relatório do CAR 270069)
+  try {
+    const resResult = detectReservatorioRules({ layers: ruleLayers, minAreaM2: minArea });
+    allRows.push(...resResult.rows);
+    allRuleViolations.push(...resResult.violations);
+    allWarnings.push(...resResult.warnings);
+  } catch (error: any) {
+    allWarnings.push(`Reservatório artificial: ${error?.message || "falha"}`);
+  }
+  try {
+    const airCompResult = detectAirCompositionConsistency({ layers: ruleLayers });
+    allRows.push(...airCompResult.rows);
+    allWarnings.push(...airCompResult.warnings);
+  } catch (error: any) {
+    allWarnings.push(`Composição da AIR: ${error?.message || "falha"}`);
   }
 
   // ─── ProcessarGeo: deriva APP, APPD, APPP, APPRL, AURD, ARLDR ───
@@ -461,24 +479,20 @@ export function runProcessPhase(
         crsLabel: crs.label,
       });
 
-      // Sempre gera camada processada (arquivo processado SIMCAR-like),
-      // mesmo sem erros: limpa vértices e unkink de auto-interseções.
-      const errorFeatureIds = new Set(
-        rows.filter((row) => row.tipo === "borda_se_cruza").map((row) => row.feicao),
-      );
-      const fix = fixLayerGeometry({
-        layerName: group.name,
-        records,
-        errorFeatureIds,
-        cleanDuplicates: true,
-      });
-      fixes.push(fix);
-      allWarnings.push(...fix.warnings);
+      // Arquivo processado = camadas COMO ENVIADAS (o SIMCAR não corrige a
+      // geometria do técnico — reprova na importação; aqui só replicamos).
       processedLayers.push({
         name: group.name,
-        records: fix.records,
-        fixedFeatures: fix.fixedFeatures,
-        featureCount: fix.records.length,
+        records: records.map(
+          (rec) =>
+            ({
+              type: "polygon",
+              rings: rec.rings,
+              attributes: { camada: group.name, feicao: rec.feature, corrigido: "N" },
+            }) as ShpRecord,
+        ),
+        fixedFeatures: 0,
+        featureCount: records.length,
       });
 
       originalLayers.push({
@@ -489,7 +503,7 @@ export function runProcessPhase(
       });
 
       let layerArea = 0;
-      for (const rec of fix.records) {
+      for (const rec of records) {
         layerArea += ringsAreaAbs(rec.rings || []);
       }
       quadroAreas.push({
@@ -497,7 +511,7 @@ export function runProcessPhase(
         codigo: recognizeSimcarLayer(group.name) || "",
         feicoes: records.length,
         erros: rows.length,
-        corrigidas: fix.fixedFeatures,
+        corrigidas: 0,
         area_m2: layerArea,
         area_ha: layerArea / 10000,
       });
@@ -524,10 +538,69 @@ export function runProcessPhase(
   }
 
   const lines: string[] = [];
-  lines.push("Relatorio de processamento — Processar projeto (GeoForest / ProcessarGeo local)");
+  lines.push("Relatório de processamento");
+  lines.push(
+    allRows.length
+      ? "Situação do processamento: Reprovado - Corrija os erros encontrados e processe novamente!"
+      : "Situação do processamento: Processado com sucesso!",
+  );
   lines.push(`Arquivo: ${filename}`);
   lines.push(`Gerado em: ${new Date().toISOString()}`);
   lines.push("");
+
+  // ── seções no formato do relatório oficial da SEMA ──
+  const countByDetail = (rows: GeometryErrorRow[]) => {
+    const map = new Map<string, { camada: string; detalhe: string; n: number }>();
+    for (const row of rows) {
+      const key = `${row.camada}\t${row.detalhe}`;
+      const cur = map.get(key);
+      if (cur) cur.n += 1;
+      else map.set(key, { camada: row.camada, detalhe: row.detalhe, n: 1 });
+    }
+    return [...map.values()];
+  };
+
+  const espaciais = allRows.filter((r) => r.tipo === "reservatorio_fora_uso_antropico" || r.tipo === "fora_do_continente");
+  lines.push("Erros espaciais");
+  if (!espaciais.length) lines.push("(nenhum)");
+  for (const item of countByDetail(espaciais)) {
+    lines.push(`${item.camada} | ${item.detalhe} | Quantidade: ${item.n}`);
+  }
+  lines.push("");
+
+  lines.push("Erros de sobreposição e obrigatoriedades");
+  const composicao = allRows.filter((r) => r.tipo === "air_composicao_area" || r.tipo === "air_atp_area");
+  for (const row of composicao) lines.push(row.detalhe);
+  // "X está sobrepondo Y n vezes." — mesma camada e pares proibidos
+  const overlapCounts = new Map<string, number>();
+  for (const o of allOverlaps) {
+    overlapCounts.set(`${o.camada}\t${o.camada}`, (overlapCounts.get(`${o.camada}\t${o.camada}`) || 0) + 1);
+  }
+  for (const v of allRuleViolations) {
+    if (v.regra !== "sobreposicao") continue;
+    overlapCounts.set(`${v.camadaA}\t${v.camadaB}`, (overlapCounts.get(`${v.camadaA}\t${v.camadaB}`) || 0) + 1);
+  }
+  for (const [key, n] of overlapCounts) {
+    const [a, b] = key.split("\t");
+    lines.push(`${a} está sobrepondo ${b} ${n} ${n === 1 ? "vez" : "vezes"}.`);
+  }
+  if (!composicao.length && !overlapCounts.size) lines.push("(nenhum)");
+  lines.push("");
+
+  const atributos = allRows.filter((r) => r.tipo.startsWith("atributo_"));
+  lines.push("Erros de atributos");
+  if (!atributos.length) lines.push("(nenhum)");
+  for (const item of countByDetail(atributos)) {
+    lines.push(`${item.camada} | ${item.detalhe} | Quantidade: ${item.n}`);
+  }
+  lines.push("");
+
+  lines.push("Geometrias encontradas");
+  for (const q of quadroAreas) {
+    lines.push(`${q.camada} | ${q.area_ha.toFixed(4)} ha | Quantidade: ${q.feicoes}`);
+  }
+  lines.push("");
+
   lines.push("Camadas analisadas / geradas:");
   for (const layer of analyzedLayers) {
     lines.push(`- ${layer.name}: feicoes=${layer.featureCount}; erros=${layer.errors}; CRS=${layer.crsLabel}`);
@@ -538,10 +611,8 @@ export function runProcessPhase(
   const derivedNames = derivedLayers.map((d) => d.code).join(", ") || "(nenhuma — falta hidrografia)";
   lines.push(`Camadas derivadas ProcessarGeo: ${derivedNames}`);
   lines.push("");
-  if (!allRows.length) {
-    lines.push("Processamento realizado com sucesso, nenhum erro encontrado.");
-  } else {
-    lines.push("Erros encontrados:");
+  if (allRows.length) {
+    lines.push("Detalhe dos erros (por feição):");
     for (const row of allRows) {
       lines.push(
         `${row.camada}; tipo=${row.tipo}; feicao=${row.feicao}; xy=(${row.x}, ${row.y}); ${row.detalhe}`,
@@ -874,6 +945,50 @@ export async function buildProcessarProjetoZip(args: {
       data: buildDbfBuffer(records.map((r) => r.attributes), ruleViolationFields),
     });
     errosFiles.push({ name: "poligonos_regras_simcar.prj", data: Buffer.from(prj, "utf8") });
+  }
+  // ERROS_DE_SOBREPOSICAO — MESMO nome/schema do arquivo oficial da SEMA
+  // (pontos com ID + DETALHES "A com B"), um por incidente de sobreposição.
+  {
+    const centroidOf = (geometry: { type: string; coordinates: any }): [number, number] => {
+      const ring: number[][] =
+        geometry.type === "Polygon" ? geometry.coordinates[0] : geometry.coordinates[0]?.[0] || [];
+      let sx = 0;
+      let sy = 0;
+      for (const p of ring) {
+        sx += Number(p[0]) || 0;
+        sy += Number(p[1]) || 0;
+      }
+      const n = Math.max(1, ring.length);
+      return [sx / n, sy / n];
+    };
+    const sobreposicaoPoints: PointShpRecord[] = [];
+    let id = 1;
+    for (const o of proc.overlapPolygons) {
+      sobreposicaoPoints.push({
+        coordinates: centroidOf(o.geometry as any),
+        attributes: { ID: id++, DETALHES: `${o.camada} com ${o.camada}` },
+      });
+    }
+    for (const v of proc.ruleViolations) {
+      if (v.regra !== "sobreposicao") continue;
+      sobreposicaoPoints.push({
+        coordinates: centroidOf(v.geometry as any),
+        attributes: { ID: id++, DETALHES: `${v.camadaA} com ${v.camadaB}` },
+      });
+    }
+    if (sobreposicaoPoints.length) {
+      const built = buildPointShpAndShx(sobreposicaoPoints, 1);
+      errosFiles.push({ name: "ERROS_DE_SOBREPOSICAO.shp", data: built.shp });
+      errosFiles.push({ name: "ERROS_DE_SOBREPOSICAO.shx", data: built.shx });
+      errosFiles.push({
+        name: "ERROS_DE_SOBREPOSICAO.dbf",
+        data: buildDbfBuffer(sobreposicaoPoints.map((p) => p.attributes), [
+          { name: "ID", type: "N", length: 18, decimals: 0 },
+          { name: "DETALHES", type: "C", length: 254, decimals: 0 },
+        ]),
+      });
+      errosFiles.push({ name: "ERROS_DE_SOBREPOSICAO.prj", data: Buffer.from(prj, "utf8") });
+    }
   }
   const errosZip = await buildNestedZip(errosFiles);
 
@@ -1447,7 +1562,7 @@ export function registerProcessarProjetoRoutes(app: Express): void {
     try {
       const uid = String((req as any).authUid || "").trim();
       const jobId = String(req.params.jobId || "").trim();
-      requestCancel(jobId);
+      requestCancel(jobId, uid);
       const data = readDocBySegments(["users", uid, "processar_projeto_jobs", jobId]);
       if (data?.inputRelativePath) removeStoragePath(String(data.inputRelativePath));
       if (data?.outputRelativePath) removeStoragePath(String(data.outputRelativePath));

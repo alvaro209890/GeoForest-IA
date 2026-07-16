@@ -42,6 +42,34 @@ export function parseDbfSchema(dbfBuffer: Buffer): DbfFieldDef[] {
     return fields;
 }
 
+/**
+ * Lê as linhas de atributos de um .dbf como strings (latin1, trim).
+ * A linha i corresponde à feição i+1 do .shp (mesma ordem).
+ */
+export function readDbfRows(dbfBuffer: Buffer): Array<Record<string, string>> {
+    const fields = parseDbfSchema(dbfBuffer);
+    if (!fields.length || dbfBuffer.length < 32) return [];
+    const numRecords = dbfBuffer.readInt32LE(4);
+    const headerBytes = dbfBuffer.readUInt16LE(8);
+    const recordBytes = dbfBuffer.readUInt16LE(10);
+    const rows: Array<Record<string, string>> = [];
+    for (let i = 0; i < numRecords; i += 1) {
+        const start = headerBytes + i * recordBytes;
+        if (start + recordBytes > dbfBuffer.length) break;
+        let offset = start + 1; // pula o flag de deleção
+        const row: Record<string, string> = {};
+        for (const field of fields) {
+            row[field.name] = dbfBuffer
+                .subarray(offset, offset + field.length)
+                .toString("latin1")
+                .trim();
+            offset += field.length;
+        }
+        rows.push(row);
+    }
+    return rows;
+}
+
 /* ─── SHP Writer ─────────────────────────────────────────────── */
 
 function writeShpHeader(buf: Buffer, fileLengthWords: number, shapeType: number, bbox: number[]) {

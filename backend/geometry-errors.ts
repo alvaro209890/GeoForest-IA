@@ -73,6 +73,7 @@ import {
   buildPointShpAndShx,
   buildShpAndShx,
   geojsonToShpRecords,
+  readDbfRows,
   type DbfFieldDef,
   type PointShpRecord,
   type ShpRecord,
@@ -822,6 +823,8 @@ export type SimcarRuleLayer = {
   name: string;
   records: ParsedPolygonRecord[];
   crs: CodedCrs;
+  /** .dbf da camada (opcional) — usado pelas regras que dependem de atributos. */
+  dbf?: Buffer;
 };
 
 type CodedFeature = {
@@ -1285,6 +1288,232 @@ export function detectSimcarForbiddenOverlaps(args: {
   }
 
   return { rows, violations, warnings };
+}
+
+/* ───────── regras do ProcessarGeo oficial (oráculo CAR 270069) ───────── */
+
+/** Mensagens EXATAS do relatório de processamento da SEMA. */
+export const SEMA_MSG_RESERVATORIO_CONTIDO =
+  "A feição RESERVATORIO_ARTIFICIAL (sem barramento), deve estar completamente contida em uma AUAS ou ÁREA CONSOLIDADA";
+export const SEMA_MSG_RESERVATORIO_SITUACAO =
+  "(Campo SITUACAO) Situação do Entorno Inválido. Em reservatórios que não fazem barramento, a Situação deve ser 'O' para Outro.";
+
+function firstVertexLonLat(geometry: Polygon | MultiPolygon): [number, number] {
+  const coords: any =
+    geometry.type === "Polygon" ? geometry.coordinates[0]?.[0] : geometry.coordinates[0]?.[0]?.[0];
+  return [Number(coords?.[0]) || 0, Number(coords?.[1]) || 0];
+}
+
+/**
+ * Regras do RESERVATORIO_ARTIFICIAL do ProcessarGeo oficial (SEMA):
+ *  - espacial: reservatório SEM barramento (BARRAMENTO ≠ 'S') deve estar
+ *    completamente contido em AUAS ∪ AREA_CONSOLIDADA;
+ *  - atributo: nesses casos o campo SITUACAO deve ser 'O' (Outro).
+ * Oráculo: relatório de processamento do CAR 270069 (12 erros espaciais +
+ * 13 de atributo com essas mensagens exatas).
+ */
+export function detectReservatorioRules(args: {
+  layers: SimcarRuleLayer[];
+  minAreaM2?: number;
+}): { rows: GeometryErrorRow[]; violations: RuleViolationPolygon[]; warnings: string[] } {
+  const rows: GeometryErrorRow[] = [];
+  const violations: RuleViolationPolygon[] = [];
+  const warnings: string[] = [];
+  const minArea = Number.isFinite(Number(args.minAreaM2)) ? Math.max(0, Number(args.minAreaM2)) : 1;
+
+  const byCode = groupLayersByCode(args.layers);
+  const reservatorios = byCode.get("RESERVATORIO_ARTIFICIAL");
+  if (!reservatorios?.length) return { rows, violations, warnings };
+
+  const attrsByLayer = new Map<string, Array<Record<string, string>>>();
+  for (const layer of args.layers) {
+    if (layer.dbf && recognizeSimcarLayer(layer.name) === "RESERVATORIO_ARTIFICIAL") {
+      attrsByLayer.set(layer.name, readDbfRows(layer.dbf));
+    }
+  }
+
+  const containers = [
+    ...(byCode.get("AUAS") || []),
+    ...(byCode.get("AREA_CONSOLIDADA") || []),
+  ];
+  const containerUnion = containers.length ? unionFeatures(containers) : null;
+
+  for (const res of reservatorios) {
+    const attrs = attrsByLayer.get(res.layerName)?.[res.feature - 1] || {};
+    const barramento = (attrs.BARRAMENTO || "").toUpperCase();
+    if (barramento === "S") continue; // com barramento: regras não se aplicam
+
+    const [x, y] = firstVertexLonLat(res.geometry);
+
+    const situacao = (attrs.SITUACAO || "").toUpperCase();
+    if (situacao !== "O") {
+      rows.push({
+        camada: res.layerName,
+        tipo: "atributo_situacao_reservatorio",
+        feicao: res.feature,
+        parte: 0,
+        anel: 0,
+        x,
+        y,
+        detalhe: SEMA_MSG_RESERVATORIO_SITUACAO,
+      });
+    }
+
+    if (!containerUnion) {
+      rows.push({
+        camada: res.layerName,
+        tipo: "reservatorio_fora_uso_antropico",
+        feicao: res.feature,
+        parte: 0,
+        anel: 0,
+        x,
+        y,
+        detalhe: SEMA_MSG_RESERVATORIO_CONTIDO,
+      });
+      continue;
+    }
+    let diff: Feature<Polygon | MultiPolygon> | null = null;
+    try {
+      diff = turfDifference(
+        turfFeatureCollection([
+          { type: "Feature", properties: {}, geometry: res.geometry } as Feature<Polygon | MultiPolygon>,
+          containerUnion,
+        ]) as any,
+      ) as Feature<Polygon | MultiPolygon> | null;
+    } catch (error: any) {
+      warnings.push(
+        `Reservatório: falha ao comparar feição ${res.feature} com AUAS/AREA_CONSOLIDADA (${error?.message || "geometria inválida"}).`,
+      );
+      continue;
+    }
+    if (!diff?.geometry) continue; // totalmente contido
+    const polygons =
+      diff.geometry.type === "Polygon" ? [diff.geometry.coordinates] : diff.geometry.coordinates;
+    let outsideM2 = 0;
+    for (const polygon of polygons) {
+      outsideM2 += polygonMetricAreaM2(polygon as number[][][], res.crs, res.metricProjDef);
+    }
+    if (outsideM2 < minArea) continue;
+    rows.push({
+      camada: res.layerName,
+      tipo: "reservatorio_fora_uso_antropico",
+      feicao: res.feature,
+      parte: 0,
+      anel: 0,
+      x,
+      y,
+      detalhe: SEMA_MSG_RESERVATORIO_CONTIDO,
+    });
+    for (const polygon of polygons) {
+      const areaM2 = polygonMetricAreaM2(polygon as number[][][], res.crs, res.metricProjDef);
+      if (areaM2 < minArea) continue;
+      violations.push({
+        camadaA: res.layerName,
+        feicaoA: res.feature,
+        camadaB: "AUAS/AREA_CONSOLIDADA",
+        regra: "contencao",
+        areaM2,
+        geometry: { type: "Polygon", coordinates: polygon as number[][][] },
+      });
+    }
+  }
+
+  return { rows, violations, warnings };
+}
+
+/** Códigos que compõem a "Hidrografia" na conferência de área da AIR. */
+const AIR_COMPOSITION_HYDRO: SimcarLayerCode[] = [
+  "RIO_MENOR_10",
+  "RIO_10_ATE_50",
+  "RIO_50_ATE_200",
+  "RIO_200_ATE_600",
+  "RIO_MAIOR_600",
+  "LAGO_LAGOA_NATURAL",
+  "RESERVATORIO_ARTIFICIAL",
+];
+
+/**
+ * Conferência de composição da AIR (ProcessarGeo oficial): a soma das áreas de
+ * AVN, AUAS, Área Consolidada e Hidrografia dentro de cada AIR de tipo 'M'
+ * deve corresponder à área total da AIR. Mensagem idêntica à da SEMA, com a
+ * identificação da matrícula. Tolerância padrão 0,5% (não calibrada — no
+ * oráculo todas as AIRs falhavam por dupla contagem de AVN duplicada).
+ */
+export function detectAirCompositionConsistency(args: {
+  layers: SimcarRuleLayer[];
+  tolRatio?: number;
+}): { rows: GeometryErrorRow[]; warnings: string[] } {
+  const rows: GeometryErrorRow[] = [];
+  const warnings: string[] = [];
+  const tolRatio = Number.isFinite(Number(args.tolRatio)) ? Math.max(0, Number(args.tolRatio)) : 0.005;
+
+  const byCode = groupLayersByCode(args.layers);
+  const airs = byCode.get("AIR");
+  if (!airs?.length) return { rows, warnings };
+
+  const airAttrs = new Map<string, Array<Record<string, string>>>();
+  for (const layer of args.layers) {
+    if (layer.dbf && recognizeSimcarLayer(layer.name) === "AIR") {
+      airAttrs.set(layer.name, readDbfRows(layer.dbf));
+    }
+  }
+
+  const componentCodes: SimcarLayerCode[] = ["AVN", "AUAS", "AREA_CONSOLIDADA", ...AIR_COMPOSITION_HYDRO];
+  const components: CodedFeature[] = [];
+  for (const code of componentCodes) components.push(...(byCode.get(code) || []));
+
+  for (const air of airs) {
+    const attrs = airAttrs.get(air.layerName)?.[air.feature - 1] || {};
+    const tipo = (attrs.TIPO || "").toUpperCase();
+    if (tipo && tipo !== "M") continue;
+    const identific = attrs.IDENTIFIC || attrs.IDENTIFICA || String(air.feature);
+
+    const airPolygons =
+      air.geometry.type === "Polygon" ? [air.geometry.coordinates] : air.geometry.coordinates;
+    let airArea = 0;
+    for (const polygon of airPolygons) {
+      airArea += polygonMetricAreaM2(polygon as number[][][], air.crs, air.metricProjDef);
+    }
+    if (airArea <= 0) continue;
+
+    let sum = 0;
+    for (const comp of components) {
+      let intersection: Feature<Polygon | MultiPolygon> | null = null;
+      try {
+        intersection = turfIntersect(
+          turfFeatureCollection([
+            { type: "Feature", properties: {}, geometry: air.geometry } as Feature<Polygon | MultiPolygon>,
+            { type: "Feature", properties: {}, geometry: comp.geometry } as Feature<Polygon | MultiPolygon>,
+          ]) as any,
+        ) as Feature<Polygon | MultiPolygon> | null;
+      } catch {
+        continue; // geometria problemática já é acusada em outros checks
+      }
+      if (!intersection?.geometry) continue;
+      const polygons =
+        intersection.geometry.type === "Polygon"
+          ? [intersection.geometry.coordinates]
+          : intersection.geometry.coordinates;
+      for (const polygon of polygons) {
+        sum += polygonMetricAreaM2(polygon as number[][][], air.crs, air.metricProjDef);
+      }
+    }
+
+    if (Math.abs(sum - airArea) <= tolRatio * airArea) continue;
+    const [x, y] = firstVertexLonLat(air.geometry);
+    rows.push({
+      camada: air.layerName,
+      tipo: "air_composicao_area",
+      feicao: air.feature,
+      parte: 0,
+      anel: 0,
+      x,
+      y,
+      detalhe: `A soma das áreas de AVN, AUAS, Área Consolidada e Hidrografia não corresponde à área total da AIR de tipo 'M' e identificação '${identific}'.`,
+    });
+  }
+
+  return { rows, warnings };
 }
 
 /* ─────────────────────── análise por camada ─────────────────────── */
