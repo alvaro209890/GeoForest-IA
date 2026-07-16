@@ -181,23 +181,25 @@ describe("paridade SIMCAR — fixture teste_1 (PDF SEMA importação)", () => {
       expect(result.ok).toBe(false);
       expect(result.relatorioTexto).toMatch(/Reprovado/i);
 
-      const arlRows = result.rows.filter((r) => {
+      // Critério 2 — oráculo EXATO do PDF da SEMA (Requerimento 270069, 15/07/2026):
+      //   ARL: Borda do polígono se cruza 4 · pontos repetidos 2
+      //   AVN: Borda do polígono se cruza 4 · pontos repetidos 2
+      //   NENHUMA outra camada com erro (AREA_CONSOLIDADA tem canto de 0,16 m
+      //   que a SEMA NÃO acusa — regressão de falso positivo).
+      const countBy = (camada: string, tipo: string) =>
+        result.rows.filter(
+          (r) => String(r.camada || "").toUpperCase() === camada && r.tipo === tipo,
+        ).length;
+      expect(countBy("ARL", "borda_se_cruza")).toBe(4);
+      expect(countBy("ARL", "vertice_duplicado")).toBe(2);
+      expect(countBy("AVN", "borda_se_cruza")).toBe(4);
+      expect(countBy("AVN", "vertice_duplicado")).toBe(2);
+      const outras = result.rows.filter((r) => {
         const name = String(r.camada || "").toUpperCase();
-        return name === "ARL" || name.includes("ARL") || name.endsWith("_ARL");
+        return name !== "ARL" && name !== "AVN";
       });
-      const borda = arlRows.filter((r) => r.tipo === "borda_se_cruza");
-      const pontos = arlRows.filter((r) => r.tipo === "vertice_duplicado");
-
-      // Critério 2: tipos do PDF no ARL (oráculo: 4 bordas, 2 pontos repetidos)
-      // Tolerância: ≥1 de cada tipo; contagens exatas documentadas no expect quando possível.
-      expect(borda.length).toBeGreaterThanOrEqual(1);
-      expect(pontos.length).toBeGreaterThanOrEqual(1);
-
-      // Preferência de paridade com o PDF (4 e 2). Se o detector contar por ponto
-      // e o SEMA por feição, o teste ainda passa no ≥1, e contagens ficam no log.
-      // Ajuste de sensibilidade: buscar 4 e 2 quando o detector estiver alinhado.
-      expect(borda.length).toBeGreaterThanOrEqual(4);
-      expect(pontos.length).toBeGreaterThanOrEqual(2);
+      expect(outras).toEqual([]);
+      expect(result.rows.length).toBe(12);
 
       // Critério 3: processar bloqueado
       expect(() => assertImportAllowsProcess(result)).toThrow(IMPORT_REPROVADO_MSG);

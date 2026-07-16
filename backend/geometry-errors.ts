@@ -236,15 +236,25 @@ function sameCoordinate(a: number[], b: number[]): boolean {
 }
 
 /**
- * Tolerâncias do importador SIMCAR/SEMA (oráculo PDF teste_1 / ARL):
+ * Tolerâncias do importador SIMCAR/SEMA (oráculo PDF do CAR 270069/Santa Clara):
  *  - pontos repetidos: vértices consecutivos a ≤ ~0,1 m
- *  - borda se cruza: auto-interseção após cluster/snap ~0,05 m
+ *  - borda se cruza: partes NÃO adjacentes do mesmo anel a ≤ ~0,05 m
+ *    (quase-cruzamento). Cantos curtos entre segmentos vizinhos NÃO contam —
+ *    ver SIMCAR_IMPORT_ADJACENT_PATH_M.
  *
- * Calibrado em 2026-07-15 contra `Relatorio de Importacao (1).pdf`
- * (4 bordas + 2 pontos repetidos no ARL do Recorte_13.07.26_CORRIGIDO_SIMCAR.zip).
+ * Calibrado em 2026-07-16 contra o PDF real da SEMA (Requerimento 270069):
+ * ARL 4 bordas + 2 pontos; AVN 4 bordas + 2 pontos; AREA_CONSOLIDADA sem erro
+ * (o canto de 0,16 m da feição 4 não é acusado pela SEMA).
  */
 export const SIMCAR_IMPORT_DUP_TOLERANCE_M = 0.1;
 export const SIMCAR_IMPORT_SNAP_TOLERANCE_M = 0.05;
+/**
+ * Segmentos ligados por um caminho curto ao longo do anel (≤ este valor, em m)
+ * são "efetivamente adjacentes": a proximidade entre eles é inerente ao canto,
+ * não um quase-cruzamento. Cobre cantos curtos (ex.: 0,16 m na Santa Clara) e
+ * pares em volta de vértices quase repetidos (já acusados como pontos repetidos).
+ */
+export const SIMCAR_IMPORT_ADJACENT_PATH_M = 0.5;
 
 export type TopologyDetectOptions = {
   /** Distância máxima (m) entre vértices consecutivos para "pontos repetidos". Default SIMCAR. */
@@ -447,10 +457,13 @@ export function cleanRecordRings(record: ParsedPolygonRecord): {
 /* ─────────────── check: borda de polígono se cruza ─────────────── */
 
 /**
- * Encontra os pontos onde segmentos do MESMO anel se cruzam ("Borda do
- * polígono se cruza" no importador SIMCAR). Cada anel é analisado
- * isoladamente. Em coordenadas geográficas, projeta para UTM e aplica
- * cluster/snap (~0,05 m) antes do kinks — calibração do oráculo SEMA.
+ * Encontra os pontos onde a borda do MESMO anel se cruza ou quase se cruza
+ * ("Borda do polígono se cruza" no importador SIMCAR). Cada anel é analisado
+ * isoladamente, em duas passadas:
+ *  1. kinks exatos (auto-interseção real);
+ *  2. proximidade ≤ ~0,05 m entre segmentos NÃO adjacentes do anel (em UTM),
+ *     ignorando pares ligados por caminho curto ao longo do anel (cantos).
+ * Calibração: oráculo PDF SEMA do CAR 270069 (Santa Clara).
  */
 export function detectSelfIntersections(
   layerName: string,
@@ -481,45 +494,123 @@ export function detectSelfIntersections(
         // segue para caminho com snap
       }
 
-      // 2) caminho SIMCAR: snap em metros + limpeza de dups + kinks
+      // 2) caminho SIMCAR (calibrado no oráculo do CAR 270069/Santa Clara):
+      //    a) snap em grade (~snapM) em UTM + kinks — reproduz a CONTAGEM do
+      //       importador da SEMA (dobra do anel na resolução do cluster);
+      //    b) cada kink do snap só vale se houver JUSTIFICATIVA geométrica no
+      //       local: um vértice a ≤ snapM de uma borda NÃO adjacente do anel
+      //       (adjacência = caminho ao longo do anel ≤ SIMCAR_IMPORT_ADJACENT_PATH_M).
+      //       Sem isso, a dobra é artefato do grid num canto curto (ex.: canto
+      //       de 0,16 m da AREA_CONSOLIDADA, que a SEMA não acusa).
       if (snapM > 0) {
         try {
-          const metric = raw.map((p) => bridge.toMetric(p));
-          const snapped = metric.map(
-            (p) =>
-              [Math.round(p[0] / snapM) * snapM, Math.round(p[1] / snapM) * snapM] as [number, number],
-          );
-          const cleaned: Array<[number, number]> = [snapped[0]];
-          for (let i = 1; i < snapped.length; i += 1) {
-            const prev = cleaned[cleaned.length - 1];
-            if (snapped[i][0] !== prev[0] || snapped[i][1] !== prev[1]) cleaned.push(snapped[i]);
+          const metricRaw = raw.map((p) => bridge.toMetric(p));
+          // remove duplicados consecutivos exatos (segmentos de comprimento zero)
+          const metric: Array<[number, number]> = [metricRaw[0]];
+          for (let i = 1; i < metricRaw.length; i += 1) {
+            const prev = metric[metric.length - 1];
+            if (metricRaw[i][0] !== prev[0] || metricRaw[i][1] !== prev[1]) metric.push(metricRaw[i]);
           }
-          if (cleaned.length >= 2) {
-            const first = cleaned[0];
-            const last = cleaned[cleaned.length - 1];
-            if (first[0] !== last[0] || first[1] !== last[1]) cleaned.push([first[0], first[1]]);
-          }
-          if (cleaned.length >= 4) {
-            const collection = turfKinks({ type: "Polygon", coordinates: [cleaned] });
-            for (const feature of collection.features) {
-              const m: [number, number] = [
-                Number(feature.geometry.coordinates[0]),
-                Number(feature.geometry.coordinates[1]),
+          const nSeg = metric.length - 1; // anel fechado: último ponto == primeiro
+          if (nSeg >= 3) {
+            // ── b) justificativas: vértice ≤ snapM de borda não adjacente ──
+            const segLen: number[] = new Array(nSeg);
+            const bboxes: Array<[number, number, number, number]> = new Array(nSeg);
+            let totalLen = 0;
+            for (let i = 0; i < nSeg; i += 1) {
+              const [ax, ay] = metric[i];
+              const [bx, by] = metric[i + 1];
+              segLen[i] = Math.hypot(bx - ax, by - ay);
+              totalLen += segLen[i];
+              bboxes[i] = [
+                Math.min(ax, bx) - snapM,
+                Math.min(ay, by) - snapM,
+                Math.max(ax, bx) + snapM,
+                Math.max(ay, by) + snapM,
               ];
-              if (!Number.isFinite(m[0]) || !Number.isFinite(m[1])) continue;
-              const lonlat = bridge.fromMetric(m);
-              found.push([Number(lonlat[0]), Number(lonlat[1])]);
+            }
+            const prefix: number[] = new Array(nSeg + 1);
+            prefix[0] = 0;
+            for (let i = 0; i < nSeg; i += 1) prefix[i + 1] = prefix[i] + segLen[i];
+            const pointSegDist = (
+              px: number, py: number, sx: number, sy: number, ex: number, ey: number,
+            ): number => {
+              const vx = ex - sx;
+              const vy = ey - sy;
+              const len2 = vx * vx + vy * vy;
+              const t = len2 <= 0 ? 0 : Math.max(0, Math.min(1, ((px - sx) * vx + (py - sy) * vy) / len2));
+              return Math.hypot(px - (sx + t * vx), py - (sy + t * vy));
+            };
+            const ringPath = (fromPrefix: number, toPrefix: number): number => {
+              const direct = Math.abs(toPrefix - fromPrefix);
+              return Math.min(direct, totalLen - direct);
+            };
+            const justifications: Array<[number, number]> = [];
+            for (let k = 0; k < nSeg; k += 1) {
+              const [px, py] = metric[k];
+              for (let j = 0; j < nSeg; j += 1) {
+                if (j === k || j === (k - 1 + nSeg) % nSeg) continue; // incidentes
+                const bj = bboxes[j];
+                if (px < bj[0] || px > bj[2] || py < bj[1] || py > bj[3]) continue;
+                const pathToStart = ringPath(prefix[k], prefix[j]);
+                const pathToEnd = ringPath(prefix[k], prefix[j + 1]);
+                if (Math.min(pathToStart, pathToEnd) <= SIMCAR_IMPORT_ADJACENT_PATH_M) continue;
+                if (pointSegDist(px, py, metric[j][0], metric[j][1], metric[j + 1][0], metric[j + 1][1]) > snapM) {
+                  continue;
+                }
+                justifications.push([px, py]);
+                break;
+              }
+            }
+
+            // ── a) snap em grade + kinks (contagem estilo SEMA) ──
+            if (justifications.length) {
+              const snapped = metric.map(
+                (p) =>
+                  [Math.round(p[0] / snapM) * snapM, Math.round(p[1] / snapM) * snapM] as [number, number],
+              );
+              const cleaned: Array<[number, number]> = [snapped[0]];
+              for (let i = 1; i < snapped.length; i += 1) {
+                const prev = cleaned[cleaned.length - 1];
+                if (snapped[i][0] !== prev[0] || snapped[i][1] !== prev[1]) cleaned.push(snapped[i]);
+              }
+              if (cleaned.length >= 2) {
+                const first = cleaned[0];
+                const last = cleaned[cleaned.length - 1];
+                if (first[0] !== last[0] || first[1] !== last[1]) cleaned.push([first[0], first[1]]);
+              }
+              if (cleaned.length >= 4) {
+                const collection = turfKinks({ type: "Polygon", coordinates: [cleaned] });
+                const JUSTIFY_RADIUS_M = 1.0;
+                for (const feature of collection.features) {
+                  const m: [number, number] = [
+                    Number(feature.geometry.coordinates[0]),
+                    Number(feature.geometry.coordinates[1]),
+                  ];
+                  if (!Number.isFinite(m[0]) || !Number.isFinite(m[1])) continue;
+                  const justified = justifications.some(
+                    (jp) => Math.hypot(jp[0] - m[0], jp[1] - m[1]) <= JUSTIFY_RADIUS_M,
+                  );
+                  if (!justified) continue;
+                  const lonlat = bridge.fromMetric(m);
+                  found.push([Number(lonlat[0]), Number(lonlat[1])]);
+                }
+              }
             }
           }
         } catch {
-          // ignora falha de snap; mantém o que o kinks original encontrou
+          // ignora falha do caminho métrico; mantém o que o kinks original encontrou
         }
       }
 
+      // Um erro por LOCAL: pares distintos de segmentos em volta do mesmo ponto
+      // (ex.: os dois segmentos incidentes num vértice) contam uma vez só,
+      // como no relatório da SEMA. Cluster de ~1 m em métrico.
       const seen = new Set<string>();
       for (const [x, y] of found) {
         if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-        const key = `${x.toFixed(9)}:${y.toFixed(9)}`;
+        const m = bridge.toMetric([x, y]);
+        const key = `${Math.round(m[0])}:${Math.round(m[1])}`;
         if (seen.has(key)) continue;
         seen.add(key);
         rows.push({
