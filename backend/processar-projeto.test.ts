@@ -216,6 +216,20 @@ describe("paridade SIMCAR — fixture teste_1 (PDF SEMA importação)", () => {
     expect(zipPath).toBeTruthy();
     expect(fs.statSync(zipPath!).size).toBeGreaterThan(1000);
   });
+
+  it.skipIf(!hasFixture)(
+    "APROVA o ZIP corrigido que a SEMA aceitou (Geometrias importadas com sucesso)",
+    () => {
+      const finalPath = path.join(path.dirname(zipPath!), "Recorte_SANTA_CLARA_FINAL_16-07-26.zip");
+      if (!fs.existsSync(finalPath)) return;
+      const result = runImportPhase(fs.readFileSync(finalPath), "Recorte_SANTA_CLARA_FINAL_16-07-26.zip");
+      // Oráculo 2026-07-16: este exato arquivo foi importado no SIMCAR real com
+      // "Situação da importação: Geometrias importadas com sucesso!" ([FINALIZADO]).
+      expect(result.rows).toEqual([]);
+      expect(result.ok).toBe(true);
+      expect(() => assertImportAllowsProcess(result)).not.toThrow();
+    },
+  );
 });
 
 describe("runProcessPhase", () => {
