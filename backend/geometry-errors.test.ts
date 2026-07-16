@@ -736,3 +736,36 @@ describe("detectAirCompositionConsistency", () => {
     expect(result.rows).toEqual([]);
   });
 });
+
+import { detectComplexPolygons, SEMA_MSG_POLIGONO_COMPLEXO } from "./geometry-errors";
+
+describe("detectComplexPolygons (importador SEMA: polígono simples)", () => {
+  // Anel horário (exterior na spec shapefile) e anti-horário (buraco)
+  const cw = (x0: number, y0: number, s: number): number[][] => [
+    [x0, y0],
+    [x0, y0 + s],
+    [x0 + s, y0 + s],
+    [x0 + s, y0],
+    [x0, y0],
+  ];
+  const ccw = (x0: number, y0: number, s: number): number[][] => [...cw(x0, y0, s)].reverse();
+
+  it("aceita polígono simples com buraco", () => {
+    const rows = detectComplexPolygons("AVN", [
+      { feature: 1, rings: [cw(0, 0, 100), ccw(10, 10, 5)] } as any,
+    ]);
+    expect(rows).toEqual([]);
+  });
+
+  it("reprova registro com 2 anéis exteriores (multipart), mesmo com o extra dentro do bbox do principal", () => {
+    // Oráculo upload v2 (16/07/2026): lasca exterior dentro do anel principal
+    // reprovou ARL/AVN — o critério da SEMA é a ORIENTAÇÃO, não o aninhamento.
+    const rows = detectComplexPolygons("ARL", [
+      { feature: 7, rings: [cw(0, 0, 100), cw(20, 20, 1)] } as any,
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tipo).toBe("poligono_complexo");
+    expect(rows[0].feicao).toBe(7);
+    expect(rows[0].detalhe).toContain(SEMA_MSG_POLIGONO_COMPLEXO);
+  });
+});

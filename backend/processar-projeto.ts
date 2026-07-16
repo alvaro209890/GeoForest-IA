@@ -29,6 +29,7 @@ import {
   analyzeLayerGeometry,
   detectAirAtpAreaConsistency,
   detectAirCompositionConsistency,
+  detectComplexPolygons,
   detectOverlaps,
   detectReservatorioRules,
   detectSimcarContainment,
@@ -388,6 +389,8 @@ export function runImportPhase(zipBuffer: Buffer, filename = "projeto.zip"): Imp
           checks: { selfIntersection: true, duplicateVertices: true },
         }),
       );
+      // Oráculo 16/07/2026: registro MULTIPART reprova ("polígono complexo").
+      rows.push(...detectComplexPolygons(g.name, records));
     } catch (error: any) {
       warnings.push(`Topologia (${g.name}): ${error?.message || "falha"}`);
     }
@@ -433,7 +436,9 @@ export function runImportPhase(zipBuffer: Buffer, filename = "projeto.zip"): Imp
       const label =
         tipo === "borda_se_cruza"
           ? "Borda do polígono se cruza"
-          : tipo === "vertice_duplicado"
+          : tipo === "poligono_complexo"
+            ? "Era esperado um polígono simples, porém veio polígono complexo"
+            : tipo === "vertice_duplicado"
             ? "A geometria contém pontos repetidos"
             : tipo;
       lines.push(`- ${camada}: ${label} ${n}`);
