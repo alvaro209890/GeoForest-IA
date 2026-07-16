@@ -181,19 +181,25 @@ describe("paridade SIMCAR — fixture teste_1 (PDF SEMA importação)", () => {
       expect(result.ok).toBe(false);
       expect(result.relatorioTexto).toMatch(/Reprovado/i);
 
-      // Critério 2 — oráculo EXATO do PDF da SEMA (Requerimento 270069, 15/07/2026):
-      //   ARL: Borda do polígono se cruza 4 · pontos repetidos 2
-      //   AVN: Borda do polígono se cruza 4 · pontos repetidos 2
-      //   NENHUMA outra camada com erro (AREA_CONSOLIDADA tem canto de 0,16 m
-      //   que a SEMA NÃO acusa — regressão de falso positivo).
-      const countBy = (camada: string, tipo: string) =>
+      // Critério 2 — oráculo EXATO do importador da SEMA (Requerimento 270069),
+      // identidades confirmadas por BISSECÇÃO (feições candidatas isoladas em
+      // camadas-sonda e conferidas no PDF de importação em 16/07/2026):
+      //   borda se cruza = anéis COLAPSADOS: feições 111 (micro-triângulo,
+      //   área 0,005 m²) e 115 (agulha de 186 m, largura 0,017 m) + gêmeas
+      //   232/236 do bloco duplicado — em ARL e AVN (geometrias idênticas).
+      //   pontos repetidos = feições 66 e 187 (vértices consecutivos ≤ 0,1 m).
+      //   NENHUMA outra camada com erro; encostes pontuais de vértice em borda
+      //   (0,015–0,076 m, ex. feições 100/119/45/89) NÃO reprovam na SEMA.
+      const rowsBy = (camada: string, tipo: string) =>
         result.rows.filter(
           (r) => String(r.camada || "").toUpperCase() === camada && r.tipo === tipo,
-        ).length;
-      expect(countBy("ARL", "borda_se_cruza")).toBe(4);
-      expect(countBy("ARL", "vertice_duplicado")).toBe(2);
-      expect(countBy("AVN", "borda_se_cruza")).toBe(4);
-      expect(countBy("AVN", "vertice_duplicado")).toBe(2);
+        );
+      for (const camada of ["ARL", "AVN"]) {
+        const borda = rowsBy(camada, "borda_se_cruza");
+        const pontos = rowsBy(camada, "vertice_duplicado");
+        expect(borda.map((r) => r.feicao).sort((a, b) => a - b)).toEqual([111, 115, 232, 236]);
+        expect(pontos.map((r) => r.feicao).sort((a, b) => a - b)).toEqual([66, 187]);
+      }
       const outras = result.rows.filter((r) => {
         const name = String(r.camada || "").toUpperCase();
         return name !== "ARL" && name !== "AVN";

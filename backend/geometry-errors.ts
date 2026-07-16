@@ -236,30 +236,39 @@ function sameCoordinate(a: number[], b: number[]): boolean {
 }
 
 /**
- * Tolerâncias do importador SIMCAR/SEMA (oráculo PDF do CAR 270069/Santa Clara):
- *  - pontos repetidos: vértices consecutivos a ≤ ~0,1 m
- *  - borda se cruza: partes NÃO adjacentes do mesmo anel a ≤ ~0,05 m
- *    (quase-cruzamento). Cantos curtos entre segmentos vizinhos NÃO contam —
- *    ver SIMCAR_IMPORT_ADJACENT_PATH_M.
+ * Tolerâncias do importador SIMCAR/SEMA — calibradas em 2026-07-16 por
+ * BISSECÇÃO EMPÍRICA contra o importador real (CAR 270069/Santa Clara, feições
+ * candidatas isoladas em camadas-sonda e lidas no PDF de importação):
  *
- * Calibrado em 2026-07-16 contra o PDF real da SEMA (Requerimento 270069):
- * ARL 4 bordas + 2 pontos; AVN 4 bordas + 2 pontos; AREA_CONSOLIDADA sem erro
- * (o canto de 0,16 m da feição 4 não é acusado pela SEMA).
+ *  - "A geometria contém pontos repetidos": vértices consecutivos a ≤ ~0,1 m.
+ *  - "Borda do polígono se cruza": anel cujas PAREDES se sobrepõem no cluster
+ *    do importador — anel colapsado (largura mínima ≤ ~3 cm) ou espiga/agulha
+ *    (ida-e-volta com ângulo ~0°). Descobertas do oráculo:
+ *      • feição 111 (micro-triângulo, largura 0,012 m) → acusada;
+ *      • feição 115 (agulha 186 m, largura 0,017 m) → acusada;
+ *      • anéis finos de 0,042 m+ (AREA_CONSOLIDADA f3) → NÃO acusados;
+ *      • encostes PONTUAIS de vértice em borda (0,015–0,076 m, ex. feições
+ *        45/89/100/102/107/108/119) → NÃO acusados (toque pontual é válido
+ *        na regra ESRI; só sobreposição de paredes reprova).
  */
 export const SIMCAR_IMPORT_DUP_TOLERANCE_M = 0.1;
-export const SIMCAR_IMPORT_SNAP_TOLERANCE_M = 0.05;
 /**
- * Segmentos ligados por um caminho curto ao longo do anel (≤ este valor, em m)
- * são "efetivamente adjacentes": a proximidade entre eles é inerente ao canto,
- * não um quase-cruzamento. Cobre cantos curtos (ex.: 0,16 m na Santa Clara) e
- * pares em volta de vértices quase repetidos (já acusados como pontos repetidos).
+ * Anel "colapsado" (borda se cruza): largura mínima ≤ 0,02 m OU área ≤ 0,01 m².
+ * Régua empírica do oráculo (todos os anéis finos do teste_1, larguras via
+ * rotating calipers):
+ *   acusados:  ARL:111 (área 0,0049 m²; larg. 0,0344 m) · ARL:115 (agulha
+ *              186 m; área 1,61 m²; larg. 0,0173 m) — e gêmeas 232/236;
+ *   poupados:  ARL:112 (área 0,0208 m²; larg. 0,051 m) · AUAS:15 (larg.
+ *              0,0231 m!) · AREA_CONSOLIDADA:3 (larg. 0,042 m) · demais.
+ * Margens: área ×4 (0,0049→0,0208), largura +34% (0,0173→0,0231).
  */
-export const SIMCAR_IMPORT_ADJACENT_PATH_M = 0.5;
+export const SIMCAR_IMPORT_COLLAPSE_WIDTH_M = 0.02;
+export const SIMCAR_IMPORT_COLLAPSE_AREA_M2 = 0.01;
 
 export type TopologyDetectOptions = {
   /** Distância máxima (m) entre vértices consecutivos para "pontos repetidos". Default SIMCAR. */
   duplicateToleranceM?: number;
-  /** Cluster/snap (m) antes de detectar auto-interseção. Default SIMCAR. */
+  /** Largura de colapso (m) p/ "borda se cruza". 0 desliga colapso/espiga. Default SIMCAR. */
   selfIntersectionSnapM?: number;
 };
 
@@ -456,23 +465,68 @@ export function cleanRecordRings(record: ParsedPolygonRecord): {
 
 /* ─────────────── check: borda de polígono se cruza ─────────────── */
 
+/** Convex hull (monotone chain) de pontos métricos. */
+function convexHull(points: Array<[number, number]>): Array<[number, number]> {
+  const pts = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (pts.length <= 2) return pts;
+  const cross = (o: number[], a: number[], b: number[]) =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: Array<[number, number]> = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper: Array<[number, number]> = [];
+  for (let i = pts.length - 1; i >= 0; i -= 1) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+/** Largura mínima do conjunto (rotating calipers sobre o hull), em metros. */
+function minWidth(points: Array<[number, number]>): number {
+  const hull = convexHull(points);
+  if (hull.length < 3) return 0;
+  let best = Infinity;
+  for (let i = 0; i < hull.length; i += 1) {
+    const a = hull[i];
+    const b = hull[(i + 1) % hull.length];
+    const ex = b[0] - a[0];
+    const ey = b[1] - a[1];
+    const len = Math.hypot(ex, ey);
+    if (len <= 0) continue;
+    let maxDist = 0;
+    for (const p of hull) {
+      const d = Math.abs((p[0] - a[0]) * ey - (p[1] - a[1]) * ex) / len;
+      if (d > maxDist) maxDist = d;
+    }
+    if (maxDist < best) best = maxDist;
+  }
+  return Number.isFinite(best) ? best : 0;
+}
+
 /**
- * Encontra os pontos onde a borda do MESMO anel se cruza ou quase se cruza
- * ("Borda do polígono se cruza" no importador SIMCAR). Cada anel é analisado
- * isoladamente, em duas passadas:
- *  1. kinks exatos (auto-interseção real);
- *  2. proximidade ≤ ~0,05 m entre segmentos NÃO adjacentes do anel (em UTM),
- *     ignorando pares ligados por caminho curto ao longo do anel (cantos).
- * Calibração: oráculo PDF SEMA do CAR 270069 (Santa Clara).
+ * Encontra onde a borda do polígono "se cruza" segundo o importador SIMCAR.
+ * Três detecções por anel:
+ *  1. kinks exatos (auto-interseção real — turf);
+ *  2. anel COLAPSADO: largura mínima ≤ SIMCAR_IMPORT_COLLAPSE_WIDTH_M — as
+ *     paredes se sobrepõem no cluster do importador (micro-resíduos e agulhas);
+ *  3. ESPIGA: vértice de ida-e-volta (ângulo ≤ ~0,5°) com braços longos.
+ * Encostes pontuais de vértice em borda NÃO reprovam (regra ESRI: toque
+ * pontual é permitido) — comprovado no oráculo (ver constantes SIMCAR_*).
  */
 export function detectSelfIntersections(
   layerName: string,
   records: ParsedPolygonRecord[],
   options: TopologyDetectOptions = {},
 ): GeometryErrorRow[] {
-  const snapM =
+  const collapseM =
     options.selfIntersectionSnapM === undefined
-      ? SIMCAR_IMPORT_SNAP_TOLERANCE_M
+      ? SIMCAR_IMPORT_COLLAPSE_WIDTH_M
       : Math.max(0, Number(options.selfIntersectionSnapM));
   const bridge = buildMetricBridge(records);
   const rows: GeometryErrorRow[] = [];
@@ -482,7 +536,7 @@ export function detectSelfIntersections(
       const raw = ensureClosed(group.coords);
       if (raw.length < 4) continue;
 
-      // 1) kinks no anel original (casos óbvios / testes sintéticos)
+      // 1) kinks exatos no anel original
       let found: Array<[number, number]> = [];
       try {
         const collection = turfKinks({ type: "Polygon", coordinates: [raw] });
@@ -491,121 +545,42 @@ export function detectSelfIntersections(
           Number(feature.geometry.coordinates[1]),
         ]);
       } catch {
-        // segue para caminho com snap
+        // segue para os testes de colapso/espiga
       }
 
-      // 2) caminho SIMCAR (calibrado no oráculo do CAR 270069/Santa Clara):
-      //    a) snap em grade (~snapM) em UTM + kinks — reproduz a CONTAGEM do
-      //       importador da SEMA (dobra do anel na resolução do cluster);
-      //    b) cada kink do snap só vale se houver JUSTIFICATIVA geométrica no
-      //       local: um vértice a ≤ snapM de uma borda NÃO adjacente do anel
-      //       (adjacência = caminho ao longo do anel ≤ SIMCAR_IMPORT_ADJACENT_PATH_M).
-      //       Sem isso, a dobra é artefato do grid num canto curto (ex.: canto
-      //       de 0,16 m da AREA_CONSOLIDADA, que a SEMA não acusa).
-      if (snapM > 0) {
+      if (collapseM > 0) {
         try {
-          const metricRaw = raw.map((p) => bridge.toMetric(p));
-          // remove duplicados consecutivos exatos (segmentos de comprimento zero)
-          const metric: Array<[number, number]> = [metricRaw[0]];
-          for (let i = 1; i < metricRaw.length; i += 1) {
+          const metricRaw = raw.slice(0, -1).map((p) => bridge.toMetric(p));
+          // remove duplicados consecutivos exatos
+          const metric: Array<[number, number]> = [];
+          for (const p of metricRaw) {
             const prev = metric[metric.length - 1];
-            if (metricRaw[i][0] !== prev[0] || metricRaw[i][1] !== prev[1]) metric.push(metricRaw[i]);
+            if (!prev || p[0] !== prev[0] || p[1] !== prev[1]) metric.push(p);
           }
-          const nSeg = metric.length - 1; // anel fechado: último ponto == primeiro
-          if (nSeg >= 3) {
-            // ── b) justificativas: vértice ≤ snapM de borda não adjacente ──
-            const segLen: number[] = new Array(nSeg);
-            const bboxes: Array<[number, number, number, number]> = new Array(nSeg);
-            let totalLen = 0;
-            for (let i = 0; i < nSeg; i += 1) {
-              const [ax, ay] = metric[i];
-              const [bx, by] = metric[i + 1];
-              segLen[i] = Math.hypot(bx - ax, by - ay);
-              totalLen += segLen[i];
-              bboxes[i] = [
-                Math.min(ax, bx) - snapM,
-                Math.min(ay, by) - snapM,
-                Math.max(ax, bx) + snapM,
-                Math.max(ay, by) + snapM,
-              ];
+          if (metric.length >= 3) {
+            // 2) anel colapsado: largura mínima ≤ collapseM OU área ≤ limiar —
+            //    as paredes do anel se sobrepõem no cluster do importador.
+            let area2 = 0;
+            for (let i = 0; i < metric.length; i += 1) {
+              const a = metric[i];
+              const b = metric[(i + 1) % metric.length];
+              area2 += a[0] * b[1] - b[0] * a[1];
             }
-            const prefix: number[] = new Array(nSeg + 1);
-            prefix[0] = 0;
-            for (let i = 0; i < nSeg; i += 1) prefix[i + 1] = prefix[i] + segLen[i];
-            const pointSegDist = (
-              px: number, py: number, sx: number, sy: number, ex: number, ey: number,
-            ): number => {
-              const vx = ex - sx;
-              const vy = ey - sy;
-              const len2 = vx * vx + vy * vy;
-              const t = len2 <= 0 ? 0 : Math.max(0, Math.min(1, ((px - sx) * vx + (py - sy) * vy) / len2));
-              return Math.hypot(px - (sx + t * vx), py - (sy + t * vy));
-            };
-            const ringPath = (fromPrefix: number, toPrefix: number): number => {
-              const direct = Math.abs(toPrefix - fromPrefix);
-              return Math.min(direct, totalLen - direct);
-            };
-            const justifications: Array<[number, number]> = [];
-            for (let k = 0; k < nSeg; k += 1) {
-              const [px, py] = metric[k];
-              for (let j = 0; j < nSeg; j += 1) {
-                if (j === k || j === (k - 1 + nSeg) % nSeg) continue; // incidentes
-                const bj = bboxes[j];
-                if (px < bj[0] || px > bj[2] || py < bj[1] || py > bj[3]) continue;
-                const pathToStart = ringPath(prefix[k], prefix[j]);
-                const pathToEnd = ringPath(prefix[k], prefix[j + 1]);
-                if (Math.min(pathToStart, pathToEnd) <= SIMCAR_IMPORT_ADJACENT_PATH_M) continue;
-                if (pointSegDist(px, py, metric[j][0], metric[j][1], metric[j + 1][0], metric[j + 1][1]) > snapM) {
-                  continue;
-                }
-                justifications.push([px, py]);
-                break;
-              }
-            }
-
-            // ── a) snap em grade + kinks (contagem estilo SEMA) ──
-            if (justifications.length) {
-              const snapped = metric.map(
-                (p) =>
-                  [Math.round(p[0] / snapM) * snapM, Math.round(p[1] / snapM) * snapM] as [number, number],
-              );
-              const cleaned: Array<[number, number]> = [snapped[0]];
-              for (let i = 1; i < snapped.length; i += 1) {
-                const prev = cleaned[cleaned.length - 1];
-                if (snapped[i][0] !== prev[0] || snapped[i][1] !== prev[1]) cleaned.push(snapped[i]);
-              }
-              if (cleaned.length >= 2) {
-                const first = cleaned[0];
-                const last = cleaned[cleaned.length - 1];
-                if (first[0] !== last[0] || first[1] !== last[1]) cleaned.push([first[0], first[1]]);
-              }
-              if (cleaned.length >= 4) {
-                const collection = turfKinks({ type: "Polygon", coordinates: [cleaned] });
-                const JUSTIFY_RADIUS_M = 1.0;
-                for (const feature of collection.features) {
-                  const m: [number, number] = [
-                    Number(feature.geometry.coordinates[0]),
-                    Number(feature.geometry.coordinates[1]),
-                  ];
-                  if (!Number.isFinite(m[0]) || !Number.isFinite(m[1])) continue;
-                  const justified = justifications.some(
-                    (jp) => Math.hypot(jp[0] - m[0], jp[1] - m[1]) <= JUSTIFY_RADIUS_M,
-                  );
-                  if (!justified) continue;
-                  const lonlat = bridge.fromMetric(m);
-                  found.push([Number(lonlat[0]), Number(lonlat[1])]);
-                }
-              }
+            const area = Math.abs(area2) / 2;
+            const width = minWidth(metric);
+            if (width <= collapseM || area <= SIMCAR_IMPORT_COLLAPSE_AREA_M2) {
+              const cx = metric.reduce((s, p) => s + p[0], 0) / metric.length;
+              const cy = metric.reduce((s, p) => s + p[1], 0) / metric.length;
+              const lonlat = bridge.fromMetric([cx, cy]);
+              found.push([Number(lonlat[0]), Number(lonlat[1])]);
             }
           }
         } catch {
-          // ignora falha do caminho métrico; mantém o que o kinks original encontrou
+          // ignora falha do caminho métrico; mantém o que o kinks encontrou
         }
       }
 
-      // Um erro por LOCAL: pares distintos de segmentos em volta do mesmo ponto
-      // (ex.: os dois segmentos incidentes num vértice) contam uma vez só,
-      // como no relatório da SEMA. Cluster de ~1 m em métrico.
+      // Um erro por LOCAL: cluster de ~1 m em métrico (como no relatório SEMA).
       const seen = new Set<string>();
       for (const [x, y] of found) {
         if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
@@ -622,8 +597,8 @@ export function detectSelfIntersections(
           x,
           y,
           detalhe:
-            snapM > 0
-              ? `Segmentos do mesmo anel se cruzam (auto-interseção; cluster SIMCAR ${snapM} m).`
+            collapseM > 0
+              ? `Borda do polígono se cruza (anel colapsado/espiga ou auto-interseção; largura crítica ${collapseM} m).`
               : "Segmentos do mesmo anel se cruzam neste ponto (auto-interseção).",
         });
       }
