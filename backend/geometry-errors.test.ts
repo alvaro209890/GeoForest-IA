@@ -769,3 +769,37 @@ describe("detectComplexPolygons (importador SEMA: polígono simples)", () => {
     expect(rows[0].detalhe).toContain(SEMA_MSG_POLIGONO_COMPLEXO);
   });
 });
+
+import { detectSelfIntersections as detectSelfInt2 } from "./geometry-errors";
+
+describe("borda se cruza — toque EXATO do próprio anel (oráculo upload v4)", () => {
+  // anel com "antena": revisita o vértice (50,50) — pinça não adjacente
+  it("reprova anel que revisita o mesmo ponto (pinça)", () => {
+    const ring = [
+      [0, 0],
+      [50, 50],
+      [60, 55],
+      [50, 50], // pinça: vértice 1 ≡ vértice 3
+      [100, 0],
+      [100, 100],
+      [0, 100],
+      [0, 0],
+    ];
+    const rows = detectSelfInt2("ARL", [{ feature: 1, rings: [ring] } as any]);
+    expect(rows.some((r) => r.tipo === "borda_se_cruza" && r.feicao === 1)).toBe(true);
+  });
+
+  it("tolera quase-toque de ~4 mm (oráculo: f86 não reprovou)", () => {
+    // CRS projetado (coords em metros): vértice a 0,004 m da borda oposta
+    const ring = [
+      [0, 0],
+      [50, 0.004], // quase toca o segmento inferior, mas não encosta
+      [100, 0],
+      [100, 100],
+      [0, 100],
+      [0, 0],
+    ];
+    const rows = detectSelfInt2("ARL", [{ feature: 2, rings: [ring] } as any]);
+    expect(rows.filter((r) => r.tipo === "borda_se_cruza")).toEqual([]);
+  });
+});

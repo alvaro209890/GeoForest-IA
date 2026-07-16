@@ -522,6 +522,83 @@ function minWidth(points: Array<[number, number]>): number {
   return Number.isFinite(best) ? best : 0;
 }
 
+/** Limiar do TOQUE EXATO do anel (mm): 0,0000 m reprova; 4,3 mm passa (oráculo v4). */
+export const SIMCAR_IMPORT_SELF_TOUCH_M = 0.001;
+
+/**
+ * Pontos onde segmentos NÃO adjacentes do MESMO anel se tocam (< 1 mm) —
+ * a "pinça" que o importador da SEMA acusa como "Borda do polígono se cruza".
+ * `metric` = vértices métricos SEM o ponto de fechamento.
+ */
+function ringExactSelfTouches(metric: Array<[number, number]>): Array<[number, number]> {
+  const n = metric.length;
+  if (n < 4) return [];
+  const touches: Array<[number, number]> = [];
+  // hash espacial com célula adaptativa (≥ metade do maior segmento):
+  // garante nº de células limitado por segmento mesmo com arestas de km.
+  let maxSegLen = 0;
+  for (let i = 0; i < n; i += 1) {
+    const a = metric[i];
+    const b = metric[(i + 1) % n];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len > maxSegLen) maxSegLen = len;
+  }
+  const cell = Math.max(5, maxSegLen / 2);
+  const grid = new Map<string, number[]>();
+  const segBox = (i: number): [number, number, number, number] => {
+    const a = metric[i];
+    const b = metric[(i + 1) % n];
+    return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+  };
+  for (let i = 0; i < n; i += 1) {
+    const [x0, y0, x1, y1] = segBox(i);
+    for (let gx = Math.floor(x0 / cell); gx <= Math.floor(x1 / cell); gx += 1) {
+      for (let gy = Math.floor(y0 / cell); gy <= Math.floor(y1 / cell); gy += 1) {
+        const key = `${gx}:${gy}`;
+        const list = grid.get(key);
+        if (list) list.push(i);
+        else grid.set(key, [i]);
+      }
+    }
+  }
+  const ptSegDist = (p: [number, number], a: [number, number], b: [number, number]): number => {
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const len2 = dx * dx + dy * dy;
+    if (!len2) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+    let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+  };
+  const checked = new Set<number>();
+  for (const segs of grid.values()) {
+    for (let a = 0; a < segs.length; a += 1) {
+      for (let b = a + 1; b < segs.length; b += 1) {
+        const i = Math.min(segs[a], segs[b]);
+        const j = Math.max(segs[a], segs[b]);
+        if (j - i <= 1 || (i === 0 && j === n - 1)) continue; // adjacentes
+        const pairKey = i * n + j;
+        if (checked.has(pairKey)) continue;
+        checked.add(pairKey);
+        const p1 = metric[i];
+        const p2 = metric[(i + 1) % n];
+        const q1 = metric[j];
+        const q2 = metric[(j + 1) % n];
+        const d = Math.min(
+          ptSegDist(p1, q1, q2),
+          ptSegDist(p2, q1, q2),
+          ptSegDist(q1, p1, p2),
+          ptSegDist(q2, p1, p2),
+        );
+        if (d < SIMCAR_IMPORT_SELF_TOUCH_M) {
+          touches.push([(p1[0] + q1[0]) / 2, (p1[1] + q1[1]) / 2]);
+        }
+      }
+    }
+  }
+  return touches;
+}
+
 /**
  * Encontra onde a borda do polígono "se cruza" segundo o importador SIMCAR.
  * Três detecções por anel:
@@ -585,6 +662,15 @@ export function detectSelfIntersections(
               const cx = metric.reduce((s, p) => s + p[0], 0) / metric.length;
               const cy = metric.reduce((s, p) => s + p[1], 0) / metric.length;
               const lonlat = bridge.fromMetric([cx, cy]);
+              found.push([Number(lonlat[0]), Number(lonlat[1])]);
+            }
+            // 4) TOQUE EXATO do próprio anel (oráculo upload v4, 16/07/2026):
+            //    segmentos NÃO adjacentes a < 1 mm (anel revisita o mesmo
+            //    ponto / pinça) reprovam — ARL f108/f113, AVN f108/f113,
+            //    AUAS f26 = exatamente o "Borda do polígono se cruza" 2+2+1
+            //    do PDF; quase-toques de 4,3 mm (f86) NÃO reprovam.
+            for (const touchPt of ringExactSelfTouches(metric)) {
+              const lonlat = bridge.fromMetric(touchPt);
               found.push([Number(lonlat[0]), Number(lonlat[1])]);
             }
           }
