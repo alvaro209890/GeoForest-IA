@@ -638,3 +638,101 @@ describe("recordToGeoJSON", () => {
     expect(ring[0]).toEqual(ring[ring.length - 1]);
   });
 });
+
+/* ───────── regras do ProcessarGeo oficial (oráculo CAR 270069) ───────── */
+
+import { detectAirCompositionConsistency, detectReservatorioRules } from "./geometry-errors";
+import { buildDbfBuffer } from "./shapefile-writer";
+
+function rect(feature: number, x0: number, y0: number, w: number, h: number): ParsedPolygonRecord {
+  return {
+    feature,
+    rings: [
+      [
+        [x0, y0],
+        [x0, y0 + h],
+        [x0 + w, y0 + h],
+        [x0 + w, y0],
+        [x0, y0],
+      ],
+    ],
+  };
+}
+
+describe("detectReservatorioRules", () => {
+  const auas = rect(1, 0, 0, 100, 100);
+  const resDbf = (rows: Array<{ BARRAMENTO: string; SITUACAO: string }>) =>
+    buildDbfBuffer(rows, [
+      { name: "BARRAMENTO", type: "C", length: 1, decimals: 0 },
+      { name: "SITUACAO", type: "C", length: 1, decimals: 0 },
+    ]);
+
+  it("acusa reservatório sem barramento fora de AUAS/CONSOLIDADA + SITUACAO inválida", () => {
+    const result = detectReservatorioRules({
+      layers: [
+        { name: "AUAS", records: [auas], crs: projectedCrs },
+        {
+          name: "RESERVATORIO_ARTIFICIAL",
+          records: [rect(1, 200, 200, 20, 20)],
+          crs: projectedCrs,
+          dbf: resDbf([{ BARRAMENTO: "N", SITUACAO: "" }]),
+        },
+      ],
+    });
+    const tipos = result.rows.map((r) => r.tipo).sort();
+    expect(tipos).toEqual(["atributo_situacao_reservatorio", "reservatorio_fora_uso_antropico"]);
+    expect(result.rows.find((r) => r.tipo === "reservatorio_fora_uso_antropico")?.detalhe).toMatch(
+      /completamente contida em uma AUAS ou ÁREA CONSOLIDADA/,
+    );
+  });
+
+  it("não acusa reservatório contido com SITUACAO 'O' nem os com barramento", () => {
+    const ok = detectReservatorioRules({
+      layers: [
+        { name: "AUAS", records: [auas], crs: projectedCrs },
+        {
+          name: "RESERVATORIO_ARTIFICIAL",
+          records: [rect(1, 10, 10, 20, 20), rect(2, 300, 300, 20, 20)],
+          crs: projectedCrs,
+          dbf: resDbf([
+            { BARRAMENTO: "N", SITUACAO: "O" },
+            { BARRAMENTO: "S", SITUACAO: "" },
+          ]),
+        },
+      ],
+    });
+    expect(ok.rows).toEqual([]);
+  });
+});
+
+describe("detectAirCompositionConsistency", () => {
+  const airDbf = buildDbfBuffer([{ TIPO: "M", IDENTIFIC: "1.234" }], [
+    { name: "TIPO", type: "C", length: 1, decimals: 0 },
+    { name: "IDENTIFIC", type: "C", length: 40, decimals: 0 },
+  ]);
+
+  it("acusa AIR 'M' cuja composição não soma a área total (mensagem SEMA c/ IDENTIFIC)", () => {
+    const result = detectAirCompositionConsistency({
+      layers: [
+        { name: "AIR", records: [rect(1, 0, 0, 100, 100)], crs: projectedCrs, dbf: airDbf },
+        { name: "AVN", records: [rect(1, 0, 0, 100, 50)], crs: projectedCrs },
+      ],
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].tipo).toBe("air_composicao_area");
+    expect(result.rows[0].detalhe).toBe(
+      "A soma das áreas de AVN, AUAS, Área Consolidada e Hidrografia não corresponde à área total da AIR de tipo 'M' e identificação '1.234'.",
+    );
+  });
+
+  it("não acusa quando AVN+AUAS cobrem a AIR", () => {
+    const result = detectAirCompositionConsistency({
+      layers: [
+        { name: "AIR", records: [rect(1, 0, 0, 100, 100)], crs: projectedCrs, dbf: airDbf },
+        { name: "AVN", records: [rect(1, 0, 0, 100, 50)], crs: projectedCrs },
+        { name: "AUAS", records: [rect(1, 0, 50, 100, 50)], crs: projectedCrs },
+      ],
+    });
+    expect(result.rows).toEqual([]);
+  });
+});

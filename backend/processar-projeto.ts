@@ -344,8 +344,12 @@ export function runProcessPhase(
   }));
 
   onProgress?.({ percent: 10, message: "Aplicando regras do Anexo 01 / AIR×ATP.", stage: "simcar-rules" });
+  // Calibração do ProcessarGeo oficial (oráculo CAR 270069): a SEMA NÃO acusou
+  // vazamentos de contenção de até 78 m² (0,0078 ha) — o processamento usa
+  // limiar mínimo de 100 m² para contenção (o usuário pode subir via settings).
+  const containmentMinAreaM2 = Math.max(minArea, 100);
   try {
-    const containmentResult = detectSimcarContainment({ layers: ruleLayers, minAreaM2: minArea });
+    const containmentResult = detectSimcarContainment({ layers: ruleLayers, minAreaM2: containmentMinAreaM2 });
     allRows.push(...containmentResult.rows);
     allRuleViolations.push(...containmentResult.violations);
     allWarnings.push(...containmentResult.warnings);
@@ -354,8 +358,25 @@ export function runProcessPhase(
   }
   try {
     const crossResult = detectSimcarForbiddenOverlaps({ layers: ruleLayers, minAreaM2: minArea });
-    allRows.push(...crossResult.rows);
-    allRuleViolations.push(...crossResult.violations);
+    // Oráculo: o ProcessarGeo oficial não reporta sobreposição com hidrografia
+    // (AVN×RIO etc.) — esses pares ficam só na aba Erros de Geometria.
+    const isHydro = (layerName: string) => {
+      const code = recognizeSimcarLayer(layerName);
+      return (
+        !!code &&
+        ["RIO_MENOR_10", "RIO_10_ATE_50", "RIO_50_ATE_200", "RIO_200_ATE_600", "RIO_MAIOR_600", "LAGO_LAGOA_NATURAL", "RESERVATORIO_ARTIFICIAL"].includes(code)
+      );
+    };
+    const keptViolations = crossResult.violations.filter(
+      (v) => v.regra !== "sobreposicao" || (!isHydro(v.camadaA) && !isHydro(v.camadaB)),
+    );
+    const keptRows = crossResult.rows.filter((row) => {
+      if (row.tipo !== "sobreposicao_proibida") return true;
+      if (isHydro(row.camada)) return false;
+      return !/RIO_|LAGO|RESERVATORIO/i.test(row.detalhe);
+    });
+    allRows.push(...keptRows);
+    allRuleViolations.push(...keptViolations);
     allWarnings.push(...crossResult.warnings);
   } catch (error: any) {
     allWarnings.push(`Sobreposições proibidas: ${error?.message || "falha"}`);

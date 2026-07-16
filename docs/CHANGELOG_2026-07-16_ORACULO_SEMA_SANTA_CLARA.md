@@ -129,6 +129,57 @@ npx vitest run --root . backend/processar-projeto.test.ts \
   backend/geometry-errors.test.ts backend/simcar-rules.test.ts
 ```
 
+## ProcessarGeo oficial: disparado e usado como 2º oráculo
+
+Com a importação aprovada, disparamos `POST /Requerimento/ProcessarGeo/270069`
+(job de ~5 min) e baixamos o relatório + `erros_processamento` + `conferencia`.
+Resultado SEMA: **Reprovado** (pendências reais do dado, não de geometria):
+
+| Erro (SEMA) | Qtde SEMA | GeoForest após paridade |
+|---|---|---|
+| RESERVATORIO_ARTIFICIAL sem barramento fora de AUAS/Consolidada | 12 | **12 (exato)** |
+| (Campo SITUACAO) deve ser 'O' em reservatório sem barramento | 13 | **13 (exato)** |
+| Soma AVN+AUAS+Consolidada+Hidrografia ≠ AIR tipo 'M' | 9 matrículas | **9 (mesmas matrículas: 8.157/8.158/8.160/8.162/8.163/10.636/10.637/13.514/13.515)** |
+| AVN sobrepondo AVN / ARL sobrepondo ARL | 106 / 106 | 127/127 (semântica de contagem deles difere — ver abaixo) |
+| AVN×Área Consolidada / AUAS×Área Consolidada | 8 / 2 | 14 / 5 (idem — limiar/agrupamento) |
+
+Paridade implementada no GeoForest (commit `86cac433` + calibração):
+- Checks novos com as mensagens EXATAS da SEMA: `detectReservatorioRules`
+  (usa BARRAMENTO/SITUACAO do .dbf) e `detectAirCompositionConsistency`
+  (mensagem com IDENTIFIC da matrícula).
+- Relatório nas 4 seções oficiais (Erros espaciais / sobreposição e
+  obrigatoriedades / atributos / Geometrias encontradas) com "X está
+  sobrepondo Y n vezes.".
+- `ERROS_DE_SOBREPOSICAO.shp` no `erros_processamento.zip` — mesmo nome e
+  schema do arquivo oficial (pontos, `ID` + `DETALHES` "A com B"; o da SEMA
+  tinha 222 registros = 106+106+8+2).
+- **Sem autocorreção**: o arquivo processado replica as camadas como enviadas
+  (o SIMCAR reprova na importação, não conserta o shape do técnico).
+- Calibrações do oráculo: contenção ignora vazamentos < 100 m² (SEMA ignorou
+  até 78 m²); sobreposição com hidrografia (AVN×RIO etc.) não entra no
+  relatório de processamento (SEMA não reporta — fica na aba Erros de
+  Geometria).
+
+**Diferença conhecida (documentada, sem dado para fechar):** a contagem de
+"n vezes" das sobreposições da SEMA (106 vs nossos 127 pares ≥1 m²) não bate
+com nenhum limiar de área simples (na varredura, ≥100 m² ainda dá 114) —
+provavelmente eles agrupam regiões contíguas ou dissolvem antes de contar.
+Fechar isso exigiria outra rodada de sondas no ProcessarGeo (a ~6 min por
+iteração), fica como próximo passo.
+
+## Pendências REAIS do imóvel (para o Álvaro decidir — não é bug de geometria)
+
+O ProcessarGeo oficial reprova o projeto da Santa Clara por dados:
+1. **ARL e AVN têm o bloco inteiro duplicado** (cada polígono 2×: feições
+   1–121 ≈ 122–242) → "sobrepondo 106 vezes" + soma de AVN dobrada (62.327 ha
+   p/ ATP de 37.884 ha), o que derruba a conferência das 9 AIRs. Remover o
+   bloco duplicado provavelmente resolve os dois grupos de erro.
+2. **12 reservatórios sem barramento fora de AUAS/Área Consolidada** — exige
+   redesenho do uso do solo ao redor (decisão cartográfica).
+3. **13 reservatórios sem barramento com SITUACAO ≠ 'O'** — correção mecânica
+   de atributo no .dbf.
+4. AVN×Consolidada (8) e AUAS×Consolidada (2) — recortes entre usos.
+
 ## Limites / honestidade
 
 - A regra dual (0,02 m / 0,01 m²) é **empírica** deste oráculo; margens
