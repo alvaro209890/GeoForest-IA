@@ -75,6 +75,13 @@ completos). Harness: `backend/simcar-oraculo/pipeline-process-d7-live.test.ts` (
 Smoke read-only prévio (login + Buscar): CAR 270069 "Santa clara", Querência/5107065,
 `[EM_CADASTRAMENTO]`; baseline import `[FINALIZADO]`, process `[COM_PENDENCIA]`.
 
+**Resultado (2026-07-17 tarde) — ✅ gate FECHADO.** Job `live-d7-semumida-06964b31-…` (~5,5 min):
+prepare em skip (Querência/abrangência), import `[FINALIZADO]`, process `[FINALIZADO]` **sem nenhum
+erro** (`errosResumo: []`, `wetlandContainment: 0`, `rounds: 1`, `stopReason: null`). O autofix não
+precisou rodar. **Nota (Álvaro):** este ZIP já tinha as demais pendências (reservatório/ARL etc.)
+corrigidas manualmente no GIS **e** estava sem AREA_UMIDA — o D7 valida o pipeline fim-a-fim num ZIP
+cadastralmente correto, não que a úmida fosse o único bloqueio.
+
 Gate T14: planner mockado passou 9/9 cenários (JSON válido/inválido, conteúdo vazio, timeout,
 ação fora do inventário, camada inventada e ausência de chave). O teste live isolado com
 DeepSeek V4 Pro e a chave efêmera de `~/.hermes/.env` passou em 8,6 s: propôs somente

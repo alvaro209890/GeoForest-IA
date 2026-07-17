@@ -26,7 +26,7 @@ camada AREA_UMIDA** do ZIP de teste, processar sem ela e seguir a bateria sem es
 | P3.5 | Pipeline único + SSE + parse PDF | ✅ T7–T9 concluídas |
 | P4 | Front ORACULO-only | ✅ T10–T12 concluídas |
 | P5 | Autofix import + DeepSeek + loop | ✅ T13–T16; V23 aprovado live na rodada 2 |
-| **P6** | **Autofix process** | 🔶 **T17 em progresso** (código + live parcial; gate V22×41 ainda aberto) |
+| **P6** | **Autofix process** | ✅ **gate fechado via D7** (17/07 tarde; ZIP sem AREA_UMIDA processou `[FINALIZADO]` sem erros). Clip fica best-effort; T17b (naoCorrigivel de úmida) pendente |
 | P7 | Limpeza + deploy + E2E | ⏳ T18–T19 |
 
 ## Descobertas de 2026-07-16 (noite) — ver `11-endpoints-sema-descobertos.md`
@@ -180,7 +180,28 @@ Feito nesta retomada (tudo fora do repo público — segredos/shapes gitignored)
   `SIMCAR_LIVE=1`, pinado no SHA acima). Assert: process sem contenção de úmida, sem camada
   `AREA_UMIDA` em erro algum, e o loop **não** aplica `clip_layer_to_cover` (nada mecânico a fazer).
 
-Próximo passo: rodar o live D7 (muta o CAR-teste), registrar resultado e fechar o gate P6.
+#### Resultado do live D7 — ✅ gate FECHADO (2026-07-17 tarde)
+
+Job `live-d7-semumida-06964b31-…` no CAR 270069 (~5,5 min):
+
+1. Prepare: município Querência (skip), abrangência já cobre (skip) — zero mutação de contexto.
+2. **Import** `[FINALIZADO]` (aprovado).
+3. **Process (ProcessarGeo)** `[FINALIZADO]` **sem NENHUM erro** (`errosResumo: []`, `wetlandContainment: 0`).
+4. `rounds: 1`, `stopReason: null`, autofix não precisou rodar (nada a corrigir).
+
+**Enquadramento correto (Álvaro):** o process saiu limpo porque este ZIP já tinha as **demais
+pendências (reservatório/ARL etc.) corrigidas manualmente no GIS** pelo técnico **e** estava sem
+a camada AREA_UMIDA. Ou seja, o D7 não prova que a úmida era o único bloqueio — prova que, dado um
+ZIP cadastralmente correto e sem a úmida problemática, o pipeline SIMCAR real importa e processa
+fim-a-fim com sucesso. Isso reforça o produto: pendências cartográficas/cadastrais (reservatório,
+ARL, contenção de úmida) são resolvidas pelo técnico no GIS → devem virar `naoCorrigivel` com
+orientação, não autofix silencioso (T17b).
+
+Estado atual do CAR-teste após o D7: import/process `[FINALIZADO]` com a base sem úmida. Ao
+encerrar a bateria (P7/T19), reimportar o `Recorte_SANTA_CLARA_FINAL` para deixar o projeto num
+estado conhecido.
+
+Evidência (fora do repo): `.oraculo-scratch/live-d7-data/run.log` + `resumo-seguro.json`.
 
 #### O que o Codex já entregou no código (WIP → commitado nesta rodada)
 
