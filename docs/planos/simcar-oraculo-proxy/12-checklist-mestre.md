@@ -20,7 +20,8 @@
       Santa Clara→Querência e Cuiabá cobertos por teste
 - [x] Fallback WFS SEMA + dropdown manual (T4) — `Geoportal:LIM_MUNICIPIOS_MT` validada
       live; `/api/simcar-oraculo/municipios` devolveu 142 opções e Querência/Chave 751
-- [ ] Endpoints de escrita validados LIVE no 270069 e documentados em `11` (T5)
+- [x] Endpoints de escrita validados LIVE no 270069 e documentados em `11` (T5) — município
+      alterado/revertido com nome intacto; abrangência sobrescrita/restaurada sem `Limpar`
 - [ ] `prepare-project.ts` com guard do CAR-teste e `PropriedadeNome` intocável (T6)
 - [ ] BaseRef aguardada após mudar abrangência (T6)
 

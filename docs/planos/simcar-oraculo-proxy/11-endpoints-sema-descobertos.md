@@ -71,7 +71,7 @@ para o centroid do fixture Santa Clara.
 
 ⚠️ `Chave` (id interno) ≠ código IBGE. `BuscarMunicipioGeo` aceita o **código IBGE** (`Municipio.Codigo`), não a Chave.
 
-## Escrita (P2) — **do bundle, exigem 1 validação live cada antes de produção**
+## Escrita (P2) — validada live no CAR-teste em T5
 
 | Endpoint | Método | Payload (do código do app) |
 |---|---|---|
@@ -81,6 +81,26 @@ para o centroid do fixture Santa Clara.
 | `Requerimento/LimparAreaAbrangencia/{id}` | POST | sem body. **DESTRUTIVO**: modal do app avisa "Todas as geometrias do seu projeto serão descartadas e esta ação não poderá ser desfeita!" |
 | `Requerimento/ReprocessarBaseRef/{id}` | POST | sem body — regera base de referência |
 | `Requerimento/CancelarProcessamentoBaseRef/{id}` | POST | sem body |
+
+### Evidência live T5 — 2026-07-16
+
+Probe reproduzível: `SIMCAR_LIVE=1 npx tsx
+backend/simcar-oraculo/scripts/probe-escrita.ts` (credenciais somente via env gitignored).
+
+- `SalvarGrupoPropriedade`: contrato seguro aceito = **objeto inteiro retornado por `Buscar`**,
+  alterando somente `Municipio`. Querência `{Id:751,Codigo:"5107065"}` → Canarana
+  `{Id:703,Codigo:"5102702"}` → Querência. Cada POST foi confirmado por re-`Buscar`.
+  `PropriedadeNome` permaneceu byte a byte `"Santa clara"`. Subset mínimo não é suportado
+  pelo nosso cliente: por segurança, a produção sempre envia o snapshot inteiro preservado.
+- `SalvarAreaAbrangencia`: aceitou sobrescrever diretamente o retângulo existente com
+  ±0,01°; re-`Buscar` confirmou as quatro coordenadas em **4.883 ms**. Não exigiu nem chamou
+  `LimparAreaAbrangencia` (`precisouLimpar:false`).
+- `BaseRefStatus`: permaneceu `null` em três polls por ~11 s tanto após mudar quanto após
+  restaurar; assim, neste estado do CAR, salvar abrangência não iniciou BaseRef observável.
+  O pipeline deve aceitar `null` estável como concluído, além de aguardar `[CONCLUIDO]` quando
+  a SEMA efetivamente iniciar o processamento.
+- Restauração: bbox original confirmado em **1.817 ms**; estado final Querência/5107065,
+  `PropriedadeNome="Santa clara"`, bbox original. Nenhum ZIP precisou ser reimportado.
 
 **Sequência observada no app** após `SalvarAreaAbrangencia`: o front chama `Buscar` e inicia
 timer de status — a abrangência dispara processamento de **BaseRef** no servidor
@@ -116,10 +136,13 @@ Poll: `BuscarStatusProcessamento` a cada `SIMCAR_POLL_MS` (5 s). Import ~2 min; 
 | `Requerimento/DownloadArquivoAreaAbrangencia/{id}` | shape da área de abrangência (do bundle) |
 | `Requerimento/DownloadArquivoModelo?requerimentoId={id}` | ZIP modelo da SEMA (do bundle) |
 
-## O que ainda NÃO se sabe (fechar na implementação, com o CAR-teste)
+## Pendências opcionais / decisões fechadas
 
-- [ ] Payload mínimo aceito por `SalvarGrupoPropriedade` (objeto inteiro do `Buscar` ou subset? `Municipio` só com `{Id}` basta?) — testar no 270069 trocando Querência↔outro e revertendo.
-- [ ] `SalvarAreaAbrangencia` com abrangência JÁ salva: aceita sobrescrever direto ou exige `LimparAreaAbrangencia` antes (que apaga as geometrias)? Testar na ordem: salvar-por-cima → se 4xx/sem efeito, Limpar+Salvar.
-- [ ] Tempo típico do BaseRef após mudar abrangência (definir `SIMCAR_BASEREF_TIMEOUT_MS`, chute inicial 20 min).
-- [ ] Se `SalvarGrupoCaracterizacao` é sequer necessário para o nosso fluxo (a abrangência tem endpoint próprio; a aba Caracterização pode não precisar de mais nada).
+- [x] Contrato de propriedade adotado/validado: snapshot inteiro do `Buscar`; subset não será
+      usado para não apagar campos omitidos.
+- [x] Abrangência existente aceita sobrescrita direta; `Limpar` não é necessário no fluxo normal.
+- [x] BaseRef no probe ficou `null` estável; implementação aceita `null` ou aguarda
+      `[CONCLUIDO]`, timeout de 20 min quando houver estado ativo.
+- [x] `SalvarGrupoCaracterizacao` não é necessário: o endpoint específico de abrangência
+      alterou e restaurou as coordenadas sozinho.
 - [ ] Body real do `ListarRasc` (opcional — só se um dia quisermos descobrir o CAR-teste dinamicamente).

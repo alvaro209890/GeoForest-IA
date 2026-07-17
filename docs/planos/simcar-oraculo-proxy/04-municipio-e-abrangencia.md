@@ -90,13 +90,17 @@ o escritório trabalha vários shapes da mesma região.
 
 Sequência segura no 270069 (estado atual: Querência, V24 importado):
 
-- [ ] `SalvarGrupoPropriedade` trocando Querência → Canarana; re-Buscar confirma; **reverter**
+- [x] `SalvarGrupoPropriedade` trocando Querência → Canarana; re-Buscar confirma; **reverter**
       para Querência; re-Buscar confirma. Documentar payload mínimo aceito em `11`.
-- [ ] `SalvarAreaAbrangencia` com retângulo ~igual ao atual +1 km; observar `BaseRefStatus`
+- [x] `SalvarAreaAbrangencia` com retângulo ~igual ao atual +1 km; observar `BaseRefStatus`
       e cronometrar; documentar se precisou de Limpar.
-- [ ] Se precisou Limpar: reimportar o ZIP FINAL da Santa Clara
-      (`backend/fixtures/teste_1/Recorte_SANTA_CLARA_FINAL_16-07-26.zip`) para restaurar estado.
-- [ ] Registrar TUDO (payloads reais, respostas) em `11-endpoints-sema-descobertos.md`.
+- [x] N/A — `Limpar` não foi necessário; se fosse, reimportar o ZIP FINAL da Santa Clara
+      (`backend/fixtures/teste_1/Recorte_SANTA_CLARA_FINAL_16-07-26.zip`) restauraria o estado.
+- [x] Registrar TUDO (payloads reais, respostas) em `11-endpoints-sema-descobertos.md`.
+
+Resultado T5: `LimparAreaAbrangencia` **não foi necessário**, portanto nenhuma geometria foi
+descartada e não houve reimportação restauradora. O probe restaurou município e bbox originais
+em `finally` e confirmou o estado final por `Buscar`.
 
 ## Testes
 

@@ -42,5 +42,5 @@ DeepSeek V4 Pro explicando), automático até 3 rodadas.
 
 ## Continuar por
 
-1. [STATUS.md](./STATUS.md) → 2. T5 (validação live de escrita) em
+1. [STATUS.md](./STATUS.md) → 2. T6 (`prepare-project.ts`) em
 [07](./07-tarefas-implementacao.md) → 3. contrato canônico: [11](./11-endpoints-sema-descobertos.md)

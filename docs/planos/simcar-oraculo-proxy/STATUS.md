@@ -16,7 +16,7 @@ D6 repo PÚBLICO → segredos só em env.
 | P0 | Cliente + health + Buscar | ✅ (Hermes 16/07; live login/Buscar revalidado à noite) |
 | P1 | Import API no CAR-teste | ✅ rotas prontas |
 | **P1.5** | **Bugs bloqueantes (B1–B9)** | ✅ T1–T3 concluídas; B9 (modo local) sai em T18 |
-| P2 | Município + abrangência | 🚧 T4 concluída (IBGE+WFS+lista live); T5 é a próxima |
+| P2 | Município + abrangência | 🚧 T4–T5 concluídas; escrita live restaurada; T6 é a próxima |
 | P3 | ProcessarGeo API | ✅ rotas prontas |
 | P3.5 | Pipeline único + SSE + parse PDF | ⏳ T7–T9 |
 | P4 | Front ORACULO-only | ⏳ T10–T12 |
@@ -60,6 +60,11 @@ B9 comentário × código do default de modo.
   (`config/municipios-mt.geojson`, 142 feições); detecção local no `shape-context` com
   reprojeção UTM→4326; fallback live `Geoportal:LIM_MUNICIPIOS_MT`; endpoint de dropdown
   casa a lista SIMCAR (142 itens) com IBGE. Querência = `5107065`/Chave `751` confirmada live.
+- **T5 concluída (2026-07-16):** probe guardado por `SIMCAR_LIVE=1` validou no 270069:
+  Querência→Canarana→Querência com `PropriedadeNome="Santa clara"` intacto; sobrescrita direta
+  da abrangência confirmou em 4,883 s, **sem Limpar**, e restauração em 1,817 s. BaseRef ficou
+  `null` após alterar/restaurar (3 polls, ~11 s), comportamento aceito pelo contrato. Estado
+  final confirmado: Querência/5107065 e bbox original.
 
 ## Credenciais
 
