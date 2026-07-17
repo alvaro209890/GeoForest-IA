@@ -6,6 +6,7 @@ import {
   simcarPost,
   simcarUploadZip,
   withSimcarAuthRetry,
+  withSimcarPollRetry,
 } from "./client";
 import { enqueueSimcar } from "./queue";
 import type { OraculoProgress, SimcarImportOutcome } from "./types";
@@ -23,15 +24,18 @@ export async function importZipOnTestProject(args: {
   zip: Buffer;
   fileName: string;
   onProgress?: (ev: OraculoProgress) => void;
+  checkCancelled?: () => void | Promise<void>;
 }): Promise<SimcarImportOutcome> {
   return enqueueSimcar(() => importZipOnTestProjectUnlocked(args));
 }
 
-async function importZipOnTestProjectUnlocked(args: {
+/** Executa com a fila global já adquirida pelo pipeline. Não chamar diretamente fora dele. */
+export async function importZipOnTestProjectUnlocked(args: {
   carId?: string;
   zip: Buffer;
   fileName: string;
   onProgress?: (ev: OraculoProgress) => void;
+  checkCancelled?: () => void | Promise<void>;
 }): Promise<SimcarImportOutcome> {
   const cfg = assertSimcarCredentials();
   const carId = assertTestCarId(args.carId || cfg.testCarId);
@@ -41,6 +45,7 @@ async function importZipOnTestProjectUnlocked(args: {
     args.onProgress?.(ev);
   };
 
+  await args.checkCancelled?.();
   push({ step: "login", message: "Autenticando no SIMCAR técnico…", percent: 5 });
   await getSimcarToken();
   const authenticated = <T>(operation: (token: string) => Promise<T>) =>
@@ -53,9 +58,11 @@ async function importZipOnTestProjectUnlocked(args: {
         }),
     });
 
+  await args.checkCancelled?.();
   push({ step: "upload_zip", message: `Enviando ${args.fileName} ao SIMCAR…`, percent: 15 });
   const arquivo = await authenticated((token) => simcarUploadZip(token, args.zip, args.fileName));
 
+  await args.checkCancelled?.();
   push({ step: "importar", message: "Disparando ImportarArquivoShape…", percent: 25 });
   await authenticated((token) =>
     simcarPost(token, "Requerimento/ImportarArquivoShape", {
@@ -68,7 +75,18 @@ async function importZipOnTestProjectUnlocked(args: {
   const started = Date.now();
   let raw: Record<string, unknown> = {};
   while (Date.now() - started < cfg.importTimeoutMs) {
-    raw = await authenticated((token) => simcarBuscarStatusProcessamento(token, carId));
+    await args.checkCancelled?.();
+    raw = await withSimcarPollRetry(
+      () => authenticated((token) => simcarBuscarStatusProcessamento(token, carId)),
+      {
+        onRetry: ({ attempt, delayMs }) =>
+          push({
+            step: "import_poll",
+            message: `SEMA indisponível no poll de importação; nova tentativa ${attempt + 1}/3 em ${delayMs}ms…`,
+            percent: 35,
+          }),
+      },
+    );
     const st = String(raw.ImportacaoShapeStatus || "");
     const res = String(raw.ImportacaoResultado || "");
     const det = String(raw.ImportacaoShapeDetalhes || "");
@@ -86,12 +104,14 @@ async function importZipOnTestProjectUnlocked(args: {
   const resultado = String(raw.ImportacaoResultado || "");
   const detalhes = String(raw.ImportacaoShapeDetalhes || "");
   if (!status.includes("CONCLUIDO")) {
-    push({ step: "error", message: `Timeout na importação SIMCAR (${cfg.importTimeoutMs}ms)`, percent: 100 });
-    return { ok: false, resultado, status, detalhes, raw, timeline };
+    const message = `Timeout na importação SIMCAR (${cfg.importTimeoutMs}ms)`;
+    push({ step: "failed", message, percent: 100 });
+    throw new Error(message);
   }
 
   let pdfBuffer: Buffer | undefined;
   try {
+    await args.checkCancelled?.();
     push({ step: "download_artifacts", message: "Baixando PDF de importação…", percent: 90 });
     const dl = await authenticated((token) =>
       simcarDownload(token, `Requerimento/DownloadPdfImportacaoShapefile/${carId}`),
@@ -109,7 +129,7 @@ async function importZipOnTestProjectUnlocked(args: {
   // FINALIZADO sozinho = sucesso; COM_PENDENCIA = reprovado na prática
   const reallyOk = /FINALIZADO/.test(resultado) && !/COM_PENDENCIA|REPROV/.test(resultado);
   push({
-    step: "import_done",
+    step: reallyOk ? "import_ok" : "import_fail",
     message: reallyOk
       ? "Importação FINALIZADA no SIMCAR."
       : `Importação concluída com pendência: ${resultado}`,

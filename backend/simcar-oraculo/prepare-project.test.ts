@@ -6,6 +6,7 @@ import {
   type PrepareProjectClient,
 } from "./prepare-project";
 import type { ShapeContext } from "./types";
+import { OraculoPipelineCancelledError } from "./errors";
 
 const querencia = { Id: 751, Texto: "Querência", Codigo: "5107065", Estado: { Id: 11 } };
 const canarana = { Id: 703, Texto: "Canarana", Codigo: "5102702", Estado: { Id: 11 } };
@@ -245,6 +246,33 @@ describe("prepareTestProject", () => {
       "Requerimento/LimparAreaAbrangencia/270069",
       "Requerimento/SalvarAreaAbrangencia",
     ]);
+  });
+
+  it("não interpreta cancelamento como falha de overwrite nem chama Limpar", async () => {
+    const posts: string[] = [];
+    let checks = 0;
+    const client: PrepareProjectClient = {
+      buscar: async () => requirement({ bbox: [-52.65, -12.65, -52.55, -12.55] }),
+      buscarStatus: unreachable("buscarStatus"),
+      get: unreachable("get"),
+      post: async (pathname) => {
+        posts.push(pathname);
+        return {};
+      },
+      listarMunicipios: unreachable("listarMunicipios"),
+    };
+
+    await expect(
+      prepareTestProject({
+        shape: shape(),
+        client,
+        checkCancelled: () => {
+          checks += 1;
+          if (checks >= 2) throw new OraculoPipelineCancelledError();
+        },
+      }),
+    ).rejects.toBeInstanceOf(OraculoPipelineCancelledError);
+    expect(posts).toEqual([]);
   });
 
   it("falha em timeout da BaseRef ativa", async () => {

@@ -13,15 +13,15 @@ Rotas locais antigas de importar/processar do processar-projeto **morrem** (D2).
 | POST | `/api/simcar-oraculo/pipeline` | **novo** — `{uploadId, autoProcess?: true, autofix?: true}` → `202 {jobId, queuePosition}` |
 | GET | `/api/simcar-oraculo/jobs/:jobId` | snapshot do job (poll fallback) |
 | GET | `/api/simcar-oraculo/jobs/:jobId/events` | **novo** — SSE da timeline (mesmo padrão do processing-jobs atual) |
-| POST | `/api/simcar-oraculo/jobs/:jobId/autofix` | **novo** — dispara rodada manual de correção (quando o loop automático parou/foi desligado) |
+| POST | `/api/simcar-oraculo/jobs/:jobId/autofix` | **reservado em T8** — 409 `AUTOFIX_NOT_AVAILABLE`; ativado em T15 |
 | DELETE | `/api/simcar-oraculo/jobs/:jobId` | cancelar (para de pollear; best-effort Cancelar* na SEMA) |
 | GET | `/api/simcar-oraculo/jobs/:jobId/artifact/:key` | download tokenizado: `import-pdf-r{N}`, `process-pdf-r{N}`, `erros-zip-r{N}`, `enviado-zip-r{N}`, `corrigido-zip-r{N}`, `fixplan-r{N}` |
 | GET | `/api/simcar-oraculo/health` | mode-less: `{ok, simcarConfigured, testCarId, queueLength, deepseekConfigured}` |
 | GET | `/api/simcar-oraculo/test-project` | Buscar do CAR-teste (leitura) |
 | GET | `/api/simcar-oraculo/municipios` | 142 opções `{chave,nome,ibge}` para fallback manual; cache 24h |
 
-Rotas atuais `/importar` e `/processar` do oráculo: manter por 1 release como atalhos do
-pipeline (`autoProcess=false`) ou remover direto — decidir na task; front novo só usa pipeline.
+Decisão T8: rotas atuais `/importar` e `/processar` do oráculo ficam por 1 release como atalhos
+legados; o front novo usa somente `/pipeline`.
 
 Auth: Firebase `requireAuth` em tudo (como hoje). Rate limit: fila serial global já limita;
 opcional `SIMCAR_MAX_JOBS_POR_UID_DIA`.
@@ -44,7 +44,7 @@ opcional `SIMCAR_MAX_JOBS_POR_UID_DIA`.
 }
 ```
 
-`municipioDetectado.fonte`: `"malha-ibge" | "wfs-sema" | "nao-detectado"`. Se
+`municipioDetectado.fonte`: `"malha-ibge" | "wfs-sema" | "manual" | "nao-detectado"`. Se
 `nao-detectado`, o front oferece dropdown (dados de `Municipio/ListarMatoGrosso` via backend).
 
 ## Evento SSE / item de timeline
@@ -62,7 +62,7 @@ type OraculoEvent = {
     | "processar" | "process_poll" | "process_ok" | "process_fail"
     | "download_artifacts"
     | "autofix_plan" | "autofix_apply" | "autofix_skip"
-    | "done" | "failed" | "cancelled";
+    | "cancel_requested" | "done" | "failed" | "cancelled";
   message: string;                  // humano, pt-BR
   percent?: number;                 // 0-100 da rodada
   data?: Record<string, unknown>;   // ex.: {municipioAntes, municipioDepois}
@@ -79,7 +79,7 @@ Mensagens de exemplo (copy do front em 05):
 
 ```json
 {
-  "jobId": "…", "status": "queued|running|completed|failed|cancelled",
+  "jobId": "…", "status": "queued|running|cancel_requested|completed|failed|cancelled",
   "round": 2, "maxRounds": 3,
   "prepare": {
     "municipioAntes": "Querência", "municipioDepois": "Nova Mutum",
@@ -99,9 +99,21 @@ Mensagens de exemplo (copy do front em 05):
                    "errosResumo": [{ "camada": "AREA_UMIDA", "erro": "Geometria deve ser completamente contida…", "qtd": 41 }] } }
   ],
   "timeline": [ /* OraculoEvent[] acumulada (B3 corrigido) */ ],
-  "artifacts": { "import-pdf-r1": "/api/simcar-oraculo/jobs/…/artifact/import-pdf-r1", "…": "…" }
+  "artifacts": {
+    "import-pdf-r1": {
+      "key": "import-pdf-r1", "round": 1,
+      "relativePath": "users/UID/simcar-oraculo/JOB/r1/relatorio_importacao_sema.pdf",
+      "url": "/api/simcar-oraculo/jobs/JOB/artifact/import-pdf-r1",
+      "contentType": "application/pdf", "bytes": 347217
+    }
+  }
 }
 ```
+
+SSE envia primeiro `{type:"snapshot", jobId, job}`, depois `{type:"event", ...}`; heartbeat a
+cada 15 s. Jobs terminais devolvem apenas o snapshot e fecham a conexão. A rota faz lookup do
+job dentro do UID autenticado — outro usuário recebe 404. O cliente não pode sobrescrever nem
+apagar `simcar_oraculo_jobs` via store genérico, e a árvore de artefatos é excluída do static.
 
 ## Contratos de erro
 

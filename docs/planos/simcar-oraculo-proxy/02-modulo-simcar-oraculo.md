@@ -6,13 +6,14 @@
 |---------|----------|-------|
 | `config.ts` | env SIMCAR_* (cpf/senha/testCarId/root/polls/timeouts) | `PROCESSAR_MODE` será REMOVIDO (D2) |
 | `scramble.ts` + `scramble-impl.js` | scramble verbatim do bundle | ok |
-| `client.ts` | login (token cache 25min), get/post/download/uploadZip, Buscar, BuscarStatusProcessamento | headers browser-like ok |
+| `client.ts` | login (token cache 25min), get/post/download/uploadZip, Buscar, status, retry 401 e 5xx de poll | headers browser-like ok |
 | `queue.ts` | fila serial global + length | ok |
 | `import-shape.ts` | upload → ImportarArquivoShape {RequerimentoId, Arquivo} → poll → PDF | ok (guard assertTestCarId) |
 | `process-geo.ts` | ProcessarGeo/{id} → poll → PDF + erros-zip | ok |
-| `shape-context.ts` | bbox/centroid/camadas do ZIP (local) | municipioHint nunca preenchido (P2) |
-| `routes.ts` | 8 rotas `/api/simcar-oraculo/*` | ⚠️ bugs P1.5 abaixo |
-| `simcar-oraculo.test.ts` | 8 testes | ampliar |
+| `shape-context.ts` | bbox/centroid/camadas/município do ZIP (local) | fallback WFS disponível |
+| `pipeline.ts` | fila única prepare→import→process, rounds, parse, artefatos e cancelamento | T8 concluída |
+| `routes.ts` | atalhos legados + pipeline/snapshot/SSE/artifact/cancel | Firebase Auth |
+| testes `simcar-oraculo/` + geometria | 97 testes | gate T8 verde |
 
 ## P1.5 — BUGS a corrigir ANTES de tudo (achados na revisão de 16/07)
 
@@ -43,19 +44,21 @@ backend/simcar-oraculo/
     plan.ts  apply.ts  deepseek.ts  actions/*.ts
 ```
 
-### `pipeline.ts` (assinatura)
+### `pipeline.ts` (assinatura implementada em T8)
 
 ```ts
-export async function runOraculoPipeline(args: {
+export function startOraculoPipeline(args: {
   uid: string;
-  jobId: string;
+  uploadId: string;
+  jobId?: string;
   zip: Buffer;                 // rodada 1 = ZIP do usuário
   fileName: string;
-  autoProcess: boolean;        // default true (decisão do fluxo)
-  autofix: boolean;            // default true (D4)
-  maxRounds: number;           // default 3 (AUTOFIX_MAX_ROUNDS)
-  onEvent: (ev: OraculoEvent) => void;   // persiste timeline + SSE
-}): Promise<OraculoJobResult>;
+  shape?: ShapeContext;
+  autoProcess?: boolean;       // default true
+  autofix?: boolean;           // reservado; loop entra em T15
+  maxRounds?: number;          // default/teto 3
+  onNotification?: (ev: OraculoPipelineNotification) => void;
+}): { jobId: string; queuePosition: number; completion: Promise<JobSnapshot> };
 ```
 
 Regras:
@@ -67,6 +70,9 @@ Regras:
 - Timeout por etapa: import 15 min, process 30 min, BaseRef 20 min (`SIMCAR_BASEREF_TIMEOUT_MS`).
 - Falha de INFRA (timeout, 5xx persistente, login) → job `failed`. Reprovação da SEMA
   (COM_PENDENCIA) → job `completed` com `importOk/processOk=false` — é resultado, não erro.
+- O ZIP original e os resultados ficam em
+  `users/{uid}/simcar-oraculo/{jobId}/r{N}/`; o snapshot terminal também é espelhado em
+  `job.json`. Downloads só resolvem chaves registradas no doc do próprio usuário/job.
 
 ### `sema-report-parse.ts`
 
@@ -101,6 +107,8 @@ Oráculos reais versionados em `backend/fixtures/teste_1/`:
 | `prepare-project` com mock (município igual → skip; diferente → salvar+re-Buscar) | P2 |
 | `municipio-mt` centroid Querência → 5107065 | P2 |
 | `sema-report-parse` com quatro PDFs reais v21/v22/v23 versionados | P3.5 — 7 testes verdes |
+| pipeline import aprovado→process; import reprovado→stop; cancel mid-import | P3.5/T8 |
+| SSE snapshot/evento/terminal + isolamento por usuário | P3.5/T8 |
 | pipeline: import reprova → não processa → autofix roda → 2ª rodada | P5 (mock SEMA) |
 
 Live (manual, PC): `SIMCAR_LIVE=1` + scripts `scripts/smoke-*.ts` (nunca em CI).

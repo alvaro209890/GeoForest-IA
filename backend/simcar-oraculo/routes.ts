@@ -5,6 +5,7 @@
 import type { Express, Request, Response } from "express";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import { getSimcarOraculoConfig } from "./config";
 import { simcarBuscar, withSimcarAuthRetry } from "./client";
 import { getSimcarQueueLength } from "./queue";
@@ -13,8 +14,55 @@ import { importZipOnTestProject } from "./import-shape";
 import { processGeoOnTestProject } from "./process-geo";
 import type { SimcarImportOutcome, SimcarProcessOutcome } from "./types";
 import { saveUserBuffer, getAbsoluteStoragePath, readDocBySegments } from "../local-storage";
-import { appendOraculoTimelineEvent, persistOraculoJob } from "./job-store";
+import {
+  appendOraculoTimelineEvent,
+  persistOraculoJob,
+  readOraculoJob,
+} from "./job-store";
 import { detectarMunicipioWfsSema, listarMunicipiosSimcar } from "./municipio-mt";
+import {
+  requestOraculoPipelineCancellation,
+  resolveOraculoArtifact,
+  startOraculoPipeline,
+  type OraculoPipelineNotification,
+} from "./pipeline";
+
+const pipelineSubscribers = new Map<string, Set<Response>>();
+const PIPELINE_TERMINAL_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+
+function writePipelineSse(res: Response, payload: Record<string, unknown>): void {
+  if (res.writableEnded || res.destroyed) return;
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function closePipelineSubscribers(jobId: string): void {
+  const subscribers = pipelineSubscribers.get(jobId);
+  if (!subscribers) return;
+  for (const subscriber of subscribers) {
+    if (!subscriber.writableEnded) subscriber.end();
+  }
+  pipelineSubscribers.delete(jobId);
+}
+
+export function publishOraculoPipelineNotification(
+  notification: OraculoPipelineNotification,
+): void {
+  const subscribers = pipelineSubscribers.get(notification.jobId);
+  if (subscribers) {
+    for (const subscriber of subscribers) writePipelineSse(subscriber, notification);
+  }
+  if (
+    notification.type === "snapshot" &&
+    PIPELINE_TERMINAL_STATUSES.has(String(notification.job.status || ""))
+  ) {
+    closePipelineSubscribers(notification.jobId);
+  }
+}
 
 function uidOf(req: Request): string {
   return String((req as any).authUid || "").trim();
@@ -77,11 +125,10 @@ export function registerSimcarOraculoRoutes(app: Express): void {
       const c = getSimcarOraculoConfig();
       res.json({
         ok: true,
-        mode: c.mode,
         testCarId: c.testCarId,
         simcarConfigured: c.credentialsConfigured,
+        deepseekConfigured: Boolean(String(process.env.DEEPSEEK_API_KEY || "").trim()),
         queueLength: getSimcarQueueLength(),
-        root: c.root,
       });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || "health failed" });
@@ -139,6 +186,220 @@ export function registerSimcarOraculoRoutes(app: Express): void {
     } catch (e: any) {
       res.status(502).json({ error: e?.message || "Falha ao listar municípios do SIMCAR." });
     }
+  });
+
+  app.post("/api/simcar-oraculo/pipeline", async (req: Request, res: Response) => {
+    try {
+      const uid = uidOf(req);
+      if (!uid) {
+        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      const cfg = getSimcarOraculoConfig();
+      if (!cfg.credentialsConfigured) {
+        res.status(503).json({
+          error: "Oráculo SIMCAR não configurado no servidor.",
+          code: "SIMCAR_NOT_CONFIGURED",
+        });
+        return;
+      }
+      const uploadId = String((req.body as any)?.uploadId || "").trim();
+      if (!uploadId) {
+        res.status(400).json({ error: "uploadId é obrigatório." });
+        return;
+      }
+      const upload = readDocBySegments(["users", uid, "processar_projeto_jobs", uploadId]);
+      if (!upload || upload.status !== "uploaded") {
+        res.status(404).json({ error: "Upload não encontrado ou expirado. Envie o ZIP novamente." });
+        return;
+      }
+      const inputRelativePath = String(upload.inputRelativePath || "").trim();
+      const absolutePath = getAbsoluteStoragePath(inputRelativePath);
+      if (!inputRelativePath || !fs.existsSync(absolutePath)) {
+        res.status(404).json({ error: "Arquivo do upload expirou. Envie o ZIP novamente." });
+        return;
+      }
+      const zip = fs.readFileSync(absolutePath);
+      const shape = extractShapeContext(zip);
+      const selected = (req.body as any)?.municipio;
+      if (selected?.ibge && selected?.nome) {
+        shape.municipioDetectado = {
+          nome: String(selected.nome).trim(),
+          ibge: String(selected.ibge).replace(/\D/g, ""),
+          chaveSimcar: selected.chaveSimcar ?? selected.chave,
+          fonte: "manual",
+        };
+      } else if (shape.municipioDetectado.fonte === "nao-detectado") {
+        try {
+          const fallback = await detectarMunicipioWfsSema(shape.centroid);
+          if (fallback) shape.municipioDetectado = fallback;
+        } catch (error: any) {
+          shape.warnings.push(
+            `Fallback municipal WFS indisponível: ${error?.message || "falha de rede"}`,
+          );
+        }
+      }
+      const started = startOraculoPipeline({
+        uid,
+        uploadId,
+        zip,
+        fileName: String(upload.filename || "projeto.zip"),
+        shape,
+        carId: cfg.testCarId,
+        autoProcess: (req.body as any)?.autoProcess !== false,
+        autofix: (req.body as any)?.autofix === true,
+        onNotification: publishOraculoPipelineNotification,
+      });
+      // O executor converte falha/cancelamento em snapshot terminal; o catch evita rejeição
+      // não observada se a própria infraestrutura da fila falhar fora do executor.
+      void started.completion.catch((error: any) => {
+        const job = persistOraculoJob(uid, started.jobId, {
+          status: "failed",
+          stage: "failed",
+          ok: false,
+          error: error?.message || "Falha na fila do pipeline SIMCAR.",
+          finishedAt: new Date().toISOString(),
+        });
+        publishOraculoPipelineNotification({ type: "snapshot", jobId: started.jobId, job });
+      });
+      res.status(202).json({
+        ok: true,
+        jobId: started.jobId,
+        queuePosition: started.queuePosition,
+        testCarId: cfg.testCarId,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || "Falha ao iniciar pipeline SIMCAR." });
+    }
+  });
+
+  app.get("/api/simcar-oraculo/jobs/:jobId/events", async (req: Request, res: Response) => {
+    const uid = uidOf(req);
+    if (!uid) {
+      res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+      return;
+    }
+    const jobId = String(req.params.jobId || "").trim();
+    const job = readOraculoJob(uid, jobId);
+    if (!job) {
+      res.status(404).json({ error: "Job oráculo não encontrado." });
+      return;
+    }
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+    writePipelineSse(res, { type: "snapshot", jobId, job });
+    if (PIPELINE_TERMINAL_STATUSES.has(String(job.status || ""))) {
+      res.end();
+      return;
+    }
+    const subscribers = pipelineSubscribers.get(jobId) || new Set<Response>();
+    subscribers.add(res);
+    pipelineSubscribers.set(jobId, subscribers);
+    const heartbeat = setInterval(
+      () => writePipelineSse(res, { type: "heartbeat", jobId, ts: new Date().toISOString() }),
+      15_000,
+    );
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      subscribers.delete(res);
+      if (subscribers.size === 0) pipelineSubscribers.delete(jobId);
+    });
+  });
+
+  app.get(
+    "/api/simcar-oraculo/jobs/:jobId/artifact/:key",
+    async (req: Request, res: Response) => {
+      try {
+        const uid = uidOf(req);
+        if (!uid) {
+          res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+          return;
+        }
+        const jobId = String(req.params.jobId || "").trim();
+        const key = String(req.params.key || "").trim();
+        const resolved = resolveOraculoArtifact(uid, jobId, key);
+        if (!resolved || !fs.existsSync(resolved.absolutePath)) {
+          res.status(404).json({ error: "Artefato não encontrado para este job." });
+          return;
+        }
+        const allowedContentTypes = new Set([
+          "application/pdf",
+          "application/zip",
+          "application/json",
+          "application/octet-stream",
+        ]);
+        const contentType = allowedContentTypes.has(resolved.artifact.contentType)
+          ? resolved.artifact.contentType
+          : "application/octet-stream";
+        const downloadName = path
+          .basename(String(resolved.artifact.filename || "artefato.bin"))
+          .replace(/[^a-zA-Z0-9._-]/g, "_");
+        const bytes = fs.statSync(resolved.absolutePath).size;
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Content-Length", String(bytes));
+        res.setHeader("Cache-Control", "private, no-store");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${downloadName || "artefato.bin"}"`,
+        );
+        fs.createReadStream(resolved.absolutePath).pipe(res);
+      } catch (error: any) {
+        res.status(400).json({ error: error?.message || "Falha ao baixar artefato." });
+      }
+    },
+  );
+
+  app.post(
+    "/api/simcar-oraculo/jobs/:jobId/autofix",
+    async (req: Request, res: Response) => {
+      const uid = uidOf(req);
+      if (!uid) {
+        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      const jobId = String(req.params.jobId || "").trim();
+      const job = readOraculoJob(uid, jobId);
+      if (!job) {
+        res.status(404).json({ error: "Job oráculo não encontrado." });
+        return;
+      }
+      res.status(409).json({
+        error: "Autofix ainda não está disponível nesta fase do pipeline.",
+        code: "AUTOFIX_NOT_AVAILABLE",
+        hint: "A rota está reservada e será ativada pela fase P5.",
+      });
+    },
+  );
+
+  app.delete("/api/simcar-oraculo/jobs/:jobId", async (req: Request, res: Response) => {
+    const uid = uidOf(req);
+    if (!uid) {
+      res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+      return;
+    }
+    const jobId = String(req.params.jobId || "").trim();
+    const result = requestOraculoPipelineCancellation(uid, jobId);
+    if (result.status === "not_found") {
+      res.status(404).json({ error: "Job oráculo não encontrado." });
+      return;
+    }
+    if (result.event && result.job) {
+      publishOraculoPipelineNotification({
+        type: "event",
+        jobId,
+        event: result.event,
+        job: result.job,
+      });
+    } else if (result.job) {
+      publishOraculoPipelineNotification({ type: "snapshot", jobId, job: result.job });
+    }
+    res.status(result.status === "requested" ? 202 : 200).json({
+      ok: true,
+      status: result.status,
+    });
   });
 
   /**

@@ -91,6 +91,10 @@ function isUnauthorized(error: unknown): boolean {
   return error instanceof Error && /\b401\b/.test(error.message);
 }
 
+function isTransientServerError(error: unknown): error is SimcarHttpError {
+  return error instanceof SimcarHttpError && error.status >= 500 && error.status <= 599;
+}
+
 /**
  * Executa uma chamada autenticada e, somente em 401, invalida a sessão, faz novo login e
  * repete a operação uma vez. A repetição é limitada para não mascarar credencial inválida.
@@ -109,6 +113,35 @@ export async function withSimcarAuthRetry<T>(
     const renewedToken = await getSimcarToken();
     return operation(renewedToken);
   }
+}
+
+/**
+ * Polls são idempotentes: em 5xx transitório repetimos até três tentativas com backoff.
+ * Erros 4xx, abort/timeout e a terceira falha seguem imediatamente para o chamador.
+ */
+export async function withSimcarPollRetry<T>(
+  operation: () => Promise<T>,
+  options: {
+    maxAttempts?: number;
+    baseDelayMs?: number;
+    onRetry?: (args: { attempt: number; delayMs: number; error: SimcarHttpError }) =>
+      | void
+      | Promise<void>;
+  } = {},
+): Promise<T> {
+  const maxAttempts = Math.max(1, Math.trunc(options.maxAttempts ?? 3));
+  const baseDelayMs = Math.max(0, Math.trunc(options.baseDelayMs ?? 500));
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isTransientServerError(error) || attempt >= maxAttempts) throw error;
+      const delayMs = baseDelayMs * 2 ** (attempt - 1);
+      await options.onRetry?.({ attempt, delayMs, error });
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw new Error("Retry de poll SIMCAR terminou sem resultado.");
 }
 
 export async function simcarPost(

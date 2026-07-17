@@ -315,6 +315,65 @@ export function saveUserBuffer(args: {
   };
 }
 
+/**
+ * Persiste um artefato privado do pipeline SIMCAR em uma árvore isolada por job/rodada.
+ * Os segmentos são sempre normalizados aqui; nenhuma rota aceita um path fornecido pelo cliente.
+ */
+export function saveSimcarOraculoArtifact(args: {
+  uid: string;
+  jobId: string;
+  round: number;
+  filename: string;
+  buffer: Buffer;
+}): { relativePath: string; absolutePath: string; bytes: number } {
+  const userDir = ensureUserScaffold(args.uid);
+  const cleanJobId = safeSegment(args.jobId);
+  const cleanName = safeSegment(args.filename);
+  const round = Math.trunc(Number(args.round));
+  if (!cleanJobId || !cleanName || !Number.isInteger(round) || round < 1 || round > 99) {
+    throw new Error("INVALID_SIMCAR_ARTIFACT_PATH");
+  }
+  const relativePath = path.posix.join(
+    "users",
+    safeSegment(args.uid),
+    "simcar-oraculo",
+    cleanJobId,
+    `r${round}`,
+    cleanName,
+  );
+  const absolutePath = path.join(
+    userDir,
+    "simcar-oraculo",
+    cleanJobId,
+    `r${round}`,
+    cleanName,
+  );
+  ensureDir(path.dirname(absolutePath));
+  fs.writeFileSync(absolutePath, args.buffer);
+  return { relativePath, absolutePath, bytes: args.buffer.length };
+}
+
+/** Snapshot final redundante ao doc da coleção, útil para auditoria junto aos artefatos. */
+export function saveSimcarOraculoJobSnapshot(args: {
+  uid: string;
+  jobId: string;
+  data: PlainObject;
+}): { relativePath: string; absolutePath: string } {
+  const userDir = ensureUserScaffold(args.uid);
+  const cleanJobId = safeSegment(args.jobId);
+  if (!cleanJobId) throw new Error("INVALID_SIMCAR_JOB_PATH");
+  const relativePath = path.posix.join(
+    "users",
+    safeSegment(args.uid),
+    "simcar-oraculo",
+    cleanJobId,
+    "job.json",
+  );
+  const absolutePath = path.join(userDir, "simcar-oraculo", cleanJobId, "job.json");
+  writeJsonAtomic(absolutePath, args.data);
+  return { relativePath, absolutePath };
+}
+
 export function saveUserFileFromPath(args: {
   uid: string;
   area: "cbers/output";

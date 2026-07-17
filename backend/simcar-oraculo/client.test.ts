@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearSimcarTokenCache,
+  SimcarHttpError,
   simcarGet,
   withSimcarAuthRetry,
+  withSimcarPollRetry,
 } from "./client";
 
 function configureFakeCredentials(): void {
@@ -99,5 +101,53 @@ describe("simcar-oraculo/client timeout", () => {
 
     await rejection;
     expect(receivedSignal?.aborted).toBe(true);
+  });
+});
+
+describe("simcar-oraculo/client poll retry", () => {
+  it("repete 5xx transitório com backoff limitado e conclui na terceira tentativa", async () => {
+    let calls = 0;
+    const retries: number[] = [];
+    const result = await withSimcarPollRetry(
+      async () => {
+        calls += 1;
+        if (calls < 3) {
+          throw new SimcarHttpError({
+            method: "GET",
+            pathname: "Requerimento/BuscarStatusProcessamento/270069",
+            status: 503,
+            responseText: "indisponível",
+          });
+        }
+        return "ok";
+      },
+      {
+        baseDelayMs: 0,
+        onRetry: ({ attempt }) => retries.push(attempt),
+      },
+    );
+
+    expect(result).toBe("ok");
+    expect(calls).toBe(3);
+    expect(retries).toEqual([1, 2]);
+  });
+
+  it("não repete erro 4xx", async () => {
+    let calls = 0;
+    await expect(
+      withSimcarPollRetry(
+        async () => {
+          calls += 1;
+          throw new SimcarHttpError({
+            method: "GET",
+            pathname: "Requerimento/BuscarStatusProcessamento/270069",
+            status: 400,
+            responseText: "inválido",
+          });
+        },
+        { baseDelayMs: 0 },
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(calls).toBe(1);
   });
 });

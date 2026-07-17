@@ -14,6 +14,7 @@ import {
   type MunicipioSimcarOption,
 } from "./municipio-mt";
 import type { OraculoProgress, ShapeContext } from "./types";
+import { isOraculoPipelineCancelledError } from "./errors";
 
 type Requirement = Record<string, any>;
 type RequestBbox = {
@@ -144,10 +145,12 @@ async function waitForRequest(
   carId: string,
   predicate: (req: Requirement) => boolean,
   label: string,
+  checkCancelled?: () => void | Promise<void>,
 ): Promise<Requirement> {
   const started = Date.now();
   let last: Requirement = {};
   while (Date.now() - started <= 30_000) {
+    await checkCancelled?.();
     last = await client.buscar(carId);
     if (predicate(last)) return last;
     await sleep(Math.min(1_000, getSimcarOraculoConfig().pollMs));
@@ -190,12 +193,14 @@ async function waitBaseRef(args: {
   carId: string;
   onEvent: (event: OraculoProgress) => void;
   warnings: string[];
+  checkCancelled?: () => void | Promise<void>;
 }): Promise<number> {
   const cfg = getSimcarOraculoConfig();
   const started = Date.now();
   let nullPolls = 0;
   let reprocessed = false;
   while (Date.now() - started <= cfg.baseRefTimeoutMs) {
+    await args.checkCancelled?.();
     const raw = await args.client.buscarStatus(args.carId);
     const status = raw.BaseRefStatus == null ? null : String(raw.BaseRefStatus);
     const detalhes = String(raw.BaseRefDetalhes || "");
@@ -233,6 +238,7 @@ export async function prepareTestProject(args: {
   shape: ShapeContext;
   onEvent?: (event: OraculoProgress) => void;
   client?: PrepareProjectClient;
+  checkCancelled?: () => void | Promise<void>;
 }): Promise<PrepareProjectResult> {
   const cfg = getSimcarOraculoConfig();
   const carId = assertTestCarId(args.carId || cfg.testCarId);
@@ -247,6 +253,7 @@ export async function prepareTestProject(args: {
   const onEvent = args.onEvent || (() => undefined);
   const warnings = [...(args.shape.warnings || [])];
 
+  await args.checkCancelled?.();
   onEvent({ step: "buscar_projeto", message: `Conferindo o CAR-teste ${carId}…`, percent: 5 });
   let req = await client.buscar(carId);
   const originalName = String(req.PropriedadeNome ?? "");
@@ -268,7 +275,9 @@ export async function prepareTestProject(args: {
     data: { municipioAntes, ibgeAntes: currentIbge, municipioAlvo: detected.nome, ibgeAlvo: detected.ibge },
   });
   if (currentIbge !== detected.ibge) {
+    await args.checkCancelled?.();
     await confirmOfficialMunicipio(client, detected.ibge, args.shape.centroid);
+    await args.checkCancelled?.();
     const options = await client.listarMunicipios();
     const target =
       options.find((item) => item.ibge === detected.ibge) ||
@@ -293,6 +302,7 @@ export async function prepareTestProject(args: {
       message: `Ajustando município para ${target.nome}, sem alterar o nome da propriedade…`,
       percent: 10,
     });
+    await args.checkCancelled?.();
     assertTestCarId(carId);
     await client.post("Requerimento/SalvarGrupoPropriedade", payload);
     req = await waitForRequest(
@@ -300,6 +310,7 @@ export async function prepareTestProject(args: {
       carId,
       (next) => String(next.Municipio?.Codigo) === detected.ibge,
       "Mudança de município",
+      args.checkCancelled,
     );
     if (String(req.PropriedadeNome) !== originalName) {
       throw new Error("SEMA alterou PropriedadeNome durante a mudança de município.");
@@ -331,6 +342,7 @@ export async function prepareTestProject(args: {
     });
     let directError: unknown = null;
     try {
+      await args.checkCancelled?.();
       assertTestCarId(carId);
       await client.post("Requerimento/SalvarAreaAbrangencia", payload);
       req = await waitForRequest(
@@ -338,8 +350,10 @@ export async function prepareTestProject(args: {
         carId,
         (next) => requestMatchesBbox(next, targetBbox),
         "Sobrescrita da abrangência",
+        args.checkCancelled,
       );
     } catch (error) {
+      if (isOraculoPipelineCancelledError(error)) throw error;
       directError = error;
     }
     if (directError) {
@@ -353,8 +367,10 @@ export async function prepareTestProject(args: {
         message: "A SEMA recusou sobrescrever; limpando a abrangência do CAR-teste e tentando novamente…",
         percent: 16,
       });
+      await args.checkCancelled?.();
       assertTestCarId(carId);
       await client.post(`Requerimento/LimparAreaAbrangencia/${carId}`);
+      await args.checkCancelled?.();
       assertTestCarId(carId);
       await client.post("Requerimento/SalvarAreaAbrangencia", payload);
       req = await waitForRequest(
@@ -362,10 +378,17 @@ export async function prepareTestProject(args: {
         carId,
         (next) => requestMatchesBbox(next, targetBbox),
         "Abrangência após Limpar",
+        args.checkCancelled,
       );
     }
     abrangenciaChanged = true;
-    baserefWaitedMs = await waitBaseRef({ client, carId, onEvent, warnings });
+    baserefWaitedMs = await waitBaseRef({
+      client,
+      carId,
+      onEvent,
+      warnings,
+      checkCancelled: args.checkCancelled,
+    });
     onEvent({
       step: "abrangencia_ok",
       message: "Área de abrangência pronta para a importação.",

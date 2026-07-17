@@ -544,10 +544,14 @@ async function startServer() {
       "/api/simcar-oraculo/health",
       "/api/simcar-oraculo/test-project",
       "/api/simcar-oraculo/municipios",
+      "/api/simcar-oraculo/pipeline",
       "/api/simcar-oraculo/importar",
       "/api/simcar-oraculo/processar",
       "/api/simcar-oraculo/shape-preview",
       /^\/api\/simcar-oraculo\/jobs\/[^/]+$/,
+      /^\/api\/simcar-oraculo\/jobs\/[^/]+\/events$/,
+      /^\/api\/simcar-oraculo\/jobs\/[^/]+\/artifact\/[^/]+$/,
+      /^\/api\/simcar-oraculo\/jobs\/[^/]+\/autofix$/,
       /^\/api\/simcar-oraculo\/jobs\/[^/]+\/pdf-import$/,
       /^\/api\/simcar-oraculo\/jobs\/[^/]+\/pdf-process$/,
       /^\/api\/simcar-oraculo\/jobs\/[^/]+\/erros-zip$/,
@@ -563,6 +567,11 @@ async function startServer() {
     requireAuth,
   );
   app.use(["/api/upload-image", "/api/upload-file"], attachOptionalAuth);
+  // Artefatos do oráculo exigem ownership via /jobs/:id/artifact/:key; nunca ficam expostos
+  // pelo servidor estático genérico, mesmo que alguém descubra o path relativo no disco.
+  app.use("/api/storage/users/:uid/simcar-oraculo", (_req, res) => {
+    res.status(404).json({ error: "Arquivo não encontrado." });
+  });
   app.use("/api/storage", express.static(STORAGE_ROOT));
   app.use("/api/raster", express.static(CBERS_ARCHIVE_ROOT));
 
@@ -631,6 +640,10 @@ async function startServer() {
       res.status(403).json({ error: "Acesso negado." });
       return;
     }
+    if (pathSegments[2] === "simcar_oraculo_jobs") {
+      res.status(403).json({ error: "Jobs do oráculo são gerenciados somente pelo backend." });
+      return;
+    }
     const data = materializeServerTimestamps((req.body as any)?.data || {});
     const merge = Boolean((req.body as any)?.merge);
     const saved = writeDocBySegments(pathSegments, data, { merge });
@@ -642,6 +655,10 @@ async function startServer() {
     const uid = String(req.authUid || "").trim();
     if (pathSegments[0] !== "users" || pathSegments[1] !== uid) {
       res.status(403).json({ error: "Acesso negado." });
+      return;
+    }
+    if (pathSegments[2] === "simcar_oraculo_jobs") {
+      res.status(403).json({ error: "Jobs do oráculo são gerenciados somente pelo backend." });
       return;
     }
     deleteDocBySegments(pathSegments);

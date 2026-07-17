@@ -24,6 +24,10 @@ Calibração offline T7 concluída com cópias imutáveis dos PDFs reais em
 V23 import (`AREA_UMIDA`, pontos repetidos ×11) e V22 process (`AREA_UMIDA`, contenção ×41).
 Os hashes SHA-256 e o contrato estruturado estão registrados em `02-modulo-simcar-oraculo.md`.
 
+Gate offline T8 concluído: mock aprovado encadeou prepare→import→ProcessarGeo; V23 reprovado
+parou antes do process e estruturou pontos repetidos ×11; cancelamento durante import tentou o
+endpoint remoto e terminou `cancelled`. A validação live desta seção continua pendente para T19.
+
 ## Checklist P1.5 (rotas persistem de verdade)
 
 - [ ] `POST /api/simcar-oraculo/pipeline` com V24 → doc em `users/{uid}/simcar_oraculo_jobs/{id}` existe e atualiza

@@ -62,7 +62,7 @@ ZIP do usuário
 | **P1.5** | **Correções de bugs** achadas na revisão de 16/07 (whitelist, timeline, PDFs, retry 401, recuperação no boot) | ✅ T1–T3 em 2026-07-16; remoção de `PROCESSAR_MODE` fica em T18 |
 | **P2** | Município (Propriedade) + abrangência (Caracterização) com os endpoints REAIS de `11-endpoints-sema-descobertos.md` | ✅ T4–T6 (live no 270069) |
 | **P3** | ProcessarGeo + artefatos | ✅ API pronta (falta encadear no pipeline) |
-| **P3.5** | **Pipeline único** upload→prepare→import→process + SSE/timeline + parse do PDF SEMA → `errosResumo` | ⏳ T7 parse ✅; T8–T9 pendentes |
+| **P3.5** | **Pipeline único** upload→prepare→import→process + SSE/timeline + parse do PDF SEMA → `errosResumo` | ⏳ T7–T8 ✅; T9 pendente |
 | **P4** | Front: remover validação local, timeline oráculo, downloads SEMA, botão Corrigir | ⏳ |
 | **P5** | Autofix de import (mecânico + DeepSeek planner) + loop 3 rodadas | ⏳ |
 | **P6** | Autofix de process (clip úmida etc.) no mesmo loop | ⏳ |

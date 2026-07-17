@@ -62,12 +62,15 @@
   degrada para warning; 7 testes verdes e quatro PDFs-oráculo versionados com hashes em `02`.
 - Commit: `feat(simcar-oraculo): parse dos relatórios PDF da SEMA`
 
-### T8 — `pipeline.ts` + rotas novas + SSE
+### T8 — `pipeline.ts` + rotas novas + SSE ✅ concluída em 2026-07-16
 - Create: pipeline.ts (02); rotas `POST /pipeline`, `GET /jobs/:id/events` (SSE via
   processing-jobs), `GET /jobs/:id/artifact/:key`, `POST /jobs/:id/autofix`, DELETE cancel
 - Job doc: `rounds[]`, `artifacts{}`, timeline acumulada; artefatos em
   `users/{uid}/simcar-oraculo/{jobId}/r{N}/…` (01)
 - Test: pipeline com SEMA mockada — caminho feliz; import reprova e para (autofix ainda off)
+- Evidência: cancelamento mid-import com `CancelarImportacaoShape` best-effort; SSE privado
+  snapshot→evento→terminal; 5xx com 3 tentativas; 97 testes do gate oráculo+geometria verdes.
+- `/autofix` fica registrado e responde 409 explícito até a implementação P5/T15.
 - Commit: `feat(simcar-oraculo): pipeline único upload→prepare→import→process`
 
 ### T9 — Downloads SEMA extras

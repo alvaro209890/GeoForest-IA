@@ -5,6 +5,7 @@ import {
   simcarDownload,
   simcarPost,
   withSimcarAuthRetry,
+  withSimcarPollRetry,
 } from "./client";
 import { enqueueSimcar } from "./queue";
 import type { OraculoProgress, SimcarProcessOutcome } from "./types";
@@ -19,13 +20,16 @@ function sleep(ms: number): Promise<void> {
 export async function processGeoOnTestProject(args: {
   carId?: string;
   onProgress?: (ev: OraculoProgress) => void;
+  checkCancelled?: () => void | Promise<void>;
 }): Promise<SimcarProcessOutcome> {
   return enqueueSimcar(() => processGeoOnTestProjectUnlocked(args));
 }
 
-async function processGeoOnTestProjectUnlocked(args: {
+/** Executa com a fila global já adquirida pelo pipeline. Não chamar diretamente fora dele. */
+export async function processGeoOnTestProjectUnlocked(args: {
   carId?: string;
   onProgress?: (ev: OraculoProgress) => void;
+  checkCancelled?: () => void | Promise<void>;
 }): Promise<SimcarProcessOutcome> {
   const cfg = assertSimcarCredentials();
   const carId = assertTestCarId(args.carId || cfg.testCarId);
@@ -35,6 +39,7 @@ async function processGeoOnTestProjectUnlocked(args: {
     args.onProgress?.(ev);
   };
 
+  await args.checkCancelled?.();
   push({ step: "login", message: "Autenticando no SIMCAR…", percent: 5 });
   await getSimcarToken();
   const authenticated = <T>(operation: (token: string) => Promise<T>) =>
@@ -47,6 +52,7 @@ async function processGeoOnTestProjectUnlocked(args: {
         }),
     });
 
+  await args.checkCancelled?.();
   push({ step: "processar", message: "Disparando ProcessarGeo…", percent: 15 });
   await authenticated((token) => simcarPost(token, `Requerimento/ProcessarGeo/${carId}`));
 
@@ -55,7 +61,18 @@ async function processGeoOnTestProjectUnlocked(args: {
   let raw: Record<string, unknown> = {};
   let lastDet = "";
   while (Date.now() - started < cfg.processTimeoutMs) {
-    raw = await authenticated((token) => simcarBuscarStatusProcessamento(token, carId));
+    await args.checkCancelled?.();
+    raw = await withSimcarPollRetry(
+      () => authenticated((token) => simcarBuscarStatusProcessamento(token, carId)),
+      {
+        onRetry: ({ attempt, delayMs }) =>
+          push({
+            step: "process_poll",
+            message: `SEMA indisponível no poll de processamento; nova tentativa ${attempt + 1}/3 em ${delayMs}ms…`,
+            percent: 25,
+          }),
+      },
+    );
     const st = String(raw.ProcessamentoStatus || "");
     const res = String(raw.ProcessamentoResultado || "");
     const det = String(raw.ProcessamentoDetalhes || "");
@@ -83,13 +100,15 @@ async function processGeoOnTestProjectUnlocked(args: {
   const resultado = String(raw.ProcessamentoResultado || "");
   const detalhes = String(raw.ProcessamentoDetalhes || lastDet || "");
   if (!status.includes("CONCLUIDO")) {
-    push({ step: "error", message: `Timeout no ProcessarGeo (${cfg.processTimeoutMs}ms)`, percent: 100 });
-    return { ok: false, resultado, status, detalhes, raw, timeline };
+    const message = `Timeout no ProcessarGeo (${cfg.processTimeoutMs}ms)`;
+    push({ step: "failed", message, percent: 100 });
+    throw new Error(message);
   }
 
   let pdfBuffer: Buffer | undefined;
   let errosZipBuffer: Buffer | null = null;
   try {
+    await args.checkCancelled?.();
     push({ step: "download_artifacts", message: "Baixando PDF de processamento…", percent: 90 });
     const dl = await authenticated((token) =>
       simcarDownload(token, `Requerimento/DownloadPdfRelatorioProcessamento/${carId}`),
@@ -99,6 +118,7 @@ async function processGeoOnTestProjectUnlocked(args: {
     push({ step: "download_artifacts", message: `PDF process: ${e?.message || "falha"}`, percent: 91 });
   }
   try {
+    await args.checkCancelled?.();
     const dl = await authenticated((token) =>
       simcarDownload(token, `Requerimento/DownloadArquivoErrosProcessamento/${carId}`),
     );
@@ -109,7 +129,7 @@ async function processGeoOnTestProjectUnlocked(args: {
 
   const reallyOk = /FINALIZADO/.test(resultado) && !/COM_PENDENCIA|REPROV/.test(resultado);
   push({
-    step: "process_done",
+    step: reallyOk ? "process_ok" : "process_fail",
     message: reallyOk ? "Processamento FINALIZADO." : `Processamento: ${resultado}`,
     percent: 100,
   });

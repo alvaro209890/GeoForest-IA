@@ -60,6 +60,9 @@ Checklist de deploy:
 ## Superfície de ataque / limites
 
 - Rotas oráculo: Firebase auth obrigatório (já). Health também autenticado.
+- `simcar_oraculo_jobs` é server-owned: `/api/store/doc` permite leitura, mas bloqueia PUT/
+  DELETE do cliente. Artefatos não passam pelo `/api/storage` estático; o download autenticado
+  valida UID, job, chave registrada e containment do path absoluto.
 - Fila serial global = rate limit natural; opcional `SIMCAR_MAX_JOBS_POR_UID_DIA`.
 - `assertTestCarId` em TODA mutação (prepare/import/process) — teste unitário garante.
 - Logar por job: `uid, jobId, round, fileName, carId, steps` — **nunca** token/senha/chave.

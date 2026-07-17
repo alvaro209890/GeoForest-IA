@@ -18,7 +18,7 @@ D6 repo PÚBLICO → segredos só em env.
 | **P1.5** | **Bugs bloqueantes (B1–B9)** | ✅ T1–T3 concluídas; B9 (modo local) sai em T18 |
 | P2 | Município + abrangência | ✅ T4–T6; prepare live em skip e mutações T5 comprovadas |
 | P3 | ProcessarGeo API | ✅ rotas prontas |
-| P3.5 | Pipeline único + SSE + parse PDF | ⏳ T7 concluída; T8–T9 pendentes |
+| P3.5 | Pipeline único + SSE + parse PDF | ⏳ T7–T8 concluídas; T9 pendente |
 | P4 | Front ORACULO-only | ⏳ T10–T12 |
 | P5 | Autofix import + DeepSeek + loop | ⏳ T13–T16 |
 | P6 | Autofix process | ⏳ T17 |
@@ -76,6 +76,14 @@ B9 comentário × código do default de modo.
   ×11; V22 processamento/área úmida não contida ×41. Os PDFs-oráculo estão versionados como
   fixtures e o parse degradável preserva o PDF com `warnings` em vez de derrubar o job. Gate
   acumulado: **88/88 testes** do oráculo+geometria, `tsc --noEmit` e build de produção verdes.
+- **T8 concluída (2026-07-16):** job único `queued→prepare→import→process` dentro de uma única
+  aquisição da fila; `rounds[]`, timeline com `ts/round`, artefatos privados por job/rodada e
+  `job.json`; SSE com snapshot/heartbeat/fechamento terminal; poll fallback, cancelamento entre
+  polls com `Cancelar*` best-effort e retry 5xx 3 tentativas. Import reprovado termina
+  `completed/importOk=false` sem disparar ProcessarGeo. Rotas pipeline/snapshot/SSE/artifact/
+  cancel estão autenticadas; jobs são server-owned e a árvore não é servida pelo static;
+  `/autofix` responde reserva explícita até P5. Gate acumulado:
+  **97/97 testes** do oráculo+geometria, `tsc --noEmit` e build de produção verdes.
 
 ## Credenciais
 
@@ -85,6 +93,6 @@ B9 comentário × código do default de modo.
 
 ## Como retomar
 
-1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T8 em diante)
+1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T9 em diante)
 2. Antes de codar SEMA: `11-endpoints-sema-descobertos.md`
 3. Validação: `09-validacao-santa-clara.md`

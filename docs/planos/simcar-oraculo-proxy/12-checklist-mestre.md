@@ -31,8 +31,10 @@
 
 - [x] Parse PDF SEMA → `errosResumo` (T7) — 7 testes; oráculos reais V21, V22-import,
       V23 e V22-process versionados com SHA-256; colunas coladas/quebras/agregação cobertas
-- [ ] `POST /pipeline` + SSE + artefatos por rodada (T8)
-- [ ] Import aprovou → ProcessarGeo automático (T8)
+- [x] `POST /pipeline` + SSE + artefatos por rodada (T8) — snapshot/evento/heartbeat/terminal,
+      Auth por UID, cancelamento e storage `job/rN` cobertos por testes
+- [x] Import aprovou → ProcessarGeo automático (T8) — import reprovado para sem processar e
+      permanece resultado `completed`; ambos os caminhos mockados
 - [ ] Todos os downloads SEMA disponíveis por rodada (T9)
 
 ## P4 — Front sem validação local

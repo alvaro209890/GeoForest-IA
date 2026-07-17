@@ -20,5 +20,10 @@ export {
   expandBboxMeters,
 } from "./prepare-project";
 export { parseSemaReportPdf, parseSemaReportText } from "./sema-report-parse";
+export {
+  requestOraculoPipelineCancellation,
+  resolveOraculoArtifact,
+  startOraculoPipeline,
+} from "./pipeline";
 export { registerSimcarOraculoRoutes } from "./routes";
 export type * from "./types";

@@ -14,11 +14,21 @@ export type OraculoStep =
   | "upload_zip"
   | "importar"
   | "import_poll"
+  | "import_ok"
+  | "import_fail"
   | "import_done"
   | "processar"
   | "process_poll"
+  | "process_ok"
+  | "process_fail"
   | "process_done"
   | "download_artifacts"
+  | "autofix_plan"
+  | "autofix_apply"
+  | "autofix_skip"
+  | "cancel_requested"
+  | "cancelled"
+  | "failed"
   | "done"
   | "error";
 
@@ -29,10 +39,50 @@ export type OraculoProgress = {
   data?: Record<string, unknown>;
 };
 
+export type OraculoEvent = OraculoProgress & {
+  ts: string;
+  round: number;
+};
+
+export type OraculoArtifact = {
+  key: string;
+  round: number;
+  filename: string;
+  relativePath: string;
+  url: string;
+  contentType: string;
+  bytes: number;
+};
+
+export type OraculoRoundResult = {
+  n: number;
+  zipArtifact: string;
+  import: null | {
+    ok: boolean;
+    resultado: string;
+    status: string;
+    detalhes: string;
+    pdf: string | null;
+    errosResumo: Array<{ camada: string; erro: string; qtd: number }>;
+    parseWarnings: string[];
+  };
+  process: null | {
+    ok: boolean;
+    resultado: string;
+    status: string;
+    detalhes: string;
+    pdf: string | null;
+    errosZip: string | null;
+    errosResumo: Array<{ camada: string; erro: string; qtd: number }>;
+    parseWarnings: string[];
+  };
+  fixplan?: string | null;
+};
+
 export type MunicipioDetectado = {
   nome: string | null;
   ibge: string | null;
-  fonte: "malha-ibge" | "wfs-sema" | "nao-detectado";
+  fonte: "malha-ibge" | "wfs-sema" | "manual" | "nao-detectado";
   chaveSimcar?: string | number;
 };
 
