@@ -72,11 +72,15 @@
 - [ ] Env no PC servidor (SIMCAR_* + DEEPSEEK_API_KEY do Hermes) (T19)
 - [ ] Deploy backend + front; health `simcarConfigured && deepseekConfigured` (T19) — **código pronto** no `/api/simcar-oraculo/health`
 - [ ] E2E completo de `09` no ambiente real (T19)
-- [ ] Grep de segredos no repo vazio (regra do `08`)
-- [ ] CAR-teste restaurado com o ZIP FINAL da Santa Clara ao encerrar a bateria
+- [x] Grep de segredos no **HEAD** vazio (regra do `08`) — CPF real que estava em
+      `tools/simcar-parity/README.md` foi redigido (commit `54cdc430`).
+      ⚠️ **Histórico do git ainda contém o CPF** (commits antigos) — decidir com o Álvaro se
+      vale reescrever histórico (BFG/filter-repo) ou rotacionar; não feito por ser destrutivo.
+- [ ] CAR-teste restaurado com o ZIP FINAL da Santa Clara ao encerrar a bateria — **pendente**
+      (após o E2E do deploy; hoje o CAR está no estado sem-úmida `[FINALIZADO]`).
 
 ## Segurança transversal (conferir em TODO commit)
 
-- [ ] Nenhum CPF/senha/chave em arquivo commitado (repo PÚBLICO)
-- [ ] Mutação SEMA só via `assertTestCarId`
-- [ ] Nenhum log de token/senha
+- [x] Nenhum CPF/senha/chave em arquivo commitado no HEAD (repo PÚBLICO) — ⚠️ ver ressalva do histórico acima
+- [x] Mutação SEMA só via `assertTestCarId`
+- [x] Nenhum log de token/senha
