@@ -6,8 +6,9 @@
 
 - [x] B1 `simcar_oraculo_jobs` na whitelist do local-storage (T1) — round-trip, listagem,
       áreas tipadas e scaffold cobertos por 7 testes (`local-storage.test.ts`, 2026-07-16)
-- [ ] B2/B4 status+ok coerentes; PDFs import/process em campos separados (T2)
-- [ ] B3 timeline acumula de verdade (T2)
+- [x] B2/B4 status+ok coerentes; PDFs import/process em campos separados (T2) — reprovação
+      funcional fica `completed` com `importOk=false`; paths/URLs separados e testados
+- [x] B3 timeline acumula de verdade (T2) — 3 eventos persistidos em ordem, sem `timelinePush`
 - [ ] B5/B6 timeout no GET + relogin automático em 401 (T3)
 - [ ] B7 jobs `running` viram `interrupted` no boot (T3)
 - [ ] `vitest backend/simcar-oraculo` verde

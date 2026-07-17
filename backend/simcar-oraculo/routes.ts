@@ -11,14 +11,58 @@ import { getSimcarQueueLength } from "./queue";
 import { extractShapeContext } from "./shape-context";
 import { importZipOnTestProject } from "./import-shape";
 import { processGeoOnTestProject } from "./process-geo";
-import { saveUserBuffer, getAbsoluteStoragePath, readDocBySegments, writeDocBySegments } from "../local-storage";
+import type { SimcarImportOutcome, SimcarProcessOutcome } from "./types";
+import { saveUserBuffer, getAbsoluteStoragePath, readDocBySegments } from "../local-storage";
+import { appendOraculoTimelineEvent, persistOraculoJob } from "./job-store";
 
 function uidOf(req: Request): string {
   return String((req as any).authUid || "").trim();
 }
 
-function persistOraculoJob(uid: string, jobId: string, data: Record<string, unknown>): void {
-  writeDocBySegments(["users", uid, "simcar_oraculo_jobs", jobId], data, { merge: true });
+export function buildImportCompletionPatch(args: {
+  outcome: SimcarImportOutcome;
+  importPdfRelativePath: string | null;
+  importPdfUrl: string | null;
+  finishedAt?: string;
+}): Record<string, unknown> {
+  return {
+    // Reprovação da regra SEMA é um resultado concluído; somente falha de infraestrutura
+    // leva o job a `failed`.
+    status: "completed",
+    ok: args.outcome.ok,
+    importOk: args.outcome.ok,
+    resultado: args.outcome.resultado,
+    detalhes: args.outcome.detalhes,
+    simcarStatus: args.outcome.status,
+    timeline: args.outcome.timeline,
+    importPdfRelativePath: args.importPdfRelativePath,
+    importPdfUrl: args.importPdfUrl,
+    finishedAt: args.finishedAt || new Date().toISOString(),
+  };
+}
+
+export function buildProcessCompletionPatch(args: {
+  outcome: SimcarProcessOutcome;
+  processPdfRelativePath: string | null;
+  processPdfUrl: string | null;
+  errosZipRelativePath: string | null;
+  errosZipUrl: string | null;
+  finishedAt?: string;
+}): Record<string, unknown> {
+  return {
+    status: "completed",
+    ok: args.outcome.ok,
+    processOk: args.outcome.ok,
+    resultado: args.outcome.resultado,
+    detalhes: args.outcome.detalhes,
+    simcarStatus: args.outcome.status,
+    timeline: args.outcome.timeline,
+    processPdfRelativePath: args.processPdfRelativePath,
+    processPdfUrl: args.processPdfUrl,
+    errosZipRelativePath: args.errosZipRelativePath,
+    errosZipUrl: args.errosZipUrl,
+    finishedAt: args.finishedAt || new Date().toISOString(),
+  };
 }
 
 export function registerSimcarOraculoRoutes(app: Express): void {
@@ -136,17 +180,16 @@ export function registerSimcarOraculoRoutes(app: Express): void {
             zip,
             fileName,
             onProgress: (ev) => {
-              persistOraculoJob(uid, jobId, {
+              appendOraculoTimelineEvent(uid, jobId, ev, {
                 status: "running",
                 lastStep: ev.step,
                 message: ev.message,
                 percent: ev.percent ?? null,
-                timelinePush: ev,
               });
             },
           });
-          let pdfUrl: string | null = null;
-          let pdfRelativePath: string | null = null;
+          let importPdfUrl: string | null = null;
+          let importPdfRelativePath: string | null = null;
           if (outcome.pdfBuffer) {
             const stored = saveUserBuffer({
               uid,
@@ -154,21 +197,14 @@ export function registerSimcarOraculoRoutes(app: Express): void {
               filename: `sema_import_${jobId.slice(0, 8)}.pdf`,
               buffer: outcome.pdfBuffer,
             });
-            pdfRelativePath = stored.relativePath;
-            pdfUrl = `/api/simcar-oraculo/jobs/${jobId}/pdf-import`;
+            importPdfRelativePath = stored.relativePath;
+            importPdfUrl = `/api/simcar-oraculo/jobs/${jobId}/pdf-import`;
           }
-          persistOraculoJob(uid, jobId, {
-            status: outcome.ok ? "completed" : "completed",
-            ok: outcome.ok,
-            importOk: outcome.ok,
-            resultado: outcome.resultado,
-            detalhes: outcome.detalhes,
-            simcarStatus: outcome.status,
-            timeline: outcome.timeline,
-            pdfRelativePath,
-            pdfUrl,
-            finishedAt: new Date().toISOString(),
-          });
+          persistOraculoJob(
+            uid,
+            jobId,
+            buildImportCompletionPatch({ outcome, importPdfRelativePath, importPdfUrl }),
+          );
         } catch (e: any) {
           persistOraculoJob(uid, jobId, {
             status: "failed",
@@ -211,15 +247,16 @@ export function registerSimcarOraculoRoutes(app: Express): void {
         try {
           const outcome = await processGeoOnTestProject({
             onProgress: (ev) => {
-              persistOraculoJob(uid, jobId, {
+              appendOraculoTimelineEvent(uid, jobId, ev, {
+                status: "running",
                 lastStep: ev.step,
                 message: ev.message,
                 percent: ev.percent ?? null,
               });
             },
           });
-          let pdfUrl: string | null = null;
-          let pdfRelativePath: string | null = null;
+          let processPdfUrl: string | null = null;
+          let processPdfRelativePath: string | null = null;
           let errosZipUrl: string | null = null;
           let errosZipRelativePath: string | null = null;
           if (outcome.pdfBuffer) {
@@ -229,8 +266,8 @@ export function registerSimcarOraculoRoutes(app: Express): void {
               filename: `sema_process_${jobId.slice(0, 8)}.pdf`,
               buffer: outcome.pdfBuffer,
             });
-            pdfRelativePath = stored.relativePath;
-            pdfUrl = `/api/simcar-oraculo/jobs/${jobId}/pdf-process`;
+            processPdfRelativePath = stored.relativePath;
+            processPdfUrl = `/api/simcar-oraculo/jobs/${jobId}/pdf-process`;
           }
           if (outcome.errosZipBuffer) {
             const stored = saveUserBuffer({
@@ -242,18 +279,17 @@ export function registerSimcarOraculoRoutes(app: Express): void {
             errosZipRelativePath = stored.relativePath;
             errosZipUrl = `/api/simcar-oraculo/jobs/${jobId}/erros-zip`;
           }
-          persistOraculoJob(uid, jobId, {
-            status: "completed",
-            ok: outcome.ok,
-            resultado: outcome.resultado,
-            detalhes: outcome.detalhes,
-            timeline: outcome.timeline,
-            pdfRelativePath,
-            pdfUrl,
-            errosZipRelativePath,
-            errosZipUrl,
-            finishedAt: new Date().toISOString(),
-          });
+          persistOraculoJob(
+            uid,
+            jobId,
+            buildProcessCompletionPatch({
+              outcome,
+              processPdfRelativePath,
+              processPdfUrl,
+              errosZipRelativePath,
+              errosZipUrl,
+            }),
+          );
         } catch (e: any) {
           persistOraculoJob(uid, jobId, {
             status: "failed",
@@ -318,8 +354,8 @@ export function registerSimcarOraculoRoutes(app: Express): void {
     }
   };
 
-  app.get("/api/simcar-oraculo/jobs/:jobId/pdf-import", sendStored("pdfRelativePath"));
-  app.get("/api/simcar-oraculo/jobs/:jobId/pdf-process", sendStored("pdfRelativePath"));
+  app.get("/api/simcar-oraculo/jobs/:jobId/pdf-import", sendStored("importPdfRelativePath"));
+  app.get("/api/simcar-oraculo/jobs/:jobId/pdf-process", sendStored("processPdfRelativePath"));
   app.get("/api/simcar-oraculo/jobs/:jobId/erros-zip", sendStored("errosZipRelativePath"));
 
   /** Preview local do ZIP (sem SEMA). Body: { zipBase64 } ou usa uploadId */
