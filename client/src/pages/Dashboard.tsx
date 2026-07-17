@@ -7998,7 +7998,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           backdrop-blur-2xl border-r border-emerald-500/10
           shadow-2xl shadow-black/30
           transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]
-          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-[72px] xl:w-80 xl:max-w-80'}
+          ${isSidebarOpen ? 'translate-x-0 lg:w-80 lg:max-w-80' : '-translate-x-full lg:translate-x-0 lg:w-80 lg:max-w-80'}
         `}
       >
         <div className="p-5 flex items-center gap-3 cursor-pointer group/sidebar-logo" onClick={() => setActiveView('simcar-clip')}>
@@ -8012,7 +8012,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               />
             </div>
           </div>
-          <div className="flex flex-col overflow-hidden transition-all duration-300 xl:opacity-100 lg:opacity-0 lg:w-0 xl:w-auto">
+          <div className="flex flex-col overflow-hidden transition-all duration-300 opacity-100">
             <span className="font-bold text-base tracking-tight text-white group-hover/sidebar-logo:text-emerald-200 transition-colors">GeoForest IA</span>
             <span className="text-[10px] text-emerald-400/70 font-medium tracking-[0.15em] uppercase">Forestry Intelligence</span>
           </div>
@@ -8038,7 +8038,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 }`}
               >
                 <Scissors size={16} className={activeView === 'simcar-clip' ? 'drop-shadow-[0_0_6px_rgba(167,139,250,0.5)]' : ''} />
-                <span className="block lg:hidden xl:block leading-none text-[10px] tracking-wide">SIMCAR</span>
+                <span className="block leading-none text-[10px] tracking-wide">SIMCAR</span>
               </button>
               <button
                 onClick={() => setActiveView('simcar-receipts')}
@@ -8050,7 +8050,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 }`}
               >
                 <Receipt size={16} className={activeView === 'simcar-receipts' ? 'drop-shadow-[0_0_6px_rgba(16,185,129,0.5)]' : ''} />
-                <span className="block lg:hidden xl:block leading-none text-[10px] tracking-wide">Recibos</span>
+                <span className="block leading-none text-[10px] tracking-wide">Recibos</span>
               </button>
               <button
                 onClick={() => setActiveView('cbers-wpm')}
@@ -8062,7 +8062,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 }`}
               >
                 <Satellite size={16} className={activeView === 'cbers-wpm' ? 'drop-shadow-[0_0_6px_rgba(34,211,238,0.5)]' : ''} />
-                <span className="block lg:hidden xl:block leading-none text-[10px] tracking-wide">CBERS</span>
+                <span className="block leading-none text-[10px] tracking-wide">CBERS</span>
               </button>
               <button
                 onClick={() => setActiveView('landsat')}
@@ -8074,7 +8074,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 }`}
               >
                 <Layers size={16} className={activeView === 'landsat' ? 'drop-shadow-[0_0_6px_rgba(56,189,248,0.5)]' : ''} />
-                <span className="block lg:hidden xl:block leading-none text-[10px] tracking-wide">Landsat</span>
+                <span className="block leading-none text-[10px] tracking-wide">Landsat</span>
               </button>
               <button
                 onClick={() => setActiveView('vertices-proximas')}
@@ -8086,7 +8086,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 }`}
               >
                 <Network size={16} className={activeView === 'vertices-proximas' ? 'drop-shadow-[0_0_6px_rgba(167,139,250,0.5)]' : ''} />
-                <span className="block lg:hidden xl:block leading-none text-[10px] tracking-wide">Erros</span>
+                <span className="block leading-none text-[10px] tracking-wide">Erros</span>
               </button>
             </div>
           </div>
@@ -8099,7 +8099,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             >
               <div className="relative flex items-center justify-center gap-2 bg-[#120e1a] group-hover:bg-transparent text-purple-100 py-2.5 rounded-[11px] transition-colors">
                 <Plus size={16} />
-                <span className="font-medium block lg:hidden xl:block text-sm">Novo Recorte</span>
+                <span className="font-medium block text-sm">Novo Recorte</span>
               </div>
             </button>
           )}
@@ -8110,7 +8110,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             >
               <div className="relative flex items-center justify-center gap-2 bg-[#071618] group-hover:bg-transparent text-cyan-100 py-2.5 rounded-[11px] transition-colors">
                 <Plus size={16} />
-                <span className="font-medium block lg:hidden xl:block text-sm">Nova Imagem</span>
+                <span className="font-medium block text-sm">Nova Imagem</span>
               </div>
             </button>
           )}
@@ -8121,7 +8121,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             >
               <div className="relative flex items-center justify-center gap-2 bg-[#071318] group-hover:bg-transparent text-sky-100 py-2.5 rounded-[11px] transition-colors">
                 <Plus size={16} />
-                <span className="font-medium block lg:hidden xl:block text-sm">Nova Landsat</span>
+                <span className="font-medium block text-sm">Nova Landsat</span>
               </div>
             </button>
           )}
@@ -8132,7 +8132,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             >
               <div className="relative flex items-center justify-center gap-2 bg-[#120e1a] group-hover:bg-transparent text-violet-100 py-2.5 rounded-[11px] transition-colors">
                 <Plus size={16} />
-                <span className="font-medium block lg:hidden xl:block text-sm">Nova Análise</span>
+                <span className="font-medium block text-sm">Nova Análise</span>
               </div>
             </button>
           )}
@@ -8151,7 +8151,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${cbersJobId === entry.jobId ? 'bg-gradient-to-br from-cyan-500 to-emerald-500 text-white shadow-md shadow-cyan-900/40' : 'bg-white/5 text-slate-400 group-hover:text-cyan-300 group-hover:bg-cyan-500/10'}`}>
                     <Satellite size={18} />
                   </div>
-                  <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                  <div className="flex-1 min-w-0 block">
                     <p className={`text-sm truncate font-medium ${cbersJobId === entry.jobId ? 'text-cyan-100' : 'text-slate-200 group-hover:text-cyan-100'}`}>{entry.scene?.id || entry.itemId || entry.filename}</p>
                     <div className="flex items-center gap-2 mt-1 opacity-80">
                       <span className="text-[10px] uppercase tracking-wider font-semibold text-cyan-300">
@@ -8182,7 +8182,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       e.stopPropagation();
                       void deleteCbersJob(entry);
                     }}
-                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
                     title="Excluir imagem"
                   >
                     <Trash2 size={14} />
@@ -8190,7 +8190,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </div>
               ))
             ) : (
-              <div className="text-center py-6 block lg:hidden xl:block">
+              <div className="text-center py-6 block">
                 <div className="inline-flex justify-center items-center w-10 h-10 rounded-full bg-white/5 text-slate-500 mb-2">
                   <Satellite size={16} />
                 </div>
@@ -8208,7 +8208,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${landsatJobId === entry.jobId ? 'bg-gradient-to-br from-sky-500 to-emerald-500 text-white shadow-md shadow-sky-900/40' : 'bg-white/5 text-slate-400 group-hover:text-sky-300 group-hover:bg-sky-500/10'}`}>
                     <Layers size={18} />
                   </div>
-                  <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                  <div className="flex-1 min-w-0 block">
                     <p className={`text-sm truncate font-medium ${landsatJobId === entry.jobId ? 'text-sky-100' : 'text-slate-200 group-hover:text-sky-100'}`}>{entry.scene?.id || entry.sceneId || entry.filename}</p>
                     <div className="flex items-center gap-2 mt-1 opacity-80">
                       <span className="text-[10px] uppercase tracking-wider font-semibold text-sky-300">
@@ -8242,7 +8242,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       e.stopPropagation();
                       void deleteLandsatJob(entry);
                     }}
-                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
                     title="Excluir imagem"
                   >
                     <Trash2 size={14} />
@@ -8250,7 +8250,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </div>
               ))
             ) : (
-              <div className="text-center py-6 block lg:hidden xl:block">
+              <div className="text-center py-6 block">
                 <div className="inline-flex justify-center items-center w-10 h-10 rounded-full bg-white/5 text-slate-500 mb-2">
                   <Layers size={16} />
                 </div>
@@ -8272,7 +8272,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${containmentJobId === entry.jobId ? 'bg-gradient-to-br from-rose-500 to-emerald-500 text-white shadow-md shadow-rose-900/40' : 'bg-white/5 text-slate-400 group-hover:text-rose-300 group-hover:bg-rose-500/10'}`}>
                       <ShieldAlert size={18} />
                     </div>
-                    <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                    <div className="flex-1 min-w-0 block">
                       <p className={`text-sm truncate font-medium ${containmentJobId === entry.jobId ? 'text-rose-100' : 'text-slate-200 group-hover:text-rose-100'}`}>{entry.filename}</p>
                       <div className="flex items-center gap-2 mt-1 opacity-80">
                         <span className="text-[10px] uppercase tracking-wider font-semibold text-rose-300">
@@ -8308,7 +8308,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         setContainmentHistory((prev) => prev.filter((item) => item.jobId !== entry.jobId));
                         if (containmentJobId === entry.jobId) setContainmentJobId(null);
                       }}
-                      className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                      className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
                       title="Excluir análise"
                     >
                       <Trash2 size={14} />
@@ -8336,7 +8336,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${geometryJobId === entry.jobId ? 'bg-gradient-to-br from-amber-500 to-emerald-500 text-white shadow-md shadow-amber-900/40' : 'bg-white/5 text-slate-400 group-hover:text-amber-300 group-hover:bg-amber-500/10'}`}>
                       <AlertTriangle size={18} />
                     </div>
-                    <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                    <div className="flex-1 min-w-0 block">
                       <p className={`text-sm truncate font-medium ${geometryJobId === entry.jobId ? 'text-amber-100' : 'text-slate-200 group-hover:text-amber-100'}`}>{entry.filename}</p>
                       <div className="flex items-center gap-2 mt-1 opacity-80">
                         <span className="text-[10px] uppercase tracking-wider font-semibold text-amber-300">
@@ -8372,7 +8372,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         setGeometryHistory((prev) => prev.filter((item) => item.jobId !== entry.jobId));
                         if (geometryJobId === entry.jobId) setGeometryJobId(null);
                       }}
-                      className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                      className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
                       title="Excluir análise"
                     >
                       <Trash2 size={14} />
@@ -8451,7 +8451,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${processarJobId === entry.jobId ? 'bg-gradient-to-br from-cyan-500 to-teal-500 text-white shadow-md shadow-cyan-900/40' : 'bg-white/5 text-slate-400 group-hover:text-cyan-300 group-hover:bg-cyan-500/10'}`}>
                         <FileStack size={18} />
                       </div>
-                      <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                      <div className="flex-1 min-w-0 block">
                         <p className={`text-sm truncate font-medium ${processarJobId === entry.jobId ? 'text-cyan-100' : 'text-slate-200 group-hover:text-cyan-100'}`}>{entry.filename}</p>
                         <div className="flex items-center gap-2 mt-1 opacity-80">
                           <span className="text-[10px] uppercase tracking-wider font-semibold text-cyan-300">
@@ -8487,7 +8487,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${verticesJobId === entry.jobId ? 'bg-gradient-to-br from-violet-500 to-emerald-500 text-white shadow-md shadow-violet-900/40' : 'bg-white/5 text-slate-400 group-hover:text-violet-300 group-hover:bg-violet-500/10'}`}>
                     <Network size={18} />
                   </div>
-                  <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                  <div className="flex-1 min-w-0 block">
                     <p className={`text-sm truncate font-medium ${verticesJobId === entry.jobId ? 'text-violet-100' : 'text-slate-200 group-hover:text-violet-100'}`}>{entry.filename}</p>
                     <div className="flex items-center gap-2 mt-1 opacity-80">
                       <span className="text-[10px] uppercase tracking-wider font-semibold text-violet-300">
@@ -8521,7 +8521,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       e.stopPropagation();
                       void deleteVerticesJob(entry);
                     }}
-                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
                     title="Excluir análise"
                   >
                     <Trash2 size={14} />
@@ -8549,7 +8549,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
                     <Scissors size={16} />
                   </div>
-                  <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                  <div className="flex-1 min-w-0 block">
                     <p className="text-sm text-slate-200 truncate">{clip.filename}</p>
                     <p className="text-[10px] text-slate-500">
                       {clip.layersWithData}/{clip.totalLayers} camadas • {clip.totalFeatures} feições
@@ -8662,7 +8662,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         setActiveView('simcar-clip');
                       }
                     }}
-                    className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition block lg:hidden xl:block"
+                    className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition block"
                     title="Excluir recorte"
                   >
                     <Trash2 size={14} />
@@ -8686,7 +8686,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className={`p-2 rounded-lg shrink-0 ${receipt.type === 'apf' ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
                     <Receipt size={16} />
                   </div>
-                  <div className="flex-1 min-w-0 block lg:hidden xl:block">
+                  <div className="flex-1 min-w-0 block">
                     <p className="text-sm text-slate-200 truncate">{receipt.filename}</p>
                     <div className="flex items-center gap-2 mt-1">
                       <span className={`text-[10px] font-semibold uppercase tracking-wider ${receipt.type === 'apf' ? 'text-amber-300' : 'text-emerald-300'}`}>
@@ -8718,7 +8718,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       if (receiptsRef) void deleteDoc(doc(receiptsRef, receipt.receiptId)).catch(() => {});
                       setReceiptHistory((prev) => prev.filter((item) => item.receiptId !== receipt.receiptId));
                     }}
-                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
+                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
                     title="Excluir"
                   >
                     <Trash2 size={14} />
@@ -8748,7 +8748,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'features' ? 'bg-white/10' : ''}`}
           >
             <BookOpen size={18} className={`transition-colors ${activeView === 'features' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
-            <span className="text-sm text-slate-300 group-hover:text-white transition-colors block lg:hidden xl:block">
+            <span className="text-sm text-slate-300 group-hover:text-white transition-colors block">
               Funcionalidades
             </span>
           </button>
@@ -8757,7 +8757,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'settings' ? 'bg-white/10' : ''}`}
           >
             <Settings size={18} className={`transition-colors ${activeView === 'settings' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
-            <span className="text-sm text-slate-300 group-hover:text-white transition-colors block lg:hidden xl:block">
+            <span className="text-sm text-slate-300 group-hover:text-white transition-colors block">
               Configurações
             </span>
           </button>
@@ -8776,14 +8776,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   .join('')}
               </span>
             </div>
-            <div className="flex-1 text-left overflow-hidden block lg:hidden xl:block">
+            <div className="flex-1 text-left overflow-hidden block">
               <p className="text-sm font-medium text-white truncate">{userProfile?.fullName || 'Usuário'}</p>
               <p className="text-xs text-emerald-400/70">{userProfile?.email || 'Plano Pro'}</p>
             </div>
             {loggingOut ? (
-              <Loader2 size={18} className="text-slate-400 animate-spin block lg:hidden xl:block" />
+              <Loader2 size={18} className="text-slate-400 animate-spin block" />
             ) : (
-              <LogOut size={18} className="text-slate-500 group-hover:text-red-400 transition-colors block lg:hidden xl:block" />
+              <LogOut size={18} className="text-slate-500 group-hover:text-red-400 transition-colors block" />
             )}
           </button>
         </div>
