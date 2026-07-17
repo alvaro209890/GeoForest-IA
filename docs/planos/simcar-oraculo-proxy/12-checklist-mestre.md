@@ -72,15 +72,19 @@
 - [ ] Env no PC servidor (SIMCAR_* + DEEPSEEK_API_KEY do Hermes) (T19)
 - [ ] Deploy backend + front; health `simcarConfigured && deepseekConfigured` (T19) — **código pronto** no `/api/simcar-oraculo/health`
 - [ ] E2E completo de `09` no ambiente real (T19)
-- [x] Grep de segredos no **HEAD** vazio (regra do `08`) — CPF real que estava em
-      `tools/simcar-parity/README.md` foi redigido (commit `54cdc430`).
-      ⚠️ **Histórico do git ainda contém o CPF** (commits antigos) — decidir com o Álvaro se
-      vale reescrever histórico (BFG/filter-repo) ou rotacionar; não feito por ser destrutivo.
+- [x] Grep de segredos vazio (regra do `08`) — CPF real que estava em `tools/simcar-parity/README.md`
+      redigido no HEAD **e purgado de todo o histórico** com `git filter-repo` + `git push --force`
+      (2026-07-17). Nenhuma das 7 branches (local/remotas) contém mais o CPF. Backup imutável:
+      `.oraculo-scratch/backup-pre-cpf-purge.bundle` (gitignored).
+      ⚠️ Ressalva: o GitHub pode reter os **objetos órfãos** (commits antigos por SHA direto) até
+      o GC/expiração de cache; se algum PR/fork antigo os referenciar, persistem. Para remoção
+      definitiva: abrir ticket no GitHub Support. Na prática o CPF já não é alcançável por
+      clone/navegação normal.
 - [ ] CAR-teste restaurado com o ZIP FINAL da Santa Clara ao encerrar a bateria — **pendente**
       (após o E2E do deploy; hoje o CAR está no estado sem-úmida `[FINALIZADO]`).
 
 ## Segurança transversal (conferir em TODO commit)
 
-- [x] Nenhum CPF/senha/chave em arquivo commitado no HEAD (repo PÚBLICO) — ⚠️ ver ressalva do histórico acima
+- [x] Nenhum CPF/senha/chave em arquivo commitado (repo PÚBLICO) — HEAD e histórico limpos (CPF purgado)
 - [x] Mutação SEMA só via `assertTestCarId`
 - [x] Nenhum log de token/senha
