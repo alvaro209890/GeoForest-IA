@@ -543,6 +543,7 @@ async function startServer() {
       /^\/api\/processar-projeto\/jobs\/[^/]+$/,
       "/api/simcar-oraculo/health",
       "/api/simcar-oraculo/test-project",
+      "/api/simcar-oraculo/municipios",
       "/api/simcar-oraculo/importar",
       "/api/simcar-oraculo/processar",
       "/api/simcar-oraculo/shape-preview",

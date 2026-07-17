@@ -18,6 +18,7 @@ Rotas locais antigas de importar/processar do processar-projeto **morrem** (D2).
 | GET | `/api/simcar-oraculo/jobs/:jobId/artifact/:key` | download tokenizado: `import-pdf-r{N}`, `process-pdf-r{N}`, `erros-zip-r{N}`, `enviado-zip-r{N}`, `corrigido-zip-r{N}`, `fixplan-r{N}` |
 | GET | `/api/simcar-oraculo/health` | mode-less: `{ok, simcarConfigured, testCarId, queueLength, deepseekConfigured}` |
 | GET | `/api/simcar-oraculo/test-project` | Buscar do CAR-teste (leitura) |
+| GET | `/api/simcar-oraculo/municipios` | 142 opções `{chave,nome,ibge}` para fallback manual; cache 24h |
 
 Rotas atuais `/importar` e `/processar` do oráculo: manter por 1 release como atalhos do
 pipeline (`autoProcess=false`) ou remover direto — decidir na task; front novo só usa pipeline.

@@ -14,6 +14,7 @@ import { processGeoOnTestProject } from "./process-geo";
 import type { SimcarImportOutcome, SimcarProcessOutcome } from "./types";
 import { saveUserBuffer, getAbsoluteStoragePath, readDocBySegments } from "../local-storage";
 import { appendOraculoTimelineEvent, persistOraculoJob } from "./job-store";
+import { detectarMunicipioWfsSema, listarMunicipiosSimcar } from "./municipio-mt";
 
 function uidOf(req: Request): string {
   return String((req as any).authUid || "").trim();
@@ -115,6 +116,28 @@ export function registerSimcarOraculoRoutes(app: Express): void {
       });
     } catch (e: any) {
       res.status(502).json({ error: e?.message || "Falha ao buscar projeto-teste no SIMCAR." });
+    }
+  });
+
+  app.get("/api/simcar-oraculo/municipios", async (req: Request, res: Response) => {
+    try {
+      const uid = uidOf(req);
+      if (!uid) {
+        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      const c = getSimcarOraculoConfig();
+      if (!c.credentialsConfigured) {
+        res.status(503).json({
+          error: "Oráculo SIMCAR não configurado no servidor.",
+          code: "SIMCAR_NOT_CONFIGURED",
+        });
+        return;
+      }
+      const municipios = await listarMunicipiosSimcar();
+      res.json({ ok: true, municipios });
+    } catch (e: any) {
+      res.status(502).json({ error: e?.message || "Falha ao listar municípios do SIMCAR." });
     }
   });
 
@@ -381,6 +404,16 @@ export function registerSimcarOraculoRoutes(app: Express): void {
         return;
       }
       const ctx = extractShapeContext(zip);
+      if (ctx.municipioDetectado.fonte === "nao-detectado") {
+        try {
+          const fallback = await detectarMunicipioWfsSema(ctx.centroid);
+          if (fallback) ctx.municipioDetectado = fallback;
+        } catch (error: any) {
+          ctx.warnings.push(
+            `Fallback municipal WFS indisponível: ${error?.message || "falha de rede"}`,
+          );
+        }
+      }
       const c = getSimcarOraculoConfig();
       res.json({ ok: true, shapePreview: ctx, mode: c.mode, testCarId: c.testCarId });
     } catch (e: any) {

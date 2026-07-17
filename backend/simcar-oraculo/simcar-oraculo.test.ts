@@ -105,6 +105,12 @@ describe("simcar-oraculo/shape-context", () => {
     expect(maxY).toBeLessThan(-7);
     expect(ctx.centroid[0]).toBeGreaterThan(minX);
     expect(ctx.centroid[0]).toBeLessThan(maxX);
+    expect(ctx.municipioDetectado).toEqual({
+      nome: "Querência",
+      ibge: "5107065",
+      fonte: "malha-ibge",
+    });
+    expect(ctx.warnings).toEqual([]);
   });
 });
 

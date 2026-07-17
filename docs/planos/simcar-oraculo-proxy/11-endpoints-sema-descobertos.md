@@ -63,6 +63,12 @@
 | `Municipio/ListarMatoGrosso` | GET | idem (atalho MT) | ✅ validado ao vivo |
 | `Municipio/BuscarMunicipioGeo/{codigoIBGE}` | GET | `{Id, Chave:"5107065", Nome:"QUERÊNCIA", GeoJson: "<Polygon stringificado>"}` — polígono oficial do município | ✅ validado ao vivo |
 
+Revalidação T4 (2026-07-16): `ListarMatoGrosso` retornou **142** itens; o casamento por nome
+normalizado com a malha IBGE 2024 resolveu Querência como `{Chave:751, ibge:"5107065"}`.
+Fallback geográfico WFS validado na camada `Geoportal:LIM_MUNICIPIOS_MT`, filtro
+`INTERSECTS(SHAPE,POINT(lon lat))`, retornando `MUNICIPIO=QUERÊNCIA` e `COD_IBGE=5107065`
+para o centroid do fixture Santa Clara.
+
 ⚠️ `Chave` (id interno) ≠ código IBGE. `BuscarMunicipioGeo` aceita o **código IBGE** (`Municipio.Codigo`), não a Chave.
 
 ## Escrita (P2) — **do bundle, exigem 1 validação live cada antes de produção**

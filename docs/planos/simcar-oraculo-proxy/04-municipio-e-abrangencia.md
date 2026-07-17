@@ -29,7 +29,21 @@ Ordem de fontes em `municipio-mt.ts`:
 Mapeamentos necessários (tabela estática `municipios-mt.ts`, gerada 1×):
 `nomeNormalizado → { ibge, chaveSimcar }` — `chaveSimcar` obtida em runtime de
 `ListarMatoGrosso` (cache 24h) casando por nome normalizado (sem acento/caixa);
-divergências de grafia resolvidas na tabela estática.
+   divergências de grafia resolvidas na tabela estática.
+
+### Implementado em T4 (2026-07-16)
+
+- `config/municipios-mt.geojson`: **142** municípios da Malha Municipal IBGE 2024,
+  simplificação de 0,001° e precisão de 5 casas; origem oficial registrada no próprio arquivo.
+- `scripts/generate-municipios-mt.mjs`: baixa a edição oficial, reprojeta EPSG:4674→4326,
+  simplifica, normaliza `{ibge,nome}` e exige exatamente 142 códigos únicos; duas execuções
+  produziram o mesmo SHA-256.
+- `municipio-mt.ts`: índice bbox+point-in-polygon local; fallback WFS na camada descoberta e
+  validada ao vivo `Geoportal:LIM_MUNICIPIOS_MT` (`MUNICIPIO`, `COD_IBGE`, `SHAPE`).
+- `shape-context.ts`: bbox/centroid passam a ser reprojetados para 4326 quando o ZIP está em
+  UTM; o fixture Santa Clara detecta Querência/`5107065` sem rede.
+- `GET /api/simcar-oraculo/municipios`: lista para fallback manual; validação live retornou
+  142 itens e casou Querência com Chave SIMCAR `751` e IBGE `5107065`.
 
 ## Algoritmo `prepare-project.ts`
 

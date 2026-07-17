@@ -73,6 +73,7 @@ import {
 } from "./simcar-rules";
 import { getSimcarOraculoConfig } from "./simcar-oraculo/config";
 import { extractShapeContext } from "./simcar-oraculo/shape-context";
+import { detectarMunicipioWfsSema } from "./simcar-oraculo/municipio-mt";
 import {
   generateSimcarDerivedLayers,
   parsePointRecords,
@@ -1462,6 +1463,16 @@ export function registerProcessarProjetoRoutes(app: Express): void {
       let shapePreview: ReturnType<typeof extractShapeContext> | null = null;
       try {
         shapePreview = extractShapeContext(zipBuffer);
+        if (shapePreview.municipioDetectado.fonte === "nao-detectado") {
+          try {
+            const fallback = await detectarMunicipioWfsSema(shapePreview.centroid);
+            if (fallback) shapePreview.municipioDetectado = fallback;
+          } catch (error: any) {
+            shapePreview.warnings.push(
+              `Fallback municipal WFS indisponível: ${error?.message || "falha de rede"}`,
+            );
+          }
+        }
       } catch {
         shapePreview = null;
       }

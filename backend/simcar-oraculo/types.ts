@@ -24,6 +24,13 @@ export type OraculoProgress = {
   data?: Record<string, unknown>;
 };
 
+export type MunicipioDetectado = {
+  nome: string | null;
+  ibge: string | null;
+  fonte: "malha-ibge" | "wfs-sema" | "nao-detectado";
+  chaveSimcar?: string | number;
+};
+
 export type SimcarImportOutcome = {
   ok: boolean;
   /** Ex.: [FINALIZADO] | [COM_PENDENCIA] */
@@ -54,6 +61,9 @@ export type ShapeContext = {
   propertyLayer?: string;
   /** Hint textual se existir no DBF; lookup IBGE fica para P2 */
   municipioHint?: string;
+  municipioDetectado: MunicipioDetectado;
+  warnings: string[];
+  crs?: string;
 };
 
 export type SimcarArquivoUpload = {

@@ -16,7 +16,7 @@ D6 repo PÚBLICO → segredos só em env.
 | P0 | Cliente + health + Buscar | ✅ (Hermes 16/07; live login/Buscar revalidado à noite) |
 | P1 | Import API no CAR-teste | ✅ rotas prontas |
 | **P1.5** | **Bugs bloqueantes (B1–B9)** | ✅ T1–T3 concluídas; B9 (modo local) sai em T18 |
-| P2 | Município + abrangência | ⏳ endpoints descobertos e sondados (leitura ✅); falta T4–T6 |
+| P2 | Município + abrangência | 🚧 T4 concluída (IBGE+WFS+lista live); T5 é a próxima |
 | P3 | ProcessarGeo API | ✅ rotas prontas |
 | P3.5 | Pipeline único + SSE + parse PDF | ⏳ T7–T9 |
 | P4 | Front ORACULO-only | ⏳ T10–T12 |
@@ -56,6 +56,10 @@ B9 comentário × código do default de modo.
   em 401 e é usado em Buscar/import/process/download; boot marca jobs ativos do oráculo e do
   legado como `interrupted`. Declaração de `scramble-impl.js` adicionada e `tsc --noEmit`
   ficou limpo. Gate: **64/64** testes do oráculo+geometria e **11/11** de processar-projeto.
+- **T4 concluída (2026-07-16):** malha oficial IBGE 2024 simplificada e reproduzível
+  (`config/municipios-mt.geojson`, 142 feições); detecção local no `shape-context` com
+  reprojeção UTM→4326; fallback live `Geoportal:LIM_MUNICIPIOS_MT`; endpoint de dropdown
+  casa a lista SIMCAR (142 itens) com IBGE. Querência = `5107065`/Chave `751` confirmada live.
 
 ## Credenciais
 
