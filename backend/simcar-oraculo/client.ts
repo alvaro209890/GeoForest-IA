@@ -16,6 +16,22 @@ const BROWSER_HEADERS: Record<string, string> = {
 type TokenCache = { token: string; expiresAtMs: number };
 let tokenCache: TokenCache | null = null;
 
+export class SimcarHttpError extends Error {
+  readonly status: number;
+  readonly method: string;
+  readonly pathname: string;
+
+  constructor(args: { method: string; pathname: string; status: number; responseText: string }) {
+    super(
+      `${args.method} ${args.pathname} ${args.status}: ${args.responseText.slice(0, 500)}`,
+    );
+    this.name = "SimcarHttpError";
+    this.status = args.status;
+    this.method = args.method;
+    this.pathname = args.pathname;
+  }
+}
+
 async function req(url: string, opts: RequestInit = {}, timeoutMs = 60000): Promise<Response> {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
@@ -70,6 +86,31 @@ export function clearSimcarTokenCache(): void {
   tokenCache = null;
 }
 
+function isUnauthorized(error: unknown): boolean {
+  if (error instanceof SimcarHttpError) return error.status === 401;
+  return error instanceof Error && /\b401\b/.test(error.message);
+}
+
+/**
+ * Executa uma chamada autenticada e, somente em 401, invalida a sessão, faz novo login e
+ * repete a operação uma vez. A repetição é limitada para não mascarar credencial inválida.
+ */
+export async function withSimcarAuthRetry<T>(
+  operation: (token: string) => Promise<T>,
+  options: { onRetry?: () => void | Promise<void> } = {},
+): Promise<T> {
+  const token = await getSimcarToken();
+  try {
+    return await operation(token);
+  } catch (error) {
+    if (!isUnauthorized(error)) throw error;
+    clearSimcarTokenCache();
+    await options.onRetry?.();
+    const renewedToken = await getSimcarToken();
+    return operation(renewedToken);
+  }
+}
+
 export async function simcarPost(
   token: string,
   pathname: string,
@@ -86,7 +127,14 @@ export async function simcarPost(
     timeoutMs,
   );
   const text = await r.text();
-  if (!r.ok) throw new Error(`POST ${pathname} ${r.status}: ${text.slice(0, 500)}`);
+  if (!r.ok) {
+    throw new SimcarHttpError({
+      method: "POST",
+      pathname,
+      status: r.status,
+      responseText: text,
+    });
+  }
   try {
     return JSON.parse(text);
   } catch {
@@ -101,7 +149,14 @@ export async function simcarGet(token: string, pathname: string, timeoutMs = 600
     timeoutMs,
   );
   const text = await r.text();
-  if (!r.ok) throw new Error(`GET ${pathname} ${r.status}: ${text.slice(0, 500)}`);
+  if (!r.ok) {
+    throw new SimcarHttpError({
+      method: "GET",
+      pathname,
+      status: r.status,
+      responseText: text,
+    });
+  }
   try {
     return JSON.parse(text);
   } catch {
@@ -131,7 +186,14 @@ export async function simcarDownload(
       300000,
     );
   }
-  if (!r.ok) throw new Error(`download ${pathname} ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  if (!r.ok) {
+    throw new SimcarHttpError({
+      method: "DOWNLOAD",
+      pathname,
+      status: r.status,
+      responseText: (await r.text()).slice(0, 300),
+    });
+  }
   const buf = Buffer.from(await r.arrayBuffer());
   return { buffer: buf, contentType: r.headers.get("content-type") };
 }
@@ -150,7 +212,14 @@ export async function simcarUploadZip(
     300000,
   );
   const text = await r.text();
-  if (!r.ok) throw new Error(`upload SIMCAR ${r.status}: ${text.slice(0, 500)}`);
+  if (!r.ok) {
+    throw new SimcarHttpError({
+      method: "UPLOAD",
+      pathname: "Arquivo/Upload/",
+      status: r.status,
+      responseText: text,
+    });
+  }
   const parsed = JSON.parse(text);
   return (Array.isArray(parsed) ? parsed[0] : parsed) as SimcarArquivoUpload;
 }

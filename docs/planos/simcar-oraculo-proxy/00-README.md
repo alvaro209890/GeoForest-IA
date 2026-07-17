@@ -59,7 +59,7 @@ ZIP do usuário
 |------|---------|--------|
 | **P0** | Cliente SIMCAR + health + Buscar | ✅ feito (rodada Hermes 16/07) |
 | **P1** | Import ZIP no CAR-teste + PDF | ✅ API pronta |
-| **P1.5** | **Correções de bugs** achadas na revisão de 16/07 (whitelist `simcar_oraculo_jobs`, status `completed` fixo, timeline que não acumula, etc. — lista em `02`) | ⏳ **fazer primeiro** |
+| **P1.5** | **Correções de bugs** achadas na revisão de 16/07 (whitelist, timeline, PDFs, retry 401, recuperação no boot) | ✅ T1–T3 em 2026-07-16; remoção de `PROCESSAR_MODE` fica em T18 |
 | **P2** | Município (Propriedade) + abrangência (Caracterização) com os endpoints REAIS de `11-endpoints-sema-descobertos.md` | ⏳ |
 | **P3** | ProcessarGeo + artefatos | ✅ API pronta (falta encadear no pipeline) |
 | **P3.5** | **Pipeline único** upload→prepare→import→process + SSE/timeline + parse do PDF SEMA → `errosResumo` | ⏳ |

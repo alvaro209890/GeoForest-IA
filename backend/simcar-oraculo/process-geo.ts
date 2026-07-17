@@ -4,6 +4,7 @@ import {
   simcarBuscarStatusProcessamento,
   simcarDownload,
   simcarPost,
+  withSimcarAuthRetry,
 } from "./client";
 import { enqueueSimcar } from "./queue";
 import type { OraculoProgress, SimcarProcessOutcome } from "./types";
@@ -35,17 +36,26 @@ async function processGeoOnTestProjectUnlocked(args: {
   };
 
   push({ step: "login", message: "Autenticando no SIMCAR…", percent: 5 });
-  const token = await getSimcarToken();
+  await getSimcarToken();
+  const authenticated = <T>(operation: (token: string) => Promise<T>) =>
+    withSimcarAuthRetry(operation, {
+      onRetry: () =>
+        push({
+          step: "login",
+          message: "Sessão do SIMCAR expirou; autenticando novamente…",
+          percent: 5,
+        }),
+    });
 
   push({ step: "processar", message: "Disparando ProcessarGeo…", percent: 15 });
-  await simcarPost(token, `Requerimento/ProcessarGeo/${carId}`);
+  await authenticated((token) => simcarPost(token, `Requerimento/ProcessarGeo/${carId}`));
 
   push({ step: "process_poll", message: "Aguardando processamento no SEMA…", percent: 25 });
   const started = Date.now();
   let raw: Record<string, unknown> = {};
   let lastDet = "";
   while (Date.now() - started < cfg.processTimeoutMs) {
-    raw = await simcarBuscarStatusProcessamento(token, carId);
+    raw = await authenticated((token) => simcarBuscarStatusProcessamento(token, carId));
     const st = String(raw.ProcessamentoStatus || "");
     const res = String(raw.ProcessamentoResultado || "");
     const det = String(raw.ProcessamentoDetalhes || "");
@@ -81,13 +91,17 @@ async function processGeoOnTestProjectUnlocked(args: {
   let errosZipBuffer: Buffer | null = null;
   try {
     push({ step: "download_artifacts", message: "Baixando PDF de processamento…", percent: 90 });
-    const dl = await simcarDownload(token, `Requerimento/DownloadPdfRelatorioProcessamento/${carId}`);
+    const dl = await authenticated((token) =>
+      simcarDownload(token, `Requerimento/DownloadPdfRelatorioProcessamento/${carId}`),
+    );
     pdfBuffer = dl.buffer;
   } catch (e: any) {
     push({ step: "download_artifacts", message: `PDF process: ${e?.message || "falha"}`, percent: 91 });
   }
   try {
-    const dl = await simcarDownload(token, `Requerimento/DownloadArquivoErrosProcessamento/${carId}`);
+    const dl = await authenticated((token) =>
+      simcarDownload(token, `Requerimento/DownloadArquivoErrosProcessamento/${carId}`),
+    );
     errosZipBuffer = dl.buffer;
   } catch {
     errosZipBuffer = null;

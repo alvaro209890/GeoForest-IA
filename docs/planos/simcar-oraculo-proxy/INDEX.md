@@ -14,7 +14,7 @@ DeepSeek V4 Pro explicando), automático até 3 rodadas.
 | Fase | Status |
 |------|--------|
 | P0/P1/P3 cliente+import+process API | ✅ |
-| P1.5 bugs bloqueantes (B1–B9) | ⏳ **próximo** |
+| P1.5 bugs bloqueantes (B1–B8; B9 fecha com T18) | ✅ T1–T3; 75 testes + `tsc` |
 | P2 município/abrangência (endpoints descobertos ✅) | ⏳ |
 | P3.5 pipeline único + parse PDF | ⏳ |
 | P4 front ORACULO-only | ⏳ |
@@ -42,5 +42,5 @@ DeepSeek V4 Pro explicando), automático até 3 rodadas.
 
 ## Continuar por
 
-1. [STATUS.md](./STATUS.md) → 2. T1 (P1.5) em [07](./07-tarefas-implementacao.md) →
-3. antes de SEMA: [11](./11-endpoints-sema-descobertos.md)
+1. [STATUS.md](./STATUS.md) → 2. T4 (P2) em [07](./07-tarefas-implementacao.md) →
+3. antes de escrita SEMA (T5/T6): [11](./11-endpoints-sema-descobertos.md)

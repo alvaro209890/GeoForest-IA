@@ -6,7 +6,7 @@ import type { Express, Request, Response } from "express";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { getSimcarOraculoConfig } from "./config";
-import { getSimcarToken, simcarBuscar, clearSimcarTokenCache } from "./client";
+import { simcarBuscar, withSimcarAuthRetry } from "./client";
 import { getSimcarQueueLength } from "./queue";
 import { extractShapeContext } from "./shape-context";
 import { importZipOnTestProject } from "./import-shape";
@@ -102,8 +102,7 @@ export function registerSimcarOraculoRoutes(app: Express): void {
         });
         return;
       }
-      const token = await getSimcarToken();
-      const raw = await simcarBuscar(token, c.testCarId);
+      const raw = await withSimcarAuthRetry((token) => simcarBuscar(token, c.testCarId));
       res.json({
         ok: true,
         testCarId: c.testCarId,
@@ -115,7 +114,6 @@ export function registerSimcarOraculoRoutes(app: Express): void {
         ProcessamentoResultado: raw.ProcessamentoResultado ?? null,
       });
     } catch (e: any) {
-      clearSimcarTokenCache();
       res.status(502).json({ error: e?.message || "Falha ao buscar projeto-teste no SIMCAR." });
     }
   });

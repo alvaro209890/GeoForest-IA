@@ -16,6 +16,9 @@
 
 ## P1.5 — BUGS a corrigir ANTES de tudo (achados na revisão de 16/07)
 
+**Status 2026-07-16:** T1–T3 concluídas e cobertas por testes. B1–B8 foram corrigidos;
+B9 é a remoção arquitetural de `PROCESSAR_MODE` programada para T18.
+
 | # | Bug | Onde | Correção |
 |---|-----|------|----------|
 | B1 | **Coleção `simcar_oraculo_jobs` fora da whitelist** → `writeDocBySegments` lança INVALID_DOC_PATH e `readDocBySegments` devolve null: **as rotas do oráculo não persistem job nenhum em runtime** (foram validadas por script, não pela rota) | `local-storage.ts:204` e `:212` | adicionar `simcar_oraculo_jobs` às duas whitelists + teste de round-trip |

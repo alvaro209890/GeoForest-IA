@@ -15,7 +15,7 @@ D6 repo PÚBLICO → segredos só em env.
 |------|------|--------|
 | P0 | Cliente + health + Buscar | ✅ (Hermes 16/07; live login/Buscar revalidado à noite) |
 | P1 | Import API no CAR-teste | ✅ rotas prontas |
-| **P1.5** | **Bugs bloqueantes (B1–B9)** | 🚧 T1–T2 concluídas (10 testes novos); T3 é a próxima |
+| **P1.5** | **Bugs bloqueantes (B1–B9)** | ✅ T1–T3 concluídas; B9 (modo local) sai em T18 |
 | P2 | Município + abrangência | ⏳ endpoints descobertos e sondados (leitura ✅); falta T4–T6 |
 | P3 | ProcessarGeo API | ✅ rotas prontas |
 | P3.5 | Pipeline único + SSE + parse PDF | ⏳ T7–T9 |
@@ -52,8 +52,10 @@ B9 comentário × código do default de modo.
 - **T2 concluída (2026-07-16):** timeline agora faz read+append+write do array real durante o
   job; reprovação da regra SEMA é `completed` com `importOk=false`; import e process usam
   `importPdf*`/`processPdf*` independentes. `job-store.test.ts`: **3/3 testes verdes**.
-- **Débito preexistente observado no gate:** `npx tsc --noEmit` ainda acusa falta de declaração
-  para `scramble-impl.js`; corrigir junto da robustez do client em T3 e repetir o gate.
+- **T3 concluída (2026-07-16):** GET respeita timeout; `withSimcarAuthRetry` reloga uma vez
+  em 401 e é usado em Buscar/import/process/download; boot marca jobs ativos do oráculo e do
+  legado como `interrupted`. Declaração de `scramble-impl.js` adicionada e `tsc --noEmit`
+  ficou limpo. Gate: **64/64** testes do oráculo+geometria e **11/11** de processar-projeto.
 
 ## Credenciais
 

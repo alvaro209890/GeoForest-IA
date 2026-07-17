@@ -9,9 +9,10 @@
 - [x] B2/B4 status+ok coerentes; PDFs import/process em campos separados (T2) — reprovação
       funcional fica `completed` com `importOk=false`; paths/URLs separados e testados
 - [x] B3 timeline acumula de verdade (T2) — 3 eventos persistidos em ordem, sem `timelinePush`
-- [ ] B5/B6 timeout no GET + relogin automático em 401 (T3)
-- [ ] B7 jobs `running` viram `interrupted` no boot (T3)
-- [ ] `vitest backend/simcar-oraculo` verde
+- [x] B5/B6 timeout no GET + relogin automático em 401 (T3) — abort testado; 401 renova
+      uma vez e 401 duplo não entra em loop
+- [x] B7 jobs `running` viram `interrupted` no boot (T3) — coleções nova e legada cobertas
+- [x] `vitest backend/simcar-oraculo` verde — gate P1.5: 75 testes relevantes + `tsc` limpo
 
 ## P2 — Município e abrangência
 

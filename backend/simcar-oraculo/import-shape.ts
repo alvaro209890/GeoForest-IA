@@ -5,6 +5,7 @@ import {
   simcarDownload,
   simcarPost,
   simcarUploadZip,
+  withSimcarAuthRetry,
 } from "./client";
 import { enqueueSimcar } from "./queue";
 import type { OraculoProgress, SimcarImportOutcome } from "./types";
@@ -41,22 +42,33 @@ async function importZipOnTestProjectUnlocked(args: {
   };
 
   push({ step: "login", message: "Autenticando no SIMCAR técnico…", percent: 5 });
-  const token = await getSimcarToken();
+  await getSimcarToken();
+  const authenticated = <T>(operation: (token: string) => Promise<T>) =>
+    withSimcarAuthRetry(operation, {
+      onRetry: () =>
+        push({
+          step: "login",
+          message: "Sessão do SIMCAR expirou; autenticando novamente…",
+          percent: 5,
+        }),
+    });
 
   push({ step: "upload_zip", message: `Enviando ${args.fileName} ao SIMCAR…`, percent: 15 });
-  const arquivo = await simcarUploadZip(token, args.zip, args.fileName);
+  const arquivo = await authenticated((token) => simcarUploadZip(token, args.zip, args.fileName));
 
   push({ step: "importar", message: "Disparando ImportarArquivoShape…", percent: 25 });
-  await simcarPost(token, "Requerimento/ImportarArquivoShape", {
-    RequerimentoId: Number(carId),
-    Arquivo: arquivo,
-  });
+  await authenticated((token) =>
+    simcarPost(token, "Requerimento/ImportarArquivoShape", {
+      RequerimentoId: Number(carId),
+      Arquivo: arquivo,
+    }),
+  );
 
   push({ step: "import_poll", message: "Aguardando importação no SEMA…", percent: 35 });
   const started = Date.now();
   let raw: Record<string, unknown> = {};
   while (Date.now() - started < cfg.importTimeoutMs) {
-    raw = await simcarBuscarStatusProcessamento(token, carId);
+    raw = await authenticated((token) => simcarBuscarStatusProcessamento(token, carId));
     const st = String(raw.ImportacaoShapeStatus || "");
     const res = String(raw.ImportacaoResultado || "");
     const det = String(raw.ImportacaoShapeDetalhes || "");
@@ -81,7 +93,9 @@ async function importZipOnTestProjectUnlocked(args: {
   let pdfBuffer: Buffer | undefined;
   try {
     push({ step: "download_artifacts", message: "Baixando PDF de importação…", percent: 90 });
-    const dl = await simcarDownload(token, `Requerimento/DownloadPdfImportacaoShapefile/${carId}`);
+    const dl = await authenticated((token) =>
+      simcarDownload(token, `Requerimento/DownloadPdfImportacaoShapefile/${carId}`),
+    );
     pdfBuffer = dl.buffer;
   } catch (e: any) {
     push({

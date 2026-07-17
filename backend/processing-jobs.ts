@@ -146,67 +146,114 @@ export function markPersistedRunningJobsInterrupted(): number {
   const usersDir = path.join(STORAGE_ROOT, "users");
   if (!fs.existsSync(usersDir)) return 0;
 
-  let count = 0;
+  const interruptedJobKeys = new Set<string>();
   const now = Date.now();
+  const interruptedAt = new Date(now).toISOString();
+  const error = "Processamento interrompido pelo reinicio do servidor.";
+
   for (const uid of fs.readdirSync(usersDir)) {
     const processingDir = path.join(usersDir, uid, "processing_jobs");
-    if (!fs.existsSync(processingDir)) continue;
-    for (const entry of fs.readdirSync(processingDir)) {
-      if (!entry.endsWith(".json")) continue;
-      const jobId = entry.replace(/\.json$/i, "");
-      const data = readJsonSafe(path.join(processingDir, entry));
-      const status = safeTrim(data?.status).toLowerCase();
-      if (status !== "running" && status !== "cancel_requested") continue;
+    if (fs.existsSync(processingDir)) {
+      for (const entry of fs.readdirSync(processingDir)) {
+        if (!entry.endsWith(".json")) continue;
+        const jobId = entry.replace(/\.json$/i, "");
+        const data = readJsonSafe(path.join(processingDir, entry));
+        const status = safeTrim(data?.status).toLowerCase();
+        if (status !== "running" && status !== "cancel_requested") continue;
 
-      const endpoint = safeTrim(data?.endpoint);
-      const error = "Processamento interrompido pelo reinicio do servidor.";
-      writeDocBySegments(
-        ["users", uid, "processing_jobs", jobId],
-        {
-          status: "failed",
-          cancelRequested: false,
-          error,
-          updatedAtMs: now,
-          finishedAtMs: now,
-        },
-        { merge: true },
-      );
-
-      const clipJobId = safeTrim(data?.metadata?.clipJobId);
-      if (clipJobId && endpoint.startsWith("/api/simcar/clip")) {
-        const clipData = readJsonSafe(path.join(usersDir, uid, "simcar_clips", `${clipJobId}.json`));
-        const sourceMode = safeTrim(clipData?.sourceMode);
-        const isAutoClipAuas = endpoint === "/api/simcar/clip/analyze-auas" && sourceMode === "auto-clip";
+        const endpoint = safeTrim(data?.endpoint);
         writeDocBySegments(
-          ["users", uid, "simcar_clips", clipJobId],
-          {
-            status: isAutoClipAuas ? "completed" : "failed",
-            processingStage: isAutoClipAuas ? undefined : "error",
-            error,
-          },
-          { merge: true },
-        );
-      }
-
-      if (endpoint === "/api/cbers-wpm/jobs") {
-        const cbersData = readJsonSafe(path.join(usersDir, uid, "cbers_wpm_jobs", `${jobId}.json`));
-        writeDocBySegments(
-          ["users", uid, "cbers_wpm_jobs", jobId],
+          ["users", uid, "processing_jobs", jobId],
           {
             status: "failed",
-            stage: "interrupted",
+            cancelRequested: false,
             error,
-            message: error,
-            scenes: markCbersScenesInterrupted(cbersData, error),
+            updatedAtMs: now,
+            finishedAtMs: now,
           },
           { merge: true },
         );
-      }
 
-      count++;
+        const clipJobId = safeTrim(data?.metadata?.clipJobId);
+        if (clipJobId && endpoint.startsWith("/api/simcar/clip")) {
+          const clipData = readJsonSafe(
+            path.join(usersDir, uid, "simcar_clips", `${clipJobId}.json`),
+          );
+          const sourceMode = safeTrim(clipData?.sourceMode);
+          const isAutoClipAuas =
+            endpoint === "/api/simcar/clip/analyze-auas" && sourceMode === "auto-clip";
+          writeDocBySegments(
+            ["users", uid, "simcar_clips", clipJobId],
+            {
+              status: isAutoClipAuas ? "completed" : "failed",
+              processingStage: isAutoClipAuas ? undefined : "error",
+              error,
+            },
+            { merge: true },
+          );
+        }
+
+        if (endpoint === "/api/cbers-wpm/jobs") {
+          const cbersData = readJsonSafe(
+            path.join(usersDir, uid, "cbers_wpm_jobs", `${jobId}.json`),
+          );
+          writeDocBySegments(
+            ["users", uid, "cbers_wpm_jobs", jobId],
+            {
+              status: "failed",
+              stage: "interrupted",
+              error,
+              message: error,
+              scenes: markCbersScenesInterrupted(cbersData, error),
+            },
+            { merge: true },
+          );
+        }
+
+        interruptedJobKeys.add(`${uid}:${jobId}`);
+      }
+    }
+
+    const standaloneCollections = [
+      {
+        name: "processar_projeto_jobs",
+        activeStatuses: new Set(["processing", "running", "cancel_requested"]),
+      },
+      {
+        name: "simcar_oraculo_jobs",
+        activeStatuses: new Set(["queued", "running", "cancel_requested"]),
+      },
+    ] as const;
+
+    for (const collection of standaloneCollections) {
+      const collectionDir = path.join(usersDir, uid, collection.name);
+      if (!fs.existsSync(collectionDir)) continue;
+      for (const entry of fs.readdirSync(collectionDir)) {
+        if (!entry.endsWith(".json")) continue;
+        const jobId = entry.replace(/\.json$/i, "");
+        const data = readJsonSafe(path.join(collectionDir, entry));
+        const status = safeTrim(data?.status).toLowerCase();
+        if (!collection.activeStatuses.has(status)) continue;
+
+        writeDocBySegments(
+          ["users", uid, collection.name, jobId],
+          {
+            status: "interrupted",
+            stage: "interrupted",
+            ok: false,
+            error,
+            message: error,
+            interruptedAt,
+            finishedAt: interruptedAt,
+            finishedAtMs: now,
+          },
+          { merge: true },
+        );
+        interruptedJobKeys.add(`${uid}:${jobId}`);
+      }
     }
   }
-  return count;
+  return interruptedJobKeys.size;
 }
 
 export function startJob(input: StartJobInput): ProcessingJob {
