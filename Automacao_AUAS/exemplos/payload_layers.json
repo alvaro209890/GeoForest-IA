@@ -1,0 +1,28 @@
+{
+  "classTypes": [
+    "CUT",
+    "SELECTIVE_EXTRACTION",
+    "DEGRADATION_SELECTIVE_CUT",
+    "BURN_SCAR",
+    "MINERAL_EXTRACTION",
+    "DEGRADATION_CHEMICAL_AGENT",
+    "FOCUS_OF_BURN"
+  ],
+  "selectedFilters": [
+    {
+      "localType": "STATE",
+      "localIds": null,
+      "parentLocalIds": []
+    }
+  ],
+  "rangeDate": [
+    {
+      "start": "2019-07-22",
+      "end": "2026-07-10"
+    }
+  ],
+  "areaRange": null,
+  "alertStatusTypesIds": [],
+  "organizationUUID": "597953b9-ee78-4113-80f9-803dbbaa60a0",
+  "cdCars": []
+}

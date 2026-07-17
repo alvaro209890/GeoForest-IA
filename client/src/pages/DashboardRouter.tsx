@@ -14,6 +14,7 @@ type DashboardView =
   | 'cbers-wpm'
   | 'landsat'
   | 'vertices-proximas'
+  | 'auas-sccon'
   | 'features'
   | 'settings';
 
@@ -24,6 +25,7 @@ const VIEW_MAP: Record<string, DashboardView> = {
   '/dashboard/cbers': 'cbers-wpm',
   '/dashboard/landsat': 'landsat',
   '/dashboard/erros': 'vertices-proximas',
+  '/dashboard/auas': 'auas-sccon',
   '/dashboard/manual': 'features',
   '/dashboard/configuracoes': 'settings',
   '/dashboard/chat': 'simcar-clip',

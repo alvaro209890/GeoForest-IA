@@ -49,6 +49,7 @@ import { registerContainmentRoutes } from "./containment-analysis";
 import { registerGeometryErrorsRoutes } from "./geometry-errors";
 import { registerProcessarProjetoRoutes } from "./processar-projeto";
 import { registerSimcarOraculoRoutes } from "./simcar-oraculo";
+import { registerAuasScconRoutes } from "./auas-sccon";
 import {
   JobCancelledError,
   finishJob,
@@ -713,6 +714,7 @@ async function startServer() {
   registerGeometryErrorsRoutes(app);
   registerProcessarProjetoRoutes(app);
   registerSimcarOraculoRoutes(app);
+  registerAuasScconRoutes(app);
   registerCbersArchiveAdminRoutes(app);
 
   const MODEL_CATALOG = [

@@ -67,6 +67,7 @@ import {
   Radio,
   ShieldAlert,
   FileStack,
+  CalendarClock,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -95,6 +96,7 @@ import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog'
 import ContainmentAnalysis, { type ContainmentRow, type ContainmentSummary } from '@/components/ContainmentAnalysis';
 import GeometryErrorsAnalysis, { type GeometryErrorRow, type GeometrySummary } from '@/components/GeometryErrorsAnalysis';
 import ProcessarProjetoAnalysis, { type ProcessarHistoryItem } from '@/components/ProcessarProjetoAnalysis';
+import AuasSccon from '@/components/AuasSccon';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
 
@@ -1356,7 +1358,7 @@ function CbersMapPreview({
 }
 
 interface DashboardProps {
-  initialView?: 'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'features' | 'settings';
+  initialView?: 'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'auas-sccon' | 'features' | 'settings';
   hideSidebar?: boolean;
 }
 
@@ -1365,7 +1367,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [selectedErrorLocation, setSelectedErrorLocation] = useState<google.maps.LatLngLiteral | null>(null);
   const [selectedErrorLabel, setSelectedErrorLabel] = useState<string | null>(null);
-  const [activeView, setActiveView] = useState<'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'features' | 'settings'>(initialView);
+  const [activeView, setActiveView] = useState<'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'auas-sccon' | 'features' | 'settings'>(initialView);
   const initialViewRef = React.useRef(initialView);
 
   useEffect(() => {
@@ -8022,7 +8024,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         <div className="px-1 sm:px-3 mb-3 space-y-2">
           {/* ─── Abas — Segmented Control Moderno ─── */}
           <div className="relative p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm overflow-hidden">
-            <div className="flex sm:grid sm:grid-cols-5 gap-0.5 relative scroll-tabs">
+            <div className="flex sm:grid sm:grid-cols-6 gap-0.5 relative scroll-tabs">
               {/* Fundo ativo aplicado direto no botão — alinhamento perfeito, sem slider frágil */}
               <button
                 onClick={() => {
@@ -8088,6 +8090,18 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               >
                 <Network size={16} className={activeView === 'vertices-proximas' ? 'drop-shadow-[0_0_6px_rgba(167,139,250,0.5)]' : ''} />
                 <span className="block leading-none text-[10px] tracking-wide">Erros</span>
+              </button>
+              <button
+                onClick={() => setActiveView('auas-sccon')}
+                style={activeView === 'auas-sccon' ? { background: 'linear-gradient(135deg, #059669, #16a34a)', boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)' } : undefined}
+                className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
+                  activeView === 'auas-sccon'
+                    ? 'text-white'
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
+                }`}
+              >
+                <CalendarClock size={16} className={activeView === 'auas-sccon' ? 'drop-shadow-[0_0_6px_rgba(16,185,129,0.5)]' : ''} />
+                <span className="block leading-none text-[10px] tracking-wide">AUAS</span>
               </button>
             </div>
           </div>
@@ -8801,7 +8815,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2 min-w-0">
               <Zap size={16} className="text-emerald-400 fill-current shrink-0" />
               <span className="font-medium text-slate-200 text-sm sm:text-base truncate">
-                {activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'simcar-receipts' ? 'Recibos SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'landsat' ? 'Landsat WMS' : activeView === 'vertices-proximas' ? 'Análise de Erros' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
+                {activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'simcar-receipts' ? 'Recibos SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'landsat' ? 'Landsat WMS' : activeView === 'vertices-proximas' ? 'Análise de Erros' : activeView === 'auas-sccon' ? 'AUAS × SCCON' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
               </span>
             </div>
           </div>
@@ -12534,6 +12548,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               )}
             </div>
           </div>
+        ) : activeView === 'auas-sccon' ? (
+          <AuasSccon />
         ) : activeView === 'features' ? (
           <Suspense fallback={
             <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">

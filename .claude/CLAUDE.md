@@ -48,6 +48,7 @@ npx firebase deploy --only hosting
 | `backend/auth.ts` | requireAuth middleware (Firebase token verification) |
 | `backend/simcar-clip.ts` | SIMCAR Clip module (shapefile, WFS, Gemini analysis) |
 | `backend/auas-analysis.ts` | AUAS land use classification |
+| `backend/auas-sccon.ts` | AUAS × SCCON: data ABERTURA via alertas de desmate + pontos sem alerta (ver `docs/AUAS_SCCON.md`) |
 | `backend/processing-jobs.ts` | In-memory job tracking with persistence |
 | `client/src/lib/localFirestore.ts` | Client-side Firestore replacement |
 

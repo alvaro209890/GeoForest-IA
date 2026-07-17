@@ -1,0 +1,40 @@
+{
+  "organization_uuid": "597953b9-ee78-4113-80f9-803dbbaa60a0",
+  "dashboard_url": "https://alertas.sccon.com.br/matogrosso/#/dashboard/view-map",
+  "start_date": "2019-07-22",
+  "date_rule": "min",
+  "crs": "EPSG:4674",
+  "classes": [
+    "CUT",
+    "SELECTIVE_EXTRACTION",
+    "DEGRADATION_SELECTIVE_CUT",
+    "BURN_SCAR",
+    "MINERAL_EXTRACTION",
+    "DEGRADATION_CHEMICAL_AGENT",
+    "FOCUS_OF_BURN"
+  ],
+  "endpoints": {
+    "app_config": "https://alertas.sccon.com.br/matogrosso/assets/config/env/app.config.matogrosso.json",
+    "token": "https://plataforma.sccon.com.br/gama-api/auth/token-public-layer?organizationUUID={organization_uuid}",
+    "user": "https://plataforma-alertas.sccon.com.br/gama-api/users/user",
+    "classes_org": "https://plataforma-alertas.sccon.com.br/gama-api/organizations/uuid/{organization_uuid}",
+    "layers": "https://deforestation-data-mt.sccon.com.br/api-v2/alerts/layers/?lang=pt",
+    "wfs": "https://geoserver-dashboard-mt.sccon.com.br/geoserver/dashboards/wfs",
+    "wfs_layer": "dashboards:vw_v2_dashboard_alerts_all_defo-data_prod-mt",
+    "local_alert": "https://deforestation-data-mt.sccon.com.br/api-v2/localAlerts/{id}",
+    "search_by_geometry_unstable": "https://deforestation-data-mt.sccon.com.br/api/alerts/search?oldGeomCompatibility=true",
+    "search_list": "https://deforestation-data-mt.sccon.com.br/api-v2/alerts/search"
+  },
+  "http": {
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "origin": "https://alertas.sccon.com.br",
+    "referer": "https://alertas.sccon.com.br/matogrosso/",
+    "concurrency": 12,
+    "timeout_seconds": 60
+  },
+  "spatial": {
+    "predicate": "intersects",
+    "bbox_pad_degrees": 0.001,
+    "buffer_meters": 0
+  }
+}
