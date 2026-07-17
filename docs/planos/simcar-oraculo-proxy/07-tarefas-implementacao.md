@@ -133,9 +133,14 @@
 - Commit: `feat(autofix): ações mecânicas de importação`
 
 ### T14 — `plan.ts` + `deepseek.ts` + fallback
+- **Concluída em 2026-07-16.** Planner aceita da IA somente ações/camadas previamente
+  elegíveis pelo código, completa omissões mecânicas pelo fallback e preserva decisões
+  ambíguas em `naoCorrigivel`.
 - Cliente DeepSeek (deepseek-v4-pro, zod, retry content-vazio, timeout, sem chave→fallback);
   tabela fixa erro→ação como fallback; filtro de ações fora do inventário
 - Test: resposta IA mockada válida/inválida/fora-do-inventário; sem chave → fallback
+- Evidência: 9/9 testes próprios, 115/115 gate acumulado e teste live V4 Pro 1/1 (8,6 s)
+  com chave efêmera do Hermes; saída segura `remove_duplicate_vertices→AREA_UMIDA`.
 - Commit: `feat(autofix): planner DeepSeek V4 Pro com fallback determinístico`
 
 ### T15 — Loop no pipeline (D4) + UI do FixPlan

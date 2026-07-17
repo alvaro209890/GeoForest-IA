@@ -20,7 +20,7 @@ D6 repo PÚBLICO → segredos só em env.
 | P3 | ProcessarGeo API | ✅ rotas prontas |
 | P3.5 | Pipeline único + SSE + parse PDF | ✅ T7–T9 concluídas |
 | P4 | Front ORACULO-only | ✅ T10–T12 concluídas |
-| P5 | Autofix import + DeepSeek + loop | ⏳ T13 concluída; T14–T16 pendentes |
+| P5 | Autofix import + DeepSeek + loop | ⏳ T13–T14 concluídas; T15–T16 pendentes |
 | P6 | Autofix process | ⏳ T17 |
 | P7 | Limpeza + deploy + E2E | ⏳ T18–T19 |
 
@@ -120,6 +120,15 @@ B9 comentário × código do default de modo.
   Prova offline no V23 real: 11 feições/73 vértices tratados, 2 registros colapsados removidos,
   zero ponto repetido restante e mesmas 38 feições/48 anéis/3.187 pontos/IDs/coordenadas do
   V24 aceito; o reenvio ao SIMCAR permanece reservado à T16.
+- **T14 concluída (2026-07-16):** `autofix/deepseek.ts` chama `deepseek-v4-pro` por fetch
+  nativo com JSON mode, raciocínio medium, timeout e uma repetição com `max_tokens` maior;
+  Zod valida o contrato e conteúdo vazio/JSON inválido/API ausente degradam para o planner
+  determinístico. `plan.ts` mapeia os erros às cinco ações de import (e ao clip P6), mantém
+  casos de decisão em `naoCorrigivel` e só aceita pares ação×camada cujas precondições o código
+  confirmou; ação/camada inventada é descartada. **9/9 testes** cobrem IA válida/inválida,
+  retry, timeout, filtro e ausência de chave; gate acumulado **115/115**. Teste live explícito
+  com a chave carregada apenas de `~/.hermes/.env` passou em **8,6 s**, planejando somente
+  `remove_duplicate_vertices` para `AREA_UMIDA`; a chave não foi copiada nem persistida.
 
 ## Credenciais
 
@@ -129,6 +138,6 @@ B9 comentário × código do default de modo.
 
 ## Como retomar
 
-1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T14 em diante)
+1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T15 em diante)
 2. Antes de codar SEMA: `11-endpoints-sema-descobertos.md`
 3. Validação: `09-validacao-santa-clara.md`

@@ -40,6 +40,22 @@ export type FixPlan = {
   explicacaoUsuario: string;
   confianca: "alta" | "media" | "baixa";
   fonte: "deepseek" | "fallback";
+  modelo: string | null;
+  avisos: string[];
+};
+
+export type PlannerPreviousRound = {
+  round: number;
+  totalErrors: number;
+  actions: FixAction[];
+  resultado?: string | null;
+};
+
+export type BuildFixPlanInput = {
+  reportText: string;
+  errosResumo: Array<{ camada: string; erro: string; qtd: number }>;
+  previousRound?: PlannerPreviousRound | null;
+  allowedActions?: readonly AutofixActionType[];
 };
 
 /** Registro de trabalho. `sourceFeature` sempre aponta para a linha DBF original. */

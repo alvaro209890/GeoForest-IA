@@ -49,7 +49,7 @@
 
 - [x] `zip-rewrite` preserva bytes de camadas não tocadas (T13)
 - [x] 5 ações mecânicas de import com testes (T13)
-- [ ] DeepSeek V4 Pro planeja/explica; fallback sem IA funciona (T14)
+- [x] DeepSeek V4 Pro planeja/explica; fallback sem IA funciona (T14)
 - [ ] Loop automático ≤3 rodadas com paradas explícitas (T15)
 - [ ] **Prova real: V23 aprovado na rodada 2 no SIMCAR da SEMA (T16)**
 

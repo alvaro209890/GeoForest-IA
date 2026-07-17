@@ -38,6 +38,12 @@ zero ocorrência. A saída tem as mesmas 38 feições, 48 anéis, 3.187 pontos, 
 conjuntos de coordenadas do V24 `[FINALIZADO]`; apenas preserva a ordem original dos anéis onde
 o protótipo os ordenava por área. Nenhuma chamada SEMA foi feita nesta prova; rodada real é T16.
 
+Gate T14: planner mockado passou 9/9 cenários (JSON válido/inválido, conteúdo vazio, timeout,
+ação fora do inventário, camada inventada e ausência de chave). O teste live isolado com
+DeepSeek V4 Pro e a chave efêmera de `~/.hermes/.env` passou em 8,6 s: propôs somente
+`remove_duplicate_vertices` para `AREA_UMIDA`. Nenhuma credencial foi persistida e nenhuma
+mutação SEMA ocorreu.
+
 ## Checklist P1.5 (rotas persistem de verdade)
 
 - [ ] `POST /api/simcar-oraculo/pipeline` com V24 → doc em `users/{uid}/simcar_oraculo_jobs/{id}` existe e atualiza
