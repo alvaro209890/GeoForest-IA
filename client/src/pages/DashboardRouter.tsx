@@ -17,15 +17,15 @@ export const DashboardRouter: React.FC = () => {
     <DashboardLayout>
       <Suspense fallback={<div className="p-8 text-text-secondary">Carregando...</div>}>
         <Switch>
-          <Route path="/simcar">{() => <SimcarPage />}</Route>
-          <Route path="/recibos">{() => <RecibosPage />}</Route>
-          <Route path="/cbers">{() => <CbersPage />}</Route>
-          <Route path="/landsat">{() => <LandsatPage />}</Route>
-          <Route path="/erros">{() => <ErrosPage />}</Route>
-          <Route path="/configuracoes">{() => <ConfiguracoesPage />}</Route>
-          <Route path="/manual">{() => <ManualPage />}</Route>
-          <Route path="/chat">{() => <ChatPage />}</Route>
-          <Route path="/project/:id">{params => <ProjectDetailPage id={params.id} />}</Route>
+          <Route path="/dashboard/simcar">{() => <SimcarPage />}</Route>
+          <Route path="/dashboard/recibos">{() => <RecibosPage />}</Route>
+          <Route path="/dashboard/cbers">{() => <CbersPage />}</Route>
+          <Route path="/dashboard/landsat">{() => <LandsatPage />}</Route>
+          <Route path="/dashboard/erros">{() => <ErrosPage />}</Route>
+          <Route path="/dashboard/configuracoes">{() => <ConfiguracoesPage />}</Route>
+          <Route path="/dashboard/manual">{() => <ManualPage />}</Route>
+          <Route path="/dashboard/chat">{() => <ChatPage />}</Route>
+          <Route path="/dashboard/project/:id">{params => <ProjectDetailPage id={params.id} />}</Route>
           {/* Default Route */}
           <Route>{() => <SimcarPage />}</Route>
         </Switch>
