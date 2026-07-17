@@ -51,7 +51,7 @@
 - [x] 5 ações mecânicas de import com testes (T13)
 - [x] DeepSeek V4 Pro planeja/explica; fallback sem IA funciona (T14)
 - [x] Loop automático ≤3 rodadas com paradas explícitas (T15)
-- [ ] **Prova real: V23 aprovado na rodada 2 no SIMCAR da SEMA (T16)**
+- [x] **Prova real: V23 aprovado na rodada 2 no SIMCAR da SEMA (T16)**
 
 ## P6 — Autofix process
 

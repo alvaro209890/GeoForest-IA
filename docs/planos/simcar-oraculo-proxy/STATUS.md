@@ -20,7 +20,7 @@ D6 repo PÚBLICO → segredos só em env.
 | P3 | ProcessarGeo API | ✅ rotas prontas |
 | P3.5 | Pipeline único + SSE + parse PDF | ✅ T7–T9 concluídas |
 | P4 | Front ORACULO-only | ✅ T10–T12 concluídas |
-| P5 | Autofix import + DeepSeek + loop | ⏳ T13–T15 concluídas; T16 pendente |
+| P5 | Autofix import + DeepSeek + loop | ✅ T13–T16; V23 aprovado live na rodada 2 |
 | P6 | Autofix process | ⏳ T17 |
 | P7 | Limpeza + deploy + E2E | ⏳ T18–T19 |
 
@@ -33,8 +33,8 @@ D6 repo PÚBLICO → segredos só em env.
   `Municipio {Id:751, Codigo IBGE 5107065}`), `BuscarStatusProcessamento` (BaseRef/Croqui),
   `ListarMatoGrosso` (142 `{Chave,Texto}`), `BuscarMunicipioGeo/{IBGE}` → polígono oficial.
 - `ListarRasc` exige filtro específico (400 genérico) — desnecessário p/ nós.
-- Estado atual do 270069: Situacao `[EM_CADASTRAMENTO]`, import `[FINALIZADO]` (V24),
-  process `[COM_PENDENCIA]`, município Querência.
+- Estado atual do 270069 após T16: Situacao `[EM_CADASTRAMENTO]`, import `[FINALIZADO]`
+  (ZIP V23 corrigido pelo produto), process `[EM_ABERTO]`, município Querência.
 
 ## Bugs achados na revisão do código (P1.5 — detalhe em `02`)
 
@@ -119,7 +119,7 @@ B9 comentário × código do default de modo.
   ZIP anterior. Gate: **9/9 testes novos**, **42/42** geometria, **2/2** writer e `tsc` verdes.
   Prova offline no V23 real: 11 feições/73 vértices tratados, 2 registros colapsados removidos,
   zero ponto repetido restante e mesmas 38 feições/48 anéis/3.187 pontos/IDs/coordenadas do
-  V24 aceito; o reenvio ao SIMCAR permanece reservado à T16.
+  V24 aceito; o reenvio ao SIMCAR foi comprovado na T16.
 - **T14 concluída (2026-07-16):** `autofix/deepseek.ts` chama `deepseek-v4-pro` por fetch
   nativo com JSON mode, raciocínio medium, timeout e uma repetição com `max_tokens` maior;
   Zod valida o contrato e conteúdo vazio/JSON inválido/API ausente degradam para o planner
@@ -137,8 +137,15 @@ B9 comentário × código do default de modo.
   front ganhou modal acessível “O que a IA entendeu”, fonte/confiança/ações/contagens e botão
   pós-parada bloqueado com motivo quando não há ação nova. Testes mockados provam aprovação
   na rodada 2, “sem melhora”, teto 3/3 e plano sem ação; **78/78 testes do módulo** e `tsc`
-  verdes. A rota manual saiu do placeholder e devolve guardas específicas. Falta a prova live
-  V23 da T16.
+  verdes. A rota manual saiu do placeholder e devolve guardas específicas.
+- **T16 concluída (2026-07-17):** teste live guardado por `SIMCAR_LIVE=1` executou o V23 de
+  SHA-256 `22d79a…f21f5a` no CAR 270069. Prepare confirmou Querência/abrangência sem mutação;
+  rodada 1 voltou `[COM_PENDENCIA]` com 11 pontos repetidos. O `deepseek-v4-pro` planejou
+  somente `remove_duplicate_vertices→AREA_UMIDA`; o executor tratou as 11 feições, removeu
+  73 vértices e 2 anéis/registros colapsados. O ZIP corrigido e o `enviado.zip` oficial têm o
+  mesmo SHA-256 `5ba311…042e8d`; rodada 2 voltou `[FINALIZADO]` e zero erro em **138,5 s**.
+  Pós-condição read-only: nome “Santa clara” e Querência/5107065 intactos, import concluído;
+  processamento ficou `[EM_ABERTO]` porque a prova isolou P5 com `autoProcess:false`.
 
 ## Credenciais
 
@@ -148,6 +155,6 @@ B9 comentário × código do default de modo.
 
 ## Como retomar
 
-1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T16 em diante)
+1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T17 em diante)
 2. Antes de codar SEMA: `11-endpoints-sema-descobertos.md`
 3. Validação: `09-validacao-santa-clara.md`

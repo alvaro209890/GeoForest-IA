@@ -38,6 +38,15 @@ zero ocorrência. A saída tem as mesmas 38 feições, 48 anéis, 3.187 pontos, 
 conjuntos de coordenadas do V24 `[FINALIZADO]`; apenas preserva a ordem original dos anéis onde
 o protótipo os ordenava por área. Nenhuma chamada SEMA foi feita nesta prova; rodada real é T16.
 
+Gate live T16 concluído em 2026-07-17 com o V23 de SHA-256 `22d79a…f21f5a`: prepare fez
+skip seguro em Querência; rodada 1 voltou `[COM_PENDENCIA]` com os 11 pontos repetidos. O
+plano veio de `deepseek-v4-pro` com uma única ação `remove_duplicate_vertices→AREA_UMIDA`;
+diff: 11 feições, 73 vértices, 2 anéis e 2 registros removidos. O `corrigido_r2.zip` e o ZIP
+oficial devolvido por `DownloadArquivoEnviado` foram byte a byte iguais (SHA-256
+`5ba311…042e8d`). A rodada 2 voltou `[FINALIZADO]`, sem erros, em 138,5 s. Nome “Santa clara”
+e município Querência/5107065 permaneceram intactos. A prova usou `autoProcess:false` para
+isolar P5; T17 assume o processamento `[EM_ABERTO]`.
+
 Gate T14: planner mockado passou 9/9 cenários (JSON válido/inválido, conteúdo vazio, timeout,
 ação fora do inventário, camada inventada e ausência de chave). O teste live isolado com
 DeepSeek V4 Pro e a chave efêmera de `~/.hermes/.env` passou em 8,6 s: propôs somente
@@ -76,7 +85,7 @@ mutação SEMA ocorreu.
 
 ## Checklist P5/P6 (autofix)
 
-- [ ] V23 com autofix ligado → rodada 1 reprova, FixPlan gerado (explicação DeepSeek visível),
+- [x] V23 com autofix ligado → rodada 1 reprova, FixPlan gerado (explicação DeepSeek visível),
       rodada 2 importa **[FINALIZADO]** no SIMCAR real
 - [x] fixplan.json salvo com ações + fonte (deepseek|fallback) — contrato e round-trip mock T15
 - [ ] Derrubar DEEPSEEK_API_KEY → mesmo fluxo funciona via fallback (explicação template)

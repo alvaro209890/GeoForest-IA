@@ -64,7 +64,7 @@ ZIP do usuário
 | **P3** | ProcessarGeo + artefatos | ✅ encadeado no pipeline |
 | **P3.5** | **Pipeline único** upload→prepare→import→process + SSE/timeline + parse do PDF SEMA → `errosResumo` | ✅ T7–T9 |
 | **P4** | Front: remover validação local, timeline oráculo, downloads SEMA, botão Corrigir | ⏳ |
-| **P5** | Autofix de import (mecânico + DeepSeek planner) + loop 3 rodadas | ⏳ |
+| **P5** | Autofix de import (mecânico + DeepSeek planner) + loop 3 rodadas | ✅ V23 live |
 | **P6** | Autofix de process (clip úmida etc.) no mesmo loop | ⏳ |
 | **P7** | Remoção do código local morto + deploy PC servidor + validação E2E (`09`) | ⏳ |
 

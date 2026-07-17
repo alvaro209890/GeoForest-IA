@@ -155,8 +155,13 @@
 - Commit: `feat(autofix): loop automático corrigir→reenviar (3 rodadas)`
 
 ### T16 — Live P5: oráculo V23
+- **Concluída em 2026-07-17.** Teste live explícito e opt-in versionado em
+  `pipeline-live.test.ts`; SHA do V23 é validado antes de qualquer mutação.
 - ZIP V23 (11 pontos repetidos) pelo produto → rodada 2 deve importar FINALIZADO
 - Deliverable: registrar em `09` o resultado; ajustar calibração se divergir
+- Evidência: r1 `[COM_PENDENCIA]` ×11; plano real `deepseek-v4-pro` com apenas
+  `remove_duplicate_vertices→AREA_UMIDA`; diff 11 feições/73 vértices/2 registros removidos;
+  r2 `[FINALIZADO]` em 138,5 s. ZIP corrigido = ZIP recebido de volta da SEMA byte a byte.
 - Commit: `test(autofix): V23 aprovado via loop automático (live)`
 
 ## Fase P6 — autofix process
