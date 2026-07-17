@@ -61,8 +61,9 @@
       — **fechado via D7** (2026-07-17). Live `live-d7-semumida-06964b31-…`: import `[FINALIZADO]`,
       process `[FINALIZADO]` sem erros (`wetlandContainment: 0`). Fixture `Recorte_SANTA_CLARA_SEM_UMIDA.zip`
       (SHA `98a9f5f2…`) + harness `pipeline-process-d7-live.test.ts`.
-- [ ] Casos de decisão / residual cartográfico como "exige edição no GIS" com orientação
-      (produto: contenção de úmida que o clip não fecha → `naoCorrigivel`, não drop da camada)
+- [x] Casos de decisão / residual cartográfico como "exige edição no GIS" com orientação
+      (produto: contenção de úmida que o clip não fecha → `naoCorrigivel` com orientação
+      específica de GIS; não drop da camada). T17b em `plan.ts:nonFixableForError` + teste.
 
 ## P7 — Produção
 

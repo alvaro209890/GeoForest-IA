@@ -289,5 +289,8 @@ describe("planner de autofix", () => {
     });
     expect(plan.acoes).toHaveLength(0);
     expect(plan.naoCorrigivel).toHaveLength(1);
+    // T17b: contenção de úmida sem correção mecânica → orientação específica de GIS.
+    expect(plan.naoCorrigivel[0].porque).toMatch(/host de cobertura/i);
+    expect(plan.naoCorrigivel[0].orientacao).toMatch(/AREA_UMIDA no GIS/i);
   });
 });

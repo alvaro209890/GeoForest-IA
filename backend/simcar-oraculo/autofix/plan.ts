@@ -128,6 +128,18 @@ function nonFixableForError(error: {
   const normalized = normalizeText(error.erro);
   const label = `${canonicalLayer(error.camada)}: ${error.erro} (${error.qtd})`;
   if (
+    canonicalLayer(error.camada) === "AREA_UMIDA" &&
+    /completamente contid|deve (?:estar|ser) contid/.test(normalized)
+  ) {
+    return {
+      erro: label,
+      porque:
+        "A área úmida precisa caber inteiramente dentro de um host de cobertura (AVN, AUAS ou AREA_CONSOLIDADA). O trecho que sobra — em geral sobre hidrografia ou numa lacuna de composição — não pode ser recortado automaticamente sem decidir a cobertura correta.",
+      orientacao:
+        "Ajustar a AREA_UMIDA no GIS para ficar contida num host de cobertura (ou reclassificar a cobertura) e reenviar; recorte automático não resolve o resíduo cartográfico.",
+    };
+  }
+  if (
     /reservatorio|barramento|situacao|atributo|campo obrigatorio/.test(
       normalized
     )

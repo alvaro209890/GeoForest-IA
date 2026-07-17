@@ -26,7 +26,7 @@ camada AREA_UMIDA** do ZIP de teste, processar sem ela e seguir a bateria sem es
 | P3.5 | Pipeline único + SSE + parse PDF | ✅ T7–T9 concluídas |
 | P4 | Front ORACULO-only | ✅ T10–T12 concluídas |
 | P5 | Autofix import + DeepSeek + loop | ✅ T13–T16; V23 aprovado live na rodada 2 |
-| **P6** | **Autofix process** | ✅ **gate fechado via D7** (17/07 tarde; ZIP sem AREA_UMIDA processou `[FINALIZADO]` sem erros). Clip fica best-effort; T17b (naoCorrigivel de úmida) pendente |
+| **P6** | **Autofix process** | ✅ **gate fechado via D7** (17/07 tarde; ZIP sem AREA_UMIDA processou `[FINALIZADO]` sem erros). Clip best-effort; **T17b concluído** (contenção de úmida sem fix → `naoCorrigivel` com orientação GIS específica) |
 | P7 | Limpeza + deploy + E2E | ⏳ T18–T19 |
 
 ## Descobertas de 2026-07-16 (noite) — ver `11-endpoints-sema-descobertos.md`
