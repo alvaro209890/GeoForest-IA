@@ -49,6 +49,8 @@ import {
   featureCollection as turfFeatureCollection,
   intersect as turfIntersect,
   kinks as turfKinks,
+  booleanPointInPolygon,
+  point as turfPoint,
   pointOnFeature as turfPointOnFeature,
   union as turfUnion,
   unkinkPolygon as turfUnkink,
@@ -1411,6 +1413,15 @@ export function detectSimcarForbiddenOverlaps(args: {
   minAreaM2?: number;
   /** Semântica do ProcessarGeo: o par só conta se a soma das interseções ≥ este valor. */
   pairMinAreaM2?: number;
+  /**
+   * Filtro por PAR de feições (oráculo v8: sobreposição com RESERVATORIO
+   * sem barramento é isenta — ele deve estar DENTRO de AUAS/CONS; os demais
+   * corpos d'água CONTAM). Devolver false para isentar o par.
+   */
+  pairFilter?: (
+    a: { code: SimcarLayerCode; layerName: string; feature: number },
+    b: { code: SimcarLayerCode; layerName: string; feature: number },
+  ) => boolean;
 }): { rows: GeometryErrorRow[]; violations: RuleViolationPolygon[]; warnings: string[] } {
   const rows: GeometryErrorRow[] = [];
   const violations: RuleViolationPolygon[] = [];
@@ -1437,6 +1448,15 @@ export function detectSimcarForbiddenOverlaps(args: {
     for (const a of featuresA) {
       for (const b of featuresB) {
         if (!bboxesTouch(bboxOf(a), bboxOf(b))) continue;
+        if (
+          args.pairFilter &&
+          !args.pairFilter(
+            { code: codeA, layerName: a.layerName, feature: a.feature },
+            { code: codeB, layerName: b.layerName, feature: b.feature },
+          )
+        ) {
+          continue;
+        }
         let intersection: Feature<Polygon | MultiPolygon> | null = null;
         try {
           intersection = turfIntersect(
@@ -1505,6 +1525,368 @@ export function detectSimcarForbiddenOverlaps(args: {
 }
 
 /* ───────── regras do ProcessarGeo oficial (oráculo CAR 270069) ───────── */
+
+/** Mensagem EXATA do importador p/ anéis sobrepostos no mesmo registro (oráculo v19). */
+export const SEMA_MSG_ANEIS_SOBREPOSTOS =
+  "Duas ou mais bordas ou buracos da geometria de poligono complexo se sobrepõem";
+
+/**
+ * Comprimento mínimo de borda compartilhada (m) entre anéis do mesmo registro
+ * que o importador SEMA trata como "bordas/buracos se sobrepõem".
+ * Oráculo v21 (CAR 270069): buraco colado na borda exterior de AREA_UMIDA
+ * f22 ~140 m e f43 ~38 m → reprova; buracos internos limpos (shared≈0) passam.
+ * Encoste pontual (ESRI) permanece permitido — limiar em comprimento, não em 1 vértice.
+ */
+export const SIMCAR_RING_SHARED_EDGE_M = 1.0;
+/** Distância (m) para considerar um ponto "sobre" a aresta do outro anel. */
+export const SIMCAR_RING_SHARED_EDGE_TOL_M = 0.02;
+
+function pointToSegmentDistanceM(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 <= 0) return Math.hypot(px - ax, py - ay);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/**
+ * Comprimento (m) das arestas de `ringA` que estão coladas em `ringB`
+ * (amostragem ao longo da aresta com tol. métrica).
+ * `crs` opcional: se projetado, coords já estão em metros (não reprojeta).
+ */
+export function ringsSharedBoundaryLengthM(
+  ringA: number[][],
+  ringB: number[][],
+  metricProjDef: string,
+  tolM = SIMCAR_RING_SHARED_EDGE_TOL_M,
+  crs?: CodedCrs,
+): number {
+  if (ringA.length < 2 || ringB.length < 2) return 0;
+  const projected = crs?.kind === "projected";
+  // SIRGAS 2000 ≈ WGS84 no domínio do MT; evita depender de defs EPSG no proj4.
+  const toM = projected ? null : proj4("WGS84", metricProjDef);
+  const project = (p: number[]): [number, number] => {
+    if (!toM) return [Number(p[0]), Number(p[1])];
+    const m = toM.forward([Number(p[0]), Number(p[1])]) as [number, number];
+    return [m[0], m[1]];
+  };
+  const aM: [number, number][] = [];
+  const bM: [number, number][] = [];
+  for (const p of ringA) aM.push(project(p));
+  for (const p of ringB) bM.push(project(p));
+  let shared = 0;
+  for (let i = 0; i < aM.length - 1; i += 1) {
+    const [x1, y1] = aM[i];
+    const [x2, y2] = aM[i + 1];
+    const seglen = Math.hypot(x2 - x1, y2 - y1);
+    if (seglen < 1e-6) continue;
+    // ~0,5 m por amostra (mín. 4) — suficiente p/ capturar colagem contínua
+    const steps = Math.max(4, Math.ceil(seglen / 0.5));
+    let on = 0;
+    for (let s = 0; s <= steps; s += 1) {
+      const t = s / steps;
+      const px = x1 + t * (x2 - x1);
+      const py = y1 + t * (y2 - y1);
+      let ok = false;
+      for (let k = 0; k < bM.length - 1; k += 1) {
+        if (pointToSegmentDistanceM(px, py, bM[k][0], bM[k][1], bM[k + 1][0], bM[k + 1][1]) <= tolM) {
+          ok = true;
+          break;
+        }
+      }
+      if (ok) on += 1;
+    }
+    // aresta "colada" se ≥80% das amostras caem sobre ringB
+    if (on >= steps * 0.8) shared += seglen;
+  }
+  return shared;
+}
+
+/**
+ * Importador da SEMA (oráculo upload v19/v21, 16/07/2026): dois anéis do MESMO
+ * registro não podem (a) se sobrepor em ÁREA de forma parcial nem (b) compartilhar
+ * borda com comprimento significativo (buraco colado na exterior).
+ * Encoste pontual de vértice segue permitido (regra ESRI).
+ */
+export function detectOverlappingRings(
+  layerName: string,
+  records: ParsedPolygonRecord[],
+  crs: CodedCrs,
+): GeometryErrorRow[] {
+  const rows: GeometryErrorRow[] = [];
+  const metricProjDef = metricProjForCrs(crs, records);
+  for (const record of records) {
+    const rings = record.rings || [];
+    if (rings.length < 2) continue;
+    let overlapped = false;
+    for (let i = 0; i < rings.length && !overlapped; i += 1) {
+      for (let j = i + 1; j < rings.length; j += 1) {
+        if (rings[i].length < 4 || rings[j].length < 4) continue;
+
+        // (b) borda compartilhada — oráculo v21: buraco colado na exterior
+        // (f22 ~140 m / f43 ~38 m). Conta nos dois sentidos p/ arestas longas.
+        const sharedAB = ringsSharedBoundaryLengthM(rings[j], rings[i], metricProjDef, SIMCAR_RING_SHARED_EDGE_TOL_M, crs);
+        const sharedBA =
+          sharedAB >= SIMCAR_RING_SHARED_EDGE_M
+            ? sharedAB
+            : ringsSharedBoundaryLengthM(rings[i], rings[j], metricProjDef, SIMCAR_RING_SHARED_EDGE_TOL_M, crs);
+        const sharedM = Math.max(sharedAB, sharedBA);
+        if (sharedM >= SIMCAR_RING_SHARED_EDGE_M) {
+          overlapped = true;
+          rows.push({
+            camada: layerName,
+            tipo: "aneis_sobrepostos",
+            feicao: record.feature,
+            parte: 0,
+            anel: j,
+            x: Number(rings[j][0][0]),
+            y: Number(rings[j][0][1]),
+            detalhe: `${SEMA_MSG_ANEIS_SOBREPOSTOS} (anéis ${i} e ${j}, borda compartilhada ${sharedM.toFixed(2)} m).`,
+          });
+          break;
+        }
+
+        // (a) sobreposição em área (parcial / buraco×buraco)
+        let inter: Feature<Polygon | MultiPolygon> | null = null;
+        try {
+          inter = turfIntersect(
+            turfFeatureCollection([
+              { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [rings[i]] } } as Feature<Polygon>,
+              { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [rings[j]] } } as Feature<Polygon>,
+            ]) as any,
+          ) as Feature<Polygon | MultiPolygon> | null;
+        } catch {
+          continue;
+        }
+        if (!inter?.geometry) continue;
+        const polys = inter.geometry.type === "Polygon" ? [inter.geometry.coordinates] : inter.geometry.coordinates;
+        let areaM2 = 0;
+        for (const polygon of polys) areaM2 += polygonMetricAreaM2(polygon as number[][][], crs, metricProjDef);
+        // buraco DENTRO da borda é o normal — sobreposição PARCIAL (nem
+        // contido, nem disjunto) ou buraco×buraco com área é o que reprova.
+        const areaI = polygonMetricAreaM2([rings[i]] as number[][][], crs, metricProjDef);
+        const areaJ = polygonMetricAreaM2([rings[j]] as number[][][], crs, metricProjDef);
+        const inner = Math.min(areaI, areaJ);
+        const contained = Math.abs(areaM2 - inner) < Math.max(0.01, inner * 1e-6);
+        // i===0 e hole contido SEM borda compartilhada: ok (buraco legítimo)
+        if (i === 0 && contained) continue;
+        if (areaM2 <= 0.01) continue; // toque pontual/resíduo
+        overlapped = true;
+        rows.push({
+          camada: layerName,
+          tipo: "aneis_sobrepostos",
+          feicao: record.feature,
+          parte: 0,
+          anel: j,
+          x: Number(rings[j][0][0]),
+          y: Number(rings[j][0][1]),
+          detalhe: `${SEMA_MSG_ANEIS_SOBREPOSTOS} (anéis ${i} e ${j}, ${areaM2.toFixed(2)} m²).`,
+        });
+        break;
+      }
+    }
+  }
+  return rows;
+}
+
+/** Mensagem EXATA da regra de contenção da ÁREA ÚMIDA (oráculo v8/v22, 16/07/2026). */
+export const SEMA_MSG_UMIDA_CONTIDA =
+  "Geometria deve ser completamente contida por AVN, AUAS ou AREA_CONSOLIDADA.";
+
+/**
+ * Tolerância de "fora" em área (m²) da contenção da AREA_UMIDA.
+ * Oráculo v8 (ZIP com AVN ainda "furado" sob as úmidas): 41/48 com fora > ~0,3 m²
+ * (0,1 → 42; 0,5 → 40) usando união real AVN∪AUAS∪CONS.
+ */
+export const SIMCAR_UMIDA_FORA_TOL_M2 = 0.3;
+
+/**
+ * Amostragem da borda da úmida (m) para capturar micro-lascas que a área
+ * residual arredonda a ~0 mas o ProcessarGeo da SEMA ainda reprova.
+ * Oráculo v22 (CAR 270069, PDF process 16/07/2026): SEMA qty=41;
+ * step 20 m → 40 feições (Δ≤1 por amostragem); step 18 m → 42.
+ */
+export const SIMCAR_UMIDA_EDGE_SAMPLE_M = 20;
+
+function sampleRingEveryMeters(
+  ring: number[][],
+  metricProjDef: string,
+  stepM: number,
+): number[][] {
+  if (ring.length < 2 || stepM <= 0) return ring.map((p) => [Number(p[0]), Number(p[1])]);
+  const toM = proj4("WGS84", metricProjDef);
+  const out: number[][] = [];
+  for (let i = 0; i < ring.length - 1; i += 1) {
+    const a = ring[i];
+    const b = ring[i + 1];
+    const [ax, ay] = toM.forward([Number(a[0]), Number(a[1])]) as [number, number];
+    const [bx, by] = toM.forward([Number(b[0]), Number(b[1])]) as [number, number];
+    const len = Math.hypot(bx - ax, by - ay);
+    const steps = Math.max(1, Math.ceil(len / stepM));
+    for (let s = 0; s <= steps; s += 1) {
+      const t = s / steps;
+      out.push([Number(a[0]) + t * (Number(b[0]) - Number(a[0])), Number(a[1]) + t * (Number(b[1]) - Number(a[1]))]);
+    }
+  }
+  return out;
+}
+
+/**
+ * ProcessarGeo oficial — AREA_UMIDA deve estar completamente contida na
+ * COBERTURA de AVN ∪ AUAS ∪ AREA_CONSOLIDADA (mensagem SEMA exata).
+ *
+ * Implementação (sem mock / sem feição hardcoded):
+ *  1. União real dos hosts (turf union), não só diferença sequencial
+ *     (a sequencial subdetectava no v22: 8 vs 41 da SEMA).
+ *  2. Área residual métrica (úmida \ cobertura) > SIMCAR_UMIDA_FORA_TOL_M2.
+ *  3. Amostragem da borda a cada SIMCAR_UMIDA_EDGE_SAMPLE_M: ponto fora da
+ *     cobertura → reprova (micro-lascas ao longo de rios/buracos de AVN).
+ *
+ * Nota: o relatório ANTIGO (AVN duplicado + 256 erros) não trazia esta regra —
+ * a SEMA curto-circuita quando outras falhas dominam; aqui ela roda sempre.
+ */
+export function detectUmidaContainment(args: {
+  layers: SimcarRuleLayer[];
+}): { rows: GeometryErrorRow[]; warnings: string[] } {
+  const rows: GeometryErrorRow[] = [];
+  const warnings: string[] = [];
+  const byCode = groupLayersByCode(args.layers);
+  const umidas = byCode.get("AREA_UMIDA");
+  if (!umidas?.length) return { rows, warnings };
+  const hosts = [
+    ...(byCode.get("AVN") || []),
+    ...(byCode.get("AUAS") || []),
+    ...(byCode.get("AREA_CONSOLIDADA") || []),
+  ];
+  if (!hosts.length) {
+    for (const umida of umidas) {
+      const point =
+        umida.geometry.type === "Polygon" ? umida.geometry.coordinates[0][0] : umida.geometry.coordinates[0][0][0];
+      rows.push({
+        camada: umida.layerName,
+        tipo: "umida_fora_cobertura",
+        feicao: umida.feature,
+        parte: 0,
+        anel: 0,
+        x: Number(point[0]),
+        y: Number(point[1]),
+        detalhe: SEMA_MSG_UMIDA_CONTIDA,
+      });
+    }
+    warnings.push("AREA_UMIDA: sem AVN/AUAS/AREA_CONSOLIDADA para validar contenção.");
+    return { rows, warnings };
+  }
+
+  const coverUnion = unionFeatures(hosts);
+  if (!coverUnion?.geometry) {
+    warnings.push("AREA_UMIDA: falha ao unir cobertura AVN∪AUAS∪CONS; usando diferença sequencial.");
+  }
+
+  const coverFeature = coverUnion?.geometry
+    ? coverUnion
+    : null;
+
+  for (const umida of umidas) {
+    let foraM2 = 0;
+    let edgeOutside = false;
+
+    if (coverFeature) {
+      // (2) área residual
+      try {
+        const diff = turfDifference(
+          turfFeatureCollection([
+            { type: "Feature", properties: {}, geometry: umida.geometry } as Feature<Polygon | MultiPolygon>,
+            coverFeature,
+          ]) as any,
+        ) as Feature<Polygon | MultiPolygon> | null;
+        if (diff?.geometry) {
+          const polys =
+            diff.geometry.type === "Polygon" ? [diff.geometry.coordinates] : diff.geometry.coordinates;
+          for (const polygon of polys) {
+            foraM2 += polygonMetricAreaM2(polygon as number[][][], umida.crs, umida.metricProjDef);
+          }
+        }
+      } catch {
+        // fallback sequencial abaixo
+      }
+
+      // (3) amostragem da borda
+      try {
+        const polys =
+          umida.geometry.type === "Polygon" ? [umida.geometry.coordinates] : umida.geometry.coordinates;
+        outer: for (const poly of polys) {
+          for (const ring of poly) {
+            const samples = sampleRingEveryMeters(ring as number[][], umida.metricProjDef, SIMCAR_UMIDA_EDGE_SAMPLE_M);
+            for (const pt of samples) {
+              if (!booleanPointInPolygon(turfPoint(pt), coverFeature as any)) {
+                edgeOutside = true;
+                break outer;
+              }
+            }
+          }
+        }
+      } catch {
+        /* ignora amostragem se geometria degenerada */
+      }
+    }
+
+    // Fallback: diferença sequencial (hosts) se união/área falhou em zero mas há hosts
+    if (!coverFeature || (foraM2 <= 0 && !edgeOutside)) {
+      let current: Feature<Polygon | MultiPolygon> | null = {
+        type: "Feature",
+        properties: {},
+        geometry: umida.geometry,
+      } as Feature<Polygon | MultiPolygon>;
+      const umidaBbox = geometryBbox(umida.geometry);
+      for (const host of hosts) {
+        if (!current) break;
+        if (!bboxesTouch(umidaBbox, geometryBbox(host.geometry))) continue;
+        try {
+          current = turfDifference(
+            turfFeatureCollection([
+              current,
+              { type: "Feature", properties: {}, geometry: host.geometry } as Feature<Polygon | MultiPolygon>,
+            ]) as any,
+          ) as Feature<Polygon | MultiPolygon> | null;
+        } catch {
+          /* host inválido */
+        }
+      }
+      if (current?.geometry) {
+        const polys =
+          current.geometry.type === "Polygon" ? [current.geometry.coordinates] : current.geometry.coordinates;
+        let seqFora = 0;
+        for (const polygon of polys) {
+          seqFora += polygonMetricAreaM2(polygon as number[][][], umida.crs, umida.metricProjDef);
+        }
+        foraM2 = Math.max(foraM2, seqFora);
+      }
+    }
+
+    if (foraM2 <= SIMCAR_UMIDA_FORA_TOL_M2 && !edgeOutside) continue;
+    const point =
+      umida.geometry.type === "Polygon" ? umida.geometry.coordinates[0][0] : umida.geometry.coordinates[0][0][0];
+    rows.push({
+      camada: umida.layerName,
+      tipo: "umida_fora_cobertura",
+      feicao: umida.feature,
+      parte: 0,
+      anel: 0,
+      x: Number(point[0]),
+      y: Number(point[1]),
+      detalhe: SEMA_MSG_UMIDA_CONTIDA,
+    });
+  }
+  return { rows, warnings };
+}
 
 /** Mensagens EXATAS do relatório de processamento da SEMA. */
 export const SEMA_MSG_RESERVATORIO_CONTIDO =

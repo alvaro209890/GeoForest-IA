@@ -189,3 +189,101 @@ O ProcessarGeo oficial reprova o projeto da Santa Clara por dados:
   oráculo; o teste de espiga foi tentado e removido por superdetecção.
 - O upload/ImportarArquivoShape do SIMCAR substitui o arquivo do CAR na hora —
   as sondas deixaram rastros temporários (o arquivo final restaurou tudo).
+
+## Continuação (Hermes) — calibração import v19/v21 + process v22 (2026-07-16/17)
+
+### Contexto
+A sessão Claude Code parou no session limit com o ZIP **v21** e código uncommitted.
+Retomamos o loop oráculo no CAR **270069** (login técnico Álvaro), validando
+sempre: processar no SIMCAR **e** no GeoForest → comparar erros → calibrar o
+detector (sem mock) → corrigir shape offline → reimportar.
+
+### Importação — anéis sobrepostos (oráculo v19–v21)
+
+Mensagem SEMA (PDF import):
+> Duas ou mais bordas ou buracos da geometria de poligono complexo se sobrepõem
+
+- **v19/v20:** qty **2** (AREA_UMIDA)
+- **v21:** qty **1** (ainda reprovado)
+- Causa geométrica: buracos de AREA_UMIDA **colados** na borda exterior
+  (f22 ~140 m e f43 ~38 m de borda compartilhada). Área do buraco contida na
+  exterior **não** basta — a SEMA trata borda compartilhada longa como
+  sobreposição de anéis.
+- Detector: `detectOverlappingRings` em `backend/geometry-errors.ts`
+  - sobreposição parcial em área (já existia)
+  - **+** `ringsSharedBoundaryLengthM` com
+    `SIMCAR_RING_SHARED_EDGE_M = 1.0` e tol 0,02 m
+- Wired em `runImportPhase` (`backend/processar-projeto.ts`)
+- GeoForest no v21: **2** feições (f22+f43); SEMA qty 1 no v21 (agrega/conta
+  1 a menos — detector local é estrito por feição, o que é correto para bloquear
+  import)
+
+### Shape v22 (offline, sem autocorreção no app)
+
+- Removeu os 2 buracos colados de AREA_UMIDA (mesma regra do detector)
+- **Import SIMCAR: `[FINALIZADO]`** — "Geometrias importadas com sucesso!"
+- Import GeoForest: `ok=true`, 0 erros
+
+### ProcessarGeo SEMA v22
+
+PDF oficial (20:34): **somente**
+> AREA_UMIDA | Geometria deve ser completamente contida por AVN, AUAS ou AREA_CONSOLIDADA. | **Quantidade: 41**
+
+Sumiram (vs oráculo antigo do FINAL):
+- 106× AVN/ARL sobrepondo (bloco duplicado removido no loop)
+- 12+13 reservatório/SITUACAO
+- sobreposições AVN×CONS / AUAS×CONS massivas
+
+### Diagnóstico dos 41 (não é “fora da AIR”)
+
+Medições no ZIP FINAL e V22:
+- úmida fora da **AIR**: ~1 feição residual (≈2 m²)
+- úmida **sobrepõe hidrografia** (rio/lagoa/res): ~36–39 feições
+- causa: úmida “senta” em hidro; AVN tem buraco de hidro → não está em
+  AVN∪AUAS∪CONS. **Correção é cartográfica**, não loop infinito de dups.
+
+### Calibração GeoForest — `detectUmidaContainment`
+
+Implementação dinâmica (sem feição hardcoded):
+
+1. **União real** AVN∪AUAS∪CONS (`unionFeatures`) — a diferença sequencial
+   subdetectava (8 vs 41 no v22).
+2. Área residual métrica > `SIMCAR_UMIDA_FORA_TOL_M2` (0,3 m²) —
+   no pacote **v8** fecha **41/48** (oráculo de área).
+3. Amostragem da borda a cada `SIMCAR_UMIDA_EDGE_SAMPLE_M` (**20 m**):
+   ponto fora da cobertura → reprova — no **v22** fecha **40/48** (SEMA 41;
+   Δ≤1 por amostragem).
+
+Mensagem: `SEMA_MSG_UMIDA_CONTIDA` (exata).
+
+### Outras regras process (uncommitted → main)
+
+- `pairFilter` em `detectSimcarForbiddenOverlaps`: isenta só
+  RESERVATORIO_ARTIFICIAL **sem** barramento (oráculo v8).
+- Hidrografia volta a poder entrar no relatório de sobreposição do process
+  (não filtrar AVN×RIO no process como antes).
+- `detectOverlappingRings` na fase de import.
+
+### Testes
+
+```bash
+npx vitest run --root . backend/processar-projeto.test.ts \
+  backend/geometry-errors.test.ts backend/simcar-rules.test.ts
+# 62 passed (2026-07-16)
+```
+
+### O que NÃO foi feito (de propósito)
+
+- Autocorreção de shape no produto (ordem: só replicar SEMA)
+- Deploy em `/media/server/...`
+- Loop v23+ para “zerar” os 41 de úmida (exige redesenho GIS:
+  recortar úmida ∩ cobertura **ou** preencher AVN/AUAS sob a úmida)
+
+### Arquivos principais
+
+| Arquivo | Mudança |
+|---------|---------|
+| `backend/geometry-errors.ts` | anéis sobrepostos + úmida + pairFilter |
+| `backend/processar-projeto.ts` | wire import/process |
+| `backend/geometry-errors.test.ts` | testes oráculo |
+| `docs/CHANGELOG_2026-07-16_ORACULO_SEMA_SANTA_CLARA.md` | este apêndice |

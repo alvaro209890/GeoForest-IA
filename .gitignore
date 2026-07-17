@@ -112,3 +112,6 @@ temp/
 *-firebase-adminsdk-*.json
 backend/firebase-service-account.json
 tools/simcar-parity/.scramble.tmp.cjs
+
+.oraculo-scratch/
+__tmp_*.ts

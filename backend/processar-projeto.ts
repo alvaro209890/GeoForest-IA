@@ -30,10 +30,12 @@ import {
   detectAirAtpAreaConsistency,
   detectAirCompositionConsistency,
   detectComplexPolygons,
+  detectOverlappingRings,
   detectOverlaps,
   detectReservatorioRules,
   detectSimcarContainment,
   detectSimcarForbiddenOverlaps,
+  detectUmidaContainment,
   geometryPlanarAreaM2,
   LAYER_LEVEL_TIPOS,
   metricProjDefFor,
@@ -79,6 +81,7 @@ import {
   buildPointShpAndShx,
   buildShpAndShx,
   geojsonToShpRecords,
+  readDbfRows,
   type DbfFieldDef,
   type PointShpRecord,
   type ShpRecord,
@@ -167,6 +170,8 @@ function groupsFromZip(zipBuffer: Buffer) {
 /** Nomes de exibição que o relatório da SEMA usa nas frases "X está sobrepondo Y". */
 const OVERLAP_DISPLAY_NAME: Partial<Record<SimcarLayerCode, string>> = {
   AREA_CONSOLIDADA: "Área Consolidada",
+  LAGO_LAGOA_NATURAL: "Lagoa Natural",
+  RESERVATORIO_ARTIFICIAL: "Reservatório Artificial",
 };
 
 function overlapDisplayName(layerName: string): string {
@@ -391,6 +396,8 @@ export function runImportPhase(zipBuffer: Buffer, filename = "projeto.zip"): Imp
       );
       // Oráculo 16/07/2026: registro MULTIPART reprova ("polígono complexo").
       rows.push(...detectComplexPolygons(g.name, records));
+      // Oráculo v19: anéis do mesmo registro não podem se sobrepor.
+      rows.push(...detectOverlappingRings(g.name, records, detectCrs(g.prj?.data.toString("utf8"))));
     } catch (error: any) {
       warnings.push(`Topologia (${g.name}): ${error?.message || "falha"}`);
     }
@@ -526,31 +533,28 @@ export function runProcessPhase(
     allWarnings.push(`Contenção Anexo 01: ${error?.message || "falha"}`);
   }
   try {
+    // Oráculo v8 (16/07/2026): a ÚNICA isenção de sobreposição com corpo
+    // d'água é o RESERVATORIO_ARTIFICIAL SEM barramento (ele deve estar
+    // CONTIDO em AUAS/CONS; o par AUAS×RES 'N' de 442 m² não foi reportado,
+    // e o MESMO par com 'S' foi). RIO/LAGOA/RES com barramento CONTAM
+    // (ex.: "AVN está sobrepondo Lagoa Natural 1 vez").
+    const barramentoByFeature = new Map<number, string>();
+    for (const layer of ruleLayers) {
+      if (recognizeSimcarLayer(layer.name) !== "RESERVATORIO_ARTIFICIAL" || !layer.dbf) continue;
+      const dbfRows = readDbfRows(layer.dbf);
+      dbfRows.forEach((row, index) => barramentoByFeature.set(index + 1, String(row.BARRAMENTO || "").trim()));
+    }
+    const semBarramento = (item: { code: SimcarLayerCode; feature: number }) =>
+      item.code === "RESERVATORIO_ARTIFICIAL" && barramentoByFeature.get(item.feature) !== "S";
     // Semântica do ProcessarGeo: o PAR de feições só conta com soma ≥ 0,01 ha.
     const crossResult = detectSimcarForbiddenOverlaps({
       layers: ruleLayers,
       minAreaM2: Math.min(minArea, 1),
       pairMinAreaM2: SIMCAR_PROCESS_PAIR_MIN_M2,
+      pairFilter: (a, b) => !semBarramento(a) && !semBarramento(b),
     });
-    // Oráculo: o ProcessarGeo oficial não reporta sobreposição com hidrografia
-    // (AVN×RIO etc.) — esses pares ficam só na aba Erros de Geometria.
-    const isHydro = (layerName: string) => {
-      const code = recognizeSimcarLayer(layerName);
-      return (
-        !!code &&
-        ["RIO_MENOR_10", "RIO_10_ATE_50", "RIO_50_ATE_200", "RIO_200_ATE_600", "RIO_MAIOR_600", "LAGO_LAGOA_NATURAL", "RESERVATORIO_ARTIFICIAL"].includes(code)
-      );
-    };
-    const keptViolations = crossResult.violations.filter(
-      (v) => v.regra !== "sobreposicao" || (!isHydro(v.camadaA) && !isHydro(v.camadaB)),
-    );
-    const keptRows = crossResult.rows.filter((row) => {
-      if (row.tipo !== "sobreposicao_proibida") return true;
-      if (isHydro(row.camada)) return false;
-      return !/RIO_|LAGO|RESERVATORIO/i.test(row.detalhe);
-    });
-    allRows.push(...keptRows);
-    allRuleViolations.push(...keptViolations);
+    allRows.push(...crossResult.rows);
+    allRuleViolations.push(...crossResult.violations);
     allWarnings.push(...crossResult.warnings);
   } catch (error: any) {
     allWarnings.push(`Sobreposições proibidas: ${error?.message || "falha"}`);
@@ -581,6 +585,14 @@ export function runProcessPhase(
     allWarnings.push(...airCompResult.warnings);
   } catch (error: any) {
     allWarnings.push(`Composição da AIR: ${error?.message || "falha"}`);
+  }
+  try {
+    // Oráculo v8: AREA_UMIDA deve caber em UMA feição de AVN/AUAS/CONS.
+    const umidaResult = detectUmidaContainment({ layers: ruleLayers });
+    allRows.push(...umidaResult.rows);
+    allWarnings.push(...umidaResult.warnings);
+  } catch (error: any) {
+    allWarnings.push(`Contenção da Área Úmida: ${error?.message || "falha"}`);
   }
 
   // ─── ProcessarGeo: deriva APP, APPD, APPP, APPRL, AURD, ARLDR ───
@@ -757,7 +769,12 @@ export function runProcessPhase(
     return [...map.values()];
   };
 
-  const espaciais = allRows.filter((r) => r.tipo === "reservatorio_fora_uso_antropico" || r.tipo === "fora_do_continente");
+  const espaciais = allRows.filter(
+    (r) =>
+      r.tipo === "reservatorio_fora_uso_antropico" ||
+      r.tipo === "fora_do_continente" ||
+      r.tipo === "umida_fora_cobertura",
+  );
   lines.push("Erros espaciais");
   if (!espaciais.length) lines.push("(nenhum)");
   for (const item of countByDetail(espaciais)) {

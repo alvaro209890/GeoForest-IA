@@ -6,12 +6,16 @@ import {
   detectAirAtpAreaConsistency,
   detectDuplicateVertices,
   detectGaps,
+  detectOverlappingRings,
+  detectUmidaContainment,
   detectOverlaps,
   detectSelfIntersections,
   detectSimcarContainment,
   detectSimcarForbiddenOverlaps,
   fixLayerGeometry,
   recordToGeoJSON,
+  SEMA_MSG_ANEIS_SOBREPOSTOS,
+  SEMA_MSG_UMIDA_CONTIDA,
 } from "./geometry-errors";
 import { detectCrs } from "./vertices-proximas";
 import type { ParsedPolygonRecord } from "./vertices-proximas";
@@ -801,5 +805,121 @@ describe("borda se cruza — toque EXATO do próprio anel (oráculo upload v4)",
     ];
     const rows = detectSelfInt2("ARL", [{ feature: 2, rings: [ring] } as any]);
     expect(rows.filter((r) => r.tipo === "borda_se_cruza")).toEqual([]);
+  });
+});
+
+describe("detectOverlappingRings (oráculo SEMA import)", () => {
+  const crs = detectCrs(undefined, "EPSG:31981"); // UTM-like meters for simple coords
+
+  it("aceita buraco totalmente interior (sem borda compartilhada)", () => {
+    const outer = [
+      [0, 0],
+      [0, 100],
+      [100, 100],
+      [100, 0],
+      [0, 0],
+    ];
+    const hole = [
+      [20, 20],
+      [20, 40],
+      [40, 40],
+      [40, 20],
+      [20, 20],
+    ];
+    const rows = detectOverlappingRings("AREA_UMIDA", [{ feature: 1, rings: [outer, hole] } as any], crs);
+    expect(rows).toHaveLength(0);
+  });
+
+  it("reprova buraco colado na borda exterior (borda compartilhada longa)", () => {
+    // hole shares bottom edge of outer from x=10..90 (80 m) — oráculo v21 style
+    const outer = [
+      [0, 0],
+      [0, 100],
+      [100, 100],
+      [100, 0],
+      [0, 0],
+    ];
+    const holeGlued = [
+      [10, 0],
+      [10, 5],
+      [90, 5],
+      [90, 0],
+      [10, 0],
+    ];
+    const rows = detectOverlappingRings("AREA_UMIDA", [{ feature: 22, rings: [outer, holeGlued] } as any], crs);
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows[0].tipo).toBe("aneis_sobrepostos");
+    expect(rows[0].feicao).toBe(22);
+    expect(rows[0].detalhe).toContain(SEMA_MSG_ANEIS_SOBREPOSTOS);
+  });
+
+  it("reprova sobreposição parcial de anéis (não só contido)", () => {
+    const outer = [
+      [0, 0],
+      [0, 100],
+      [100, 100],
+      [100, 0],
+      [0, 0],
+    ];
+    // "hole" that crosses outside the outer (partial overlap)
+    const crossing = [
+      [80, 40],
+      [80, 120],
+      [120, 120],
+      [120, 40],
+      [80, 40],
+    ];
+    const rows = detectOverlappingRings("AREA_UMIDA", [{ feature: 7, rings: [outer, crossing] } as any], crs);
+    expect(rows.some((r) => r.tipo === "aneis_sobrepostos")).toBe(true);
+    expect(rows[0].detalhe).toContain(SEMA_MSG_ANEIS_SOBREPOSTOS);
+  });
+});
+
+describe("detectUmidaContainment (oráculo SEMA process)", () => {
+  const crs = detectCrs(undefined, "EPSG:31981");
+
+  function layer(name: string, ringsList: number[][][][]): any {
+    return {
+      name,
+      crs,
+      records: ringsList.map((rings, i) => ({ feature: i + 1, rings })),
+    };
+  }
+
+  it("reprova AREA_UMIDA fora de AVN/AUAS/CONS com mensagem SEMA", () => {
+    // úmida em (50,50)-(60,60); AVN só em (0,0)-(10,10) — sem cobertura
+    const layers = [
+      layer("AREA_UMIDA", [[[ [50, 50], [50, 60], [60, 60], [60, 50], [50, 50] ]]]),
+      layer("AVN", [[[ [0, 0], [0, 10], [10, 10], [10, 0], [0, 0] ]]]),
+      layer("AUAS", []),
+      layer("AREA_CONSOLIDADA", []),
+    ];
+    // empty AUAS/CONS — filter records length 0
+    const result = detectUmidaContainment({
+      layers: [
+        layers[0],
+        layers[1],
+      ],
+    });
+    expect(result.rows.length).toBeGreaterThanOrEqual(1);
+    expect(result.rows[0].tipo).toBe("umida_fora_cobertura");
+    expect(result.rows[0].detalhe).toBe(SEMA_MSG_UMIDA_CONTIDA);
+  });
+
+  it("aceita AREA_UMIDA totalmente dentro de AVN", () => {
+    const layers = [
+      {
+        name: "AREA_UMIDA",
+        crs,
+        records: [{ feature: 1, rings: [[[20, 20], [20, 30], [30, 30], [30, 20], [20, 20]]] }],
+      },
+      {
+        name: "AVN",
+        crs,
+        records: [{ feature: 1, rings: [[[0, 0], [0, 100], [100, 100], [100, 0], [0, 0]]] }],
+      },
+    ];
+    const result = detectUmidaContainment({ layers });
+    expect(result.rows).toHaveLength(0);
   });
 });
