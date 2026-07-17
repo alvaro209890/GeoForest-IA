@@ -1,112 +1,99 @@
-# 05 — Frontend UX (timeline + desligar local)
+# 05 — Frontend UX (v2: ORACULO-only, sem validação local)
 
-## Arquivo principal
+## Arquivos
 
-`client/src/components/ProcessarProjetoAnalysis.tsx`
+- `client/src/components/ProcessarProjetoAnalysis.tsx` (reescrita grande)
+- `client/src/pages/Dashboard.tsx` — **4 pontos de wiring** (mapeados na leitura de 16/07):
+  restauração de job (~4395-4414), sidebar histórico (~8248-8321), render (~11856-11889) e
+  `mapProcessarDocToHistoryItem`. Todos hardcodam o union de status — atualizar os QUATRO
+  juntos, senão cards caem no fallback "Falhou".
 
-Também: tab em `client/src/pages/Dashboard.tsx` (já existe `errorAnalysisTab === 'processar-projeto'`).
+## Fatos do código atual que condicionam o design
 
-## Princípios de UX
+| Fato | Consequência |
+|------|--------------|
+| Upload já devolve `mode/testCarId/simcarConfigured/shapePreview`, mas `applyZipFile` (253-257) ignora | ponto de entrada da UI nova |
+| Não existe stepper/timeline em lugar nenhum (só barra única 893-909) | criar componente `OraculoTimeline` |
+| SSE é parse manual de stream, sem retry (436-439) | adicionar retry/reconexão + fallback poll `/jobs/:id` |
+| `applySnapshot`/`restoreFromEntry` inferem `importOk` do status (375-380, 579-581) | trocar por campos explícitos `importOk/processOk` do job novo |
+| `startNewZip` (212-216) aborta SSE e reseta tudo | botão "Corrigir e reenviar" NÃO passa por ele (mantém job/contexto) |
+| Jobs restaurados têm `File` placeholder vazio (384, 558) | nada novo pode depender de `file.size>0` |
+| `onJobSnapshot` persiste o job inteiro no doc local | NÃO persistir `timeline` gigante/`rows` no histórico — só resumo + refs de artefatos |
 
-1. **O usuário vê o que o servidor está fazendo no SIMCAR**, não um spinner genérico.
-2. Cada passo da timeline tem ícone + texto humano + horário.
-3. Artefatos SEMA (PDFs/ZIPs) são **cidadãos de primeira classe** — botões grandes de download.
-4. Modo ORACULO: não forçar o usuário a “processar geometria local” se estiver desligado.
-5. Futuro auto-fix: botão **“Tentar corrigir e reenviar”** (desabilitado até P5).
-
-## Layout proposto da aba
+## Layout da aba (v2)
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Processar projeto (oráculo SIMCAR)                      │
-│  Projeto-teste: CAR 270069 · Santa Clara · modo ORACULO │
-├─────────────────────────────────────────────────────────┤
-│  [ Arraste o ZIP do recorte SIMCAR ]                    │
-│  preview: 12 camadas · município estimado: … · bbox …   │
-├─────────────────────────────────────────────────────────┤
-│  Timeline                                               │
-│  ✓ ZIP recebido                                         │
-│  ✓ Município do projeto-teste → Nova Mutum               │
-│  ✓ Área de abrangência atualizada                       │
-│  … Importando no SIMCAR…  (████░░ 60%)                  │
-│  ✗ Importação reprovada                                 │
-├─────────────────────────────────────────────────────────┤
-│  Resultado import                                       │
-│  Situação: Reprovado — pontos repetidos (AREA_UMIDA×11) │
-│  [📄 PDF importação SEMA]  [⬇ shape enviado]            │
-├─────────────────────────────────────────────────────────┤
-│  (quando import OK)                                     │
-│  [▶ Processar no SIMCAR]                                │
-│  Resultado process + [PDF] [ZIP erros]                  │
-├─────────────────────────────────────────────────────────┤
-│  Ações futuras                                          │
-│  [✨ Corrigir automaticamente e reenviar] (P5/P6)       │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ Processar projeto — SIMCAR real (SEMA)                        │
+│ Projeto-teste: CAR 270069 · Santa clara · fila: livre         │
+│ ⚠ O robô usa a conta técnica do escritório: sua sessão manual │
+│   no SIMCAR pode ser derrubada enquanto um job roda.          │
+├──────────────────────────────────────────────────────────────┤
+│ [ Arraste o ZIP do recorte SIMCAR ]                           │
+│ preview: 12 camadas · município detectado: QUERÊNCIA (IBGE)   │
+│ [se não detectado: dropdown municípios MT]                    │
+│ [▶ Enviar ao SIMCAR]  (auto: importa → processa → corrige ≤3) │
+├──────────────────────────────────────────────────────────────┤
+│ Timeline (rodada 2/3)                                         │
+│ ✓ 10:01 Na fila (0 à frente)                                  │
+│ ✓ 10:01 Município já é Querência                              │
+│ ✓ 10:02 Abrangência cobre o imóvel                            │
+│ ✓ 10:04 Importação FINALIZADA                                 │
+│ ✓ 10:10 Processamento COM PENDÊNCIA (41 erros)                │
+│ ✓ 10:11 Correção: recorte de AREA_UMIDA (41 feições)          │
+│ ⏳ 10:13 Reimportando ZIP corrigido…       (████░░ 60%)        │
+├──────────────────────────────────────────────────────────────┤
+│ Resultado (por rodada, expansível)                            │
+│ Rodada 1 ✗ process: AREA_UMIDA contida ×41                    │
+│   [📄 PDF importação SEMA] [📄 PDF processamento SEMA]         │
+│   [⬇ ZIP erros SEMA] [⬇ ZIP enviado] [🔍 o que a IA entendeu] │
+│ Rodada 2 ⏳ …                                                  │
+├──────────────────────────────────────────────────────────────┤
+│ [✨ Corrigir e reenviar]  (só quando loop automático parou e   │
+│    ainda há ação mapeada; mostra modal com o FixPlan)         │
+│ [✋ Cancelar job]  [🆕 Novo projeto (outro ZIP)]               │
+└──────────────────────────────────────────────────────────────┘
 ```
+
+## O que SOME da UI (D2)
+
+- Seções "Importar (local)" / relatório local / tabela de erros do detector GeoForest.
+- Botão de PDF de importação GeoForest (`import-report-pdf`) — substituído pelos PDFs da SEMA.
+- Os 3 mini-cards estáticos "1 Importar / 2 Processar / Saída ZIP".
+- Qualquer texto que sugira que o GeoForest valida algo: o veredito é da SEMA.
+
+Sem credencial no servidor (`simcarConfigured=false`): a aba mostra estado vazio explicativo
+("O servidor não está configurado para falar com o SIMCAR") — sem fallback local.
 
 ## Estados da UI
 
-| Estado | UI |
-|--------|-----|
-| idle | dropzone |
-| uploaded | preview + botão Importar no SIMCAR |
-| queued | “Na fila…” |
-| running | timeline viva (SSE) |
-| import_fail | vermelho + PDF + lista erros |
-| import_ok | verde + botão Processar |
-| process_fail | lista erros process + downloads |
-| process_ok | celebrar + downloads |
-| error_infra | “SIMCAR indisponível / credencial / timeout” |
+| Estado | Fonte |
+|--------|-------|
+| idle → dropzone | — |
+| uploaded → preview + município + botão Enviar | upload response |
+| queued/running → timeline viva | SSE + snapshot |
+| import_fail / process_fail (rodada) → card da rodada + downloads + (se loop parou) botão Corrigir | job.rounds |
+| done ok → verde + downloads da última rodada | job |
+| failed (infra) → vermelho + motivo + tentar de novo | job.error |
+| cancelled | job |
 
-## Desligar validação local
+## Copy obrigatória
 
-Env no backend `PROCESSAR_MODE=ORACULO` → response de upload inclui `mode`.
+- Aviso de que o shape vai para o **projeto-teste do escritório** (CAR 270069), não para o CAR
+  do cliente; jobs entram em fila.
+- No FixPlan (modal e card): texto da explicação do DeepSeek + lista de ações mecânicas com
+  contagens ("Remover 11 vértices repetidos em AREA_UMIDA").
+- Quando autofix para: motivo claro ("Rodada 3/3 sem melhora" / "Erro exige edição no GIS:
+  reservatório sem barramento").
 
-Front:
+## Histórico (Dashboard)
 
-```tsx
-const isOraculo = mode === "ORACULO";
-// Esconder ou colapsar seções "relatório local GeoForest"
-// Renomear botões:
-//   "Importar" → "Importar no SIMCAR (projeto-teste)"
-//   "Processar" → "ProcessarGeo no SIMCAR"
-```
+- `mapProcessarDocToHistoryItem` lê `simcar_oraculo_jobs` (novo) e `processar_projeto_jobs`
+  (legado, só leitura).
+- Card: nome do ZIP, data, rodadas, badge resultado final (import/process/corrigido), botão
+  reabrir → snapshot + downloads (sem religar SSE se `completed`).
 
-Flag opcional de UI (admin):
+## Testes front
 
-```tsx
-// Só se mode HYBRID
-showLocalComparison={mode === "HYBRID"}
-```
-
-## SSE — consumo (já existe padrão)
-
-Manter `EventSource` / fetch stream em `ProcessarProjetoAnalysis.tsx` (~linha 409).
-
-Mapear `event.step` → item da timeline (append-only; não apagar passos).
-
-## Downloads
-
-Usar `downloadUrl` assinado/token como hoje (`/api/processar-projeto/download/...`).
-
-Labels:
-
-- “Relatório de importação (SEMA)”
-- “Relatório de processamento (SEMA)”
-- “Arquivo de erros de processamento”
-- “ZIP enviado ao projeto-teste”
-
-## Copy (textos)
-
-- Explicar que o shape vai para o **projeto de teste do escritório**, não para o CAR do cliente.
-- Aviso amarelo: “O projeto-teste é compartilhado; jobs entram em fila.”
-
-## Acessibilidade / mobile
-
-- Timeline vertical legível no WhatsApp-like mobile
-- Botões de download full-width no mobile
-
-## Testes front (mínimo)
-
-- Story/teste de render da timeline com mock de eventos (se houver infra de teste de componente)
-- Caso sem: checklist manual em `09-validacao-santa-clara.md`
+- Sem infra de teste de componente no repo → checklist visual em `09-validacao-santa-clara.md`
+  + QA Playwright manual como nas outras abas (gotcha preview: usar chrome do sistema).

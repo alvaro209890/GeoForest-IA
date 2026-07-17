@@ -1,136 +1,124 @@
-# 03 — API, contratos e eventos SSE
+# 03 — API, contratos e eventos (v2: pipeline único)
 
-## Rotas existentes (manter paths para o front)
+## Visão
 
-Já usadas por `ProcessarProjetoAnalysis.tsx`:
+O front passa a usar **um** job de pipeline em vez de importar/processar separados.
+Rotas locais antigas de importar/processar do processar-projeto **morrem** (D2).
 
-| Método | Path | Uso atual |
-|--------|------|-----------|
-| POST | `/api/processar-projeto/upload` | sobe ZIP, retorna session |
-| POST | `/api/processar-projeto/importar` | job import |
-| POST | `/api/processar-projeto/processar` | job process |
-| GET | `/api/processar-projeto/jobs/:id/events` | SSE |
-| GET | `/api/processar-projeto/jobs/:id/status` | poll fallback |
-| GET | `/api/processar-projeto/download/:token` | artefato |
-| GET | `/api/processar-projeto/import/:id/pdf` | PDF import local |
-| DELETE | `/api/processar-projeto/jobs/:id` | cancel |
+## Rotas
 
-## Estender sem quebrar o front
+| Método | Path | Uso |
+|--------|------|-----|
+| POST | `/api/processar-projeto/upload` | **mantém** — sobe ZIP (base64), devolve `uploadId` + `shapePreview` + `simcarConfigured` + `testCar {id, nome, municipio}` |
+| POST | `/api/simcar-oraculo/pipeline` | **novo** — `{uploadId, autoProcess?: true, autofix?: true}` → `202 {jobId, queuePosition}` |
+| GET | `/api/simcar-oraculo/jobs/:jobId` | snapshot do job (poll fallback) |
+| GET | `/api/simcar-oraculo/jobs/:jobId/events` | **novo** — SSE da timeline (mesmo padrão do processing-jobs atual) |
+| POST | `/api/simcar-oraculo/jobs/:jobId/autofix` | **novo** — dispara rodada manual de correção (quando o loop automático parou/foi desligado) |
+| DELETE | `/api/simcar-oraculo/jobs/:jobId` | cancelar (para de pollear; best-effort Cancelar* na SEMA) |
+| GET | `/api/simcar-oraculo/jobs/:jobId/artifact/:key` | download tokenizado: `import-pdf-r{N}`, `process-pdf-r{N}`, `erros-zip-r{N}`, `enviado-zip-r{N}`, `corrigido-zip-r{N}`, `fixplan-r{N}` |
+| GET | `/api/simcar-oraculo/health` | mode-less: `{ok, simcarConfigured, testCarId, queueLength, deepseekConfigured}` |
+| GET | `/api/simcar-oraculo/test-project` | Buscar do CAR-teste (leitura) |
 
-### Upload response (adicionar campos)
+Rotas atuais `/importar` e `/processar` do oráculo: manter por 1 release como atalhos do
+pipeline (`autoProcess=false`) ou remover direto — decidir na task; front novo só usa pipeline.
+
+Auth: Firebase `requireAuth` em tudo (como hoje). Rate limit: fila serial global já limita;
+opcional `SIMCAR_MAX_JOBS_POR_UID_DIA`.
+
+## Upload response (novo shape)
 
 ```json
 {
-  "sessionId": "...",
+  "uploadId": "…",
   "fileName": "recorte.zip",
-  "mode": "ORACULO",
-  "testCarId": "270069",
+  "simcarConfigured": true,
+  "testCar": { "id": "270069", "nome": "Santa clara", "municipio": "Querência" },
   "shapePreview": {
-    "municipioHint": "NOVA MUTUM",
-    "bbox": [-56.1, -14.2, -55.9, -14.0],
-    "layers": ["ATP", "AIR", "AREA_UMIDA", "..."]
+    "layers": ["ATP","AIR","AREA_UMIDA","…"],
+    "bbox": [-52.9,-12.6,-52.7,-12.4],
+    "centroid": [-52.8,-12.5],
+    "municipioDetectado": { "nome": "QUERÊNCIA", "ibge": "5107065", "fonte": "malha-ibge" },
+    "warnings": []
   }
 }
 ```
 
-`shapePreview` calculado **localmente** (só leitura do ZIP) — não chama SEMA.
+`municipioDetectado.fonte`: `"malha-ibge" | "wfs-sema" | "nao-detectado"`. Se
+`nao-detectado`, o front oferece dropdown (dados de `Municipio/ListarMatoGrosso` via backend).
 
-### Eventos SSE (timeline)
-
-Cada evento:
+## Evento SSE / item de timeline
 
 ```ts
 type OraculoEvent = {
-  type: "progress" | "step" | "result" | "error" | "artifact";
+  ts: string;                       // ISO
+  round: number;                    // 1..maxRounds
   step:
-    | "queued"
-    | "login"
+    | "queued" | "login"
     | "buscar_projeto"
-    | "ajustar_municipio"
-    | "ajustar_abrangencia"
-    | "upload_zip"
-    | "importar"
-    | "import_poll"
-    | "import_done"
-    | "processar"
-    | "process_poll"
-    | "process_done"
+    | "municipio_check" | "municipio_saving" | "municipio_ok"
+    | "abrangencia_check" | "abrangencia_saving" | "baseref_wait" | "abrangencia_ok"
+    | "upload_zip" | "importar" | "import_poll" | "import_ok" | "import_fail"
+    | "processar" | "process_poll" | "process_ok" | "process_fail"
     | "download_artifacts"
-    | "done";
-  message: string;
-  percent?: number; // 0-100
-  data?: Record<string, unknown>;
+    | "autofix_plan" | "autofix_apply" | "autofix_skip"
+    | "done" | "failed" | "cancelled";
+  message: string;                  // humano, pt-BR
+  percent?: number;                 // 0-100 da rodada
+  data?: Record<string, unknown>;   // ex.: {municipioAntes, municipioDepois}
 };
 ```
 
-Exemplos de `message` (UX amigável):
+Mensagens de exemplo (copy do front em 05):
+- "Na fila do SIMCAR (1 job à frente)…"
+- "Município do shape: Nova Mutum — projeto-teste está em Querência; ajustando…"
+- "Área de abrangência atualizada; aguardando base de referência da SEMA (pode levar minutos)…"
+- "Importação reprovada: pontos repetidos em AREA_UMIDA (11). Preparando correção automática (rodada 2/3)…"
 
-- “Na fila do SIMCAR (1 job à frente)…”
-- “Ajustando município do projeto-teste para Nova Mutum…”
-- “Atualizando área de abrangência na caracterização…”
-- “Enviando shapefile ao SIMCAR…”
-- “Importação em execução no SEMA (pode levar alguns minutos)…”
-- “Importação FINALIZADA — baixando PDF…”
-- “Reprovado na importação: 11 pontos repetidos em AREA_UMIDA”
-
-### Status job (GET)
+## Snapshot do job (GET /jobs/:id)
 
 ```json
 {
-  "jobId": "...",
-  "status": "running|completed|failed|cancelled",
-  "mode": "ORACULO",
-  "import": {
-    "resultado": "[FINALIZADO]|[COM_PENDENCIA]|null",
-    "detalhes": "16/07/2026 21:17",
-    "pdfUrl": "/api/processar-projeto/download/...",
-    "errosResumo": [{ "camada": "AREA_UMIDA", "erro": "A geometria contém pontos repetidos", "qtd": 11 }]
-  },
-  "process": {
-    "resultado": "[COM_PENDENCIA]|[FINALIZADO]|null",
-    "pdfUrl": "...",
-    "errosZipUrl": "...",
-    "errosResumo": [{ "camada": "AREA_UMIDA", "erro": "Geometria deve ser completamente contida...", "qtd": 41 }]
-  },
-  "timeline": [ /* últimos eventos */ ],
+  "jobId": "…", "status": "queued|running|completed|failed|cancelled",
+  "round": 2, "maxRounds": 3,
   "prepare": {
-    "municipioAntes": "...",
-    "municipioDepois": "...",
-    "abrangenciaAtualizada": true
-  }
+    "municipioAntes": "Querência", "municipioDepois": "Nova Mutum",
+    "municipioChanged": true, "abrangenciaChanged": true, "baserefMs": 480000
+  },
+  "rounds": [
+    {
+      "n": 1, "zipArtifact": "enviado-zip-r1",
+      "import": { "resultado": "[COM_PENDENCIA]", "detalhes": "17/07/2026 10:12",
+                  "pdf": "import-pdf-r1",
+                  "errosResumo": [{ "camada": "AREA_UMIDA", "erro": "A geometria contém pontos repetidos", "qtd": 11 }] },
+      "process": null,
+      "fixplan": "fixplan-r1"
+    },
+    { "n": 2, "zipArtifact": "corrigido-zip-r2", "import": { "resultado": "[FINALIZADO]", "pdf": "import-pdf-r2" },
+      "process": { "resultado": "[COM_PENDENCIA]", "pdf": "process-pdf-r2", "errosZip": "erros-zip-r2",
+                   "errosResumo": [{ "camada": "AREA_UMIDA", "erro": "Geometria deve ser completamente contida…", "qtd": 41 }] } }
+  ],
+  "timeline": [ /* OraculoEvent[] acumulada (B3 corrigido) */ ],
+  "artifacts": { "import-pdf-r1": "/api/simcar-oraculo/jobs/…/artifact/import-pdf-r1", "…": "…" }
 }
 ```
-
-### Parse do PDF SEMA (resumo)
-
-Reusar lógica já existente de parse de PDF de import (`import-report-pdf.ts` se cobrir) ou `pdftotext` no worker se disponível no PC.
-
-Se parse falhar: ainda entregar PDF binário; `errosResumo` vazio com warning.
-
-## Novas rotas (opcionais)
-
-```
-GET  /api/simcar-oraculo/health
-     → { ok, mode, testCarId, simcarConfigured: boolean, queueLength }
-
-GET  /api/simcar-oraculo/test-project
-     → { id, nome, municipio, situacao }  // Buscar sem mutar
-```
-
-Auth: mesmo Firebase do resto do backend (usuário logado). Health pode ser admin-only.
-
-## Cancelamento
-
-Se user cancela job:
-- set `cancelRequested` no `processing-jobs`
-- entre polls SIMCAR, checar e abortar (não dá para cancelar o SEMA mid-flight de forma confiável — apenas para de pollear e marca `cancelled` local; documentar)
 
 ## Contratos de erro
 
 | Situação | HTTP / job | Mensagem |
 |----------|------------|----------|
-| Sem credenciais | job failed | “Oráculo SIMCAR não configurado no servidor.” |
-| Login SEMA falhou | failed | “Falha de autenticação SIMCAR.” |
-| Import COM_PENDENCIA | completed (ok=false import) | PDF + resumo |
-| Timeout poll | failed | “Timeout aguardando SIMCAR (Xs).” |
-| Fila longa | progress | “Posição N na fila…” |
+| Sem credencial no servidor | 503 na rota / — | "Oráculo SIMCAR não configurado no servidor." |
+| Upload não encontrado/expirado | 404 | "Envie o ZIP novamente." |
+| Login SEMA falhou (após retry B6) | job `failed` | "Falha de autenticação no SIMCAR." |
+| Import COM_PENDENCIA | job `completed`, `importOk:false` | resumo + PDF + botão corrigir |
+| Process COM_PENDENCIA | job `completed`, `processOk:false` | idem |
+| Timeout de poll (import/process/BaseRef) | job `failed` | "Timeout aguardando SIMCAR (etapa X, Ys)." |
+| SEMA 5xx no poll | retry 3× backoff antes de falhar | — |
+| Município não detectado e não informado | job `failed` cedo (antes de tocar SEMA) | "Não detectei o município do shape — selecione manualmente." |
+
+## Compat / migração
+
+- `processar_projeto_jobs` (histórico local antigo) continua legível para o histórico do
+  Dashboard; jobs novos vão para `simcar_oraculo_jobs`. `mapProcessarDocToHistoryItem` aprende
+  os dois formatos (ver 05).
+- Rotas locais mortas devolvem 410 com `{error, hint: "use /api/simcar-oraculo/pipeline"}` por
+  um release, depois somem.

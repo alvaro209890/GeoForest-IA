@@ -1,148 +1,118 @@
-# 06 — Roadmap: auto-correção de erros (próximas atualizações)
+# 06 — Autofix (P5/P6): correções mecânicas + DeepSeek V4 Pro como planejador
 
-> Esta aba do plano é **explícita e adiada** (P5/P6).  
-> Não implementar na primeira entrega do oráculo, mas **desenhar o encaixe** já na UI e no job.
+## Decisões (D3/D4)
 
-## Visão do Álvaro
+- **Aplicar**: SÓ rotinas determinísticas calibradas com o importador/ProcessarGeo reais.
+- **DeepSeek V4 Pro** (`deepseek-v4-pro`): interpreta os erros da SEMA, monta/ordena o
+  `FixPlan`, explica em pt-BR para o usuário e classifica o que NÃO é corrigível
+  mecanicamente. **Não** inventa geometria nem decide casos ambíguos.
+- **Loop automático até 3 rodadas** (`AUTOFIX_MAX_ROUNDS=3`), sem clique: reprova →
+  corrige → reimporta → (aprovou? processa) → reprova → corrige…
+- **Sem validação local** (D2): a única validação do ZIP corrigido é o próprio reenvio à
+  SEMA. Sanidade mínima permitida (não é validação): ZIP abre, camadas e contagens de
+  registros batem com o esperado pós-ação, .prj/.cpg preservados.
 
-1. Usuário envia ZIP → oráculo SIMCAR reprova import ou process.
-2. GeoForest **propõe/aplica correções** automáticas (offline no backend).
-3. Botão **“Corrigir e reenviar ao SIMCAR”** → gera ZIPvN+1 → reimporta/reprocessa no projeto-teste.
-4. Usuário acompanha o loop **sem loop infinito cego** (máx. tentativas + diff do que mudou).
+## Integração DeepSeek
 
-## Princípios (aprendizados 16/07/2026)
+| Item | Valor |
+|------|-------|
+| Modelo | `deepseek-v4-pro` (mesmo id usado no acompanhamento-de-processos) |
+| Endpoint | `https://api.deepseek.com/v1/chat/completions` |
+| Chave | env `DEEPSEEK_API_KEY` do backend; valor copiado de `~/.hermes/.env` deste PC (`grep '^DEEPSEEK_API_KEY' ~/.hermes/.env`) para o env do PC servidor. **Nunca hardcode/commit (repo público).** ⚠️ NÃO usar a chave do Atlas (401, inválida) |
+| Reasoning | medium (subir p/ high só se plano sair ruim) |
+| Gotchas (do acompanhamento) | `max_tokens` inclui o raciocínio → dar folga e retry se `content` vazio; `temperature` é ignorado; API oficial não tem visão (não mandar PDF binário — mandar TEXTO extraído) |
+| Sem chave / API fora | fallback: mapeamento fixo erro→ação (tabela abaixo); explicação vira template. O loop NUNCA depende da IA para funcionar |
 
-| # | Princípio |
-|---|-----------|
-| 1 | **Detectar = SEMA** (calibração dinâmica). **Corrigir = offline** com scripts, nunca “esconder” erro no detector. |
-| 2 | Ordem: calibrar detector → corrigir shape → reimportar SIMCAR → comparar. |
-| 3 | Não clipar AVN por hidro (piora contenção de úmida). |
-| 4 | Remover dups (0,1 m) e anéis colados **antes** de process. |
-| 5 | Contenção de AREA_UMIDA é cartográfica (úmida ⊆ AVN∪AUAS∪CONS); clip da úmida gera dups — limpar depois. |
-| 6 | Cap de iterações: `AUTOFIX_MAX_ROUNDS=3` default. |
-| 7 | Sempre guardar ZIP intermediário + log de patches. |
+### Contrato da chamada (`autofix/deepseek.ts`)
 
-## Arquitetura do auto-fix
+Entrada (system+user): texto extraído do PDF SEMA + `errosResumo` + inventário de ações
+disponíveis (com pré-condições) + resultado da rodada anterior (se houver).
+Saída JSON estrita (validar com zod; 1 retry em JSON inválido; depois fallback):
+
+```jsonc
+{
+  "acoes": [ { "type": "remove_duplicate_vertices", "layers": ["AREA_UMIDA"], "motivo": "…" } ],
+  "naoCorrigivel": [ { "erro": "reservatório sem barramento", "porque": "exige decisão cadastral", "orientacao": "…GIS…" } ],
+  "explicacaoUsuario": "A SEMA apontou 11 vértices repetidos…",
+  "confianca": "alta|media|baixa"
+}
+```
+
+Regra dura: `acoes[].type` FORA do inventário → descartada (log). IA propõe, código dispõe.
+
+## Ações mecânicas (inventário v1 — todas já prototipadas nos `__tmp_fix_*`)
+
+| Action | Origem/prova | Erro SEMA alvo |
+|--------|--------------|----------------|
+| `remove_duplicate_vertices` (tol 0,1 m) | v24 (`__tmp_fix_v24_umida_clean.ts`) | "pontos repetidos" |
+| `clean_degenerate_rings` (área ≤0,01 m² OU largura ≤0,02 m) | calibração borda-se-cruza | "borda do polígono se cruza" (colapso) |
+| `unkink_self_intersection` | `fixLayerGeometry` já em produção | "borda se cruza" (auto-interseção real) |
+| `remove_glued_holes` (borda compartilhada ≥1 m) | v22 (`__tmp_fix_v22_umida_holes.ts`) | "bordas ou buracos se sobrepõem" |
+| `clip_layer_to_cover` (AREA_UMIDA → AVN∪AUAS∪CONS) + `clean_after_clip` | v23 (`__tmp_fix_v23_umida_clip.ts`) | "deve ser completamente contida…" (process) |
+| `split_complex_polygon` | regra do importador | "polígono complexo" |
+| `drop_empty_features` | — | subproduto das demais |
+
+### Regras de engenharia (aprendidas a caro preço — NÃO violar)
+
+1. **NUNCA `turf.buffer`** — arcos reprovam "borda se cruza" no importador real.
+2. Clip só com difference/intersect iterativos; **filtrar fragmentos <100 m²** pós-clip.
+3. **Não clipar AVN por hidrografia** (abriu os 41 erros de úmida no v8→v9).
+4. Clip que vira MultiPolygon: **IDs novos** para partes extras (v9), nunca duplicar linha do .dbf.
+5. Encoste pontual de vértice é VÁLIDO (ESRI/SEMA) — não "corrigir".
+6. Camadas não tocadas: **copiar bytes originais** (.shp/.dbf/.prj/.cpg intactos); regravar só a
+   camada alterada (`shapefile-writer` não escreve .prj — copiar o original; dbf latin1 trunca).
+7. Ações de decisão (qual duplicata ARL/AVN descartar, BARRAMENTO/SITUACAO, buraco de
+   composição da AIR, fundir vs recortar úmida) → `naoCorrigivel` com orientação. NUNCA auto.
+8. Fixes encadeiam: cada rodada parte do ZIP da rodada anterior (v22→v23→v24 provou).
+
+## Estrutura
 
 ```
 backend/simcar-oraculo/autofix/
-  types.ts
-  plan.ts              # a partir de erros SEMA → lista de FixAction
-  apply.ts             # aplica actions no ZIP → novo Buffer
+  types.ts        # FixAction, FixPlan, FixResult
+  plan.ts         # errosResumo(+texto PDF) → FixPlan  [DeepSeek → fallback tabela fixa]
+  apply.ts        # ZIP + FixPlan → {novoZip, diffResumo[{camada, acao, feicoesAfetadas}]}
+  deepseek.ts     # cliente (fetch nativo, sem SDK) + zod + retry content-vazio
   actions/
     remove-duplicate-vertices.ts
-    fix-shared-boundary-holes.ts   # AREA_UMIDA buracos colados
-    clip-umida-to-cover.ts
-    clean-after-clip.ts
-    drop-empty-features.ts
-  index.ts
+    clean-degenerate-rings.ts
+    unkink-self-intersection.ts
+    remove-glued-holes.ts
+    clip-layer-to-cover.ts      # + clean-after-clip embutido
+    split-complex-polygon.ts
+  zip-rewrite.ts  # helper único: reabrir ZIP, substituir 1 camada, preservar resto byte a byte
 ```
 
-### `FixAction` (contrato)
+Promover a lógica dos `__tmp_fix_*` para `actions/` COM testes; `__tmp_*` continuam
+gitignorados e nunca importados em produção.
 
-```ts
-export type FixAction =
-  | { type: "remove_duplicate_vertices"; tolM: 0.1; layers?: string[] }
-  | { type: "remove_glued_holes"; sharedEdgeM: 1.0; layers: ["AREA_UMIDA"] }
-  | { type: "clip_layer_to_cover"; layer: "AREA_UMIDA"; cover: ["AVN","AUAS","AREA_CONSOLIDADA"] }
-  | { type: "clean_degenerate_rings"; minAreaM2: 0.01 }
-  | { type: "noop"; reason: string };
-
-export type FixPlan = {
-  actions: FixAction[];
-  rationale: string[];
-  source: "import_pdf" | "process_pdf" | "local_detector";
-};
-```
-
-### Mapeamento erro SEMA → action (v1)
-
-| Erro SEMA (mensagem / tipo) | Action |
-|-----------------------------|--------|
-| “A geometria contém pontos repetidos” | `remove_duplicate_vertices` |
-| “Borda do polígono se cruza” | limpeza anel + dups; se colapso, `clean_degenerate_rings` |
-| “Duas ou mais bordas ou buracos… se sobrepõem” | `remove_glued_holes` |
-| “Geometria deve ser completamente contida por AVN, AUAS ou AREA_CONSOLIDADA” | `clip_layer_to_cover` + `clean_after_clip` + dups |
-| Reservatório / SITUACAO / ARL duplicado | **não auto** na v1 — só reportar “pendência cartográfica / atributo” |
-
-## UI (desde P4, botão disabled)
-
-```tsx
-<button
-  disabled={!canAutofix || autofixRounds >= maxRounds}
-  onClick={onAutofixAndResend}
->
-  Corrigir automaticamente e reenviar ({autofixRounds}/{maxRounds})
-</button>
-```
-
-Após P5: `canAutofix` se `errosResumo` tiver action mapeada.
-
-## Fluxo do botão
-
-1. Parse erros do último import/process (PDF ou resumo).
-2. `plan = buildFixPlan(erros)`.
-3. Mostrar modal: “Vamos aplicar: remover 11 dups em AREA_UMIDA; recortar 40 úmidas… Continuar?”
-4. `newZip = applyFixPlan(oldZip, plan)`.
-5. Salvar artefato `corrigido_r{N}.zip`.
-6. Reentrar no fluxo import ORACULO (e process se import OK e user marcou).
-7. Se piorar (mais erros qty): rollback opção + parar.
-
-## Reuso de scripts de laboratório
-
-| Script / conhecimento | Action |
-|----------------------|--------|
-| `__tmp_fix_v24_umida_clean.ts` | `remove_duplicate_vertices` |
-| `__tmp_fix_v22_umida_holes.ts` | `remove_glued_holes` |
-| `__tmp_fix_v23_umida_clip.ts` | `clip_layer_to_cover` |
-| `detectOverlappingRings` / `SIMCAR_RING_SHARED_EDGE_M` | critério glue |
-| `detectUmidaContainment` | validação pós-fix local (HYBRID) |
-| `shapefile-writer.ts` | regravação shp/dbf |
-
-**Regra:** promover scripts `__tmp_*` estáveis para `backend/simcar-oraculo/autofix/actions/*` com testes; não importar `__tmp_` em produção.
-
-## Fases do roadmap
-
-### P5 — Auto-fix import (prioridade)
-
-- [ ] remove dups 0,1 m
-- [ ] remove buracos colados (shared edge ≥ 1 m)
-- [ ] limpa anéis degenerados
-- [ ] testes com ZIP sintético + v23 (11 dups SEMA)
-- [ ] botão ativo só para erros de import mapeados
-
-### P6 — Auto-fix process
-
-- [ ] clip úmida → cover + clean dups pós-clip
-- [ ] **não** auto-fundir AVN com hidro
-- [ ] se ainda ≥ N erros de contenção: mensagem “exige edição cartográfica”
-- [ ] teste com v22 process (41 úmidas) → após clip+clean, reimport+process
-
-### P7 — (opcional) Diff visual
-
-- Mapa antes/depois (GeoJSON) no front
-- Lista feições alteradas
-
-## Limites anti-loop (obrigatório)
-
-```ts
-const AUTOFIX_MAX_ROUNDS = 3;
-// parar se:
-// - plan.actions vazio
-// - qty erros não diminui
-// - import ok mas process piora e actions esgotadas
-// - usuário cancela
-```
-
-## Documentação na aba (texto para o usuário)
-
-> “A correção automática aplica só regras mecânicas já calibradas com o SIMCAR (pontos repetidos, anéis colados, recorte de úmida). Problemas de desenho (reservatório sem barramento, ARL duplicado, sobreposição de usos) continuam exigindo ajuste no GIS.”
-
-## Commits sugeridos (quando chegar a hora)
+## Loop (dentro do pipeline)
 
 ```
-feat(autofix): remove duplicate vertices (SEMA 0.1m)
-feat(autofix): remove glued holes on AREA_UMIDA
-feat(autofix): clip AREA_UMIDA to AVN∪AUAS∪CONS + clean
-feat(ui): botão corrigir e reenviar no oráculo SIMCAR
+round = 1
+while true:
+  importa (e processa se aprovar)
+  if tudo FINALIZADO: done ✓
+  if round >= AUTOFIX_MAX_ROUNDS: para ("teto de rodadas")
+  erros = parse(pdf) ; plan = buildFixPlan(erros, historicoRodadas)
+  if plan.acoes vazio: para ("nada corrigível mecanicamente" + orientações)
+  if qtdErros(round) >= qtdErros(round-1) e mesmo conjunto de ações: para ("sem melhora")
+  aplica → corrigido_r{N+1}.zip (artefato + fixplan.json) ; round++
 ```
+
+Paradas sempre com motivo explícito na timeline + botão manual "Corrigir e reenviar"
+habilitado apenas se ainda existir ação mapeada nova (ex.: usuário editou no GIS e re-subiu —
+aí é outro job).
+
+## P5 (import) vs P6 (process)
+
+- **P5**: dups, anéis degenerados, unkink, buracos colados, polígono complexo. Oráculo de
+  teste: V23 (11 pontos repetidos — a rodada deve produzir ZIP que importa FINALIZADO).
+- **P6**: clip úmida→cover + limpeza pós-clip. Oráculo: V22 (41 contenções — após fix,
+  reimporta e processa; meta: zerar os 41; pendências restantes de reservatório/ARL são
+  `naoCorrigivel` esperado).
+
+## Telemetria mínima
+
+`fixplan.json` por rodada: erros de entrada, plano, fonte (deepseek|fallback), diffResumo,
+resultado da rodada seguinte. É o dataset para calibrar futuras ações.

@@ -1,138 +1,94 @@
-# 04 — Município (Propriedade) + Área de abrangência (Caracterização)
+# 04 — P2: Município (Propriedade) + Área de abrangência (v2 com endpoints REAIS)
+
+> Endpoints e payloads: **`11-endpoints-sema-descobertos.md`**. Os de escrita vieram do bundle
+> e ainda exigem **1 validação live cada** no CAR-teste antes de produção (tasks 9–10).
 
 ## Objetivo
 
-Antes de importar o ZIP no projeto-teste, garantir:
+Antes de importar o ZIP no CAR-teste:
 
-1. **Aba Propriedade:** município do projeto-teste = município do shape (ou do imóvel do ZIP).
-2. **Aba Caracterização:** área de abrangência **contempla** o bbox/polígono da propriedade (ATP ou união AIR).
+1. **Município** (aba Propriedade): igual ao município do shape. Se diferente →
+   `SalvarGrupoPropriedade` trocando SÓ o `Municipio` (**`PropriedadeNome` intocável — D5**).
+2. **Área de abrangência** (aba Caracterização): retângulo `Menor/Maior{Lat,Long}Gdec` deve
+   conter o bbox do shape + margem. Se não → `SalvarAreaAbrangencia` e **aguardar BaseRef**.
 
-Se não, **alterar o projeto-teste** (não o CAR do cliente).
+## Detecção do município do shape (local, sem SEMA)
 
-## Fonte de verdade do shape
+Ordem de fontes em `municipio-mt.ts`:
 
-Do ZIP de entrada (local, sem SEMA):
+1. **Malha municipal IBGE de MT** embarcada no repo (GeoJSON simplificado, ~141 municípios;
+   gerar uma vez de malha IBGE 2024 e commitar em `config/` ou `banco_de_dados/07_geoprocessamento/`).
+   `turf.booleanPointInPolygon(centroid ATP∪AIR, municipio)` → `{nome, ibge}`.
+   - Malha simplificada = risco de erro na divisa → confirmar com o polígono OFICIAL da SEMA:
+     `Municipio/BuscarMunicipioGeo/{ibge}` (GeoJson Polygon) antes de decidir MUDAR o município.
+2. **Fallback WFS SEMA** (`wfs-intersection.ts` já existe; envs `SEMA_WMS_*` configuradas):
+   INTERSECTS(point) na camada municipal.
+3. **Fallback manual**: dropdown no front com `Municipio/ListarMatoGrosso` (142 itens
+   `{Chave, Texto}` — validado ao vivo). Job não toca a SEMA sem município resolvido.
 
-| Dado | Como obter |
-|------|------------|
-| Geometria da propriedade | Camada `ATP` (preferida) ou união `AIR` |
-| BBox | `turf.bbox` / `layerBbox` em `vertices-proximas.ts` |
-| Município | (A) atributo DBF se existir; (B) reverse geocode / malha IBGE local; (C) tabela de municípios MT já usada no GeoForest se houver |
-
-**Implementação recomendada (P2):**
-
-```ts
-// backend/simcar-oraculo/shape-context.ts
-export type ShapeContext = {
-  bbox: [number, number, number, number]; // minX,minY,maxX,maxY lon/lat
-  centroid: [number, number];
-  municipioNome?: string;
-  municipioCodigoIbge?: string;
-  areaHa?: number;
-};
-
-export function extractShapeContext(zip: Buffer): ShapeContext;
-```
-
-Passos:
-1. `getZipLayerGroups` + `recognizeSimcarLayer`
-2. Preferir ATP; senão AIR
-3. `recordToGeoJSON` + união se multi
-4. BBox + centroid
-5. Município: lookup em base local (ver se `banco_de_dados` / WFS SEMA já tem malha)
-
-Se não houver malha local no dia 1: aceitar `municipioNome` opcional no body do import **e** tentar listar municípios da API SIMCAR (combo do form técnico).
-
-## Descoberta de endpoints SIMCAR (obrigatória antes de codar mutação)
-
-O bundle `tecnico.app/js/bundle.js` tem os paths reais. Tarefa de descoberta:
-
-```bash
-# no PC, somente leitura
-curl -s 'https://monitoramento.sema.mt.gov.br/simcar/tecnico.app/js/bundle.js' -o /tmp/simcar-bundle.js
-rg -n "Municipio|Abrangencia|Caracteriz|Propriedade|Salvar|Atualizar" /tmp/simcar-bundle.js | head -80
-```
-
-Documentar em `backend/simcar-oraculo/docs/endpoints-descobertos.md` (ou neste plano atualizado) os paths reais:
-
-- GET listagem municípios
-- GET/POST propriedade do requerimento
-- GET/POST caracterização / área de abrangência (polígono ou bbox?)
-
-**Hipótese de trabalho** (validar):
-
-```
-GET  Requerimento/Buscar/{id}           # já funciona — ver campos Municipio*
-POST Requerimento/SalvarPropriedade     # nome a confirmar
-POST Requerimento/SalvarCaracterizacao  # nome a confirmar
-POST Requerimento/AtualizarAbrangencia  # nome a confirmar
-```
-
-**Não inventar path em produção** sem teste no projeto 270069.
+Mapeamentos necessários (tabela estática `municipios-mt.ts`, gerada 1×):
+`nomeNormalizado → { ibge, chaveSimcar }` — `chaveSimcar` obtida em runtime de
+`ListarMatoGrosso` (cache 24h) casando por nome normalizado (sem acento/caixa);
+divergências de grafia resolvidas na tabela estática.
 
 ## Algoritmo `prepare-project.ts`
 
 ```ts
 export async function prepareTestProject(args: {
-  token: string;
-  carId: string;
-  shape: ShapeContext;
-  onProgress?: ...
+  token: string; carId: string;              // = SIMCAR_TEST_CAR_ID (guard!)
+  shape: ShapeContext;                        // bbox + centroid + municipioDetectado
+  onEvent: (ev: OraculoEvent) => void;
 }): Promise<{
-  municipioAntes: string | null;
-  municipioDepois: string | null;
-  municipioChanged: boolean;
-  abrangenciaChanged: boolean;
-  warnings: string[];
-}> {
-  const req = await simcarBuscar(token, carId);
-  // 1) município
-  const atual = pickMunicipio(req);
-  const alvo = args.shape.municipioNome;
-  let municipioChanged = false;
-  if (alvo && normalize(atual) !== normalize(alvo)) {
-    await setMunicipio(token, carId, alvo /*, codigo */);
-    municipioChanged = true;
-  }
-  // 2) abrangência
-  const abr = getAbrangenciaGeom(req); // ou endpoint dedicado
-  const precisa =
-    !abr ||
-    !coversBbox(abr, args.shape.bbox, { marginM: 500 }); // margem segurança
-  let abrangenciaChanged = false;
-  if (precisa) {
-    const nova = bboxToPolygon(expandBbox(args.shape.bbox, 2000)); // 2 km
-    await setAbrangencia(token, carId, nova);
-    abrangenciaChanged = true;
-  }
-  return { ... };
-}
+  municipioAntes: string; municipioDepois: string; municipioChanged: boolean;
+  abrangenciaChanged: boolean; baserefWaitedMs: number; warnings: string[];
+}>
 ```
 
-### Regra de cobertura
+1. `req = Buscar(carId)` — snapshot salvo como artefato (`prepare-snapshot.json`) p/ debug.
+2. **Município**: `req.Municipio.Codigo` (IBGE) vs `shape.municipioDetectado.ibge`.
+   - Igual → skip (evento `municipio_check` "já está em X").
+   - Diferente → confirmar com `BuscarMunicipioGeo` (centroid DENTRO do polígono oficial do
+     município alvo; se fora dos dois, abortar com warning — divisa ambígua, usuário decide).
+   - `SalvarGrupoPropriedade`: enviar o objeto do `Buscar` com `Municipio` substituído pelo
+     objeto completo do alvo (`{Id: chaveSimcar, Estado: {Id: 11,…}, Texto, Codigo: ibge, …}`),
+     `PropriedadeNome` e demais campos INALTERADOS.
+   - Re-`Buscar` e conferir `Municipio.Codigo` mudou. Falhou → job `failed` (não importar
+     shape em município errado — a SEMA valida contenção no município).
+3. **Abrangência**: retângulo atual = `req.{Menor,Maior}{Latitude,Longitude}Gdec`.
+   - `cobre = abrangência ⊇ expand(bbox_shape, SIMCAR_ABRANGENCIA_MARGIN_M=500)` (em graus,
+     conversão simples por latitude média).
+   - Não cobre (ou campos nulos/zerados) → alvo = `expand(bbox_shape, 2000 m)`:
+     a. tentar `SalvarAreaAbrangencia {Id, Menor…, Maior…}` direto;
+     b. se rejeitar/não surtir efeito (re-Buscar confere), `LimparAreaAbrangencia/{id}` e
+        salvar de novo. **Limpar descarta as geometrias do projeto** — aceitável no CAR-teste
+        (vamos importar por cima), mas registrar na timeline.
+   - Poll `BuscarStatusProcessamento.BaseRefStatus` até `[CONCLUIDO]` (ou `null` está ok se a
+     SEMA não disparar BaseRef — validar na task 10; timeout `SIMCAR_BASEREF_TIMEOUT_MS=20min`;
+     `[ERRO]` → 1 tentativa `ReprocessarBaseRef/{id}`, depois `failed`).
+4. **Nunca** mexer em Interessados/Dominialidade/objetivo — fora do escopo.
 
-- Converter bbox shape + abrangência para métrico (UTM local)
-- `covers` se abrangência contém bbox expandido por `SIMCAR_ABRANGENCIA_MARGIN_M` (default 500–2000 m)
-- Se abrangência for só ponto/município sem polígono: sempre atualizar com bbox expandido
+### Skip inteligente
 
-### Segurança do projeto-teste
+Município igual E abrangência já cobre → prepare vira 2 GETs (rápido). É o caso comum quando
+o escritório trabalha vários shapes da mesma região.
 
-- **Nunca** chamar prepare em CAR que não seja `SIMCAR_TEST_CAR_ID`
-- Guard:
+## Validação live dos endpoints de escrita (pré-requisito, task 9)
 
-```ts
-if (carId !== config.testCarId) throw new Error("prepare só no projeto-teste");
-```
+Sequência segura no 270069 (estado atual: Querência, V24 importado):
 
-## Fallback se API de escrita não existir ainda
-
-P0/P1 pode importar **sem** prepare (Santa Clara já no município certo para testes locais).  
-P2 bloqueia import com erro claro se município do shape ≠ projeto e mutação indisponível:
-
-> “Não foi possível ajustar o município do projeto-teste automaticamente. Configure manualmente no SIMCAR ou complete a integração da aba Propriedade.”
+- [ ] `SalvarGrupoPropriedade` trocando Querência → Canarana; re-Buscar confirma; **reverter**
+      para Querência; re-Buscar confirma. Documentar payload mínimo aceito em `11`.
+- [ ] `SalvarAreaAbrangencia` com retângulo ~igual ao atual +1 km; observar `BaseRefStatus`
+      e cronometrar; documentar se precisou de Limpar.
+- [ ] Se precisou Limpar: reimportar o ZIP FINAL da Santa Clara
+      (`backend/fixtures/teste_1/Recorte_SANTA_CLARA_FINAL_16-07-26.zip`) para restaurar estado.
+- [ ] Registrar TUDO (payloads reais, respostas) em `11-endpoints-sema-descobertos.md`.
 
 ## Testes
 
-- `extractShapeContext` com fixture `backend/fixtures/teste_1/Recorte_SANTA_CLARA_FINAL_16-07-26.zip`
-- `coversBbox` unitário
-- prepare com mock client (município muda / não muda)
+- `municipio-mt`: centroid da Santa Clara → QUERÊNCIA/5107065; ponto em Cuiabá → CUIABÁ;
+  ponto fora de MT → `nao-detectado`.
+- `coversBbox` com margem: casos cobre/não-cobre/abrangência nula.
+- `prepare-project` com client mockado: skip / muda-município / muda-abrangência /
+  BaseRef timeout / Salvar falha → failed.
+- Live checklist acima (não em CI).

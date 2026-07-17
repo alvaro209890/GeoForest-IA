@@ -1,156 +1,91 @@
-# 02 — Módulo `backend/simcar-oraculo`
+# 02 — Módulo `backend/simcar-oraculo` (estado real + P1.5 + extensões)
 
-## Objetivo
+## O que JÁ existe e funciona (rodada Hermes 16/07, live login/Buscar OK)
 
-Portar o cliente de laboratório para TypeScript **dentro do backend**, com tipos, testes e zero dependência de `.oraculo-scratch` em runtime.
+| Arquivo | Conteúdo | Notas |
+|---------|----------|-------|
+| `config.ts` | env SIMCAR_* (cpf/senha/testCarId/root/polls/timeouts) | `PROCESSAR_MODE` será REMOVIDO (D2) |
+| `scramble.ts` + `scramble-impl.js` | scramble verbatim do bundle | ok |
+| `client.ts` | login (token cache 25min), get/post/download/uploadZip, Buscar, BuscarStatusProcessamento | headers browser-like ok |
+| `queue.ts` | fila serial global + length | ok |
+| `import-shape.ts` | upload → ImportarArquivoShape {RequerimentoId, Arquivo} → poll → PDF | ok (guard assertTestCarId) |
+| `process-geo.ts` | ProcessarGeo/{id} → poll → PDF + erros-zip | ok |
+| `shape-context.ts` | bbox/centroid/camadas do ZIP (local) | municipioHint nunca preenchido (P2) |
+| `routes.ts` | 8 rotas `/api/simcar-oraculo/*` | ⚠️ bugs P1.5 abaixo |
+| `simcar-oraculo.test.ts` | 8 testes | ampliar |
 
-## Arquivos a criar
+## P1.5 — BUGS a corrigir ANTES de tudo (achados na revisão de 16/07)
 
-### `backend/simcar-oraculo/config.ts`
+| # | Bug | Onde | Correção |
+|---|-----|------|----------|
+| B1 | **Coleção `simcar_oraculo_jobs` fora da whitelist** → `writeDocBySegments` lança INVALID_DOC_PATH e `readDocBySegments` devolve null: **as rotas do oráculo não persistem job nenhum em runtime** (foram validadas por script, não pela rota) | `local-storage.ts:204` e `:212` | adicionar `simcar_oraculo_jobs` às duas whitelists + teste de round-trip |
+| B2 | Status final do import é SEMPRE `completed` mesmo com `outcome.ok=false` (`outcome.ok ? "completed" : "completed"`) | `routes.ts:161` | `ok ? 'completed' : 'completed'`→ manter `completed` com `importOk:false` é DESEJADO para import reprovado (não é falha de infra), mas o ternário morto confunde — trocar por constante + comentário; falha de INFRA (exception) continua `failed` |
+| B3 | `timelinePush` persistido como campo literal — merge shallow não faz append; timeline não acumula até o final sobrescrever | `routes.ts:144` | ler doc atual, `timeline: [...(doc.timeline||[]), evento]` (ou acumular em memória e gravar sempre o array inteiro) |
+| B4 | `/jobs/:id/pdf-import` e `/pdf-process` leem o MESMO campo `pdfRelativePath` | `routes.ts:321-322` | campos separados `importPdfRelativePath` / `processPdfRelativePath` (pipeline único vai ter os dois no mesmo job) |
+| B5 | `simcarGet` aceita `timeoutMs` e não repassa ao req | `client.ts:97-110` | repassar |
+| B6 | 401/sessão derrubada no meio de import/process não renova token (só `test-project` faz `clearSimcarTokenCache`) | `client.ts` + fluxos | wrapper `withSimcarAuthRetry(fn)`: em 401, clear cache + relogin + 1 retry |
+| B7 | `markPersistedRunningJobsInterrupted` não cobre `processar_projeto_jobs` nem `simcar_oraculo_jobs` → job fica `running` para sempre após restart | `backend/index.ts` (boot) | incluir as coleções novas |
+| B8 | `saveUserBuffer` não tipa as áreas `simcar-oraculo/*` | `local-storage.ts:272-291` | adicionar áreas tipadas + `ensureUserScaffold` |
+| B9 | Comentário do config promete default ORACULO mas código default LOCAL | `config.ts:29-31` | some junto com PROCESSAR_MODE (D2): `simcarConfigured` passa a ser o único gate |
 
-```ts
-export type ProcessarMode = "LOCAL" | "ORACULO" | "HYBRID";
+## Extensões novas do módulo
 
-export function getSimcarOraculoConfig() {
-  const mode = (process.env.PROCESSAR_MODE || "ORACULO").toUpperCase() as ProcessarMode;
-  return {
-    mode: (["LOCAL", "ORACULO", "HYBRID"].includes(mode) ? mode : "ORACULO") as ProcessarMode,
-    cpf: String(process.env.SIMCAR_CPF || "").replace(/\D/g, ""),
-    senha: String(process.env.SIMCAR_SENHA || ""),
-    testCarId: String(process.env.SIMCAR_TEST_CAR_ID || "270069"),
-    root:
-      process.env.SIMCAR_ROOT ||
-      "https://monitoramento.sema.mt.gov.br/simcar/tecnico.api/api",
-    pollMs: Number(process.env.SIMCAR_POLL_MS || 5000),
-    importTimeoutMs: Number(process.env.SIMCAR_IMPORT_TIMEOUT_MS || 15 * 60 * 1000),
-    processTimeoutMs: Number(process.env.SIMCAR_PROCESS_TIMEOUT_MS || 30 * 60 * 1000),
-  };
-}
-
-export function assertSimcarCredentials() {
-  const c = getSimcarOraculoConfig();
-  if (!c.cpf || !c.senha) {
-    throw new Error("SIMCAR_CPF/SIMCAR_SENHA não configurados no backend do PC servidor.");
-  }
-  return c;
-}
+```
+backend/simcar-oraculo/
+  prepare-project.ts      # P2 — município + abrangência (ver 04)
+  municipio-mt.ts         # P2 — malha IBGE MT local + point-in-polygon + nome→{ibge, chaveSimcar}
+  pipeline.ts             # P3.5 — orquestra prepare→import→process→artefatos→rounds
+  sema-report-parse.ts    # P3.5 — PDF SEMA → errosResumo[] {camada, erro, qtd, feicoes?}
+  autofix/                # P5/P6 — ver 06
+    plan.ts  apply.ts  deepseek.ts  actions/*.ts
 ```
 
-### `backend/simcar-oraculo/scramble.ts`
-
-- Copiar lógica de `acompanhamento-de-processos/backend-email-render/simcar-scramble.js` **para dentro do repo** (ou dependency local file) para não depender de path absoluto fora do projeto.
-- **Não** commitar senhas.
-
-### `backend/simcar-oraculo/client.ts`
-
-Funções mínimas (baseadas em `simcar-client.mjs`):
+### `pipeline.ts` (assinatura)
 
 ```ts
-export async function simcarLogin(cpf: string, senha: string): Promise<string>;
-export async function simcarGet(token: string, path: string): Promise<unknown>;
-export async function simcarPost(token: string, path: string, body?: unknown): Promise<unknown>;
-export async function simcarDownload(
-  token: string,
-  path: string,
-): Promise<{ buffer: Buffer; contentType: string | null }>;
-export async function simcarUploadShape(
-  token: string,
-  carId: string,
-  zipBuffer: Buffer,
-  fileName: string,
-): Promise<unknown>;
-export async function simcarBuscar(token: string, carId: string): Promise<SimcarRequerimento>;
-```
-
-Headers browser-like obrigatórios (oráculo):
-
-```ts
-const BROWSER_HEADERS = {
-  "User-Agent": "Mozilla/5.0 ... Chrome/126 Safari/537.36",
-  Origin: "https://monitoramento.sema.mt.gov.br",
-  Referer: "https://monitoramento.sema.mt.gov.br/simcar/tecnico.app/",
-};
-```
-
-### `backend/simcar-oraculo/queue.ts`
-
-Fila serial global (ver 01).
-
-### `backend/simcar-oraculo/import-shape.ts`
-
-```ts
-export type ImportResult = {
-  ok: boolean;
-  status: string;           // [FINALIZADO] | [COM_PENDENCIA] | ...
-  detalhes: string;
-  pdfBuffer?: Buffer;
-  rawStatus: unknown;
-};
-
-export async function importZipOnTestProject(args: {
-  carId: string;
-  zip: Buffer;
+export async function runOraculoPipeline(args: {
+  uid: string;
+  jobId: string;
+  zip: Buffer;                 // rodada 1 = ZIP do usuário
   fileName: string;
-  onProgress?: (ev: { step: string; message: string; percent?: number }) => void;
-}): Promise<ImportResult>;
+  autoProcess: boolean;        // default true (decisão do fluxo)
+  autofix: boolean;            // default true (D4)
+  maxRounds: number;           // default 3 (AUTOFIX_MAX_ROUNDS)
+  onEvent: (ev: OraculoEvent) => void;   // persiste timeline + SSE
+}): Promise<OraculoJobResult>;
 ```
 
-Passos internos:
-1. login (cache token ~25 min se possível)
-2. upload multipart (mesmo contrato do app técnico)
-3. `ImportarArquivoShape/{carId}` (ou path real do bundle)
-4. poll `Buscar` até import `CONCLUIDO` ou timeout
-5. download PDF import
+Regras:
+- TUDO que toca SEMA dentro de `enqueueSimcar` (rodada inteira; rodadas seguintes re-enfileiram).
+- `assertTestCarId` antes de QUALQUER mutação (prepare/import/process) — permanece lei.
+- Cancelamento: checar `cancelRequested` entre cada poll; SEMA não cancela mid-flight de forma
+  confiável (existem `CancelarImportacaoShape`/`CancelarProcessamentoGeo` — tentar best-effort e
+  registrar na timeline; nunca confiar).
+- Timeout por etapa: import 15 min, process 30 min, BaseRef 20 min (`SIMCAR_BASEREF_TIMEOUT_MS`).
+- Falha de INFRA (timeout, 5xx persistente, login) → job `failed`. Reprovação da SEMA
+  (COM_PENDENCIA) → job `completed` com `importOk/processOk=false` — é resultado, não erro.
 
-### `backend/simcar-oraculo/process-geo.ts`
+### `sema-report-parse.ts`
 
-Análogo com `ProcessarGeo/{carId}` + poll `ProcessamentoStatus` + downloads.
+- Extrair texto do PDF de importação/processamento da SEMA (`pdf-parse` já é dependência do repo).
+- Saída: `{ resumo: [{camada, erro, qtd}], porFeicao?: [{camada, feicao, erro}] , raw: string }`.
+- Mensagens-alvo conhecidas (calibradas 16/07): "A geometria contém pontos repetidos",
+  "Borda do polígono se cruza", "Duas ou mais bordas ou buracos… se sobrepõem",
+  "Polígono complexo…", "Geometria deve ser completamente contida por AVN, AUAS ou AREA_CONSOLIDADA…".
+- Se o parse falhar: PDF continua disponível; `errosResumo=[]` + warning na timeline
+  (autofix então usa DeepSeek como fallback de leitura — ver 06).
 
-### `backend/simcar-oraculo/prepare-project.ts`
+## Testes do módulo (ampliar)
 
-Ver arquivo `04-municipio-e-abrangencia.md`.
+| Teste | O quê |
+|-------|-------|
+| `local-storage` round-trip `simcar_oraculo_jobs` | B1 |
+| timeline append (3 eventos → array com 3) | B3 |
+| poll machine import/process com sequência fake AGUARDANDO→EXECUTANDO→CONCLUIDO | cobre timeouts e [ERRO] |
+| `withSimcarAuthRetry` renova em 401 e não loopa | B6 |
+| `prepare-project` com mock (município igual → skip; diferente → salvar+re-Buscar) | P2 |
+| `municipio-mt` centroid Querência → 5107065 | P2 |
+| `sema-report-parse` com os PDFs reais v21/v22/v23 salvos no scratch | P3.5 |
+| pipeline: import reprova → não processa → autofix roda → 2ª rodada | P5 (mock SEMA) |
 
-### Token cache
-
-```ts
-// tokenCache: { token, expiresAtMs }
-// Renovar se 401 ou se faltam < 60s
-```
-
-## Integração em `processar-projeto.ts`
-
-Onde hoje `importar` chama `runImportPhase(zip)`:
-
-```ts
-const mode = getSimcarOraculoConfig().mode;
-if (mode === "ORACULO" || mode === "HYBRID") {
-  await enqueueSimcar(async () => {
-    // prepare + import
-  });
-}
-if (mode === "LOCAL" || mode === "HYBRID") {
-  const local = runImportPhase(zip, fileName);
-  // anexar no resultado
-}
-```
-
-Em `ORACULO` puro, **não** bloquear o usuário com falhas só do detector local se o SIMCAR aprovou (mas em HYBRID mostrar os dois).
-
-## Testes
-
-| Arquivo | O quê |
-|---------|--------|
-| `backend/simcar-oraculo/config.test.ts` | mode default, assert creds |
-| `backend/simcar-oraculo/queue.test.ts` | serialização de 2 jobs |
-| `backend/simcar-oraculo/client.test.ts` | mock fetch (login body scramble shape) |
-| `backend/simcar-oraculo/import-shape.test.ts` | poll machine com status fake |
-
-**Live (opcional, flag):** `SIMCAR_LIVE=1` + credenciais — só no PC, não em CI.
-
-```bash
-# unitários
-npx vitest run --root . backend/simcar-oraculo
-
-# live (manual)
-SIMCAR_LIVE=1 SIMCAR_CPF=... SIMCAR_SENHA=... npx tsx backend/simcar-oraculo/scripts/smoke-buscar.ts
-```
+Live (manual, PC): `SIMCAR_LIVE=1` + scripts `scripts/smoke-*.ts` (nunca em CI).

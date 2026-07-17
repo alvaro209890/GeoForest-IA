@@ -1,261 +1,154 @@
-# 07 — Tarefas de implementação (bite-sized)
+# 07 — Tarefas de implementação v2 (bite-sized)
 
 > **For Hermes:** uma task por vez; TDD onde indicado; commit ao fim de cada task.
+> Live SEMA só no PC com credenciais (`.oraculo-scratch/simcar-oraculo.env`), NUNCA em CI.
+> Verificação global ao fim de cada fase:
+> `npx vitest run --root . backend/simcar-oraculo backend/processar-projeto.test.ts backend/geometry-errors.test.ts`
 
-**Repo:** `/home/acer/Documentos/GeoForest-IA`  
-**Branch sugerida:** `feat/simcar-oraculo` → merge `main` após P3 green.
-
----
-
-### Task 1: Scaffold do módulo + config
-
-**Objective:** Criar pasta e config tipada lendo env.
-
-**Files:**
-- Create: `backend/simcar-oraculo/config.ts`
-- Create: `backend/simcar-oraculo/config.test.ts`
-- Create: `backend/simcar-oraculo/types.ts`
-
-**Step 1:** Teste que `getSimcarOraculoConfig().mode` default é `ORACULO` e aceita `LOCAL`.
-
-**Step 2:** Implementar `config.ts` (código completo em `02-modulo-simcar-oraculo.md`).
-
-**Step 3:**
-```bash
-npx vitest run --root . backend/simcar-oraculo/config.test.ts
-```
-Expected: PASS
-
-**Step 4:** Commit `feat(simcar-oraculo): config e types`
+**Branch:** direto no `main` (padrão do Álvaro), commits pequenos.
 
 ---
 
-### Task 2: Portar scramble para o repo
+## Fase P1.5 — bugs bloqueantes (fazer PRIMEIRO)
 
-**Objective:** Não depender de path absoluto fora do GeoForest.
+### T1 — Whitelist `simcar_oraculo_jobs` (B1) ⚠️ rotas hoje não persistem nada
+- Modify: `backend/local-storage.ts:204,212` (+ áreas `simcar-oraculo/*` em saveUserBuffer, B8)
+- Test: round-trip write/read doc em `simcar_oraculo_jobs`; save/load buffer área nova
+- Commit: `fix(simcar-oraculo): whitelist de coleção e áreas de storage`
 
-**Files:**
-- Create: `backend/simcar-oraculo/scramble.ts` (copiar de `acompanhamento-de-processos/backend-email-render/simcar-scramble.js`)
-- Create: `backend/simcar-oraculo/scramble.test.ts` (round-trip ou snapshot do formato)
+### T2 — Timeline com append real (B3) + status/ok coerentes (B2) + campos de PDF separados (B4)
+- Modify: `backend/simcar-oraculo/routes.ts`
+- Test: 3 eventos → timeline length 3; import reprovado → `status=completed, importOk=false`;
+  job com import+process → dois paths de PDF distintos
+- Commit: `fix(simcar-oraculo): timeline acumulada, campos de resultado e PDFs`
 
-**Step 1:** Teste: `scramble(JSON.stringify({Login:"1",Senha:"x",NovaSenha:""}))` retorna string não vazia.
+### T3 — Robustez do client (B5, B6) + interrupted no boot (B7)
+- Modify: `client.ts` (timeout no GET; `withSimcarAuthRetry` 401→relogin→1 retry),
+  `backend/index.ts` (markPersistedRunningJobsInterrupted cobre `simcar_oraculo_jobs` e
+  `processar_projeto_jobs`)
+- Test: mock 401 uma vez → renova e completa; não loopa em 401 duplo
+- Commit: `fix(simcar-oraculo): retry de sessão, timeouts e jobs interrompidos no boot`
 
-**Step 2:** Implementar.
+## Fase P2 — município + abrangência
 
-**Step 3:** Commit `feat(simcar-oraculo): scramble SIMCAR no repo`
+### T4 — Malha municipal MT + `municipio-mt.ts`
+- Gerar `config/municipios-mt.geojson` (IBGE simplificado) + tabela `nome→{ibge}`;
+  resolver `chaveSimcar` em runtime via `ListarMatoGrosso` (cache 24h)
+- Create: `backend/simcar-oraculo/municipio-mt.ts` + testes (Santa Clara→5107065; fora de MT→null)
+- Wire: `shape-context.ts` preenche `municipioDetectado`; upload response nova (03)
+- Commit: `feat(simcar-oraculo): detecção local de município (malha IBGE MT)`
 
----
+### T5 — Validação LIVE dos endpoints de escrita (sem código de produção)
+- Script: `scripts/probe-escrita.ts` (só no PC): SalvarGrupoPropriedade Querência→Canarana→
+  reverte; SalvarAreaAbrangencia +1km; cronometrar BaseRef; se Limpar foi necessário,
+  restaurar com o ZIP FINAL da fixture
+- Deliverable: atualizar `11-endpoints-sema-descobertos.md` (payload mínimo, precisa-Limpar?,
+  tempo BaseRef) — **gate para T6**
+- Commit: `docs(simcar-oraculo): payloads reais de propriedade/abrangência validados`
 
-### Task 3: Cliente HTTP SIMCAR (login/get/post/download)
+### T6 — `prepare-project.ts`
+- Create: prepare-project.ts + testes com client mockado (skip / muda município / muda
+  abrangência / BaseRef timeout / salvar falha → failed) — algoritmo em `04`
+- Guard: `assertTestCarId` na entrada; `PropriedadeNome` do payload comparado byte a byte
+  com o do Buscar (teste garante que nunca muda — D5)
+- Commit: `feat(simcar-oraculo): prepare município e abrangência no CAR-teste`
 
-**Objective:** Cliente TS com headers do app técnico.
+## Fase P3.5 — pipeline único + parse
 
-**Files:**
-- Create: `backend/simcar-oraculo/client.ts`
-- Create: `backend/simcar-oraculo/client.test.ts` (mock global fetch)
+### T7 — `sema-report-parse.ts`
+- pdf-parse nos PDFs reais salvos (v21/v22/v23 do scratch + fixtures) → `errosResumo`
+- Test: v23 → `[{AREA_UMIDA, pontos repetidos, 11}]`; v22-process → contida ×41
+- Commit: `feat(simcar-oraculo): parse dos relatórios PDF da SEMA`
 
-**Step 1:** Teste login: mock 200 com body `"TECNICO abc"` → token `TECNICO abc`.
+### T8 — `pipeline.ts` + rotas novas + SSE
+- Create: pipeline.ts (02); rotas `POST /pipeline`, `GET /jobs/:id/events` (SSE via
+  processing-jobs), `GET /jobs/:id/artifact/:key`, `POST /jobs/:id/autofix`, DELETE cancel
+- Job doc: `rounds[]`, `artifacts{}`, timeline acumulada; artefatos em
+  `users/{uid}/simcar-oraculo/{jobId}/r{N}/…` (01)
+- Test: pipeline com SEMA mockada — caminho feliz; import reprova e para (autofix ainda off)
+- Commit: `feat(simcar-oraculo): pipeline único upload→prepare→import→process`
 
-**Step 2:** Implementar login/get/post/download (base `.oraculo-scratch/simcar-client.mjs`).
+### T9 — Downloads SEMA extras
+- No fim de cada rodada, baixar o que existir: PDF import, PDF process, erros-zip,
+  `DownloadArquivoEnviado`, `DownloadArquivoProcessado` (tolerar 400 = não existe)
+- Commit: `feat(simcar-oraculo): artefatos completos da SEMA por rodada`
 
-**Step 3:** Commit `feat(simcar-oraculo): client HTTP`
+## Fase P4 — front
 
----
+### T10 — Reescrever `ProcessarProjetoAnalysis.tsx` (ORACULO-only)
+- Remover seções locais; dropzone → preview (município + dropdown fallback) → botão único
+  "Enviar ao SIMCAR"; componente `OraculoTimeline`; cards por rodada com downloads;
+  estados/copy de `05`; SSE com retry + fallback poll
+- Commit: `feat(ui): aba Processar projeto 100% SIMCAR real`
 
-### Task 4: Fila serial
+### T11 — Wiring Dashboard (4 pontos) + histórico
+- `mapProcessarDocToHistoryItem` lê `simcar_oraculo_jobs` + legado; atualizar os 3 blocos de
+  status hardcodado; não persistir timeline/rows gigantes no doc de histórico
+- Commit: `feat(ui): histórico do oráculo SIMCAR no dashboard`
 
-**Objective:** Dois jobs não se intercalam.
+### T12 — Matar rotas locais (D2)
+- `/api/processar-projeto/importar|processar` → 410 Gone (1 release); remover
+  `assertImportAllowsProcess`, fallback :1654-1665 e chamadas de `runImportPhase`/
+  `runProcessPhase` DESTA aba; `import-report-pdf` sai da rota da aba
+- Cuidado: `geometry-errors` (outra aba) não usa nada disso — confirmar com grep antes de apagar
+- Test: regressão `geometry-errors.test.ts` verde; upload continua ok
+- Commit: `feat(processar-projeto)!: remove validação local — veredito é do SIMCAR`
 
-**Files:**
-- Create: `backend/simcar-oraculo/queue.ts`
-- Create: `backend/simcar-oraculo/queue.test.ts`
+## Fase P5 — autofix import
 
-**Step 1:** Teste: job A delay 50ms, job B delay 10ms; ordem de fim = A depois B se enfileirados A,B.
+### T13 — `zip-rewrite.ts` + actions de import
+- Promover v22/v24 + fixLayerGeometry: `remove_duplicate_vertices`, `clean_degenerate_rings`,
+  `unkink_self_intersection`, `remove_glued_holes`, `split_complex_polygon`
+- Test por action: ZIP sintético entra errado → sai sem o defeito → contagens/prj preservados
+  (regras de engenharia de `06` viram asserts: sem buffer, fragmentos <100 m² filtrados…)
+- Commit: `feat(autofix): ações mecânicas de importação`
 
-**Step 2:** Implementar `enqueueSimcar`.
+### T14 — `plan.ts` + `deepseek.ts` + fallback
+- Cliente DeepSeek (deepseek-v4-pro, zod, retry content-vazio, timeout, sem chave→fallback);
+  tabela fixa erro→ação como fallback; filtro de ações fora do inventário
+- Test: resposta IA mockada válida/inválida/fora-do-inventário; sem chave → fallback
+- Commit: `feat(autofix): planner DeepSeek V4 Pro com fallback determinístico`
 
-**Step 3:** Commit `feat(simcar-oraculo): fila serial`
+### T15 — Loop no pipeline (D4) + UI do FixPlan
+- Loop ≤3 rodadas com regras de parada (06); artefatos corrigido_rN.zip + fixplan.json;
+  front: cards de rodada + modal "o que a IA entendeu" + botão manual pós-parada
+- Test: mock SEMA que aprova na rodada 2; que nunca melhora (para em "sem melhora")
+- Commit: `feat(autofix): loop automático corrigir→reenviar (3 rodadas)`
 
----
+### T16 — Live P5: oráculo V23
+- ZIP V23 (11 pontos repetidos) pelo produto → rodada 2 deve importar FINALIZADO
+- Deliverable: registrar em `09` o resultado; ajustar calibração se divergir
+- Commit: `test(autofix): V23 aprovado via loop automático (live)`
 
-### Task 5: Buscar projeto + health route
+## Fase P6 — autofix process
 
-**Objective:** `Buscar/{id}` e rota health.
+### T17 — `clip_layer_to_cover` + clean pós-clip (v23/v9 promovidos)
+- Test: fixture com úmida fora do cover → clip → sem fragmentos <100 m², IDs únicos
+- Live: V22 → fix → reimporta → processa; meta: zerar os 41; reservatório/ARL duplicado
+  aparecem como `naoCorrigivel` com orientação
+- Commit: `feat(autofix): recorte de AREA_UMIDA à cobertura + limpeza`
 
-**Files:**
-- Create: `backend/simcar-oraculo/index.ts` (exports)
-- Modify: `backend/index.ts` — registrar `GET /api/simcar-oraculo/health` (auth)
-- Create: `backend/simcar-oraculo/scripts/smoke-buscar.ts` (manual)
+## Fase P7 — fechamento
 
-**Step 1:** Unit com mock Buscar.
+### T18 — Limpeza de código morto + docs
+- Remover PROCESSAR_MODE/branches LOCAL mortos; atualizar `docs/SIMCAR_ORACULO.md`,
+  `README_PROJETO.md`; changelog novo
+- Commit: `chore: remove modo local do processar-projeto + docs`
 
-**Step 2:** Manual no PC:
-```bash
-export SIMCAR_CPF=... SIMCAR_SENHA=...
-npx tsx backend/simcar-oraculo/scripts/smoke-buscar.ts 270069
-```
-Expected: JSON com Nome/Situacao/Municipio*
-
-**Step 3:** Commit `feat(simcar-oraculo): buscar + health`
-
----
-
-### Task 6: Upload + ImportarArquivoShape + poll
-
-**Objective:** Importar ZIP no projeto-teste e baixar PDF.
-
-**Files:**
-- Create: `backend/simcar-oraculo/import-shape.ts`
-- Create: `backend/simcar-oraculo/artifacts.ts`
-- Modify: `backend/processar-projeto.ts` — branch `ORACULO` no handler `importar`
-
-**Step 1:** Teste de máquina de estados do poll com status fake: AGUARDANDO → EXECUTANDO → CONCLUIDO FINALIZADO.
-
-**Step 2:** Implementar import real.
-
-**Step 3:** Live smoke com fixture FINAL (só se import não destruir dados críticos — é projeto-teste):
-```bash
-npx tsx backend/simcar-oraculo/scripts/smoke-import.ts \
-  270069 backend/fixtures/teste_1/Recorte_SANTA_CLARA_FINAL_16-07-26.zip
-```
-Expected: PDF baixado; status FINALIZADO ou COM_PENDENCIA documentado.
-
-**Step 4:** Commit `feat(simcar-oraculo): import shape no projeto-teste`
-
----
-
-### Task 7: Wire job SSE de import
-
-**Objective:** Front já existente recebe steps.
-
-**Files:**
-- Modify: `backend/processar-projeto.ts` (emit progress events)
-- Modify: `client/src/components/ProcessarProjetoAnalysis.tsx` (timeline labels)
-
-**Step 1:** Emular eventos no status e validar UI manual.
-
-**Step 2:** Commit `feat(ui): timeline oráculo import`
-
----
-
-### Task 8: extractShapeContext
-
-**Objective:** Bbox + município hint do ZIP.
-
-**Files:**
-- Create: `backend/simcar-oraculo/shape-context.ts`
-- Create: `backend/simcar-oraculo/shape-context.test.ts`
-- Fixture: `backend/fixtures/teste_1/Recorte_SANTA_CLARA_FINAL_16-07-26.zip`
-
-**Step 1:** Teste: bbox finito; centroid dentro do Brasil MT roughly.
-
-**Step 2:** Commit `feat(simcar-oraculo): shape context do ZIP`
-
----
-
-### Task 9: Descoberta endpoints município/abrangência
-
-**Objective:** Documentar paths reais do bundle.
-
-**Files:**
-- Create: `backend/simcar-oraculo/docs/endpoints-descobertos.md`
-
-**Step 1:** Buscar no bundle (read-only).
-
-**Step 2:** Testar GET/POST em 270069 com payload mínimo (cuidado).
-
-**Step 3:** Commit `docs(simcar-oraculo): endpoints propriedade/caracterização`
+### T19 — Deploy PC servidor + smoke produção
+- Checklist de `08-seguranca-ops.md` (env, systemd, tunnel) + E2E de `09` no ambiente real
+- Commit: (se precisar de ajuste) `fix: ajustes de deploy do oráculo`
 
 ---
 
-### Task 10: prepare-project (município + abrangência)
+## Mapa fase → tasks
 
-**Objective:** Ajustar projeto-teste antes do import.
-
-**Files:**
-- Create: `backend/simcar-oraculo/prepare-project.ts`
-- Create: `backend/simcar-oraculo/prepare-project.test.ts` (mocks)
-- Modify: `import-shape.ts` / handler import — chamar prepare antes
-
-**Step 1:** Testes unitários coversBbox + skip se mesmo município.
-
-**Step 2:** Live: shape de outro município (se disponível) ou forçar município errado e reverter.
-
-**Step 3:** Commit `feat(simcar-oraculo): prepare município e abrangência`
-
----
-
-### Task 11: ProcessarGeo + artefatos
-
-**Objective:** Process + PDF + ZIP erros.
-
-**Files:**
-- Create: `backend/simcar-oraculo/process-geo.ts`
-- Modify: handler `processar` em `processar-projeto.ts`
-
-**Step 1:** Poll machine unit test.
-
-**Step 2:** Live após import OK.
-
-**Step 3:** Commit `feat(simcar-oraculo): processar geo`
-
----
-
-### Task 12: Front completo ORACULO
-
-**Objective:** Labels, downloads SEMA, aviso projeto-teste, botão autofix disabled.
-
-**Files:**
-- Modify: `ProcessarProjetoAnalysis.tsx`
-- Optional: CSS/tailwind existente
-
-**Step 1:** Checklist visual (09).
-
-**Step 2:** Commit `feat(ui): modo oráculo SIMCAR na aba processar`
-
----
-
-### Task 13: Docs env + README ops
-
-**Objective:** Como configurar o PC servidor.
-
-**Files:**
-- Create: `docs/SIMCAR_ORACULO.md`
-- Modify: `README_PROJETO.md` (link)
-
-Env exemplo (sem segredos):
-
-```
-PROCESSAR_MODE=ORACULO
-SIMCAR_TEST_CAR_ID=270069
-SIMCAR_CPF=
-SIMCAR_SENHA=
-SIMCAR_POLL_MS=5000
-AUTOFIX_MAX_ROUNDS=3
-```
-
-**Step 3:** Commit `docs: oráculo SIMCAR no backend do PC`
-
----
-
-### Task 14 (P5 depois): autofix dups
-
-Ver `06-autofix-roadmap.md` — não bloquear P0–P4.
-
----
-
-## Ordem de merge
-
-P0: Tasks 1–5  
-P1: Tasks 6–7  
-P2: Tasks 8–10  
-P3: Task 11  
-P4: Task 12–13  
-P5+: Task 14+
-
-## Verificação global
-
-```bash
-npx vitest run --root . backend/simcar-oraculo backend/processar-projeto.test.ts backend/geometry-errors.test.ts
-```
-Expected: all pass (processar-projeto tests não devem quebrar no mode LOCAL default de CI — **importante:** em CI usar `PROCESSAR_MODE=LOCAL` se não houver credenciais).
+| Fase | Tasks | Gate de saída |
+|------|-------|---------------|
+| P1.5 | T1–T3 | vitest verde; rotas persistem job de verdade |
+| P2 | T4–T6 | prepare live validado no 270069 (T5 doc atualizada) |
+| P3.5 | T7–T9 | pipeline mockado verde + artefatos por rodada |
+| P4 | T10–T12 | aba sem validação local; QA visual `09` |
+| P5 | T13–T16 | V23 aprovado via loop no SIMCAR real |
+| P6 | T17 | V22 sem erros de úmida no process real |
+| P7 | T18–T19 | produção no ar + checklist mestre `12` 100% |

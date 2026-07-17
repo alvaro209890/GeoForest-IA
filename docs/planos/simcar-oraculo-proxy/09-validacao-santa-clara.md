@@ -1,70 +1,79 @@
-# 09 — Validação com Santa Clara (CAR 270069)
+# 09 — Validação E2E (CAR 270069 Santa clara)
 
 ## Pré-requisitos
 
 ```bash
-export SIMCAR_CPF='...'          # técnico Álvaro
-export SIMCAR_SENHA='...'
-export SIMCAR_TEST_CAR_ID=270069
-export PROCESSAR_MODE=ORACULO
+set -a && source .oraculo-scratch/simcar-oraculo.env && set +a   # neste PC (gitignored)
+# ou env do systemd no PC servidor
 ```
 
-ZIPs de laboratório (já no scratch / fixtures):
+ZIPs-oráculo (resultados REAIS já conhecidos da SEMA, 16/07):
 
-| ZIP | Expectativa import SEMA | Expectativa process |
-|-----|-------------------------|---------------------|
-| `backend/fixtures/teste_1/Recorte_SANTA_CLARA_FINAL_16-07-26.zip` | FINALIZADO (histórico) | pode ter pendências |
-| `.oraculo-scratch/santa_clara/Recorte_SANTA_CLARA_V22_*.zip` | FINALIZADO | AREA_UMIDA contida ×41 |
-| `.oraculo-scratch/santa_clara/Recorte_SANTA_CLARA_V23_*.zip` | COM_PENDENCIA: pontos repetidos ×11 | — |
-| `.oraculo-scratch/santa_clara/Recorte_SANTA_CLARA_V24_*.zip` | FINALIZADO (se gerado) | a confirmar process |
+| ZIP | Import esperado | Process esperado |
+|-----|-----------------|------------------|
+| `backend/fixtures/teste_1/Recorte_SANTA_CLARA_FINAL_16-07-26.zip` | [FINALIZADO] | pendências reais (reservatório/ARL dup) |
+| `.oraculo-scratch/santa_clara/Recorte_SANTA_CLARA_V22_*.zip` | [FINALIZADO] | [COM_PENDENCIA] AREA_UMIDA contida ×41 |
+| `.oraculo-scratch/santa_clara/Recorte_SANTA_CLARA_V23_*.zip` | [COM_PENDENCIA] pontos repetidos ×11 | — |
+| `.oraculo-scratch/santa_clara/Recorte_SANTA_CLARA_V24_*.zip` | [FINALIZADO] | a confirmar |
 
-## Checklist P1 (import via API do site)
+Estado do CAR-teste é descartável (D1), mas ao TERMINAR uma bateria: reimportar o FINAL
+para deixar o projeto num estado conhecido.
 
-1. Subir backend local com env.
-2. Abrir aba Processar projeto.
-3. Upload V23.
-4. Timeline mostra: fila → prepare → upload → import poll.
-5. Resultado COM_PENDENCIA; PDF import baixável.
-6. Resumo: AREA_UMIDA pontos repetidos quantidade 11 (ou equivalente parseado).
+## Checklist P1.5 (rotas persistem de verdade)
 
-## Checklist P3 (process)
+- [ ] `POST /api/simcar-oraculo/pipeline` com V24 → doc em `users/{uid}/simcar_oraculo_jobs/{id}` existe e atualiza
+- [ ] Timeline acumula (≥6 eventos distintos no doc final)
+- [ ] Derrubar backend no meio → reiniciar → job marcado `interrupted` (não fica `running`)
 
-1. Upload V22 ou V24 com import FINALIZADO.
-2. Clicar Processar.
-3. Aguardar COM_PENDENCIA ou FINALIZADO.
-4. PDF process + (se houver) ZIP erros.
-5. V22: esperar mensagem contenção AREA_UMIDA qty ~41.
+## Checklist P2 (município + abrangência)
 
-## Checklist prepare (P2)
+- [ ] Upload de shape de OUTRO município (usar recorte de teste de Nova Mutum/Canarana se
+      houver; senão deslocar o bbox numa cópia sintética) → preview mostra município detectado
+- [ ] Job muda o município do 270069 (timeline mostra antes/depois); `Buscar` confirma;
+      `PropriedadeNome` continua **"Santa clara"** (D5 — conferir explicitamente)
+- [ ] Job volta com shape da Querência → município restaurado automaticamente
+- [ ] Reduzir abrangência na mão (app SIMCAR) → job expande; BaseRef aguardada; import OK
+- [ ] Shape com centroid fora de MT → job falha CEDO com mensagem clara (não toca SEMA)
 
-1. Forçar município diferente no projeto-teste (manual no SIMCAR).
-2. Upload shape Santa Clara.
-3. Timeline: “ajustando município…”.
-4. `Buscar` após job: município restaurado/alvo.
-5. Abrangência: reduzir artificialmente no SIMCAR → job expande → import ok.
+## Checklist P3.5/P4 (pipeline + front)
 
-## Checklist anti-regressão LOCAL
+- [ ] V22 → timeline completa: fila→município(skip)→abrangência(skip)→upload→import
+      FINALIZADO→process COM_PENDENCIA→artefatos; cards da rodada com PDF import, PDF process,
+      ZIP erros, ZIP enviado baixáveis
+- [ ] V23 (com autofix DESLIGADO via flag) → import_fail; PDF import baixável; resumo "pontos
+      repetidos AREA_UMIDA ×11" parseado
+- [ ] NENHUM traço de validação local na aba (sem relatório GeoForest, sem gate local)
+- [ ] 2 uploads simultâneos (2 navegadores) → segundo mostra posição na fila; jobs não se
+      intercalam; resultados corretos para cada um
+- [ ] Cancelar no meio do poll → job `cancelled`, fila liberada
+- [ ] Restaurar do histórico após F5 → snapshot + downloads ok (sem SSE religado se completed)
+- [ ] Mobile: timeline legível, botões full-width
+
+## Checklist P5/P6 (autofix)
+
+- [ ] V23 com autofix ligado → rodada 1 reprova, FixPlan gerado (explicação DeepSeek visível),
+      rodada 2 importa **[FINALIZADO]** no SIMCAR real
+- [ ] fixplan.json salvo com ações + fonte (deepseek|fallback)
+- [ ] Derrubar DEEPSEEK_API_KEY → mesmo fluxo funciona via fallback (explicação template)
+- [ ] V22 (P6) → clip de úmida na rodada 2 → process real sem os 41; reservatório/ARL dup
+      reportados como "exige edição no GIS" (naoCorrigivel)
+- [ ] ZIP que não melhora (subir 2× o mesmo quebrado sem ação nova) → para com "sem melhora"
+      antes do teto; botão manual desabilitado com motivo
+- [ ] 3 rodadas sem sucesso → para no teto com resumo do que sobrou
+
+## Anti-regressão
 
 ```bash
-PROCESSAR_MODE=LOCAL npx vitest run --root . \
-  backend/processar-projeto.test.ts \
-  backend/geometry-errors.test.ts
+npx vitest run --root . backend/simcar-oraculo backend/geometry-errors.test.ts
 ```
-Expected: pass (paridade local oráculo geométrico preservada).
+- [ ] Aba "Erros de Geometria" intacta (upload + análise local lá continua funcionando)
+- [ ] `processar-projeto.test.ts`: testes das fases locais REMOVIDOS junto com o código (D2);
+      upload/shape-context/storage continuam cobertos
 
-## Critério de aceite da fase ORACULO (P0–P4)
+## Critério de aceite final (espelha `12-checklist-mestre.md`)
 
-- [ ] Credenciais só no env do PC
-- [ ] Import de ZIP do usuário no CAR teste
-- [ ] PDF import no front
-- [ ] Process + PDF process no front
-- [ ] Timeline compreensível
-- [ ] Fila serial (2 uploads simultâneos não corrompem)
-- [ ] Prepare município/abrangência quando endpoints prontos
-- [ ] Botão autofix visível mas disabled (P5)
-
-## Não fazer nesta validação
-
-- Loop de 20 versões de shape
-- Push de credenciais
-- Processar CAR de cliente real
+- [ ] Credenciais só em env (repo público limpo — grep do 08 vazio)
+- [ ] ZIP do usuário → veredito REAL da SEMA sem intervenção manual
+- [ ] Município/abrangência ajustados sozinhos quando necessário, nome intocado
+- [ ] Reprovações viram downloads oficiais + explicação + correção automática ≤3 rodadas
+- [ ] Deploy no PC servidor validado com E2E deste arquivo
