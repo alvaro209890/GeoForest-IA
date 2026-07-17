@@ -69,6 +69,7 @@ import {
   FileStack,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
+import { motion, AnimatePresence } from 'framer-motion';
 import { fetchSignInMethodsForEmail, onAuthStateChanged, sendPasswordResetEmail, signOut } from 'firebase/auth';
 import {
   collection,
@@ -1357,6 +1358,8 @@ function CbersMapPreview({
 export default function Dashboard() {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [selectedErrorLocation, setSelectedErrorLocation] = useState<google.maps.LatLngLiteral | null>(null);
+  const [selectedErrorLabel, setSelectedErrorLabel] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'features' | 'settings'>('simcar-clip');
   // Sub-abas dentro de "Análise de Erros": vértices próximas x áreas não contidas (containment) x erros de geometria
   const [errorAnalysisTab, setErrorAnalysisTab] = useState<'vertices' | 'containment' | 'geometry' | 'processar-projeto'>('vertices');
@@ -8788,8 +8791,18 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           <div className="flex items-center gap-2"></div>
         </header>
 
-        {activeView === 'simcar-clip' ? (
-          <div className="flex-1 overflow-y-auto px-2 sm:px-4 lg:px-6 py-3 sm:py-6 lg:py-8 custom-scrollbar">
+        <div className="flex-1 flex flex-col min-h-0 min-w-0 relative overflow-hidden">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeView}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              transition={{ duration: 0.2 }}
+              className="flex-1 flex flex-col min-h-0 min-w-0"
+            >
+              {activeView === 'simcar-clip' ? (
+                <div className="flex-1 overflow-y-auto px-2 sm:px-4 lg:px-6 py-3 sm:py-6 lg:py-8 custom-scrollbar">
             <div className="max-w-4xl mx-auto space-y-3 sm:space-y-5 lg:space-y-6 animate-fade-in-up">
               <section className="bg-[#0e1612]/60 backdrop-blur-md border border-white/5 rounded-2xl p-3 sm:p-5 lg:p-6">
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
@@ -11998,6 +12011,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               ) : errorAnalysisTab === 'geometry' ? (
                 <GeometryErrorsAnalysis
                   apiFetch={apiFetch}
+                  onHighlightLocation={(loc, lbl) => {
+                    setSelectedErrorLocation(loc);
+                    setSelectedErrorLabel(lbl);
+                  }}
                   onJobSnapshot={(job) => {
                     const item = mapGeometryDocToHistoryItem(String(job?.jobId || job?.id || ''), job);
                     setGeometryHistory((prev) => {
@@ -12025,6 +12042,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               ) : errorAnalysisTab === 'containment' ? (
                 <ContainmentAnalysis
                   apiFetch={apiFetch}
+                  onHighlightLocation={(loc, lbl) => {
+                    setSelectedErrorLocation(loc);
+                    setSelectedErrorLabel(lbl);
+                  }}
                   onJobSnapshot={(job) => {
                     const item = mapContainmentDocToHistoryItem(String(job?.jobId || job?.id || ''), job);
                     setContainmentHistory((prev) => {
@@ -12430,7 +12451,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         </thead>
                         <tbody className="divide-y divide-white/10 text-slate-200">
                           {verticesRows.map((row, index) => (
-                            <tr key={`${row.camada}-${row.ranking}-${index}`}>
+                            <tr 
+                              key={`${row.camada}-${row.ranking}-${index}`}
+                              onClick={() => {
+                                setSelectedErrorLocation({ lat: Number(row.y_medio), lng: Number(row.x_medio) });
+                                setSelectedErrorLabel(`Vértice Próxima: ${row.camada} (Ranking ${row.ranking})`);
+                              }}
+                              className="cursor-pointer hover:bg-violet-500/10 transition-colors"
+                            >
                               <td className="px-3 py-2 font-semibold text-white">{row.camada}</td>
                               <td className="px-3 py-2 tabular-nums">{row.ranking}</td>
                               <td className="px-3 py-2 tabular-nums">{row.feicao}</td>
@@ -12452,6 +12480,40 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </section>
               )}
               </>
+              )}
+
+              {selectedErrorLocation && (
+                <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-black/40 shadow-2xl animate-fade-in-up">
+                  <div className="flex items-center justify-between border-b border-white/5 bg-white/[0.02] px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <MapPinned size={16} className="text-cyan-400" />
+                      <span className="text-xs font-semibold text-white">{selectedErrorLabel || 'Localização do Erro'}</span>
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        setSelectedErrorLocation(null);
+                        setSelectedErrorLabel(null);
+                      }}
+                      className="rounded p-1 text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <MapView
+                    className="h-[300px] w-full"
+                    initialCenter={selectedErrorLocation}
+                    initialZoom={18}
+                    mapTypeId="hybrid"
+                    onMapReady={(map) => {
+                      new window.google.maps.marker.AdvancedMarkerElement({
+                        map,
+                        position: selectedErrorLocation,
+                        title: selectedErrorLabel || "Erro",
+                      });
+                    }}
+                  />
+                </div>
               )}
             </div>
           </div>
@@ -12877,6 +12939,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           )
         }
+            </motion.div>
+          </AnimatePresence>
+        </div>
 
         <style>{`
           .custom-scrollbar {

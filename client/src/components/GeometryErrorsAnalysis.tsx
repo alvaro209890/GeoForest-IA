@@ -133,6 +133,7 @@ const TIPO_LABEL: Record<string, string> = {
 type Props = {
   apiFetch: ApiFetch;
   onJobSnapshot?: (job: Record<string, unknown>) => void;
+  onHighlightLocation?: (location: { lat: number; lng: number } | null, label: string | null) => void;
 };
 
 function fileToBase64(file: File): Promise<string> {
@@ -162,7 +163,7 @@ async function readApiError(response: Response): Promise<string> {
   }
 }
 
-const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) => {
+const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot, onHighlightLocation }) => {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadId, setUploadId] = useState<string | null>(null);
@@ -829,7 +830,13 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) =>
                 </thead>
                 <tbody className="divide-y divide-white/10 text-slate-200">
                   {rows.map((row, index) => (
-                    <tr key={`${row.camada}-${row.tipo}-${row.feicao}-${index}`}>
+                    <tr 
+                      key={`${row.camada}-${row.tipo}-${row.feicao}-${index}`}
+                      onClick={() => {
+                        onHighlightLocation?.({ lat: Number(row.y), lng: Number(row.x) }, `Erro de Geometria: ${row.camada} (${TIPO_LABEL[row.tipo] || row.tipo})`);
+                      }}
+                      className="cursor-pointer hover:bg-amber-500/10 transition-colors"
+                    >
                       <td className="px-3 py-2 font-semibold text-white">{row.camada}</td>
                       <td className="px-3 py-2 text-amber-200">{TIPO_LABEL[row.tipo] || row.tipo}</td>
                       <td className="px-3 py-2 tabular-nums">{row.feicao}</td>

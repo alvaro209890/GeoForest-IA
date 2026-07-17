@@ -62,6 +62,7 @@ export type ContainmentSummary = {
 type Props = {
   apiFetch: ApiFetch;
   onJobSnapshot?: (job: Record<string, unknown>) => void;
+  onHighlightLocation?: (location: { lat: number; lng: number } | null, label: string | null) => void;
 };
 
 function fileToBase64(file: File): Promise<string> {
@@ -91,7 +92,7 @@ async function readApiError(response: Response): Promise<string> {
   }
 }
 
-const ContainmentAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) => {
+const ContainmentAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot, onHighlightLocation }) => {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadId, setUploadId] = useState<string | null>(null);
@@ -724,7 +725,13 @@ const ContainmentAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot }) => {
                 </thead>
                 <tbody className="divide-y divide-white/10 text-slate-200">
                   {rows.map((row, index) => (
-                    <tr key={`${row.alvo}-${row.feicao}-${row.parte}-${index}`}>
+                    <tr 
+                      key={`${row.alvo}-${row.feicao}-${row.parte}-${index}`}
+                      onClick={() => {
+                        onHighlightLocation?.({ lat: Number(row.y), lng: Number(row.x) }, `Não Contido: ${row.alvo} (Feição ${row.feicao})`);
+                      }}
+                      className="cursor-pointer hover:bg-rose-500/10 transition-colors"
+                    >
                       <td className="px-3 py-2 font-semibold text-white">{row.alvo}</td>
                       <td className="px-3 py-2 tabular-nums">{row.feicao}</td>
                       <td className="px-3 py-2 tabular-nums">{row.parte}</td>

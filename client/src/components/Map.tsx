@@ -116,14 +116,92 @@ interface MapViewProps {
   initialZoom?: number;
   onMapReady?: (map: google.maps.Map) => void;
   onLoadError?: (error: Error) => void;
+  mapTypeId?: string;
 }
+
+const darkMapStyle = [
+  { elementType: "geometry", stylers: [{ color: "#131f18" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#131f18" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#546e5a" }] },
+  {
+    featureType: "administrative",
+    elementType: "geometry.stroke",
+    stylers: [{ color: "#223328" }],
+  },
+  {
+    featureType: "administrative.land_parcel",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#374f3e" }],
+  },
+  {
+    featureType: "landscape.natural",
+    elementType: "geometry",
+    stylers: [{ color: "#0d1611" }],
+  },
+  {
+    featureType: "poi",
+    elementType: "geometry",
+    stylers: [{ color: "#18261e" }],
+  },
+  {
+    featureType: "poi",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#4c6653" }],
+  },
+  {
+    featureType: "road",
+    elementType: "geometry",
+    stylers: [{ color: "#1f3025" }],
+  },
+  {
+    featureType: "road.arterial",
+    elementType: "geometry",
+    stylers: [{ color: "#263c2e" }],
+  },
+  {
+    featureType: "road.highway",
+    elementType: "geometry",
+    stylers: [{ color: "#2f4a38" }],
+  },
+  {
+    featureType: "road.highway",
+    elementType: "geometry.stroke",
+    stylers: [{ color: "#19291e" }],
+  },
+  {
+    featureType: "road.local",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#3f5947" }],
+  },
+  {
+    featureType: "transit",
+    elementType: "geometry",
+    stylers: [{ color: "#1b2a20" }],
+  },
+  {
+    featureType: "water",
+    elementType: "geometry",
+    stylers: [{ color: "#08131d" }],
+  },
+  {
+    featureType: "water",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#2d4454" }],
+  },
+  {
+    featureType: "water",
+    elementType: "labels.text.stroke",
+    stylers: [{ color: "#08131d" }],
+  },
+];
 
 export function MapView({
   className,
-  initialCenter = { lat: 37.7749, lng: -122.4194 },
-  initialZoom = 12,
+  initialCenter = { lat: -12.5, lng: -55.5 },
+  initialZoom = 5,
   onMapReady,
   onLoadError,
+  mapTypeId = "hybrid",
 }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<google.maps.Map | null>(null);
@@ -139,15 +217,28 @@ export function MapView({
       console.error("Map container not found");
       return;
     }
-    map.current = new window.google.maps.Map(mapContainer.current, {
+
+    const isDark = document.documentElement.classList.contains("dark") || 
+                   document.body.classList.contains("dark") || 
+                   true; // default to dark since dashboard is dark-themed
+
+    const mapOptions: google.maps.MapOptions = {
       zoom: initialZoom,
       center: initialCenter,
+      mapTypeId: mapTypeId as google.maps.MapTypeId,
       mapTypeControl: true,
+      mapTypeControlOptions: {
+        style: window.google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
+        position: window.google.maps.ControlPosition.TOP_RIGHT,
+      },
       fullscreenControl: true,
       zoomControl: true,
-      streetViewControl: true,
-      mapId: "DEMO_MAP_ID",
-    });
+      streetViewControl: false,
+      styles: isDark && mapTypeId === "roadmap" ? darkMapStyle : undefined,
+    };
+
+    map.current = new window.google.maps.Map(mapContainer.current, mapOptions);
+
     if (onMapReady) {
       onMapReady(map.current);
     }
