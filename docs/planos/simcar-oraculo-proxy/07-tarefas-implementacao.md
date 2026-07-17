@@ -94,9 +94,14 @@
   linhas dos PDFs). `tsc --noEmit` e bundle Vite de produção verdes.
 - Commit: `feat(ui): aba Processar projeto 100% SIMCAR real`
 
-### T11 — Wiring Dashboard (4 pontos) + histórico
+### T11 — Wiring Dashboard (4 pontos) + histórico ✅ concluída em 2026-07-16
 - `mapProcessarDocToHistoryItem` lê `simcar_oraculo_jobs` + legado; atualizar os 3 blocos de
   status hardcodado; não persistir timeline/rows gigantes no doc de histórico
+- Entrega: as duas coleções são lidas em paralelo e deduplicadas com preferência pelo job
+  server-owned; `running/cancel_requested/interrupted` e resultados import/process explícitos
+  têm badges próprios; cards mostram data/rodadas, reabrem snapshot e são navegáveis por
+  teclado. Legado é somente leitura e o callback novo só atualiza memória — não replica jobs.
+- Gate React/TypeScript e bundle Vite de produção verdes.
 - Commit: `feat(ui): histórico do oráculo SIMCAR no dashboard`
 
 ### T12 — Matar rotas locais (D2)

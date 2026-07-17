@@ -41,7 +41,7 @@
 ## P4 — Front sem validação local
 
 - [x] Aba 100% oráculo: dropzone → município → timeline → resultados por rodada (T10)
-- [ ] Dashboard: 4 pontos de wiring + histórico novo/legado (T11)
+- [x] Dashboard: 4 pontos de wiring + histórico novo/legado (T11)
 - [ ] Rotas locais mortas (410) e gate local removido (T12)
 - [ ] Aba Erros de Geometria intacta (T12)
 

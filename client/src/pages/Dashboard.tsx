@@ -1751,7 +1751,6 @@ export default function Dashboard() {
   const [verticesJobsRef, setVerticesJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [containmentJobsRef, setContainmentJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [geometryJobsRef, setGeometryJobsRef] = useState<ReturnType<typeof collection> | null>(null);
-  const [processarJobsRef, setProcessarJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [receiptHistory, setReceiptHistory] = useState<ReceiptHistoryItem[]>([]);
   const [receiptsRef, setReceiptsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
@@ -2380,14 +2379,24 @@ export default function Dashboard() {
     };
   }, []);
 
-  const mapProcessarDocToHistoryItem = useCallback((docId: string, data: any): ProcessarHistoryItem => {
+  const mapProcessarDocToHistoryItem = useCallback((
+    docId: string,
+    data: any,
+    sourceCollection: ProcessarHistoryItem['sourceCollection'] = data?.sourceCollection === 'simcar_oraculo_jobs'
+      ? 'simcar_oraculo_jobs'
+      : 'processar_projeto_jobs',
+  ): ProcessarHistoryItem => {
     const rawStatus = String(data?.status || '').trim().toLowerCase();
     const type = String(data?.type || '').trim().toLowerCase();
     let status: ProcessarHistoryItem['status'] = 'processing';
     if (
+      rawStatus === 'processing' ||
+      rawStatus === 'running' ||
       rawStatus === 'completed' ||
       rawStatus === 'failed' ||
       rawStatus === 'cancelled' ||
+      rawStatus === 'cancel_requested' ||
+      rawStatus === 'interrupted' ||
       rawStatus === 'uploaded' ||
       rawStatus === 'deleted' ||
       rawStatus === 'queued' ||
@@ -2402,6 +2411,57 @@ export default function Dashboard() {
     } else if (type === 'upload') {
       status = 'uploaded';
     }
+    const rawRounds = Array.isArray(data?.rounds) ? data.rounds : [];
+    const artifactRefs = Array.isArray(data?.artifactRefs)
+      ? data.artifactRefs
+      : data?.artifacts && typeof data.artifacts === 'object'
+        ? Object.values(data.artifacts)
+        : [];
+    const roundsSummary: NonNullable<ProcessarHistoryItem['roundsSummary']> = Array.isArray(data?.roundsSummary)
+      ? data.roundsSummary
+      : rawRounds.map((round: any) => ({
+          n: Math.max(1, Number(round?.n || 1)),
+          importOk: typeof round?.import?.ok === 'boolean' ? round.import.ok : null,
+          processOk: typeof round?.process?.ok === 'boolean' ? round.process.ok : null,
+          importResult: round?.import?.resultado ? String(round.import.resultado) : undefined,
+          processResult: round?.process?.resultado ? String(round.process.resultado) : undefined,
+          artifactKeys: artifactRefs
+            .filter((artifact: any) => Number(artifact?.round || 0) === Number(round?.n || 1))
+            .map((artifact: any) => String(artifact?.key || ''))
+            .filter(Boolean),
+        }));
+    const sumPhaseErrors = (phase: 'import' | 'process') => rawRounds.reduce(
+      (total: number, round: any) => total + (Array.isArray(round?.[phase]?.errosResumo)
+        ? round[phase].errosResumo.reduce(
+            (phaseTotal: number, item: any) => phaseTotal + Math.max(0, Number(item?.qtd || 0)),
+            0,
+          )
+        : 0),
+      0,
+    );
+    const importErrors = Number.isFinite(Number(data?.importErrors))
+      ? Number(data.importErrors)
+      : rawRounds.length > 0
+        ? sumPhaseErrors('import')
+        : undefined;
+    const processErrors = Number.isFinite(Number(data?.processErrors))
+      ? Number(data.processErrors)
+      : rawRounds.length > 0
+        ? sumPhaseErrors('process')
+        : undefined;
+    const pipelineSource = sourceCollection === 'simcar_oraculo_jobs' || type === 'pipeline';
+    const importOk = typeof data?.importOk === 'boolean'
+      ? data.importOk
+      : pipelineSource
+        ? null
+        : typeof data?.ok === 'boolean'
+          ? data.ok
+          : status === 'import_ok' || status === 'completed' || status === 'processing'
+            ? true
+            : status === 'import_failed'
+              ? false
+              : null;
+    const processOk = typeof data?.processOk === 'boolean' ? data.processOk : null;
     const percentFallback =
       status === 'completed' || status === 'import_ok'
         ? 100
@@ -2413,10 +2473,13 @@ export default function Dashboard() {
     return {
       id: String(data?.id || docId),
       jobId: String(data?.jobId || docId),
-      filename: String(data?.filename || 'Processar projeto'),
-      timestamp: toIsoDateFromUnknown(data?.completedAt || data?.updatedAt || data?.createdAt || data?.timestamp),
+      filename: String(data?.sourceFilename || data?.filename || 'Processar projeto'),
+      timestamp: toIsoDateFromUnknown(
+        data?.finishedAt || data?.completedAt || data?.updatedAt || data?.createdAt || data?.timestamp,
+      ),
       status,
       type: type || undefined,
+      sourceCollection,
       stage: data?.stage ? String(data.stage) : undefined,
       percent: Math.max(0, Math.min(100, Math.round(Number(data?.percent || percentFallback)))),
       message: data?.message ? String(data.message) : undefined,
@@ -2435,22 +2498,43 @@ export default function Dashboard() {
           : undefined,
       warnings: Array.isArray(data?.warnings) ? data.warnings.map((item: any) => String(item)) : undefined,
       camadasReconhecidas: Array.isArray(data?.camadasReconhecidas) ? data.camadasReconhecidas : undefined,
-      importOk:
-        typeof data?.importOk === 'boolean'
-          ? data.importOk
-          : typeof data?.ok === 'boolean'
-            ? data.ok
-            : status === 'import_ok' || status === 'completed' || status === 'processing'
-              ? true
-              : status === 'import_failed'
-                ? false
-                : null,
-      importErrors: Number.isFinite(Number(data?.importErrors)) ? Number(data.importErrors) : undefined,
-      processErrors: Number.isFinite(Number(data?.processErrors)) ? Number(data.processErrors) : undefined,
-      totalErrors: Number.isFinite(Number(data?.totalErrors)) ? Number(data.totalErrors) : undefined,
+      importOk,
+      processOk,
+      importErrors,
+      processErrors,
+      totalErrors: Number.isFinite(Number(data?.totalErrors))
+        ? Number(data.totalErrors)
+        : typeof importErrors === 'number' || typeof processErrors === 'number'
+          ? (importErrors || 0) + (processErrors || 0)
+          : undefined,
       relatorioTexto: data?.relatorioTexto ? String(data.relatorioTexto) : undefined,
+      resultado: data?.resultado ? String(data.resultado) : undefined,
+      roundCount: Math.max(0, Number(data?.roundCount ?? rawRounds.length)),
+      roundsSummary,
+      artifactRefs: artifactRefs as ProcessarHistoryItem['artifactRefs'],
     };
   }, []);
+
+  const handleProcessarJobSnapshot = useCallback((job: Record<string, unknown>) => {
+    const jobId = String(job?.jobId || job?.id || '').trim();
+    if (!jobId) return;
+    const item = mapProcessarDocToHistoryItem(jobId, job, 'simcar_oraculo_jobs');
+    if (item.status !== 'uploaded' && item.status !== 'deleted') {
+      setProcessarHistory((current) => {
+        const index = current.findIndex((entry) => entry.jobId === item.jobId);
+        if (index < 0) return [item, ...current];
+        const next = [...current];
+        next[index] = item;
+        return next;
+      });
+    }
+    setProcessarJobId(item.jobId);
+  }, [mapProcessarDocToHistoryItem]);
+
+  const selectedProcessarHistoryEntry = useMemo(
+    () => processarHistory.find((entry) => entry.jobId === processarJobId) || null,
+    [processarHistory, processarJobId],
+  );
 
   const appendVerticesJobToConversation = useCallback(async (job: VerticesHistoryItem) => {
     if (!conversationsRef || !verticesJobsRef || !job?.jobId || job.status !== 'completed') return null;
@@ -4185,8 +4269,8 @@ export default function Dashboard() {
         setContainmentJobsRef(containmentRef);
         const geometryRef = collection(db, 'users', currentUser.uid, 'geometry_errors_jobs');
         setGeometryJobsRef(geometryRef);
-        const processarRef = collection(db, 'users', currentUser.uid, 'processar_projeto_jobs');
-        setProcessarJobsRef(processarRef);
+        const processarLegacyRef = collection(db, 'users', currentUser.uid, 'processar_projeto_jobs');
+        const simcarOraculoRef = collection(db, 'users', currentUser.uid, 'simcar_oraculo_jobs');
         const receiptsColRef = collection(db, 'users', currentUser.uid, 'receipts');
         setReceiptsRef(receiptsColRef);
         const cbersRef = collection(db, 'users', currentUser.uid, 'cbers_wpm_jobs');
@@ -4393,17 +4477,52 @@ export default function Dashboard() {
         }
 
         try {
-          const processarSnap = await getDocs(query(processarRef, orderBy('updatedAtMs', 'desc')));
-          const processarEntries: ProcessarHistoryItem[] = [];
-          processarSnap.forEach((docSnap) => {
-            const data = docSnap.data() as any;
-            const item = mapProcessarDocToHistoryItem(docSnap.id, data);
-            // Não listar uploads cru no histórico; import e process viram cards.
-            if (item.status === 'deleted' || item.status === 'uploaded') return;
-            processarEntries.push(item);
-          });
+          const [oraculoResult, legacyResult] = await Promise.allSettled([
+            getDocs(query(simcarOraculoRef, orderBy('updatedAtMs', 'desc'))),
+            getDocs(query(processarLegacyRef, orderBy('updatedAtMs', 'desc'))),
+          ]);
+          if (oraculoResult.status === 'rejected' && legacyResult.status === 'rejected') {
+            throw oraculoResult.reason;
+          }
+          if (oraculoResult.status === 'rejected') {
+            console.warn('Falha ao carregar jobs novos do Oráculo SIMCAR:', oraculoResult.reason);
+          }
+          if (legacyResult.status === 'rejected') {
+            console.warn('Falha ao carregar histórico legado de Processar projeto:', legacyResult.reason);
+          }
+          const byJobId = new Map<string, ProcessarHistoryItem>();
+          if (oraculoResult.status === 'fulfilled') {
+            oraculoResult.value.forEach((docSnap) => {
+              const item = mapProcessarDocToHistoryItem(
+                docSnap.id,
+                docSnap.data() as any,
+                'simcar_oraculo_jobs',
+              );
+              if (item.status !== 'deleted' && item.status !== 'uploaded') byJobId.set(item.jobId, item);
+            });
+          }
+          if (legacyResult.status === 'fulfilled') {
+            legacyResult.value.forEach((docSnap) => {
+              const item = mapProcessarDocToHistoryItem(
+                docSnap.id,
+                docSnap.data() as any,
+                'processar_projeto_jobs',
+              );
+              if (item.status !== 'deleted' && item.status !== 'uploaded' && !byJobId.has(item.jobId)) {
+                byJobId.set(item.jobId, item);
+              }
+            });
+          }
+          const processarEntries = [...byJobId.values()].sort(
+            (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+          );
           setProcessarHistory(processarEntries);
-          const runningProcessar = processarEntries.find((entry) => entry.status === 'processing' || entry.status === 'queued');
+          const runningProcessar = processarEntries.find((entry) =>
+            entry.status === 'processing' ||
+            entry.status === 'running' ||
+            entry.status === 'queued' ||
+            entry.status === 'cancel_requested',
+          );
           if (runningProcessar) {
             setActiveView('vertices-proximas');
             setErrorAnalysisTab('processar-projeto');
@@ -8248,34 +8367,60 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             ) : errorAnalysisTab === 'processar-projeto' ? (
               processarHistory.length > 0 ? (
                 processarHistory.map((entry) => {
+                  const running =
+                    entry.status === 'processing' ||
+                    entry.status === 'running' ||
+                    entry.status === 'queued' ||
+                    entry.status === 'cancel_requested';
                   const statusLabel =
-                    entry.status === 'processing' || entry.status === 'queued'
-                      ? 'Processando'
+                    entry.status === 'queued'
+                      ? 'Na fila'
+                      : entry.status === 'cancel_requested'
+                        ? 'Cancelando'
+                        : entry.status === 'processing' || entry.status === 'running'
+                          ? 'Processando'
                       : entry.status === 'completed'
-                        ? 'Concluído'
+                        ? entry.importOk === false
+                          ? 'Import reprovada'
+                          : entry.processOk === false
+                            ? 'Com pendência'
+                            : entry.processOk === true
+                              ? (entry.roundCount || 0) > 1
+                                ? 'Corrigido'
+                                : 'Aprovado'
+                              : 'Concluído'
                         : entry.status === 'cancelled'
                           ? 'Cancelado'
+                          : entry.status === 'interrupted'
+                            ? 'Interrompido'
                           : entry.status === 'import_ok'
                             ? 'Import OK'
                             : entry.status === 'import_failed'
-                              ? 'Import falhou'
+                              ? 'Import reprovada'
                               : 'Falhou';
                   const statusColor =
-                    entry.status === 'processing' || entry.status === 'queued'
+                    running
                       ? 'text-amber-300'
-                      : entry.status === 'completed' || entry.status === 'import_ok'
+                      : (entry.status === 'completed' && entry.importOk !== false && entry.processOk !== false) || entry.status === 'import_ok'
                         ? 'text-emerald-300'
-                        : entry.status === 'cancelled'
-                          ? 'text-orange-300'
-                          : 'text-red-300';
+                      : entry.status === 'cancelled'
+                        ? 'text-orange-300'
+                        : 'text-red-300';
                   const detail =
-                    entry.status === 'import_ok' || entry.status === 'import_failed'
+                    entry.sourceCollection === 'simcar_oraculo_jobs' || entry.type === 'pipeline'
+                      ? `${entry.roundCount || 1} rodada(s) · ${entry.importErrors || 0} import. · ${entry.processErrors || 0} proc.`
+                      : entry.status === 'import_ok' || entry.status === 'import_failed'
                       ? `${entry.importErrors ?? entry.importRows?.length ?? 0} erro(s) import.`
                       : `${entry.totalErrors ?? entry.resultRows?.length ?? 0} linha(s) · ${entry.processErrors ?? 0} proc.`;
+                  const dateLabel = new Date(entry.timestamp).toLocaleString('pt-BR', {
+                    dateStyle: 'short',
+                    timeStyle: 'short',
+                  });
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={entry.jobId}
-                      className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${processarJobId === entry.jobId ? 'bg-cyan-500/10 border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.06)]' : 'bg-[#100d18]/70 hover:bg-[#171322] hover:border-cyan-500/20'}`}
+                      className={`w-full flex items-center gap-3 p-3 text-left rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${processarJobId === entry.jobId ? 'bg-cyan-500/10 border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.06)]' : 'bg-[#100d18]/70 hover:bg-[#171322] hover:border-cyan-500/20'}`}
                       onClick={() => {
                         setProcessarJobId(entry.jobId);
                         setErrorAnalysisTab('processar-projeto');
@@ -8295,21 +8440,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           </span>
                         </div>
                         <p className="text-[10px] text-slate-500 mt-0.5 truncate">{detail}</p>
+                        <p className="text-[10px] text-slate-600 mt-0.5 truncate">
+                          {dateLabel}{entry.sourceCollection === 'processar_projeto_jobs' ? ' · legado' : ''}
+                        </p>
                       </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void apiFetch(`/api/processar-projeto/jobs/${encodeURIComponent(entry.jobId)}`, { method: 'DELETE' }).catch(() => undefined);
-                          if (processarJobsRef) void deleteDoc(doc(processarJobsRef, entry.jobId)).catch(() => {});
-                          setProcessarHistory((prev) => prev.filter((item) => item.jobId !== entry.jobId));
-                          if (processarJobId === entry.jobId) setProcessarJobId(null);
-                        }}
-                        className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block lg:hidden xl:block shrink-0"
-                        title="Excluir projeto"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
+                    </button>
                   );
                 })
               ) : (
@@ -11857,35 +11992,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 <ProcessarProjetoAnalysis
                   apiFetch={apiFetch}
                   selectedJobId={processarJobId}
-                  historyEntry={processarHistory.find((e) => e.jobId === processarJobId) || null}
-                  onJobSnapshot={(job) => {
-                    const item = mapProcessarDocToHistoryItem(String(job?.jobId || job?.id || ''), job);
-                    // Upload cru não vira card permanente; import e process sim.
-                    if (item.status !== 'uploaded' && item.status !== 'deleted') {
-                      setProcessarHistory((prev) => {
-                        const idx = prev.findIndex((e) => e.jobId === item.jobId);
-                        if (idx >= 0) {
-                          const copy = [...prev];
-                          copy[idx] = item;
-                          return copy;
-                        }
-                        return [item, ...prev];
-                      });
-                    }
-                    if (item.status === 'processing' || item.status === 'queued') {
-                      setProcessarJobId(item.jobId);
-                    } else if (item.jobId) {
-                      setProcessarJobId(item.jobId);
-                    }
-                    if (processarJobsRef && item.jobId) {
-                      void setDoc(doc(processarJobsRef, item.jobId), {
-                        ...job,
-                        jobId: item.jobId,
-                        filename: item.filename,
-                        updatedAtMs: Date.now(),
-                      }, { merge: true }).catch(() => {});
-                    }
-                  }}
+                  historyEntry={selectedProcessarHistoryEntry}
+                  onJobSnapshot={handleProcessarJobSnapshot}
                 />
               ) : errorAnalysisTab === 'geometry' ? (
                 <GeometryErrorsAnalysis

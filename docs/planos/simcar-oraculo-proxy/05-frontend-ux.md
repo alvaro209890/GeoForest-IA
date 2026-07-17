@@ -105,5 +105,14 @@ Sem credencial no servidor (`simcarConfigured=false`): a aba mostra estado vazio
 - SSE consome envelopes `snapshot|event` reais, tenta reconectar três vezes e então consulta
   `GET /api/simcar-oraculo/jobs/:id` a cada 5 s; jobs terminais restauram só o snapshot.
 - O callback do Dashboard recebe `roundsSummary` e `artifactRefs`, sem replicar `timeline` ou
-  erros parseados completos. O wiring/coleções e os quatro unions do Dashboard ficam em T11.
+  erros parseados completos.
 - Verificação estática: TypeScript estrito e build Vite de produção verdes.
+
+## Implementação T11 (2026-07-16)
+
+- Dashboard consulta novo+legado em paralelo, deduplica por `jobId` e prefere o registro
+  server-owned do Oráculo; o legado continua disponível sem escrita/exclusão.
+- Mapper, restauração de job ativo, sidebar e callback do componente reconhecem todos os
+  estados novos e usam `importOk/processOk` explícitos, sem inferir aprovação de `completed`.
+- Cards mostram data, número de rodadas e resultado final; o card inteiro é um botão acessível.
+- O callback atualiza apenas o estado React. Depois do F5, a fonte é o snapshot do backend.

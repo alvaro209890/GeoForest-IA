@@ -17,7 +17,7 @@ DeepSeek V4 Pro explicando), automático até 3 rodadas.
 | P1.5 bugs bloqueantes (B1–B8; B9 fecha com T18) | ✅ T1–T3 |
 | P2 município/abrangência (endpoints descobertos ✅) | ✅ T4–T6; live no 270069 |
 | P3.5 pipeline único + parse PDF | ✅ T7–T9; 97 testes + live downloads |
-| P4 front ORACULO-only | ⏳ T10/12 concluída |
+| P4 front ORACULO-only | ⏳ T10–T11/12 concluídas |
 | P5/P6 autofix + DeepSeek | ⏳ |
 | P7 deploy + E2E | ⏳ |
 
@@ -42,5 +42,5 @@ DeepSeek V4 Pro explicando), automático até 3 rodadas.
 
 ## Continuar por
 
-1. [STATUS.md](./STATUS.md) → 2. T11 (histórico do dashboard) em
+1. [STATUS.md](./STATUS.md) → 2. T12 (remoção das rotas locais) em
 [07](./07-tarefas-implementacao.md) → 3. contrato canônico: [11](./11-endpoints-sema-descobertos.md)
