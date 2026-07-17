@@ -71,7 +71,7 @@
       fora; gate só por credenciais; `SIMCAR_ORACULO.md`/env example atualizados; tsc + 80/80 offline.
 - [x] Env no PC servidor (SIMCAR_* + DEEPSEEK_API_KEY do Hermes) (T19) — `~/.config/geoforest/backend.env` (2026-07-17)
 - [x] Deploy backend + front; health `simcarConfigured && deepseekConfigured` (T19) — backend `geoforest-backend.service` + tunnel `geoforest-api.cursar.space`; front Firebase `ia-florestal.web.app` (2026-07-17)
-- [ ] E2E completo de `09` no ambiente real (T19)
+- [x] E2E completo de `09` no ambiente real (T19) — 2026-07-17 job `de7ad2c1…`: upload FINAL → pipeline → import `[FINALIZADO]` → process `[COM_PENDENCIA]` (2 erros honestos) → autofix `apply_failed` seguro; dual-queue pos 1/2 + queueLength 2
 - [x] Grep de segredos vazio (regra do `08`) — CPF real que estava em `tools/simcar-parity/README.md`
       redigido no HEAD **e purgado de todo o histórico** com `git filter-repo` + `git push --force`
       (2026-07-17). Nenhuma das 7 branches (local/remotas) contém mais o CPF. Backup imutável:
@@ -80,8 +80,8 @@
       o GC/expiração de cache; se algum PR/fork antigo os referenciar, persistem. Para remoção
       definitiva: abrir ticket no GitHub Support. Na prática o CPF já não é alcançável por
       clone/navegação normal.
-- [ ] CAR-teste restaurado com o ZIP FINAL da Santa Clara ao encerrar a bateria — **pendente**
-      (após o E2E do deploy; hoje o CAR está no estado sem-úmida `[FINALIZADO]`).
+- [x] CAR-teste restaurado com o ZIP FINAL da Santa Clara ao encerrar a bateria — restore job
+      `0f6ae32a…` import `[FINALIZADO]` (autoProcess=false); Nome Santa clara / EM_CADASTRAMENTO (2026-07-17).
 
 ## Segurança transversal (conferir em TODO commit)
 
