@@ -4,7 +4,8 @@
 
 ## P1.5 — Fundação (bugs)
 
-- [ ] B1 `simcar_oraculo_jobs` na whitelist do local-storage (T1) — **sem isso nada persiste**
+- [x] B1 `simcar_oraculo_jobs` na whitelist do local-storage (T1) — round-trip, listagem,
+      áreas tipadas e scaffold cobertos por 7 testes (`local-storage.test.ts`, 2026-07-16)
 - [ ] B2/B4 status+ok coerentes; PDFs import/process em campos separados (T2)
 - [ ] B3 timeline acumula de verdade (T2)
 - [ ] B5/B6 timeout no GET + relogin automático em 401 (T3)

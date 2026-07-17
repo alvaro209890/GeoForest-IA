@@ -15,7 +15,7 @@ D6 repo PÚBLICO → segredos só em env.
 |------|------|--------|
 | P0 | Cliente + health + Buscar | ✅ (Hermes 16/07; live login/Buscar revalidado à noite) |
 | P1 | Import API no CAR-teste | ✅ rotas prontas |
-| **P1.5** | **Bugs bloqueantes (B1–B9)** | ⏳ **PRÓXIMO — começar por aqui (T1–T3)** |
+| **P1.5** | **Bugs bloqueantes (B1–B9)** | 🚧 T1 concluída (7 testes); T2 é a próxima |
 | P2 | Município + abrangência | ⏳ endpoints descobertos e sondados (leitura ✅); falta T4–T6 |
 | P3 | ProcessarGeo API | ✅ rotas prontas |
 | P3.5 | Pipeline único + SSE + parse PDF | ⏳ T7–T9 |
@@ -42,6 +42,13 @@ B1 whitelist `simcar_oraculo_jobs` AUSENTE (rotas não persistem!) · B2 complet
 B3 timeline não acumula · B4 pdf-import/process mesmo campo · B5 GET sem timeout ·
 B6 sem relogin 401 · B7 interrupted não cobre coleções novas · B8 áreas de storage sem tipo ·
 B9 comentário × código do default de modo.
+
+### Evidência de implementação desta retomada
+
+- **T1 concluída (2026-07-16):** `simcar_oraculo_jobs` liberada para leitura, escrita e
+  listagem no storage local; áreas de artefato `simcar-oraculo/*` tipadas e criadas no
+  scaffold. `backend/simcar-oraculo/local-storage.test.ts`: **7/7 testes verdes** em storage
+  temporário isolado.
 
 ## Credenciais
 
