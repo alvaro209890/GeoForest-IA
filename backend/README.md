@@ -72,17 +72,19 @@ Detalhes tecnicos: [`../docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md`](.
 
 Detalhes técnicos: [`../docs/VERTICES_PROXIMAS.md`](../docs/VERTICES_PROXIMAS.md).
 
-### Processar projeto (Importar → ProcessarGeo SIMCAR)
-Fluxo completo do Projeto Geográfico: importação estrutural + processamento com
-geração de **APP / APPP / APPD / APPRL / AURD / ARLDR**, topologia e Anexo 01.
+### Processar projeto (Oráculo SIMCAR real)
+O veredito da aba vem exclusivamente da SEMA: prepara o CAR de teste, importa, executa
+ProcessarGeo e guarda os artefatos oficiais por rodada.
 
-- `POST /api/processar-projeto/upload` — Upload ZIP
-- `POST /api/processar-projeto/importar` — Fase Importar (conformidade)
-- `POST /api/processar-projeto/processar` — Fase Processar (job assíncrono)
-- `GET /api/processar-projeto/jobs/:jobId/events` — SSE
-- `GET /api/processar-projeto/jobs/:jobId/status` — Status
-- `GET /api/processar-projeto/download/:jobId` — ZIP (arquivo processado + APP* + erros)
-- `DELETE /api/processar-projeto/jobs/:jobId` — Remove job
+- `POST /api/processar-projeto/upload` — Upload + preview consumido pelo Oráculo
+- `POST /api/simcar-oraculo/pipeline` — Pipeline único prepare → import → process
+- `GET /api/simcar-oraculo/jobs/:jobId/events` — Timeline SSE
+- `GET /api/simcar-oraculo/jobs/:jobId` — Snapshot persistido
+- `GET /api/simcar-oraculo/jobs/:jobId/artifact/:key` — Download privado
+- `DELETE /api/simcar-oraculo/jobs/:jobId` — Solicita cancelamento
+- `POST /api/processar-projeto/importar|processar` — **410 Gone** por uma versão; aponta para
+  o pipeline. As fases locais permanecem somente como biblioteca/regressão, nunca como
+  resultado da aba.
 
 Detalhes: [`../docs/PROCESSAR_PROJETO_SIMCAR.md`](../docs/PROCESSAR_PROJETO_SIMCAR.md) ·  
 Changelog: [`../docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md`](../docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_GEO.md).

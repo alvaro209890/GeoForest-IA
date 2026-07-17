@@ -5,9 +5,7 @@ import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
 
 import {
-  assertImportAllowsProcess,
   buildProcessarProjetoZip,
-  IMPORT_REPROVADO_MSG,
   runImportPhase,
   runProcessPhase,
 } from "./processar-projeto";
@@ -150,20 +148,6 @@ describe("runImportPhase", () => {
     expect(result.rows.some((r) => r.tipo === "borda_se_cruza")).toBe(true);
     expect(result.rows.some((r) => r.tipo === "vertice_duplicado")).toBe(true);
     expect(result.relatorioTexto).toMatch(/Reprovado/i);
-    expect(() => assertImportAllowsProcess(result)).toThrow(/Reprovado/i);
-  });
-});
-
-describe("assertImportAllowsProcess", () => {
-  it("bloqueia processar quando importação falhou", () => {
-    expect(() => assertImportAllowsProcess({ ok: false, status: "import_failed", rows: [] })).toThrow(
-      IMPORT_REPROVADO_MSG,
-    );
-    expect(() => assertImportAllowsProcess(null)).toThrow(/importação/i);
-  });
-
-  it("libera processar quando importação OK", () => {
-    expect(() => assertImportAllowsProcess({ ok: true, status: "import_ok", rows: [] })).not.toThrow();
   });
 });
 
@@ -207,8 +191,6 @@ describe("paridade SIMCAR — fixture teste_1 (PDF SEMA importação)", () => {
       expect(outras).toEqual([]);
       expect(result.rows.length).toBe(12);
 
-      // Critério 3: processar bloqueado
-      expect(() => assertImportAllowsProcess(result)).toThrow(IMPORT_REPROVADO_MSG);
     },
   );
 
@@ -227,7 +209,6 @@ describe("paridade SIMCAR — fixture teste_1 (PDF SEMA importação)", () => {
       // "Situação da importação: Geometrias importadas com sucesso!" ([FINALIZADO]).
       expect(result.rows).toEqual([]);
       expect(result.ok).toBe(true);
-      expect(() => assertImportAllowsProcess(result)).not.toThrow();
     },
   );
 });

@@ -1,25 +1,12 @@
 /**
- * Processar projeto — fluxo em 2 fases no estilo Projeto Geográfico SIMCAR.
+ * Compatibilidade do antigo "Processar projeto".
  *
- * Fase 1 (Importar): conformidade estrutural (CRS, 2D, nomenclatura, atributos, ATP)
- *   + topologia impeditiva do importador SEMA (borda se cruza / pontos repetidos).
- *   Se houver qualquer erro, a importação é **Reprovada** e o Processar não libera
- *   (igual ao PDF "Situação da importação: Reprovado").
- * Fase 2 (Processar): topologia adicional (overlaps/gaps) + Anexo 01 + AIR×ATP + APP*.
- *   Só roda após importação OK.
+ * A aba ativa usa somente o pipeline real em /api/simcar-oraculo. Este módulo mantém:
+ * - upload + preview reutilizado pelo Oráculo;
+ * - leitura/download de jobs legados;
+ * - fases puras locais como biblioteca coberta por regressão (não são veredito da aba).
  *
- * Motor local reutiliza geometry-errors.ts / simcar-rules.ts.
- * Não substitui o validador oficial da SEMA; backend roda no mesmo host
- * do recorte SIMCAR (PC físico + tunnel), não em Render.
- *
- * Endpoints:
- *   POST   /api/processar-projeto/upload
- *   POST   /api/processar-projeto/importar
- *   POST   /api/processar-projeto/processar
- *   GET    /api/processar-projeto/jobs/:id/status
- *   GET    /api/processar-projeto/jobs/:id/events
- *   GET    /api/processar-projeto/download/:id
- *   DELETE /api/processar-projeto/jobs/:id
+ * Os POSTs locais /importar e /processar respondem 410 durante a janela de migração.
  */
 import type { Express, Request, Response } from "express";
 import archiver from "archiver";
@@ -65,7 +52,7 @@ import {
   stripUndefinedDeep,
   writeDocBySegments,
 } from "./local-storage";
-import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
+import { isCancelRequested, requestCancel } from "./processing-jobs";
 import {
   checkSimcarConformity,
   recognizeSimcarLayer,
@@ -102,6 +89,8 @@ import { buildImportReportPdf } from "./import-report-pdf";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const subscribers = new Map<string, Set<Response>>();
+const LOCAL_IMPORT_REJECTED_TEXT =
+  "Situação da importação: Reprovado - Corrija os erros encontrados e envie novamente!";
 
 /* ─────────────────────── pure phases ─────────────────────── */
 
@@ -111,9 +100,6 @@ export type ImportPhaseResult = {
   camadasReconhecidas: Array<{ name: string; code: string | null; featureCount: number; crsLabel: string }>;
   relatorioTexto: string;
   warnings: string[];
-  /** Preenchido pela rota de importação quando o PDF é gerado e gravado. */
-  pdfRelativePath?: string;
-  pdfUrl?: string;
 };
 
 /** Camada pronta para gravação em shapefile (processado / conferência). */
@@ -319,33 +305,6 @@ function computeGeometriasEncontradas(args: {
   return rows;
 }
 
-/** Mensagem espelhando o PDF SEMA quando a importação falha. */
-export const IMPORT_REPROVADO_MSG =
-  "Situação da importação: Reprovado - Corrija os erros encontrados e envie novamente!";
-
-/**
- * Gate duro: Processar só libera com importação OK (como no SIMCAR).
- * Lança Error se reprovado — usado pela API e por testes unitários.
- */
-export function assertImportAllowsProcess(importSnapshot: {
-  ok?: boolean;
-  status?: string;
-  rows?: GeometryErrorRow[];
-} | null | undefined): void {
-  if (!importSnapshot) {
-    throw new Error("Execute a importação antes de processar.");
-  }
-  if (importSnapshot.status === "import_ok" || importSnapshot.ok === true) return;
-  if (importSnapshot.status === "import_failed" || importSnapshot.ok === false) {
-    throw new Error(IMPORT_REPROVADO_MSG);
-  }
-  // Snapshot sem flag explícita: qualquer row impede o processar.
-  if (Array.isArray(importSnapshot.rows) && importSnapshot.rows.length > 0) {
-    throw new Error(IMPORT_REPROVADO_MSG);
-  }
-  throw new Error("Execute a importação antes de processar.");
-}
-
 /**
  * Fase Importar: inventário + conformidade estrutural + topologia do importador.
  * Corresponde a [CAR_IMPORTAR_SHAPEFILE] do SIMCAR / PDF "Relatório de importação".
@@ -415,7 +374,7 @@ export function runImportPhase(zipBuffer: Buffer, filename = "projeto.zip"): Imp
   lines.push(
     ok
       ? "Situação da importação: Aprovado"
-      : IMPORT_REPROVADO_MSG,
+      : LOCAL_IMPORT_REJECTED_TEXT,
   );
   lines.push("");
   lines.push("Camadas no ZIP:");
@@ -1288,12 +1247,6 @@ function writeSse(res: Response, data: Record<string, unknown>): void {
   }
 }
 
-function emitJobEvent(jobId: string, data: Record<string, unknown>): void {
-  const set = subscribers.get(jobId);
-  if (!set) return;
-  for (const res of set) writeSse(res, data);
-}
-
 function closeSubscribers(jobId: string): void {
   const set = subscribers.get(jobId);
   if (!set) return;
@@ -1311,115 +1264,17 @@ function persistJob(uid: string, jobId: string, patch: Record<string, unknown>):
   );
 }
 
-function progress(uid: string, jobId: string, patch: Record<string, unknown>): void {
-  persistJob(uid, jobId, patch);
-  emitJobEvent(jobId, { type: "progress", jobId, ...patch });
-}
-
-async function runProcessJob(args: {
-  uid: string;
-  jobId: string;
-  upload: any;
-  importSnapshot: any;
-  settings: GeometrySettings;
-}): Promise<void> {
-  const { uid, jobId, upload, importSnapshot, settings } = args;
-  try {
-    const inputPath = getAbsoluteStoragePath(String(upload.inputRelativePath || ""));
-    const zipBuffer = fs.readFileSync(inputPath);
-    const filename = String(upload.filename || "projeto.zip");
-
-    progress(uid, jobId, {
-      status: "processing",
-      stage: "processing",
-      percent: 3,
-      message: "Iniciando processamento do projeto geográfico.",
-    });
-
-    const processResult = runProcessPhase(
-      zipBuffer,
-      settings,
-      filename,
-      (patch) => {
-        progress(uid, jobId, {
-          status: "processing",
-          stage: patch.stage || "processing",
-          layer: patch.layer,
-          percent: patch.percent,
-          message: patch.message,
-        });
-      },
-      jobId,
-    );
-
-    progress(uid, jobId, {
-      status: "processing",
-      stage: "zip",
-      percent: 92,
-      message: "Gerando ZIP final.",
-    });
-
-    const importRelatorio =
-      String(importSnapshot?.relatorioTexto || "") ||
-      runImportPhase(zipBuffer, filename).relatorioTexto;
-    const importRows = Array.isArray(importSnapshot?.rows) ? (importSnapshot.rows as GeometryErrorRow[]) : [];
-
-    const zip = await buildProcessarProjetoZip({
-      importRelatorio,
-      process: processResult,
-      importRows,
-    });
-
-    const stored = saveUserBuffer({
-      uid,
-      area: "processar-projeto/output",
-      filename: `processar_projeto_${jobId.slice(0, 8)}.zip`,
-      buffer: zip,
-    });
-
-    const allResultRows = [...importRows, ...processResult.rows];
-    progress(uid, jobId, {
-      status: "completed",
-      stage: "completed",
-      percent: 100,
-      message:
-        processResult.rows.length === 0
-          ? "Processamento concluído sem erros."
-          : `Processamento concluído com ${processResult.rows.length} inconsistência(s).`,
-      outputRelativePath: stored.relativePath,
-      outputUrl: stored.publicUrl,
-      downloadUrl: `/api/processar-projeto/download/${jobId}`,
-      outputBytes: zip.length,
-      resultRows: allResultRows,
-      processRows: processResult.rows,
-      importRows,
-      warnings: processResult.warnings,
-      analyzedLayers: processResult.analyzedLayers,
-      fixedLayers: processResult.fixedLayers,
-      totalErrors: allResultRows.length,
-      processErrors: processResult.rows.length,
-      importErrors: importRows.length,
-      featuresWithErrors: new Set(processResult.rows.map((r) => `${r.camada}:${r.feicao}`)).size,
-      completedAt: new Date().toISOString(),
-    });
-    finishJob({ jobId, status: "completed" });
-  } catch (error: any) {
-    const cancelled = error?.message === "cancel_requested";
-    progress(uid, jobId, {
-      status: cancelled ? "cancelled" : "failed",
-      stage: cancelled ? "cancelled" : "failed",
-      percent: cancelled ? undefined : 100,
-      message: cancelled ? "Processamento cancelado." : error?.message || "Falha ao processar projeto.",
-      error: error?.message || "processar_projeto_failed",
-    });
-    finishJob({
-      jobId,
-      status: cancelled ? "cancelled" : "failed",
-      error: error?.message || "processar_projeto_failed",
-    });
-  } finally {
-    closeSubscribers(jobId);
+function sendLocalProcessingGone(req: Request, res: Response): void {
+  const uid = String((req as any).authUid || "").trim();
+  if (!uid) {
+    res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+    return;
   }
+  res.status(410).json({
+    error: "O fluxo local de Importar/Processar foi removido; o veredito agora vem do SIMCAR real.",
+    code: "LOCAL_PROCESSING_REMOVED",
+    hint: "Use POST /api/simcar-oraculo/pipeline.",
+  });
 }
 
 /* ─────────────────────── routes ─────────────────────── */
@@ -1494,93 +1349,9 @@ export function registerProcessarProjetoRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/processar-projeto/importar", async (req: Request, res: Response) => {
-    try {
-      const uid = String((req as any).authUid || "").trim();
-      if (!uid) {
-        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
-        return;
-      }
-      const uploadId = String((req.body as any)?.uploadId || "").trim();
-      if (!uploadId) {
-        res.status(400).json({ error: "uploadId é obrigatório." });
-        return;
-      }
-      const upload = readDocBySegments(["users", uid, "processar_projeto_jobs", uploadId]);
-      if (!upload || upload.status !== "uploaded") {
-        res.status(404).json({ error: "Upload não encontrado. Envie o ZIP novamente." });
-        return;
-      }
-      const inputPath = getAbsoluteStoragePath(String(upload.inputRelativePath || ""));
-      const zipBuffer = fs.readFileSync(inputPath);
-      const result = runImportPhase(zipBuffer, String(upload.filename || "projeto.zip"));
-      const importId = crypto.randomUUID();
+  app.post("/api/processar-projeto/importar", sendLocalProcessingGone);
 
-      // PDF estilo SEMA com identidade GeoForest
-      let pdfRelativePath: string | undefined;
-      let pdfUrl: string | undefined;
-      try {
-        const pdfBuffer = await buildImportReportPdf({
-          filename: String(upload.filename || "projeto.zip"),
-          ok: result.ok,
-          rows: result.rows,
-          camadas: result.camadasReconhecidas,
-          warnings: result.warnings,
-          reportId: importId.slice(0, 8),
-        });
-        const storedPdf = saveUserBuffer({
-          uid,
-          area: "processar-projeto/import-pdf",
-          filename: `relatorio_importacao_${importId.slice(0, 8)}.pdf`,
-          buffer: pdfBuffer,
-        });
-        pdfRelativePath = storedPdf.relativePath;
-        pdfUrl = `/api/processar-projeto/import/${importId}/pdf`;
-      } catch (pdfErr: any) {
-        // Importação continua mesmo se o PDF falhar; aviso no job
-        result.warnings.push(`PDF de importação: ${pdfErr?.message || "falha ao gerar"}`);
-      }
-
-      persistJob(uid, importId, {
-        type: "import",
-        uploadId,
-        status: result.ok ? "import_ok" : "import_failed",
-        filename: upload.filename,
-        rows: result.rows,
-        camadasReconhecidas: result.camadasReconhecidas,
-        relatorioTexto: result.relatorioTexto,
-        warnings: result.warnings,
-        ok: result.ok,
-        pdfRelativePath: pdfRelativePath || null,
-        pdfUrl: pdfUrl || null,
-        createdAt: new Date().toISOString(),
-        expiresAtMs: Date.now() + CACHE_TTL_MS,
-      });
-      // Keep import snapshot on upload doc for process step
-      persistJob(uid, uploadId, {
-        lastImportId: importId,
-        lastImportOk: result.ok,
-        lastImportRows: result.rows,
-        lastImportRelatorio: result.relatorioTexto,
-        lastImportCamadas: result.camadasReconhecidas,
-        lastImportPdfUrl: pdfUrl || null,
-      });
-      res.json({
-        ok: result.ok,
-        importId,
-        uploadId,
-        rows: result.rows,
-        camadasReconhecidas: result.camadasReconhecidas,
-        relatorioTexto: result.relatorioTexto,
-        warnings: result.warnings,
-        totalErrors: result.rows.length,
-        pdfUrl: pdfUrl || null,
-      });
-    } catch (error: any) {
-      res.status(400).json({ error: error?.message || "Falha na importação." });
-    }
-  });
-
+  // Download legado: não integra o fluxo da aba nova nem produz o veredito exibido ao usuário.
   app.get("/api/processar-projeto/import/:importId/pdf", async (req: Request, res: Response) => {
     try {
       const uid = String((req as any).authUid || "").trim();
@@ -1632,91 +1403,7 @@ export function registerProcessarProjetoRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/processar-projeto/processar", async (req: Request, res: Response) => {
-    try {
-      const uid = String((req as any).authUid || "").trim();
-      if (!uid) {
-        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
-        return;
-      }
-      const uploadId = String((req.body as any)?.uploadId || "").trim();
-      if (!uploadId) {
-        res.status(400).json({ error: "uploadId é obrigatório." });
-        return;
-      }
-      const upload = readDocBySegments(["users", uid, "processar_projeto_jobs", uploadId]);
-      if (!upload || upload.status !== "uploaded") {
-        res.status(404).json({ error: "Upload não encontrado." });
-        return;
-      }
-      const importId = String((req.body as any)?.importId || upload.lastImportId || "").trim();
-      let importSnapshot: any = null;
-      if (importId) {
-        importSnapshot = readDocBySegments(["users", uid, "processar_projeto_jobs", importId]);
-      }
-      if (!importSnapshot && (upload.lastImportOk === true || upload.lastImportOk === false)) {
-        importSnapshot = {
-          ok: Boolean(upload.lastImportOk),
-          status: upload.lastImportOk ? "import_ok" : "import_failed",
-          rows: upload.lastImportRows || [],
-          relatorioTexto: upload.lastImportRelatorio,
-        };
-      }
-      if (!importSnapshot) {
-        // Auto-run import if user skipped explicit call — still gates processar.
-        const inputPath = getAbsoluteStoragePath(String(upload.inputRelativePath || ""));
-        const zipBuffer = fs.readFileSync(inputPath);
-        const autoImport = runImportPhase(zipBuffer, String(upload.filename || "projeto.zip"));
-        importSnapshot = {
-          ok: autoImport.ok,
-          status: autoImport.ok ? "import_ok" : "import_failed",
-          rows: autoImport.rows,
-          relatorioTexto: autoImport.relatorioTexto,
-        };
-      }
-
-      try {
-        assertImportAllowsProcess(importSnapshot);
-      } catch (gateError: any) {
-        res.status(400).json({
-          error: gateError?.message || IMPORT_REPROVADO_MSG,
-          code: "IMPORT_FAILED",
-          ok: false,
-          rows: importSnapshot?.rows || [],
-          totalErrors: Array.isArray(importSnapshot?.rows) ? importSnapshot.rows.length : 0,
-        });
-        return;
-      }
-
-      const settings = ((req.body as any)?.settings || {}) as GeometrySettings;
-      const job = startJob({
-        uid,
-        endpoint: "/api/processar-projeto/processar",
-        metadata: { uploadId, filename: upload.filename },
-      });
-      persistJob(uid, job.jobId, {
-        type: "process",
-        uploadId,
-        importId: importId || null,
-        filename: upload.filename,
-        status: "processing",
-        stage: "queued",
-        percent: 1,
-        message: "Processamento enviado ao servidor.",
-        createdAt: new Date().toISOString(),
-      });
-      res.status(202).json({ ok: true, jobId: job.jobId });
-      void runProcessJob({
-        uid,
-        jobId: job.jobId,
-        upload,
-        importSnapshot,
-        settings,
-      });
-    } catch (error: any) {
-      res.status(400).json({ error: error?.message || "Falha ao iniciar processamento." });
-    }
-  });
+  app.post("/api/processar-projeto/processar", sendLocalProcessingGone);
 
   app.get("/api/processar-projeto/jobs/:jobId/status", async (req: Request, res: Response) => {
     const uid = String((req as any).authUid || "").trim();

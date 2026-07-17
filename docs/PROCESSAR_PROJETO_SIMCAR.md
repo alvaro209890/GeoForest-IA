@@ -1,25 +1,27 @@
-# Processar projeto — fluxo completo Importar → ProcessarGeo (SIMCAR)
+# Processar projeto — Oráculo SIMCAR real
 
-Sub-aba **Análise de Erros → Processar projeto** que recria o fluxo oficial do
+Desde 2026-07-16, a sub-aba **Análise de Erros → Processar projeto** usa o próprio
 **Importador GEO / Projeto Geográfico do SIMCAR** (SEMA-MT):
 
-1. **Importar** shapefile (conformidade estrutural)
-2. **Processar** projeto (`ProcessarGeo`): topologia + Anexo 01 + **camadas derivadas**
-   (APP, APPP, APPD, APPRL, AURD, ARLDR) + pacotes de saída
+1. envia o ZIP ao projeto-teste CAR 270069;
+2. confirma município/abrangência sem alterar o nome “Santa clara”;
+3. executa **Importar** e **ProcessarGeo** reais em uma fila serial;
+4. devolve PDFs e ZIPs oficiais por rodada.
 
-Motor **local** no mesmo backend do recorte SIMCAR (PC + Cloudflare Tunnel).
+O antigo motor local descrito nas seções técnicas abaixo permanece como biblioteca de
+regressão e primitivas de correção. Ele **não é mais chamado pela aba e não emite o veredito**.
+Os endpoints antigos `/importar` e `/processar` respondem 410 durante a migração.
 
 ## Fluxo SIMCAR vs GeoForest
 
-| Etapa | SIMCAR (oficial) | GeoForest |
+| Etapa | Fonte atual | Rota GeoForest |
 |-------|------------------|-----------|
-| Importar | `[CAR_IMPORTAR_SHAPEFILE]` | `POST /api/processar-projeto/importar` |
-| Processar | `POST …/ProcessarGeo/{id}` | `POST /api/processar-projeto/processar` |
-| Arquivo processado | ZIP com projeto **+ APP*** | `arquivo_processado.zip` com limpos **+ APP*** |
-| Erros APP | `[ARQUIVO_ERROS_PROCESSAMENTO_APP]` | `erros_processamento_app.zip` |
-| Erros topologia | `[ARQUIVO_ERROS_PROCESSAMENTO]` | `erros_processamento.zip` |
+| Importar | `[CAR_IMPORTAR_SHAPEFILE]` real | `POST /api/simcar-oraculo/pipeline` |
+| Processar | `ProcessarGeo/{id}` real | mesmo job/pipeline |
+| Arquivos e relatórios | downloads oficiais da SEMA | `/jobs/:id/artifact/:key` |
+| Timeline | status reais da SEMA | `/jobs/:id/events` |
 
-## O que o ProcessarGeo local calcula
+## Referência do antigo ProcessarGeo local (fora do fluxo da aba)
 
 ### Camadas de entrada (técnico envia)
 
@@ -54,9 +56,10 @@ reservatório, vereda, relevo, etc. (nomenclatura oficial + aliases do modelo cl
 
 Sem camadas hidrográficas no ZIP, APP* não é gerada (aviso no relatório).
 
-## Validações (fase Importar) — calibradas no importador REAL da SEMA
+## Detectores locais preservados para regressão/autofix
 
-A importação **reprova** e **bloqueia o Processar** se houver qualquer erro:
+Essas regras ajudam nos testes e nas correções mecânicas; somente a resposta real da SEMA
+aprova ou reprova a importação exibida ao usuário:
 
 - Conformidade estrutural (CRS, 2D, nomenclatura, atributos, ATP)
 - **Borda do polígono se cruza** (`borda_se_cruza`) — auto-interseção exata
@@ -70,9 +73,9 @@ camadas-sonda em 2026-07-16 — ver
 [`CHANGELOG_2026-07-16_ORACULO_SEMA_SANTA_CLARA.md`](CHANGELOG_2026-07-16_ORACULO_SEMA_SANTA_CLARA.md)
 (inclui o contrato completo da API de importação/processamento do SIMCAR).
 
-## Validações (fase Processar)
+## Regras locais preservadas do processamento
 
-Só roda com importação **OK**. Além da derivação:
+No motor legado, só rodavam com importação **OK**. As primitivas preservadas incluem:
 
 - Auto-interseção, vértices duplicados, anéis degenerados  
 - Sobreposição mesma camada, vazios/gaps  
@@ -98,40 +101,42 @@ Todas as rotas exigem **Firebase Bearer** (`requireAuth` em `backend/index.ts`).
 
 ```
 POST   /api/processar-projeto/upload
-POST   /api/processar-projeto/importar
-POST   /api/processar-projeto/processar          → job SSE
-GET    /api/processar-projeto/import/:id/pdf
-GET    /api/processar-projeto/jobs/:id/status
-GET    /api/processar-projeto/jobs/:id/events
-GET    /api/processar-projeto/download/:id
-DELETE /api/processar-projeto/jobs/:id
+POST   /api/simcar-oraculo/pipeline
+GET    /api/simcar-oraculo/jobs/:id
+GET    /api/simcar-oraculo/jobs/:id/events
+GET    /api/simcar-oraculo/jobs/:id/artifact/:key
+DELETE /api/simcar-oraculo/jobs/:id
+
+POST   /api/processar-projeto/importar            → 410 Gone
+POST   /api/processar-projeto/processar            → 410 Gone
 ```
 
 ### Persistência / cards
 
-Jobs gravados em `users/{uid}/processar_projeto_jobs` (store local).
-A sidebar da Análise de Erros lista **import** e **process** (não o upload cru).
-Clique no card restaura o estado na UI; excluir remove job + artefatos.
+Jobs novos são server-owned em `users/{uid}/simcar_oraculo_jobs`; o Dashboard lê também
+`processar_projeto_jobs` apenas para histórico legado. Clique no card novo restaura o snapshot
+e os downloads; o front não replica `timeline`/linhas extensas nem sobrescreve o job.
 
-### Settings do processar
+### Settings do processar legado
 
 | Campo | Uso |
 |-------|-----|
 | `minOverlapM2` | Área mínima (m²) para marcar sobreposição/vazio |
 
-**Não há** `generateFixed` nesta aba (opção só em Erros de Geometria).
+Esses settings não são expostos na aba atual.
 
 ## Arquitetura
 
 | Módulo | Papel |
 |--------|-------|
 | `backend/simcar-processar-geo.ts` | Buffers APP + APPP/APPD/APPRL/AURD/ARLDR |
-| `backend/processar-projeto.ts` | Orquestra import/process + ZIP |
+| `backend/simcar-oraculo/pipeline.ts` | Orquestra prepare/import/process reais + rodadas |
+| `backend/processar-projeto.ts` | Upload/preview, compatibilidade 410 e biblioteca legada |
 | `backend/geometry-errors.ts` | Topologia / Anexo 01 / AIR×ATP |
 | `backend/simcar-rules.ts` | Nomenclatura, conformidade, regras Anexo 01 |
-| `backend/import-report-pdf.ts` | PDF de importação (identidade GeoForest) |
-| `client/.../ProcessarProjetoAnalysis.tsx` | UI + reinício com outro ZIP |
-| `client/.../Dashboard.tsx` | Cards de histórico na sidebar |
+| `backend/import-report-pdf.ts` | PDF legado/testes; não aparece na aba |
+| `client/.../ProcessarProjetoAnalysis.tsx` | UI ORACULO-only + SSE/poll/downloads |
+| `client/.../Dashboard.tsx` | Histórico novo+legado na sidebar |
 
 ## Testes
 

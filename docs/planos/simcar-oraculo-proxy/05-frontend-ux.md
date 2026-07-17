@@ -116,3 +116,11 @@ Sem credencial no servidor (`simcarConfigured=false`): a aba mostra estado vazio
   estados novos e usam `importOk/processOk` explícitos, sem inferir aprovação de `completed`.
 - Cards mostram data, número de rodadas e resultado final; o card inteiro é um botão acessível.
 - O callback atualiza apenas o estado React. Depois do F5, a fonte é o snapshot do backend.
+
+## Encerramento P4 / T12 (2026-07-16)
+
+- Os POSTs locais de importar/processar não possuem mais executor: respondem 410 com hint
+  para `/api/simcar-oraculo/pipeline` durante uma versão de compatibilidade.
+- Gate, auto-import fallback e job local saíram do caminho do produto. O PDF “estilo SEMA”
+  fica disponível apenas para registros/testes legados e nunca é mostrado pela aba nova.
+- Upload/preview e a aba Erros de Geometria permanecem independentes e cobertos por regressão.

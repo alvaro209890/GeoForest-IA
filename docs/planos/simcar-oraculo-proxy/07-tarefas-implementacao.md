@@ -104,12 +104,17 @@
 - Gate React/TypeScript e bundle Vite de produção verdes.
 - Commit: `feat(ui): histórico do oráculo SIMCAR no dashboard`
 
-### T12 — Matar rotas locais (D2)
+### T12 — Matar rotas locais (D2) ✅ concluída em 2026-07-16
 - `/api/processar-projeto/importar|processar` → 410 Gone (1 release); remover
   `assertImportAllowsProcess`, fallback :1654-1665 e chamadas de `runImportPhase`/
   `runProcessPhase` DESTA aba; `import-report-pdf` sai da rota da aba
 - Cuidado: `geometry-errors` (outra aba) não usa nada disso — confirmar com grep antes de apagar
 - Test: regressão `geometry-errors.test.ts` verde; upload continua ok
+- Entrega: handler 410 autenticado com `LOCAL_PROCESSING_REMOVED` + hint do pipeline;
+  `runProcessJob`, gate e auto-import local removidos; PDF GeoForest só fica no download
+  legado/testes. Fases puras seguem como biblioteca, sem chamada de produto.
+- Evidência: 4/4 contratos de rota (inclui upload+preview real de Querência), 42/42 Erros de
+  Geometria e 12/12 regressões das fases/PDF legados; `tsc` verde.
 - Commit: `feat(processar-projeto)!: remove validação local — veredito é do SIMCAR`
 
 ## Fase P5 — autofix import

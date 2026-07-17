@@ -19,7 +19,7 @@ D6 repo PÚBLICO → segredos só em env.
 | P2 | Município + abrangência | ✅ T4–T6; prepare live em skip e mutações T5 comprovadas |
 | P3 | ProcessarGeo API | ✅ rotas prontas |
 | P3.5 | Pipeline único + SSE + parse PDF | ✅ T7–T9 concluídas |
-| P4 | Front ORACULO-only | ⏳ T10–T11 concluídas; T12 pendente |
+| P4 | Front ORACULO-only | ✅ T10–T12 concluídas |
 | P5 | Autofix import + DeepSeek + loop | ⏳ T13–T16 |
 | P6 | Autofix process | ⏳ T17 |
 | P7 | Limpeza + deploy + E2E | ⏳ T18–T19 |
@@ -104,6 +104,12 @@ B9 comentário × código do default de modo.
   atualizados para `running`, fila, cancelamento, interrupção e resultados funcionais
   import/process; cards exibem data, rodadas e badge final. O callback não grava cópia do job
   server-owned. Checklist React, `tsc` e bundle Vite verdes.
+- **T12 concluída (2026-07-16):** os POSTs locais `/importar` e `/processar` agora devolvem
+  410 `LOCAL_PROCESSING_REMOVED` com o caminho do pipeline real; `runProcessJob`, o gate
+  `assertImportAllowsProcess` e o auto-import fallback foram removidos. O PDF GeoForest não
+  participa mais da aba (só compatibilidade/teste legado), enquanto as fases puras seguem
+  isoladas como biblioteca. Provas: **4/4** contratos de rota com upload/preview de Querência,
+  **42/42** Erros de Geometria, **12/12** regressões locais/PDF e `tsc` verdes. P4 encerrada.
 
 ## Credenciais
 
@@ -113,6 +119,6 @@ B9 comentário × código do default de modo.
 
 ## Como retomar
 
-1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T12 em diante)
+1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T13 em diante)
 2. Antes de codar SEMA: `11-endpoints-sema-descobertos.md`
 3. Validação: `09-validacao-santa-clara.md`
