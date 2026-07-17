@@ -271,6 +271,17 @@ Conclusão da prova: o **pipeline/process-autofix encadeia de verdade** no SIMCA
 **Estimativa residual do plano:** ~0% no escopo P0–P7. Arquitetura e ops no `main`/PC servidor;
 gate SIMCAR real revalidado (E2E FINAL 17/07).
 
+
+## Ops PC servidor (2026-07-17 tarde)
+
+- CAR-teste operacional: **271442 / Teste** (criado 2025-04-04, Querência) via
+  `SIMCAR_TEST_CAR_ID` no env do servidor. 270069 Santa clara permanece histórico de
+  calibração.
+- Backend `geoforest-backend.service` + tunnel `geoforest-api.cursar.space`.
+- Front clássico no Firebase; ver `docs/OPS_SERVIDOR_GEOFORREST.md`.
+- Fixes import: timeout longo ImportarArquivoShape, cancel residual AGUARDANDO,
+  retry login SIGA (`a8e74406`).
+
 ## Credenciais
 
 - Conta técnica: valores em `.oraculo-scratch/simcar-oraculo.env` (gitignored, este PC) e no
