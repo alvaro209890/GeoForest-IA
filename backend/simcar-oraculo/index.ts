@@ -14,5 +14,10 @@ export {
 export { importZipOnTestProject } from "./import-shape";
 export { processGeoOnTestProject } from "./process-geo";
 export { extractShapeContext } from "./shape-context";
+export {
+  prepareTestProject,
+  coversShapeBbox,
+  expandBboxMeters,
+} from "./prepare-project";
 export { registerSimcarOraculoRoutes } from "./routes";
 export type * from "./types";

@@ -11,6 +11,8 @@ export type SimcarOraculoConfig = {
   pollMs: number;
   importTimeoutMs: number;
   processTimeoutMs: number;
+  baseRefTimeoutMs: number;
+  abrangenciaMarginM: number;
   credentialsConfigured: boolean;
 };
 
@@ -45,6 +47,9 @@ export function getSimcarOraculoConfig(): SimcarOraculoConfig {
     pollMs: Number(process.env.SIMCAR_POLL_MS || 5000) || 5000,
     importTimeoutMs: Number(process.env.SIMCAR_IMPORT_TIMEOUT_MS || 15 * 60 * 1000) || 15 * 60 * 1000,
     processTimeoutMs: Number(process.env.SIMCAR_PROCESS_TIMEOUT_MS || 30 * 60 * 1000) || 30 * 60 * 1000,
+    baseRefTimeoutMs:
+      Number(process.env.SIMCAR_BASEREF_TIMEOUT_MS || 20 * 60 * 1000) || 20 * 60 * 1000,
+    abrangenciaMarginM: Number(process.env.SIMCAR_ABRANGENCIA_MARGIN_M || 500) || 500,
     credentialsConfigured,
   };
 }

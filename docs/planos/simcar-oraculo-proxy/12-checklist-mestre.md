@@ -22,8 +22,10 @@
       live; `/api/simcar-oraculo/municipios` devolveu 142 opções e Querência/Chave 751
 - [x] Endpoints de escrita validados LIVE no 270069 e documentados em `11` (T5) — município
       alterado/revertido com nome intacto; abrangência sobrescrita/restaurada sem `Limpar`
-- [ ] `prepare-project.ts` com guard do CAR-teste e `PropriedadeNome` intocável (T6)
-- [ ] BaseRef aguardada após mudar abrangência (T6)
+- [x] `prepare-project.ts` com guard do CAR-teste e `PropriedadeNome` intocável (T6) —
+      confirmação no polígono oficial e 11 cenários unitários
+- [x] BaseRef aguardada após mudar abrangência (T6) — `null` estável, CONCLUIDO, ERRO→
+      Reprocessar uma vez e timeout cobertos
 
 ## P3.5 — Pipeline
 

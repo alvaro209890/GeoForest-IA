@@ -110,3 +110,18 @@ em `finally` e confirmou o estado final por `Buscar`.
 - `prepare-project` com client mockado: skip / muda-município / muda-abrangência /
   BaseRef timeout / Salvar falha → failed.
 - Live checklist acima (não em CI).
+
+### Implementado em T6 (2026-07-16)
+
+- `prepare-project.ts` valida bbox/município antes de tocar a SEMA e reaplica
+  `assertTestCarId` antes de cada POST.
+- Mudança municipal só ocorre após `BuscarMunicipioGeo/{IBGE}` confirmar o centroid dentro do
+  polígono oficial. O payload é clone integral do `Buscar`; `PropriedadeNome` é conferido antes
+  e depois do save.
+- Abrangência usa margem de 500 m para decidir skip e alvo expandido em 2 km; tenta overwrite
+  direto (contrato T5) e só chama o destrutivo `Limpar` se o save falhar/não surtir efeito.
+- BaseRef aceita `null` estável após 3 polls, aguarda `[CONCLUIDO]`, chama uma vez
+  `ReprocessarBaseRef` em `[ERRO]` e respeita `SIMCAR_BASEREF_TIMEOUT_MS`.
+- `prepare-project.test.ts`: **11/11** (skip, município, nome, polígono oficial, cobertura,
+  fallback Limpar, falha, null, reprocess, timeout, CAR errado). Smoke live do fixture FINAL:
+  Querência já correta, abrangência cobre, nenhuma mutação.

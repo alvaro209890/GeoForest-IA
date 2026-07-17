@@ -16,7 +16,7 @@ D6 repo PÚBLICO → segredos só em env.
 | P0 | Cliente + health + Buscar | ✅ (Hermes 16/07; live login/Buscar revalidado à noite) |
 | P1 | Import API no CAR-teste | ✅ rotas prontas |
 | **P1.5** | **Bugs bloqueantes (B1–B9)** | ✅ T1–T3 concluídas; B9 (modo local) sai em T18 |
-| P2 | Município + abrangência | 🚧 T4–T5 concluídas; escrita live restaurada; T6 é a próxima |
+| P2 | Município + abrangência | ✅ T4–T6; prepare live em skip e mutações T5 comprovadas |
 | P3 | ProcessarGeo API | ✅ rotas prontas |
 | P3.5 | Pipeline único + SSE + parse PDF | ⏳ T7–T9 |
 | P4 | Front ORACULO-only | ⏳ T10–T12 |
@@ -65,6 +65,11 @@ B9 comentário × código do default de modo.
   da abrangência confirmou em 4,883 s, **sem Limpar**, e restauração em 1,817 s. BaseRef ficou
   `null` após alterar/restaurar (3 polls, ~11 s), comportamento aceito pelo contrato. Estado
   final confirmado: Querência/5107065 e bbox original.
+- **T6 concluída (2026-07-16):** `prepare-project.ts` implementa confirmação oficial do
+  município, payload integral com guard de `PropriedadeNome`, cobertura com margem, overwrite
+  direto + `Limpar` somente no fallback e máquina BaseRef (`null`/CONCLUIDO/ERRO/timeout).
+  **11/11 testes**; smoke live com o ZIP FINAL confirmou skip seguro em Querência, abrangência
+  já suficiente e zero mutações.
 
 ## Credenciais
 
