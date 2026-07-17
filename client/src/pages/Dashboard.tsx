@@ -8092,49 +8092,45 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           </div>
 
-          {/* ─── Botão de ação contextual ─── */}
+          {/* ─── Botão de ação contextual (camada única — evita “++” do botão em anel) ─── */}
           {activeView === 'simcar-clip' && (
             <button
+              type="button"
               onClick={() => { resetSimcarDraft('auto-clip'); setActiveView('simcar-clip'); }}
-              className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 transition-all duration-300 p-[1px] shadow-lg shadow-purple-900/30"
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 py-2.5 px-3 text-sm font-semibold text-white shadow-lg shadow-purple-900/30 transition-all"
             >
-              <div className="relative flex items-center justify-center gap-2 bg-[#120e1a] group-hover:bg-transparent text-purple-100 py-2.5 rounded-[11px] transition-colors">
-                <Plus size={16} />
-                <span className="font-medium block text-sm">Novo Recorte</span>
-              </div>
+              <Plus size={16} strokeWidth={2.25} className="shrink-0" aria-hidden />
+              <span>Novo Recorte</span>
             </button>
           )}
           {activeView === 'cbers-wpm' && (
             <button
+              type="button"
               onClick={() => resetCbersDraft()}
-              className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 transition-all duration-300 p-[1px] shadow-lg shadow-cyan-900/30"
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 py-2.5 px-3 text-sm font-semibold text-white shadow-lg shadow-cyan-900/30 transition-all"
             >
-              <div className="relative flex items-center justify-center gap-2 bg-[#071618] group-hover:bg-transparent text-cyan-100 py-2.5 rounded-[11px] transition-colors">
-                <Plus size={16} />
-                <span className="font-medium block text-sm">Nova Imagem</span>
-              </div>
+              <Plus size={16} strokeWidth={2.25} className="shrink-0" aria-hidden />
+              <span>Nova Imagem</span>
             </button>
           )}
           {activeView === 'landsat' && (
             <button
+              type="button"
               onClick={() => resetLandsatDraft()}
-              className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-sky-600 to-emerald-600 hover:from-sky-500 hover:to-emerald-500 transition-all duration-300 p-[1px] shadow-lg shadow-sky-900/30"
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-emerald-600 hover:from-sky-500 hover:to-emerald-500 py-2.5 px-3 text-sm font-semibold text-white shadow-lg shadow-sky-900/30 transition-all"
             >
-              <div className="relative flex items-center justify-center gap-2 bg-[#071318] group-hover:bg-transparent text-sky-100 py-2.5 rounded-[11px] transition-colors">
-                <Plus size={16} />
-                <span className="font-medium block text-sm">Nova Landsat</span>
-              </div>
+              <Plus size={16} strokeWidth={2.25} className="shrink-0" aria-hidden />
+              <span>Nova Landsat</span>
             </button>
           )}
           {activeView === 'vertices-proximas' && (
             <button
+              type="button"
               onClick={() => resetVerticesDraft()}
-              className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-r from-violet-600 to-emerald-600 hover:from-violet-500 hover:to-emerald-500 transition-all duration-300 p-[1px] shadow-lg shadow-violet-900/30"
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-emerald-600 hover:from-violet-500 hover:to-emerald-500 py-2.5 px-3 text-sm font-semibold text-white shadow-lg shadow-violet-900/30 transition-all"
             >
-              <div className="relative flex items-center justify-center gap-2 bg-[#120e1a] group-hover:bg-transparent text-violet-100 py-2.5 rounded-[11px] transition-colors">
-                <Plus size={16} />
-                <span className="font-medium block text-sm">Nova Análise</span>
-              </div>
+              <Plus size={16} strokeWidth={2.25} className="shrink-0" aria-hidden />
+              <span>Nova Análise</span>
             </button>
           )}
 
