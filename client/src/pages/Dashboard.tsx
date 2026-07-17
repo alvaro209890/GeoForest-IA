@@ -1366,10 +1366,12 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   const [selectedErrorLocation, setSelectedErrorLocation] = useState<google.maps.LatLngLiteral | null>(null);
   const [selectedErrorLabel, setSelectedErrorLabel] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'features' | 'settings'>(initialView);
+  const initialViewRef = React.useRef(initialView);
 
   useEffect(() => {
     if (initialView) {
       setActiveView(initialView);
+      initialViewRef.current = initialView;
     }
   }, [initialView]);
 
@@ -4986,7 +4988,9 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     setActiveConversationId(id);
     setActiveConversationRef(docRef);
     setMessages(initialMessages);
-    setActiveView('simcar-clip');
+    if (initialViewRef.current === 'simcar-clip') {
+      setActiveView('simcar-clip');
+    }
   };
 
   const loadConversation = async (collRef: ReturnType<typeof collection>, id: string) => {
@@ -5026,7 +5030,9 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     }
     setActiveConversationId(id);
     setActiveConversationRef(docRef);
-    setActiveView('simcar-clip');
+    if (initialViewRef.current === 'simcar-clip') {
+      setActiveView('simcar-clip');
+    }
     setIsSidebarOpen(false);
   };
 
