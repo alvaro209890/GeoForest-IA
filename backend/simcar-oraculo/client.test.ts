@@ -96,7 +96,7 @@ describe("simcar-oraculo/client timeout", () => {
     );
 
     const pending = simcarGet("TECNICO teste", "Requerimento/Lento", 25);
-    const rejection = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    const rejection = expect(pending).rejects.toThrow(/Timeout SIMCAR \(25ms\)/);
     await vi.advanceTimersByTimeAsync(25);
 
     await rejection;

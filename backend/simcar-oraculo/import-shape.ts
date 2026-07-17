@@ -58,18 +58,85 @@ export async function importZipOnTestProjectUnlocked(args: {
         }),
     });
 
+  // Se já há importação AGUARDANDO/EXECUTANDO (ex.: job anterior abortado no cliente
+  // depois de o SEMA ter enfileirado), um novo ImportarArquivoShape devolve 400 genérico.
+  // Cancela residual e só então sobe o ZIP novo.
+  try {
+    const pre = await authenticated((token) => simcarBuscarStatusProcessamento(token, carId));
+    const preSt = String(pre.ImportacaoShapeStatus || "");
+    if (/AGUARDANDO|EXECUTANDO|EM_ANDAMENTO|PROCESSANDO/i.test(preSt)) {
+      push({
+        step: "importar",
+        message: `Importação residual no SEMA (${preSt}); cancelando antes de reenviar…`,
+        percent: 12,
+      });
+      try {
+        await authenticated((token) =>
+          simcarPost(token, `Requerimento/CancelarImportacaoShape/${carId}`, undefined, 120_000),
+        );
+        push({
+          step: "importar",
+          message: "Importação residual cancelada; seguindo com o ZIP atual.",
+          percent: 14,
+        });
+        await sleep(Math.min(cfg.pollMs, 5000));
+      } catch (cancelErr: any) {
+        push({
+          step: "importar",
+          message: `Aviso ao cancelar residual: ${cancelErr?.message || cancelErr}`,
+          percent: 14,
+        });
+      }
+    }
+  } catch (preErr: any) {
+    push({
+      step: "importar",
+      message: `Aviso ao consultar status pré-import: ${preErr?.message || preErr}`,
+      percent: 12,
+    });
+  }
+
   await args.checkCancelled?.();
   push({ step: "upload_zip", message: `Enviando ${args.fileName} ao SIMCAR…`, percent: 15 });
   const arquivo = await authenticated((token) => simcarUploadZip(token, args.zip, args.fileName));
 
   await args.checkCancelled?.();
   push({ step: "importar", message: "Disparando ImportarArquivoShape…", percent: 25 });
-  await authenticated((token) =>
-    simcarPost(token, "Requerimento/ImportarArquivoShape", {
-      RequerimentoId: Number(carId),
-      Arquivo: arquivo,
-    }),
-  );
+  // O POST ImportarArquivoShape no SEMA pode demorar bem mais que o default HTTP (60s):
+  // a API só responde depois de enfileirar/aceitar o job. Usamos o mesmo teto do poll.
+  try {
+    await authenticated((token) =>
+      simcarPost(
+        token,
+        "Requerimento/ImportarArquivoShape",
+        {
+          RequerimentoId: Number(carId),
+          Arquivo: arquivo,
+        },
+        cfg.importTimeoutMs,
+      ),
+    );
+  } catch (importPostErr: any) {
+    // Se o SEMA já enfileirou (AGUARDANDO/EXECUTANDO) e devolve 400, seguimos para o poll.
+    const msg = String(importPostErr?.message || importPostErr || "");
+    let stNow = "";
+    try {
+      const cur = await authenticated((token) => simcarBuscarStatusProcessamento(token, carId));
+      stNow = String(cur.ImportacaoShapeStatus || "");
+    } catch {
+      /* ignore */
+    }
+    if (/AGUARDANDO|EXECUTANDO|EM_ANDAMENTO|PROCESSANDO|CONCLUIDO/i.test(stNow)) {
+      push({
+        step: "importar",
+        message: `POST Importar retornou erro, mas o SEMA já tem status ${stNow}; aguardando poll…`,
+        percent: 30,
+        data: { postError: msg.slice(0, 300), ImportacaoShapeStatus: stNow },
+      });
+    } else {
+      throw importPostErr;
+    }
+  }
 
   push({ step: "import_poll", message: "Aguardando importação no SEMA…", percent: 35 });
   const started = Date.now();

@@ -52,9 +52,41 @@ export async function processGeoOnTestProjectUnlocked(args: {
         }),
     });
 
+  // Residual de ProcessarGeo em AGUARDANDO/EXECUTANDO bloqueia novo POST com 400 genérico.
+  try {
+    const pre = await authenticated((token) => simcarBuscarStatusProcessamento(token, carId));
+    const preSt = String(
+      pre.ProcessamentoStatus || pre.ProcessamentoGeoStatus || "",
+    );
+    if (/AGUARDANDO|EXECUTANDO|EM_ANDAMENTO|PROCESSANDO/i.test(preSt)) {
+      push({
+        step: "processar",
+        message: `Processamento residual no SEMA (${preSt}); cancelando…`,
+        percent: 12,
+      });
+      try {
+        await authenticated((token) =>
+          simcarPost(token, `Requerimento/CancelarProcessamentoGeo/${carId}`, undefined, 120_000),
+        );
+        await sleep(Math.min(cfg.pollMs, 5000));
+      } catch (cancelErr: any) {
+        push({
+          step: "processar",
+          message: `Aviso ao cancelar residual: ${cancelErr?.message || cancelErr}`,
+          percent: 13,
+        });
+      }
+    }
+  } catch {
+    /* best-effort */
+  }
+
   await args.checkCancelled?.();
   push({ step: "processar", message: "Disparando ProcessarGeo…", percent: 15 });
-  await authenticated((token) => simcarPost(token, `Requerimento/ProcessarGeo/${carId}`));
+  // ProcessarGeo também pode demorar a responder o POST além do default HTTP 60s.
+  await authenticated((token) =>
+    simcarPost(token, `Requerimento/ProcessarGeo/${carId}`, undefined, cfg.processTimeoutMs),
+  );
 
   push({ step: "process_poll", message: "Aguardando processamento no SEMA…", percent: 25 });
   const started = Date.now();

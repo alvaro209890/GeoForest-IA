@@ -22,7 +22,7 @@ describe("simcar-oraculo/config", () => {
     delete process.env.SIMCAR_SENHA;
     const c = getSimcarOraculoConfig();
     expect(c.credentialsConfigured).toBe(false);
-    expect(c.testCarId).toBe("270069");
+    expect(c.testCarId).toBe("271442");
     expect("mode" in c).toBe(false);
   });
 

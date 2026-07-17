@@ -41,6 +41,16 @@ async function req(url: string, opts: RequestInit = {}, timeoutMs = 60000): Prom
       signal: ac.signal,
       headers: { ...BROWSER_HEADERS, ...(opts.headers as Record<string, string> | undefined) },
     });
+  } catch (error: any) {
+    // Node/undici: AbortError.message === "This operation was aborted"
+    const name = String(error?.name || "");
+    const msg = String(error?.message || error || "");
+    if (name === "AbortError" || /aborted|AbortError/i.test(msg)) {
+      throw new Error(
+        `Timeout SIMCAR (${timeoutMs}ms) em ${opts.method || "GET"} ${url.replace(rootUrl(), "")}`,
+      );
+    }
+    throw error;
   } finally {
     clearTimeout(t);
   }
@@ -48,6 +58,15 @@ async function req(url: string, opts: RequestInit = {}, timeoutMs = 60000): Prom
 
 function rootUrl(): string {
   return getSimcarOraculoConfig().root.replace(/\/$/, "");
+}
+
+function isTransientSigaLoginError(status: number, text: string): boolean {
+  if (status >= 500) return true;
+  // SEMA/SIGA costuma devolver 400 com "APIKEY … inválida" ou InternalServerError em instabilidade.
+  return (
+    status === 400 &&
+    /SIGA|APIKEY|InternalServerError|indispon[ií]vel|inesperado/i.test(text)
+  );
 }
 
 export async function simcarLogin(cpf: string, senha: string): Promise<string> {
@@ -60,17 +79,47 @@ export async function simcarLogin(cpf: string, senha: string): Promise<string> {
       }),
     ),
   });
-  const r = await req(
-    `${rootUrl()}/Autenticacao/Autenticar`,
-    { method: "POST", headers: { "Content-Type": "application/json" }, body },
-    60000,
-  );
-  const text = await r.text();
-  if (!r.ok) throw new Error(`login SIMCAR ${r.status}: ${text.slice(0, 300)}`);
-  const token = text.replace(/^"|"$/g, "");
-  if (!/^TECNICO /.test(token)) throw new Error(`token SIMCAR inesperado: ${token.slice(0, 80)}`);
-  tokenCache = { token, expiresAtMs: Date.now() + 25 * 60 * 1000 };
-  return token;
+  const maxAttempts = 4;
+  let lastErr: Error | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const r = await req(
+        `${rootUrl()}/Autenticacao/Autenticar`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body },
+        60000,
+      );
+      const text = await r.text();
+      if (!r.ok) {
+        const err = new Error(`login SIMCAR ${r.status}: ${text.slice(0, 300)}`);
+        if (attempt < maxAttempts && isTransientSigaLoginError(r.status, text)) {
+          lastErr = err;
+          await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+          continue;
+        }
+        throw err;
+      }
+      const token = text.replace(/^"|"$/g, "");
+      if (!/^TECNICO /.test(token)) {
+        throw new Error(`token SIMCAR inesperado: ${token.slice(0, 80)}`);
+      }
+      tokenCache = { token, expiresAtMs: Date.now() + 25 * 60 * 1000 };
+      return token;
+    } catch (error: any) {
+      const msg = String(error?.message || error || "");
+      // rede / timeout transitório
+      if (
+        attempt < maxAttempts &&
+        (/Timeout SIMCAR|fetch failed|ECONNRESET|ETIMEDOUT|network/i.test(msg) ||
+          /login SIMCAR (5\d\d|400)/.test(msg))
+      ) {
+        lastErr = error instanceof Error ? error : new Error(msg);
+        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastErr || new Error("login SIMCAR falhou após retentativas.");
 }
 
 export async function getSimcarToken(): Promise<string> {

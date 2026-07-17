@@ -141,3 +141,40 @@ PORT=3001
 
 - Repo **público**: CPF/senha/chaves **nunca** no git.
 - Mutações SEMA só no `SIMCAR_TEST_CAR_ID` (`assertTestCarId`).
+
+---
+
+## 8. Correção da falha do oráculo (job `77a050ff…`)
+
+### Sintoma
+Job do usuário (`Arquivo_Enviado_ARL_Excluida.zip` → CAR **271442 Teste**) falhou com:
+`This operation was aborted` ~60s após `ImportarArquivoShape`.
+
+### Causa 1 (corrigida)
+`simcarPost` usava timeout HTTP padrão de **60s**. O SEMA só responde o POST
+`ImportarArquivoShape` depois de enfileirar — demora frequentemente **> 60s**.
+
+**Fix:** POST de import/process usa `importTimeoutMs` / `processTimeoutMs` (15–30 min).
+Abort vira mensagem clara: `Timeout SIMCAR (Nms) em …`.
+
+### Causa 2 (corrigida)
+Após abort, o SEMA pode ficar com importação **`[AGUARDANDO]`**. Novo
+`ImportarArquivoShape` devolve **400** genérico.
+
+**Fix:** antes de importar/processar, consulta status; se residual
+AGUARDANDO/EXECUTANDO → `CancelarImportacaoShape` / `CancelarProcessamentoGeo`;
+se POST 400 mas status já indica fila ativa → segue para o poll.
+
+### Causa 3 (externa, mitigada)
+SIGA intermitente: `login SIMCAR 400: Consulta de autenticação de Pessoa
+indisponível no SIGA. STATUS:InternalServerError`.
+
+**Fix:** `simcarLogin` com até **4 retentativas** e backoff em erros transitórios
+SIGA/APIKEY/5xx/rede.
+
+### Reteste
+- Job reteste após fix de timeout: POST import passou dos 60s (não aborta mais).
+- Em seguida SEMA/SIGA instável no login; retry de login implementado.
+- Backend reiniciado com o `dist` atualizado; health local/tunnel OK;
+  `testCarId=271442`.
+
