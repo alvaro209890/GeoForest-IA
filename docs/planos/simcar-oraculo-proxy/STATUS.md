@@ -19,7 +19,7 @@ D6 repo PÚBLICO → segredos só em env.
 | P2 | Município + abrangência | ✅ T4–T6; prepare live em skip e mutações T5 comprovadas |
 | P3 | ProcessarGeo API | ✅ rotas prontas |
 | P3.5 | Pipeline único + SSE + parse PDF | ✅ T7–T9 concluídas |
-| P4 | Front ORACULO-only | ⏳ T10–T12 |
+| P4 | Front ORACULO-only | ⏳ T10 concluída; T11–T12 pendentes |
 | P5 | Autofix import + DeepSeek + loop | ⏳ T13–T16 |
 | P6 | Autofix process | ⏳ T17 |
 | P7 | Limpeza + deploy + E2E | ⏳ T18–T19 |
@@ -91,6 +91,13 @@ B9 comentário × código do default de modo.
   enviado (641.273 bytes) e conferência (811.556 bytes); erros/processado/pendências estavam
   ausentes com HTTP 400 no estado atual. Nenhuma mutação foi feita. Gate da fase P3.5:
   **97/97** oráculo+geometria, **11/11** regressão processar-projeto, `tsc` e build verdes.
+- **T10 concluída (2026-07-16):** `ProcessarProjetoAnalysis.tsx` foi reescrito sem botões,
+  gates, tabelas ou relatórios do validador local. O fluxo agora é dropzone → preview do
+  município (IBGE/WFS ou dropdown SIMCAR) → um único `POST /pipeline`; timeline por SSE com
+  três reconexões e polling de contingência; cancelamento; restauração sem SSE para terminal;
+  cards e downloads autenticados para todos os artefatos de cada rodada. O callback do
+  histórico recebe só resumo/referências, não `timeline`/linhas extensas. `tsc --noEmit` e
+  bundle Vite de produção verdes.
 
 ## Credenciais
 
@@ -100,6 +107,6 @@ B9 comentário × código do default de modo.
 
 ## Como retomar
 
-1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T10 em diante)
+1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T11 em diante)
 2. Antes de codar SEMA: `11-endpoints-sema-descobertos.md`
 3. Validação: `09-validacao-santa-clara.md`

@@ -1,24 +1,38 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AlertTriangle,
+  Bot,
   CheckCircle2,
-  Cpu,
+  ChevronDown,
+  Circle,
+  Clock3,
   Download,
+  FileArchive,
   FileStack,
   FileText,
   Loader2,
+  MapPin,
   Play,
   Plus,
   RefreshCw,
+  ShieldAlert,
+  Sparkles,
+  StopCircle,
   Upload,
   XCircle,
-} from 'lucide-react';
-import { toast } from 'sonner';
+} from "lucide-react";
+import { toast } from "sonner";
 
 type ApiFetch = (
   path: string,
   init?: RequestInit,
-  options?: { auth?: boolean },
+  options?: { auth?: boolean }
 ) => Promise<Response>;
 
 type GeometryLayer = {
@@ -30,29 +44,116 @@ type GeometryLayer = {
   ignoredReason?: string;
 };
 
-type ErrorRow = {
-  camada: string;
-  tipo: string;
-  feicao: number;
-  parte: number;
-  anel: number;
-  x: number;
-  y: number;
-  detalhe: string;
+type MunicipioDetectado = {
+  nome: string | null;
+  ibge: string | null;
+  fonte: "malha-ibge" | "wfs-sema" | "manual" | "nao-detectado";
+  chaveSimcar?: string | number;
 };
 
-type CamadaRec = {
-  name: string;
-  code: string | null;
-  featureCount: number;
-  crsLabel: string;
+type MunicipioOption = {
+  chave: string | number;
+  nome: string;
+  ibge: string | null;
 };
 
-type Progress = {
-  stage?: string;
+type ShapePreview = {
+  bbox: [number, number, number, number];
+  centroid: [number, number];
+  areaHaApprox?: number;
+  layers: string[];
+  propertyLayer?: string;
+  municipioDetectado: MunicipioDetectado;
+  warnings: string[];
+  crs?: string;
+};
+
+type OraculoHealth = {
+  testCarId: string;
+  simcarConfigured: boolean;
+  deepseekConfigured: boolean;
+  queueLength: number;
+};
+
+type OraculoEvent = {
+  step: string;
+  message: string;
   percent?: number;
+  data?: Record<string, unknown>;
+  ts: string;
+  round: number;
+};
+
+type ErrorSummary = {
+  camada: string;
+  erro: string;
+  qtd: number;
+};
+
+type RoundPhase = {
+  ok: boolean;
+  resultado: string;
+  status: string;
+  detalhes: string;
+  pdf: string | null;
+  errosZip?: string | null;
+  errosResumo: ErrorSummary[];
+  parseWarnings: string[];
+};
+
+type OraculoRound = {
+  n: number;
+  zipArtifact: string;
+  import: RoundPhase | null;
+  process: RoundPhase | null;
+  artifactWarnings?: string[];
+  fixplan?: string | null;
+};
+
+type OraculoArtifact = {
+  key: string;
+  round: number;
+  filename: string;
+  url: string;
+  contentType: string;
+  bytes: number;
+  source: "upload" | "sema" | "autofix";
+};
+
+type OraculoJob = {
+  jobId: string;
+  type?: string;
+  status: string;
+  stage?: string;
+  ok?: boolean | null;
+  importOk?: boolean | null;
+  processOk?: boolean | null;
+  resultado?: string;
+  error?: string | null;
   message?: string;
-  layer?: string;
+  percent?: number | null;
+  uploadId?: string;
+  sourceFilename?: string;
+  filename?: string;
+  testCarId?: string;
+  queuePosition?: number;
+  round?: number;
+  maxRounds?: number;
+  rounds?: OraculoRound[];
+  artifacts?: Record<string, OraculoArtifact>;
+  timeline?: OraculoEvent[];
+  createdAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+};
+
+type RoundHistorySummary = {
+  n: number;
+  importOk: boolean | null;
+  processOk: boolean | null;
+  importResult?: string;
+  processResult?: string;
+  artifactKeys: string[];
 };
 
 export type ProcessarHistoryItem = {
@@ -60,7 +161,19 @@ export type ProcessarHistoryItem = {
   jobId: string;
   filename: string;
   timestamp: string;
-  status: 'processing' | 'completed' | 'failed' | 'cancelled' | 'uploaded' | 'deleted' | 'queued' | 'import_ok' | 'import_failed';
+  status:
+    | "processing"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "cancel_requested"
+    | "interrupted"
+    | "uploaded"
+    | "deleted"
+    | "queued"
+    | "import_ok"
+    | "import_failed";
   stage?: string;
   percent: number;
   message?: string;
@@ -70,36 +183,21 @@ export type ProcessarHistoryItem = {
   importId?: string;
   downloadUrl?: string;
   importPdfUrl?: string;
-  resultRows?: ErrorRow[];
-  importRows?: ErrorRow[];
+  resultRows?: Array<Record<string, unknown>>;
+  importRows?: Array<Record<string, unknown>>;
   warnings?: string[];
-  camadasReconhecidas?: CamadaRec[];
+  camadasReconhecidas?: Array<Record<string, unknown>>;
   importOk?: boolean | null;
+  processOk?: boolean | null;
   importErrors?: number;
   processErrors?: number;
   totalErrors?: number;
   relatorioTexto?: string;
-};
-
-const TIPO_LABEL: Record<string, string> = {
-  // Rótulos alinhados ao PDF "Relatório de importação"
-  borda_se_cruza: 'Borda do polígono se cruza',
-  vertice_duplicado: 'A geometria contém pontos repetidos',
-  anel_degenerado: 'Anel degenerado',
-  sobreposicao: 'Sobreposição',
-  vazio: 'Vazio/gap',
-  air_atp_area: 'Soma AIR ≠ ATP',
-  erro_calculo_app: 'Erro de cálculo de APP',
-  nomenclatura_desconhecida: 'Nomenclatura fora do padrão',
-  crs_ausente: 'CRS ausente',
-  crs_nao_conforme: 'CRS não conforme',
-  dimensao_nao_2d: 'Shapefile não é 2D',
-  primitiva_incorreta: 'Primitiva incorreta',
-  atp_multipla: 'ATP com várias feições',
-  atributo_ausente: 'Atributo obrigatório ausente',
-  feicao_obrigatoria_ausente: 'Feição obrigatória ausente',
-  fora_do_continente: 'Fora do continente (Anexo 01)',
-  sobreposicao_proibida: 'Sobreposição proibida (Anexo 01)',
+  resultado?: string;
+  roundCount?: number;
+  roundsSummary?: RoundHistorySummary[];
+  artifactRefs?: OraculoArtifact[];
+  sourceCollection?: "simcar_oraculo_jobs" | "processar_projeto_jobs";
 };
 
 type Props = {
@@ -109,14 +207,183 @@ type Props = {
   historyEntry?: ProcessarHistoryItem | null;
 };
 
+type DraftState = {
+  file: File | null;
+  filename: string;
+  fileSize: number;
+  uploadId: string | null;
+  layers: GeometryLayer[];
+  warnings: string[];
+  preview: ShapePreview | null;
+};
+
+type ConnectionMode = "idle" | "sse" | "reconnecting" | "polling";
+
+const TERMINAL_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+const FAILURE_STEPS = new Set([
+  "import_fail",
+  "process_fail",
+  "failed",
+  "error",
+  "cancelled",
+]);
+const ARTIFACT_ORDER = [
+  "import-pdf",
+  "process-pdf",
+  "erros-zip",
+  "enviado-zip",
+  "processado-zip",
+  "conferencia-zip",
+  "pendencias-zip",
+  "corrigido-zip",
+  "fixplan",
+];
+
+function emptyDraft(): DraftState {
+  return {
+    file: null,
+    filename: "",
+    fileSize: 0,
+    uploadId: null,
+    layers: [],
+    warnings: [],
+    preview: null,
+  };
+}
+
+function isTerminal(status: unknown): boolean {
+  return TERMINAL_STATUSES.has(String(status || "").toLowerCase());
+}
+
+function clampPercent(value: unknown): number {
+  const parsed = Number(value || 0);
+  return Math.min(
+    100,
+    Math.max(0, Number.isFinite(parsed) ? Math.round(parsed) : 0)
+  );
+}
+
+function formatTime(value: string | undefined): string {
+  if (!value) return "--:--";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "--:--";
+  return parsed.toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "arquivo";
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function artifactLabel(key: string): string {
+  if (key.startsWith("import-pdf")) return "PDF importação SEMA";
+  if (key.startsWith("process-pdf")) return "PDF processamento SEMA";
+  if (key.startsWith("erros-zip")) return "ZIP de erros";
+  if (key.startsWith("enviado-zip")) return "ZIP enviado";
+  if (key.startsWith("processado-zip")) return "ZIP processado";
+  if (key.startsWith("conferencia-zip")) return "ZIP conferência";
+  if (key.startsWith("pendencias-zip")) return "ZIP pendências";
+  if (key.startsWith("corrigido-zip")) return "ZIP corrigido";
+  if (key.startsWith("fixplan")) return "Plano de correção";
+  return "Baixar artefato";
+}
+
+function artifactSortValue(key: string): number {
+  const index = ARTIFACT_ORDER.findIndex(prefix => key.startsWith(prefix));
+  return index < 0 ? ARTIFACT_ORDER.length : index;
+}
+
+function countErrors(phase: RoundPhase | null): number {
+  return (phase?.errosResumo || []).reduce(
+    (total, item) => total + Math.max(0, Number(item.qtd || 0)),
+    0
+  );
+}
+
+function toHistorySnapshot(job: OraculoJob): Record<string, unknown> {
+  const rounds = Array.isArray(job.rounds) ? job.rounds : [];
+  const artifacts = Object.values(job.artifacts || {});
+  const importErrors = rounds.reduce(
+    (total, round) => total + countErrors(round.import),
+    0
+  );
+  const processErrors = rounds.reduce(
+    (total, round) => total + countErrors(round.process),
+    0
+  );
+  const roundsSummary: RoundHistorySummary[] = rounds.map(round => ({
+    n: round.n,
+    importOk: typeof round.import?.ok === "boolean" ? round.import.ok : null,
+    processOk: typeof round.process?.ok === "boolean" ? round.process.ok : null,
+    importResult: round.import?.resultado || undefined,
+    processResult: round.process?.resultado || undefined,
+    artifactKeys: artifacts
+      .filter(artifact => artifact.round === round.n)
+      .map(artifact => artifact.key),
+  }));
+  return {
+    jobId: job.jobId,
+    type: "pipeline",
+    status: job.status,
+    stage: job.stage,
+    filename: job.sourceFilename || job.filename || "Projeto SIMCAR",
+    percent: clampPercent(job.percent),
+    message: job.message,
+    error: job.error || undefined,
+    uploadId: job.uploadId,
+    importOk: typeof job.importOk === "boolean" ? job.importOk : null,
+    processOk: typeof job.processOk === "boolean" ? job.processOk : null,
+    resultado: job.resultado,
+    roundCount: rounds.length,
+    roundsSummary,
+    artifactRefs: artifacts,
+    importErrors,
+    processErrors,
+    totalErrors: importErrors + processErrors,
+    createdAt: job.createdAt,
+    completedAt: job.finishedAt,
+    sourceCollection: "simcar_oraculo_jobs",
+  };
+}
+
+function historyEntryAsJob(entry: ProcessarHistoryItem): OraculoJob {
+  return {
+    jobId: entry.jobId,
+    type: entry.type,
+    status: entry.status,
+    stage: entry.stage,
+    percent: entry.percent,
+    message: entry.message,
+    error: entry.error,
+    uploadId: entry.uploadId,
+    filename: entry.filename,
+    importOk: entry.importOk,
+    processOk: entry.processOk,
+    resultado: entry.resultado,
+    createdAt: entry.timestamp,
+    artifacts: Object.fromEntries(
+      (entry.artifactRefs || []).map(artifact => [artifact.key, artifact])
+    ),
+  };
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      const result = String(reader.result || '');
-      resolve(result.includes(',') ? result.split(',').pop() || '' : result);
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",").pop() || "" : result);
     };
-    reader.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
+    reader.onerror = () => reject(new Error("Falha ao ler o arquivo."));
     reader.readAsDataURL(file);
   });
 }
@@ -126,14 +393,372 @@ async function readApiError(response: Response): Promise<string> {
     const text = await response.text();
     if (!text) return `Erro ${response.status}`;
     try {
-      const json = JSON.parse(text);
-      return json?.error || json?.message || text;
+      const payload = JSON.parse(text) as { error?: string; message?: string };
+      return payload.error || payload.message || text;
     } catch {
-      return text;
+      return /^\s*</.test(text)
+        ? `A API retornou uma resposta inválida (${response.status}).`
+        : text;
     }
   } catch {
     return `Erro ${response.status}`;
   }
+}
+
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Operação cancelada.", "AbortError"));
+      return;
+    }
+    const timeout = window.setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        window.clearTimeout(timeout);
+        reject(new DOMException("Operação cancelada.", "AbortError"));
+      },
+      { once: true }
+    );
+  });
+}
+
+async function consumeJobStream(
+  response: Response,
+  jobId: string,
+  onJob: (job: OraculoJob) => void
+): Promise<void> {
+  if (!response.body)
+    throw new Error("O servidor não abriu o canal de eventos.");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() || "";
+    for (const block of blocks) {
+      const data = block
+        .split(/\r?\n/)
+        .filter(line => line.startsWith("data:"))
+        .map(line => line.slice(5).trim())
+        .join("\n");
+      if (!data) continue;
+      try {
+        const envelope = JSON.parse(data) as {
+          type?: string;
+          jobId?: string;
+          job?: Record<string, unknown>;
+        };
+        if (
+          envelope.job &&
+          (envelope.type === "snapshot" || envelope.type === "event")
+        ) {
+          onJob({
+            ...(envelope.job as unknown as OraculoJob),
+            jobId: envelope.jobId || jobId,
+          });
+        }
+      } catch {
+        // Um evento malformado não invalida os snapshots seguintes do mesmo stream.
+      }
+    }
+  }
+}
+
+type TimelineProps = {
+  timeline: OraculoEvent[];
+  status: string;
+  percent: number;
+  round: number;
+  maxRounds: number;
+  connectionMode: ConnectionMode;
+};
+
+function OraculoTimeline({
+  timeline,
+  status,
+  percent,
+  round,
+  maxRounds,
+  connectionMode,
+}: TimelineProps): React.ReactElement {
+  const terminal = isTerminal(status);
+  const connectionLabel =
+    connectionMode === "sse"
+      ? "ao vivo"
+      : connectionMode === "reconnecting"
+        ? "reconectando"
+        : connectionMode === "polling"
+          ? "consulta periódica"
+          : terminal
+            ? "finalizado"
+            : "aguardando";
+
+  return (
+    <section className="rounded-2xl border border-cyan-500/15 bg-[#0b1412]/85 p-4 sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-base font-semibold text-white">
+            Timeline do Oráculo
+          </h3>
+          <p className="mt-1 text-xs text-slate-500">
+            Rodada {Math.max(1, round)}/{Math.max(1, maxRounds)} ·
+            acompanhamento {connectionLabel}
+          </p>
+        </div>
+        <span className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1 text-xs font-bold tabular-nums text-cyan-200">
+          {percent}%
+        </span>
+      </div>
+
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/5">
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-400 transition-[width] duration-500"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+
+      {timeline.length > 0 ? (
+        <ol
+          className="mt-5 max-h-[28rem] space-y-0 overflow-y-auto pr-1"
+          aria-live="polite"
+        >
+          {timeline.map((event, index) => {
+            const failed = FAILURE_STEPS.has(event.step);
+            const current = index === timeline.length - 1 && !terminal;
+            return (
+              <li
+                key={`${event.ts}-${event.step}-${index}`}
+                className="relative flex gap-3 pb-5 last:pb-0"
+              >
+                {index < timeline.length - 1 ? (
+                  <span className="absolute left-[9px] top-5 h-[calc(100%-0.25rem)] w-px bg-white/10" />
+                ) : null}
+                <span className="relative z-10 mt-0.5 shrink-0 bg-[#0b1412]">
+                  {current ? (
+                    <Loader2 size={19} className="animate-spin text-cyan-300" />
+                  ) : failed ? (
+                    <XCircle size={19} className="text-rose-300" />
+                  ) : (
+                    <CheckCircle2 size={19} className="text-emerald-300" />
+                  )}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <time className="text-[10px] tabular-nums text-slate-500">
+                      {formatTime(event.ts)}
+                    </time>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                      Rodada {event.round || 1}
+                    </span>
+                  </div>
+                  <p
+                    className={`mt-0.5 text-sm ${failed ? "text-rose-100" : "text-slate-200"}`}
+                  >
+                    {event.message}
+                  </p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      ) : (
+        <div className="mt-5 flex items-center gap-3 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-400">
+          <Clock3 size={17} />
+          Aguardando o primeiro evento do servidor.
+        </div>
+      )}
+    </section>
+  );
+}
+
+type RoundCardProps = {
+  round: OraculoRound;
+  artifacts: OraculoArtifact[];
+  current: boolean;
+  onDownload: (artifact: OraculoArtifact) => void;
+};
+
+function RoundCard({
+  round,
+  artifacts,
+  current,
+  onDownload,
+}: RoundCardProps): React.ReactElement {
+  const sortedArtifacts = useMemo(
+    () =>
+      [...artifacts].sort(
+        (a, b) => artifactSortValue(a.key) - artifactSortValue(b.key)
+      ),
+    [artifacts]
+  );
+  const importErrors = countErrors(round.import);
+  const processErrors = countErrors(round.process);
+  const rejected = round.import?.ok === false || round.process?.ok === false;
+  const approved =
+    round.process?.ok === true ||
+    (round.import?.ok === true && round.process === null);
+  const stateLabel = rejected
+    ? "com pendência"
+    : approved
+      ? "aprovada"
+      : "em andamento";
+
+  return (
+    <details
+      className="group rounded-2xl border border-white/10 bg-[#0b1412]/85 open:border-cyan-500/20"
+      open={current}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-3 p-4 sm:p-5 [&::-webkit-details-marker]:hidden">
+        <span
+          className={`rounded-xl p-2 ${
+            rejected
+              ? "bg-rose-500/10 text-rose-300"
+              : approved
+                ? "bg-emerald-500/10 text-emerald-300"
+                : "bg-cyan-500/10 text-cyan-300"
+          }`}
+        >
+          {rejected ? (
+            <XCircle size={18} />
+          ) : approved ? (
+            <CheckCircle2 size={18} />
+          ) : (
+            <Loader2 size={18} className="animate-spin" />
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-white">Rodada {round.n}</p>
+          <p className="mt-0.5 truncate text-xs text-slate-500">
+            {stateLabel} · {importErrors} erro(s) na importação ·{" "}
+            {processErrors} no processamento
+          </p>
+        </div>
+        <ChevronDown
+          size={18}
+          className="shrink-0 text-slate-500 transition-transform group-open:rotate-180"
+        />
+      </summary>
+
+      <div className="space-y-4 border-t border-white/5 px-4 pb-5 pt-4 sm:px-5">
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+            <div className="flex items-center gap-2">
+              {round.import?.ok === true ? (
+                <CheckCircle2 size={15} className="text-emerald-300" />
+              ) : round.import?.ok === false ? (
+                <XCircle size={15} className="text-rose-300" />
+              ) : (
+                <Circle size={15} className="text-slate-600" />
+              )}
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                Importação SEMA
+              </p>
+            </div>
+            <p className="mt-2 text-sm text-slate-200">
+              {round.import?.resultado ||
+                (round.import ? round.import.status : "Aguardando resultado")}
+            </p>
+            {round.import?.detalhes ? (
+              <p className="mt-1 text-xs text-slate-500">
+                {round.import.detalhes}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+            <div className="flex items-center gap-2">
+              {round.process?.ok === true ? (
+                <CheckCircle2 size={15} className="text-emerald-300" />
+              ) : round.process?.ok === false ? (
+                <XCircle size={15} className="text-rose-300" />
+              ) : (
+                <Circle size={15} className="text-slate-600" />
+              )}
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                Processamento SEMA
+              </p>
+            </div>
+            <p className="mt-2 text-sm text-slate-200">
+              {round.process?.resultado ||
+                (round.process ? round.process.status : "Ainda não executado")}
+            </p>
+            {round.process?.detalhes ? (
+              <p className="mt-1 text-xs text-slate-500">
+                {round.process.detalhes}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        {[
+          ...(round.import?.errosResumo || []),
+          ...(round.process?.errosResumo || []),
+        ].length > 0 ? (
+          <div className="overflow-hidden rounded-xl border border-rose-500/15">
+            {[
+              ...(round.import?.errosResumo || []),
+              ...(round.process?.errosResumo || []),
+            ].map((item, index) => (
+              <div
+                key={`${item.camada}-${item.erro}-${index}`}
+                className="flex flex-col gap-1 border-t border-white/5 px-3 py-2.5 first:border-t-0 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <p className="text-xs text-slate-300">
+                  <span className="font-semibold text-rose-200">
+                    {item.camada}
+                  </span>{" "}
+                  · {item.erro}
+                </p>
+                <span className="shrink-0 text-xs font-bold tabular-nums text-rose-300">
+                  ×{item.qtd}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {sortedArtifacts.length > 0 ? (
+          <div>
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Artefatos da rodada
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {sortedArtifacts.map(artifact => (
+                <button
+                  key={artifact.key}
+                  type="button"
+                  onClick={() => onDownload(artifact)}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/20 bg-cyan-500/10 px-3 py-2.5 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-500/20 sm:w-auto"
+                  title={`${artifact.filename} · ${formatBytes(artifact.bytes)}`}
+                >
+                  {artifact.contentType === "application/pdf" ? (
+                    <FileText size={14} />
+                  ) : (
+                    <Download size={14} />
+                  )}
+                  {artifactLabel(artifact.key)}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {(round.artifactWarnings || []).length > 0 ? (
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-100/90">
+            {(round.artifactWarnings || []).map((warning, index) => (
+              <p key={`${warning}-${index}`} className="mt-1 first:mt-0">
+                {warning}
+              </p>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
 }
 
 const ProcessarProjetoAnalysis: React.FC<Props> = ({
@@ -142,886 +767,1051 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({
   selectedJobId = null,
   historyEntry = null,
 }) => {
-  const [file, setFile] = useState<File | null>(null);
+  const [health, setHealth] = useState<OraculoHealth | null>(null);
+  const [healthLoading, setHealthLoading] = useState(true);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<DraftState>(emptyDraft);
   const [uploading, setUploading] = useState(false);
-  const [uploadId, setUploadId] = useState<string | null>(null);
-  const [layers, setLayers] = useState<GeometryLayer[]>([]);
-  const [uploadWarnings, setUploadWarnings] = useState<string[]>([]);
-
-  const [importing, setImporting] = useState(false);
-  const [importId, setImportId] = useState<string | null>(null);
-  const [importOk, setImportOk] = useState<boolean | null>(null);
-  const [importRows, setImportRows] = useState<ErrorRow[]>([]);
-  const [camadasRec, setCamadasRec] = useState<CamadaRec[]>([]);
-  const [importRelatorio, setImportRelatorio] = useState<string | null>(null);
-  const [importPdfUrl, setImportPdfUrl] = useState<string | null>(null);
-
-  const [minOverlapM2, setMinOverlapM2] = useState('1');
-
-  const [processing, setProcessing] = useState(false);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [progress, setProgress] = useState<Progress | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [selectedMunicipioKey, setSelectedMunicipioKey] = useState("");
+  const [municipios, setMunicipios] = useState<MunicipioOption[]>([]);
+  const [municipiosLoading, setMunicipiosLoading] = useState(false);
+  const [municipiosError, setMunicipiosError] = useState<string | null>(null);
+  const [job, setJob] = useState<OraculoJob | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("idle");
+  const [monitorError, setMonitorError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const [rows, setRows] = useState<ErrorRow[]>([]);
-  const [processErrors, setProcessErrors] = useState(0);
-  const [importErrors, setImportErrors] = useState(0);
-  const [warnings, setWarnings] = useState<string[]>([]);
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  const [completedMessage, setCompletedMessage] = useState<string | null>(null);
+  const [legacyView, setLegacyView] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const eventsAbortRef = useRef<AbortController | null>(null);
+  const healthAbortRef = useRef<AbortController | null>(null);
+  const monitorAbortRef = useRef<AbortController | null>(null);
+  const monitorSerialRef = useRef(0);
+  const jobRef = useRef<OraculoJob | null>(null);
+  const onJobSnapshotRef = useRef(onJobSnapshot);
+  const historyEntryRef = useRef(historyEntry);
   const lastRestoredJobRef = useRef<string | null>(null);
+  const municipiosLoadedRef = useRef(false);
 
-  const polygonLayers = useMemo(
-    () => layers.filter((l) => l.geometryType === 'Polygon' && l.featureCount > 0 && !l.ignoredReason),
-    [layers],
+  useEffect(() => {
+    onJobSnapshotRef.current = onJobSnapshot;
+  }, [onJobSnapshot]);
+
+  useEffect(() => {
+    historyEntryRef.current = historyEntry;
+  }, [historyEntry]);
+
+  const applyJobSnapshot = useCallback((incoming: OraculoJob) => {
+    const normalized = {
+      ...incoming,
+      jobId: String(incoming.jobId || "").trim(),
+      status: String(incoming.status || "queued").toLowerCase(),
+    };
+    if (!normalized.jobId) return;
+    jobRef.current = normalized;
+    setJob(normalized);
+    setDraft(current => ({
+      ...current,
+      uploadId: normalized.uploadId || current.uploadId,
+      filename:
+        normalized.sourceFilename || normalized.filename || current.filename,
+    }));
+    setError(
+      normalized.status === "failed"
+        ? normalized.error || normalized.message || "Falha no pipeline SIMCAR."
+        : null
+    );
+    onJobSnapshotRef.current?.(toHistorySnapshot(normalized));
+  }, []);
+
+  const loadHealth = useCallback(async () => {
+    healthAbortRef.current?.abort();
+    const controller = new AbortController();
+    healthAbortRef.current = controller;
+    setHealthLoading(true);
+    setHealthError(null);
+    try {
+      const response = await apiFetch("/api/simcar-oraculo/health", {
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      const payload = await response.json();
+      if (controller.signal.aborted) return;
+      setHealth({
+        testCarId: String(payload?.testCarId || "270069"),
+        simcarConfigured: payload?.simcarConfigured === true,
+        deepseekConfigured: payload?.deepseekConfigured === true,
+        queueLength: Math.max(0, Number(payload?.queueLength || 0)),
+      });
+    } catch (caught: unknown) {
+      if ((caught as { name?: string })?.name !== "AbortError") {
+        setHealthError(
+          caught instanceof Error
+            ? caught.message
+            : "Falha ao consultar o servidor do Oráculo."
+        );
+      }
+    } finally {
+      if (healthAbortRef.current === controller) {
+        healthAbortRef.current = null;
+        setHealthLoading(false);
+      }
+    }
+  }, [apiFetch]);
+
+  useEffect(() => {
+    void loadHealth();
+    return () => healthAbortRef.current?.abort();
+  }, [loadHealth]);
+
+  const loadMunicipios = useCallback(async () => {
+    if (municipiosLoadedRef.current) return;
+    municipiosLoadedRef.current = true;
+    setMunicipiosLoading(true);
+    setMunicipiosError(null);
+    try {
+      const response = await apiFetch("/api/simcar-oraculo/municipios");
+      if (!response.ok) throw new Error(await readApiError(response));
+      const payload = await response.json();
+      const options: MunicipioOption[] = Array.isArray(payload?.municipios)
+        ? payload.municipios
+            .map((item: Record<string, unknown>) => ({
+              chave: String(item.chave ?? ""),
+              nome: String(item.nome ?? "").trim(),
+              ibge: item.ibge ? String(item.ibge) : null,
+            }))
+            .filter(
+              (item: MunicipioOption) =>
+                item.chave !== "" && item.nome && item.ibge
+            )
+        : [];
+      if (!options.length)
+        throw new Error("O SIMCAR não retornou municípios utilizáveis.");
+      setMunicipios(options);
+    } catch (caught: unknown) {
+      municipiosLoadedRef.current = false;
+      setMunicipiosError(
+        caught instanceof Error
+          ? caught.message
+          : "Falha ao carregar municípios de Mato Grosso."
+      );
+    } finally {
+      setMunicipiosLoading(false);
+    }
+  }, [apiFetch]);
+
+  const monitorJob = useCallback(
+    (jobId: string) => {
+      monitorAbortRef.current?.abort();
+      const controller = new AbortController();
+      const serial = monitorSerialRef.current + 1;
+      monitorSerialRef.current = serial;
+      monitorAbortRef.current = controller;
+      setMonitorError(null);
+
+      void (async () => {
+        let streamFailures = 0;
+        while (!controller.signal.aborted && streamFailures < 3) {
+          try {
+            setConnectionMode(streamFailures === 0 ? "sse" : "reconnecting");
+            const response = await apiFetch(
+              `/api/simcar-oraculo/jobs/${encodeURIComponent(jobId)}/events`,
+              {
+                signal: controller.signal,
+                headers: { Accept: "text/event-stream" },
+              }
+            );
+            if (!response.ok) throw new Error(await readApiError(response));
+            await consumeJobStream(response, jobId, applyJobSnapshot);
+            if (isTerminal(jobRef.current?.status)) break;
+            throw new Error(
+              "O canal de eventos foi encerrado antes do resultado final."
+            );
+          } catch (caught: unknown) {
+            if (
+              controller.signal.aborted ||
+              (caught as { name?: string })?.name === "AbortError"
+            )
+              return;
+            streamFailures += 1;
+            if (streamFailures < 3) {
+              setConnectionMode("reconnecting");
+              await abortableDelay(
+                1000 * 2 ** (streamFailures - 1),
+                controller.signal
+              );
+            }
+          }
+        }
+
+        if (controller.signal.aborted || isTerminal(jobRef.current?.status)) {
+          setConnectionMode("idle");
+          return;
+        }
+
+        setConnectionMode("polling");
+        while (!controller.signal.aborted) {
+          try {
+            const response = await apiFetch(
+              `/api/simcar-oraculo/jobs/${encodeURIComponent(jobId)}`,
+              {
+                signal: controller.signal,
+              }
+            );
+            if (!response.ok) throw new Error(await readApiError(response));
+            const payload = await response.json();
+            if (payload?.job)
+              applyJobSnapshot({ ...(payload.job as OraculoJob), jobId });
+            setMonitorError(null);
+            if (isTerminal(jobRef.current?.status)) break;
+          } catch (caught: unknown) {
+            if (
+              controller.signal.aborted ||
+              (caught as { name?: string })?.name === "AbortError"
+            )
+              return;
+            setMonitorError(
+              caught instanceof Error
+                ? `Acompanhamento temporariamente indisponível: ${caught.message}`
+                : "Acompanhamento temporariamente indisponível."
+            );
+          }
+          await abortableDelay(5000, controller.signal);
+        }
+        if (monitorSerialRef.current === serial) setConnectionMode("idle");
+      })().catch((caught: unknown) => {
+        if (
+          (caught as { name?: string })?.name !== "AbortError" &&
+          monitorSerialRef.current === serial
+        ) {
+          setMonitorError(
+            caught instanceof Error
+              ? caught.message
+              : "Falha ao acompanhar o job."
+          );
+          setConnectionMode("polling");
+        }
+      });
+    },
+    [apiFetch, applyJobSnapshot]
   );
 
-  const resetDraft = useCallback(() => {
-    eventsAbortRef.current?.abort();
-    eventsAbortRef.current = null;
-    setFile(null);
-    setUploading(false);
-    setUploadId(null);
-    setLayers([]);
-    setUploadWarnings([]);
-    setImporting(false);
-    setImportId(null);
-    setImportOk(null);
-    setImportRows([]);
-    setCamadasRec([]);
-    setImportRelatorio(null);
-    setImportPdfUrl(null);
-    setMinOverlapM2('1');
-    setProcessing(false);
-    setJobId(null);
-    setProgress(null);
+  useEffect(
+    () => () => {
+      monitorAbortRef.current?.abort();
+      monitorSerialRef.current += 1;
+    },
+    []
+  );
+
+  const selectedId = String(selectedJobId || historyEntry?.jobId || "").trim();
+  useEffect(() => {
+    if (
+      !selectedId ||
+      lastRestoredJobRef.current === selectedId ||
+      jobRef.current?.jobId === selectedId
+    )
+      return;
+    lastRestoredJobRef.current = selectedId;
+    monitorAbortRef.current?.abort();
+    setConnectionMode("idle");
+    setMonitorError(null);
     setError(null);
-    setRows([]);
-    setProcessErrors(0);
-    setImportErrors(0);
-    setWarnings([]);
-    setDownloadUrl(null);
-    setCompletedMessage(null);
+    setLegacyView(false);
+    setRestoring(true);
+    setJob(null);
+    jobRef.current = null;
+    const entry = historyEntryRef.current;
+    setDraft({ ...emptyDraft(), filename: entry?.filename || "" });
+    const controller = new AbortController();
+
+    void (async () => {
+      try {
+        const response = await apiFetch(
+          `/api/simcar-oraculo/jobs/${encodeURIComponent(selectedId)}`,
+          {
+            signal: controller.signal,
+          }
+        );
+        if (!response.ok) {
+          if (response.status === 404 && entry?.jobId === selectedId) {
+            const legacyJob = historyEntryAsJob(entry);
+            setLegacyView(true);
+            applyJobSnapshot(legacyJob);
+            return;
+          }
+          throw new Error(await readApiError(response));
+        }
+        const payload = await response.json();
+        const restored = { ...(payload?.job as OraculoJob), jobId: selectedId };
+        applyJobSnapshot(restored);
+        if (!isTerminal(restored.status)) monitorJob(selectedId);
+      } catch (caught: unknown) {
+        if ((caught as { name?: string })?.name !== "AbortError") {
+          setError(
+            caught instanceof Error
+              ? caught.message
+              : "Falha ao restaurar o job do histórico."
+          );
+        }
+      } finally {
+        if (!controller.signal.aborted) setRestoring(false);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [apiFetch, applyJobSnapshot, monitorJob, selectedId]);
+
+  const resetWorkspace = useCallback(() => {
+    monitorAbortRef.current?.abort();
+    monitorSerialRef.current += 1;
+    jobRef.current = null;
     lastRestoredJobRef.current = null;
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    setJob(null);
+    setDraft(emptyDraft());
+    setSelectedMunicipioKey("");
+    setUploading(false);
+    setSubmitting(false);
+    setCancelling(false);
+    setConnectionMode("idle");
+    setMonitorError(null);
+    setError(null);
+    setLegacyView(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
   const startNewZip = useCallback(() => {
-    resetDraft();
-    // Abre o seletor logo após limpar, para reiniciar com outro ZIP.
+    resetWorkspace();
     window.setTimeout(() => fileInputRef.current?.click(), 50);
-  }, [resetDraft]);
+  }, [resetWorkspace]);
 
   const applyZipFile = useCallback(
     async (picked: File | null) => {
-      if (!picked) return;
-      if (!picked.name.toLowerCase().endsWith('.zip')) {
-        toast.error('Envie um arquivo .zip com os shapefiles.');
+      if (
+        !picked ||
+        uploading ||
+        submitting ||
+        (jobRef.current && !isTerminal(jobRef.current.status))
+      )
+        return;
+      if (!picked.name.toLowerCase().endsWith(".zip")) {
+        toast.error("Envie um arquivo .zip com os shapefiles.");
         return;
       }
-      eventsAbortRef.current?.abort();
-      setFile(picked);
-      setUploadId(null);
-      setLayers([]);
-      setUploadWarnings([]);
-      setImportId(null);
-      setImportOk(null);
-      setImportRows([]);
-      setCamadasRec([]);
-      setImportRelatorio(null);
-      setImportPdfUrl(null);
-      setRows([]);
-      setWarnings([]);
-      setDownloadUrl(null);
-      setCompletedMessage(null);
+      monitorAbortRef.current?.abort();
+      monitorSerialRef.current += 1;
+      jobRef.current = null;
+      setJob(null);
+      setLegacyView(false);
       setError(null);
-      setProgress(null);
-      setJobId(null);
+      setMonitorError(null);
+      setSelectedMunicipioKey("");
+      setDraft({
+        ...emptyDraft(),
+        file: picked,
+        filename: picked.name,
+        fileSize: picked.size,
+      });
       setUploading(true);
       try {
         const zipBase64 = await fileToBase64(picked);
-        const response = await apiFetch('/api/processar-projeto/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const response = await apiFetch("/api/processar-projeto/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ filename: picked.name, zipBase64 }),
         });
         if (!response.ok) throw new Error(await readApiError(response));
         const payload = await response.json();
-        const visible: GeometryLayer[] = Array.isArray(payload?.layers) ? payload.layers : [];
-        const newUploadId = String(payload?.uploadId || '');
-        setUploadId(newUploadId);
-        setLayers(visible);
-        setUploadWarnings(Array.isArray(payload?.warnings) ? payload.warnings : []);
-        if (!visible.length) toast.error('Nenhuma camada poligonal encontrada no ZIP.');
-        else toast.success('ZIP carregado. Clique em Importar.');
-        // Card de rascunho no histórico (upload)
-        onJobSnapshot?.({
-          jobId: newUploadId,
-          type: 'upload',
-          status: 'uploaded',
-          filename: picked.name,
-          percent: 5,
-          stage: 'uploaded',
-          message: 'ZIP enviado — aguardando importação.',
-          layers: visible,
-          createdAt: new Date().toISOString(),
-          updatedAtMs: Date.now(),
+        const layers: GeometryLayer[] = Array.isArray(payload?.layers)
+          ? payload.layers
+          : [];
+        const preview = payload?.shapePreview
+          ? (payload.shapePreview as ShapePreview)
+          : null;
+        setDraft({
+          file: picked,
+          filename: String(payload?.filename || picked.name),
+          fileSize: picked.size,
+          uploadId: String(payload?.uploadId || ""),
+          layers,
+          warnings: [
+            ...(Array.isArray(payload?.warnings)
+              ? payload.warnings.map(String)
+              : []),
+            ...(Array.isArray(preview?.warnings)
+              ? preview.warnings.map(String)
+              : []),
+          ],
+          preview,
         });
-      } catch (err: any) {
-        setError(err?.message || 'Falha ao enviar ZIP.');
-        setFile(null);
+        setHealth(current => ({
+          testCarId: String(
+            payload?.testCarId || current?.testCarId || "270069"
+          ),
+          simcarConfigured: payload?.simcarConfigured === true,
+          deepseekConfigured: current?.deepseekConfigured === true,
+          queueLength: current?.queueLength || 0,
+        }));
+        if (!preview) {
+          setError(
+            "Não foi possível ler o recorte geográfico do ZIP. Revise o arquivo e envie novamente."
+          );
+        } else if (
+          !preview.municipioDetectado?.nome ||
+          !preview.municipioDetectado?.ibge
+        ) {
+          void loadMunicipios();
+        }
+        toast.success(
+          "Preview pronto. Revise o município antes de enviar ao SIMCAR."
+        );
+      } catch (caught: unknown) {
+        const message =
+          caught instanceof Error ? caught.message : "Falha ao enviar o ZIP.";
+        setError(message);
+        setDraft(emptyDraft());
+        if (fileInputRef.current) fileInputRef.current.value = "";
       } finally {
         setUploading(false);
       }
     },
-    [apiFetch, onJobSnapshot],
+    [apiFetch, loadMunicipios, submitting, uploading]
   );
 
-  const runImport = useCallback(async () => {
-    if (!uploadId) {
-      toast.error('Envie o ZIP antes de importar.');
-      return;
-    }
-    setImporting(true);
-    setError(null);
-    setImportRows([]);
-    setImportOk(null);
-    setImportPdfUrl(null);
-    setCompletedMessage(null);
-    setRows([]);
-    setDownloadUrl(null);
-    try {
-      const response = await apiFetch('/api/processar-projeto/importar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uploadId }),
-      });
-      if (!response.ok) throw new Error(await readApiError(response));
-      const payload = await response.json();
-      const newImportId = String(payload?.importId || '');
-      const ok = Boolean(payload?.ok);
-      const rowsPayload: ErrorRow[] = Array.isArray(payload?.rows) ? payload.rows : [];
-      const camadas: CamadaRec[] = Array.isArray(payload?.camadasReconhecidas) ? payload.camadasReconhecidas : [];
-      const pdfUrl = payload?.pdfUrl ? String(payload.pdfUrl) : null;
-      setImportId(newImportId);
-      setImportOk(ok);
-      setImportRows(rowsPayload);
-      setCamadasRec(camadas);
-      setImportRelatorio(payload?.relatorioTexto ? String(payload.relatorioTexto) : null);
-      setImportErrors(Number(payload?.totalErrors || 0));
-      setImportPdfUrl(pdfUrl);
-      if (ok) toast.success('Importação OK — sem erros estruturais.');
-      else toast.warning(`Importação com ${payload?.totalErrors || 0} inconsistência(s). PDF do relatório disponível.`);
-
-      // Card de importação no histórico
-      onJobSnapshot?.({
-        jobId: newImportId,
-        type: 'import',
-        uploadId,
-        status: ok ? 'import_ok' : 'import_failed',
-        filename: file?.name || 'Projeto Geográfico',
-        percent: ok ? 40 : 30,
-        stage: ok ? 'import_ok' : 'import_failed',
-        message: ok
-          ? 'Importação aprovada.'
-          : `Importação reprovada (${payload?.totalErrors || 0} erro(s)).`,
-        ok,
-        importOk: ok,
-        rows: rowsPayload,
-        importRows: rowsPayload,
-        camadasReconhecidas: camadas,
-        relatorioTexto: payload?.relatorioTexto || null,
-        warnings: Array.isArray(payload?.warnings) ? payload.warnings : [],
-        totalErrors: Number(payload?.totalErrors || 0),
-        importErrors: Number(payload?.totalErrors || 0),
-        pdfUrl,
-        importPdfUrl: pdfUrl,
-        createdAt: new Date().toISOString(),
-        updatedAtMs: Date.now(),
-      });
-    } catch (err: any) {
-      setError(err?.message || 'Falha na importação.');
-    } finally {
-      setImporting(false);
-    }
-  }, [apiFetch, file?.name, onJobSnapshot, uploadId]);
-
-  const applySnapshot = useCallback(
-    (job: any) => {
-      if (!job) return;
-      const status = String(job.status || '').toLowerCase();
-      setProgress({
-        stage: job.stage || status,
-        percent: Number(job.percent || 0),
-        message: job.message,
-        layer: job.layer,
-      });
-      setProcessing(status === 'processing' || status === 'queued');
-      if (job.uploadId) setUploadId(String(job.uploadId));
-      if (job.importId) setImportId(String(job.importId));
-      if (Array.isArray(job.resultRows)) setRows(job.resultRows as ErrorRow[]);
-      if (Array.isArray(job.importRows)) {
-        setImportRows(job.importRows as ErrorRow[]);
-        setImportErrors(job.importRows.length);
-      }
-      if (Array.isArray(job.warnings)) setWarnings(job.warnings as string[]);
-      if (job.downloadUrl) setDownloadUrl(String(job.downloadUrl));
-      if (job.importPdfUrl || job.pdfUrl) setImportPdfUrl(String(job.importPdfUrl || job.pdfUrl));
-      if (Array.isArray(job.camadasReconhecidas)) setCamadasRec(job.camadasReconhecidas as CamadaRec[]);
-      if (typeof job.importOk === 'boolean') setImportOk(job.importOk);
-      else if (status === 'import_ok') setImportOk(true);
-      else if (status === 'import_failed') setImportOk(false);
-      else if (status === 'completed' || status === 'processing' || status === 'queued') {
-        // Process jobs only start after approved import.
-        if (importOk === null) setImportOk(true);
-      }
-      if (job.relatorioTexto) setImportRelatorio(String(job.relatorioTexto));
-      if (job.filename && !file) {
-        // Placeholder file name display without real File blob.
-        setFile(new File([], String(job.filename)));
-      }
-      if (status === 'completed') {
-        setProcessErrors(Number(job.processErrors ?? job.totalErrors ?? 0));
-        setImportErrors(Number(job.importErrors || 0));
-        setCompletedMessage(String(job.message || 'Concluído.'));
-        setError(null);
-      } else if (status === 'failed') {
-        setError(job.error || job.message || 'Falha ao processar projeto.');
-      } else if (status === 'import_ok' || status === 'import_failed') {
-        setImportOk(status === 'import_ok');
-        if (Array.isArray(job.rows)) setImportRows(job.rows as ErrorRow[]);
-        setImportErrors(Number(job.totalErrors || job.importErrors || (job.rows?.length ?? 0)));
-      }
-      onJobSnapshot?.(job);
+  const handleDragOver = useCallback(
+    (event: React.DragEvent<HTMLLabelElement>) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      setDragging(true);
     },
-    [file, importOk, onJobSnapshot],
+    []
   );
 
-  const connectEvents = useCallback(
-    async (id: string) => {
-      eventsAbortRef.current?.abort();
-      const controller = new AbortController();
-      eventsAbortRef.current = controller;
-      try {
-        const response = await apiFetch(`/api/processar-projeto/jobs/${encodeURIComponent(id)}/events`, {
-          signal: controller.signal,
-          headers: { Accept: 'text/event-stream' },
-        });
-        if (!response.ok || !response.body) throw new Error(await readApiError(response));
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const parts = buffer.split('\n\n');
-          buffer = parts.pop() || '';
-          for (const part of parts) {
-            const line = part.split('\n').find((l) => l.startsWith('data:'));
-            if (!line) continue;
-            try {
-              const evt = JSON.parse(line.slice(5).trim());
-              if (evt.type === 'snapshot' && evt.job) applySnapshot(evt.job);
-              else if (evt.type === 'progress') applySnapshot(evt);
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-      } catch (err: any) {
-        if (err?.name !== 'AbortError') {
-          /* stream end after complete is ok */
-        }
-      } finally {
-        if (eventsAbortRef.current === controller) eventsAbortRef.current = null;
-      }
+  const handleDragLeave = useCallback(
+    (event: React.DragEvent<HTMLLabelElement>) => {
+      event.preventDefault();
+      setDragging(false);
     },
-    [apiFetch, applySnapshot],
+    []
   );
 
-  const runProcess = useCallback(async () => {
+  const handleDrop = useCallback(
+    (event: React.DragEvent<HTMLLabelElement>) => {
+      event.preventDefault();
+      setDragging(false);
+      void applyZipFile(event.dataTransfer.files?.[0] || null);
+    },
+    [applyZipFile]
+  );
+
+  const selectedMunicipio = useMemo(
+    () =>
+      municipios.find(item => String(item.chave) === selectedMunicipioKey) ||
+      null,
+    [municipios, selectedMunicipioKey]
+  );
+  const detectedMunicipio = draft.preview?.municipioDetectado || null;
+  const needsManualMunicipio = Boolean(
+    draft.preview &&
+    (!detectedMunicipio?.nome ||
+      !detectedMunicipio?.ibge ||
+      detectedMunicipio.fonte === "nao-detectado")
+  );
+  const activeJob = Boolean(job && !isTerminal(job.status));
+  const canSubmit = Boolean(
+    draft.uploadId &&
+    draft.preview &&
+    health?.simcarConfigured &&
+    !uploading &&
+    !submitting &&
+    !activeJob &&
+    (!needsManualMunicipio || selectedMunicipio?.ibge)
+  );
+
+  const startPipeline = useCallback(async () => {
+    const uploadId = draft.uploadId || jobRef.current?.uploadId;
     if (!uploadId) {
-      toast.error('Envie e importe o ZIP antes de processar.');
+      toast.error("Envie o ZIP antes de iniciar o Oráculo.");
       return;
     }
-    if (importOk !== true) {
-      toast.error(
-        importOk === false
-          ? 'Situação da importação: Reprovado - Corrija os erros encontrados e envie novamente!'
-          : 'Execute a importação antes de processar.',
-      );
+    if (needsManualMunicipio && !selectedMunicipio?.ibge) {
+      toast.error("Selecione o município do imóvel.");
       return;
     }
-    setProcessing(true);
+    setSubmitting(true);
     setError(null);
-    setRows([]);
-    setWarnings([]);
-    setDownloadUrl(null);
-    setCompletedMessage(null);
-    setProgress({ stage: 'queued', percent: 1, message: 'Enviando processamento ao servidor.' });
+    setMonitorError(null);
     try {
-      const response = await apiFetch('/api/processar-projeto/processar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await apiFetch("/api/simcar-oraculo/pipeline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           uploadId,
-          importId: importId || undefined,
-          settings: {
-            minOverlapM2: Number(minOverlapM2) || 0,
-          },
+          autoProcess: true,
+          autofix: true,
+          municipio: selectedMunicipio
+            ? {
+                nome: selectedMunicipio.nome,
+                ibge: selectedMunicipio.ibge,
+                chaveSimcar: selectedMunicipio.chave,
+              }
+            : undefined,
         }),
       });
       if (!response.ok) throw new Error(await readApiError(response));
       const payload = await response.json();
-      const newJobId = String(payload?.jobId || '');
-      setJobId(newJobId);
-      onJobSnapshot?.({
+      const newJobId = String(payload?.jobId || "").trim();
+      if (!newJobId)
+        throw new Error("O servidor não devolveu o identificador do job.");
+      lastRestoredJobRef.current = newJobId;
+      setLegacyView(false);
+      applyJobSnapshot({
         jobId: newJobId,
-        type: 'process',
+        type: "pipeline",
+        status: "queued",
+        stage: "queued",
+        percent: 0,
         uploadId,
-        importId: importId || null,
-        filename: file?.name || 'Projeto Geográfico',
-        status: 'processing',
-        stage: 'queued',
-        percent: 1,
-        message: 'Processamento enviado ao servidor.',
-        importOk: true,
+        sourceFilename:
+          draft.filename || jobRef.current?.sourceFilename || "Projeto SIMCAR",
+        testCarId: String(payload?.testCarId || health?.testCarId || "270069"),
+        queuePosition: Number(payload?.queuePosition || 1),
+        round: 1,
+        maxRounds: 3,
+        rounds: [],
+        artifacts: {},
+        timeline: [],
+        message:
+          Number(payload?.queuePosition || 1) > 1
+            ? `Na fila do SIMCAR (${Number(payload.queuePosition) - 1} job(s) à frente).`
+            : "Na fila do SIMCAR; este job é o próximo.",
         createdAt: new Date().toISOString(),
-        updatedAtMs: Date.now(),
       });
-      void connectEvents(newJobId);
-    } catch (err: any) {
-      setProcessing(false);
-      setError(err?.message || 'Falha ao iniciar processamento.');
+      monitorJob(newJobId);
+      toast.success("Projeto enviado ao Oráculo SIMCAR.");
+    } catch (caught: unknown) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Falha ao iniciar o pipeline SIMCAR."
+      );
+    } finally {
+      setSubmitting(false);
     }
-  }, [apiFetch, connectEvents, file?.name, importId, importOk, minOverlapM2, onJobSnapshot, uploadId]);
+  }, [
+    apiFetch,
+    applyJobSnapshot,
+    draft.filename,
+    draft.uploadId,
+    health?.testCarId,
+    monitorJob,
+    needsManualMunicipio,
+    selectedMunicipio,
+  ]);
 
-  const downloadZip = useCallback(async () => {
-    if (!downloadUrl) return;
+  const cancelJob = useCallback(async () => {
+    const current = jobRef.current;
+    if (!current || isTerminal(current.status)) return;
+    setCancelling(true);
+    setError(null);
     try {
-      const response = await apiFetch(downloadUrl);
-      if (!response.ok) throw new Error(await readApiError(response));
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objectUrl;
-      a.download = `processar_projeto_${(jobId || 'resultado').slice(0, 8)}.zip`;
-      a.rel = 'noopener noreferrer';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-      toast.success('Download iniciado.');
-    } catch (err: any) {
-      toast.error(err?.message || 'Falha ao baixar ZIP.');
-    }
-  }, [apiFetch, downloadUrl, jobId]);
-
-  const downloadImportPdf = useCallback(async () => {
-    if (!importPdfUrl) return;
-    try {
-      const response = await apiFetch(importPdfUrl);
-      if (!response.ok) throw new Error(await readApiError(response));
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objectUrl;
-      a.download = `relatorio_importacao_geoforest_${(importId || 'import').slice(0, 8)}.pdf`;
-      a.rel = 'noopener noreferrer';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-      toast.success('PDF do relatório de importação baixado.');
-    } catch (err: any) {
-      toast.error(err?.message || 'Falha ao baixar PDF de importação.');
-    }
-  }, [apiFetch, importId, importPdfUrl]);
-
-  // Restaura job selecionado no histórico (cards laterais).
-  useEffect(() => {
-    const id = String(selectedJobId || historyEntry?.jobId || '').trim();
-    if (!id || lastRestoredJobRef.current === id) return;
-    lastRestoredJobRef.current = id;
-
-    const restoreFromEntry = (entry: ProcessarHistoryItem | Record<string, unknown>) => {
-      const status = String((entry as any).status || '').toLowerCase();
-      const type = String((entry as any).type || '').toLowerCase();
-      setJobId(type === 'process' ? String((entry as any).jobId || id) : null);
-      setUploadId((entry as any).uploadId ? String((entry as any).uploadId) : type === 'upload' ? id : null);
-      setImportId((entry as any).importId ? String((entry as any).importId) : type === 'import' ? id : null);
-      if ((entry as any).filename) setFile(new File([], String((entry as any).filename)));
-      setProgress({
-        stage: String((entry as any).stage || status),
-        percent: Number((entry as any).percent || 0),
-        message: (entry as any).message ? String((entry as any).message) : undefined,
-      });
-      setProcessing(status === 'processing' || status === 'queued');
-      if (Array.isArray((entry as any).resultRows)) setRows((entry as any).resultRows as ErrorRow[]);
-      if (Array.isArray((entry as any).importRows)) {
-        setImportRows((entry as any).importRows as ErrorRow[]);
-      } else if (Array.isArray((entry as any).rows) && (type === 'import' || status.startsWith('import'))) {
-        setImportRows((entry as any).rows as ErrorRow[]);
-      }
-      if (Array.isArray((entry as any).warnings)) setWarnings((entry as any).warnings as string[]);
-      if (Array.isArray((entry as any).camadasReconhecidas)) {
-        setCamadasRec((entry as any).camadasReconhecidas as CamadaRec[]);
-      }
-      if ((entry as any).downloadUrl) setDownloadUrl(String((entry as any).downloadUrl));
-      if ((entry as any).importPdfUrl || (entry as any).pdfUrl) {
-        setImportPdfUrl(String((entry as any).importPdfUrl || (entry as any).pdfUrl));
-      }
-      if (typeof (entry as any).importOk === 'boolean') setImportOk((entry as any).importOk);
-      else if (status === 'import_ok' || status === 'completed' || status === 'processing') setImportOk(true);
-      else if (status === 'import_failed') setImportOk(false);
-      if ((entry as any).relatorioTexto) setImportRelatorio(String((entry as any).relatorioTexto));
-      setImportErrors(Number((entry as any).importErrors || 0));
-      setProcessErrors(Number((entry as any).processErrors || 0));
-      if (status === 'completed') setCompletedMessage(String((entry as any).message || 'Concluído.'));
-      if (status === 'failed') setError(String((entry as any).error || (entry as any).message || 'Falhou.'));
-      else setError(null);
-    };
-
-    if (historyEntry && historyEntry.jobId === id) {
-      restoreFromEntry(historyEntry);
-    }
-
-    // Busca snapshot fresco no backend (process/import/upload).
-    void (async () => {
-      try {
-        const response = await apiFetch(`/api/processar-projeto/jobs/${encodeURIComponent(id)}/status`);
-        if (!response.ok) return;
-        const payload = await response.json();
-        if (payload?.job) {
-          restoreFromEntry(payload.job);
-          if (String(payload.job.status || '').toLowerCase() === 'processing') {
-            setJobId(id);
-            void connectEvents(id);
-          }
+      const response = await apiFetch(
+        `/api/simcar-oraculo/jobs/${encodeURIComponent(current.jobId)}`,
+        {
+          method: "DELETE",
         }
-      } catch {
-        /* keep local restore */
-      }
-    })();
-  }, [apiFetch, connectEvents, historyEntry, selectedJobId]);
+      );
+      if (!response.ok) throw new Error(await readApiError(response));
+      applyJobSnapshot({
+        ...current,
+        status: "cancel_requested",
+        stage: "cancel_requested",
+        message:
+          "Cancelamento solicitado; aguardando um ponto seguro do pipeline.",
+      });
+      toast.success("Cancelamento solicitado.");
+    } catch (caught: unknown) {
+      setError(
+        caught instanceof Error ? caught.message : "Falha ao cancelar o job."
+      );
+    } finally {
+      setCancelling(false);
+    }
+  }, [apiFetch, applyJobSnapshot]);
 
-  const canImport = Boolean(uploadId) && !uploading && !importing && !processing;
-  // SIMCAR: Processar só libera com importação aprovada.
-  const canProcess = Boolean(uploadId) && importOk === true && !processing && !importing;
-  const hasWork = Boolean(file || uploadId || importId || jobId || downloadUrl || completedMessage);
+  const downloadArtifact = useCallback(
+    async (artifact: OraculoArtifact) => {
+      try {
+        const response = await apiFetch(artifact.url);
+        if (!response.ok) throw new Error(await readApiError(response));
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = objectUrl;
+        anchor.download = artifact.filename || artifact.key;
+        anchor.rel = "noopener noreferrer";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        toast.success("Download iniciado.");
+      } catch (caught: unknown) {
+        toast.error(
+          caught instanceof Error
+            ? caught.message
+            : "Falha ao baixar o artefato."
+        );
+      }
+    },
+    [apiFetch]
+  );
+
+  const timeline = Array.isArray(job?.timeline) ? job.timeline : [];
+  const rounds = Array.isArray(job?.rounds) ? job.rounds : [];
+  const artifacts = Object.values(job?.artifacts || {});
+  const currentRound = Math.max(1, Number(job?.round || rounds.at(-1)?.n || 1));
+  const maxRounds = Math.max(1, Number(job?.maxRounds || 3));
+  const percent = clampPercent(
+    job?.percent ??
+      timeline.at(-1)?.percent ??
+      (job?.status === "completed" ? 100 : 0)
+  );
+  const jobSucceeded = job?.status === "completed" && job.ok === true;
+  const jobRejected = job?.status === "completed" && job.ok === false;
+  const testCarId = job?.testCarId || health?.testCarId || "270069";
+  const municipalitySourceLabel =
+    detectedMunicipio?.fonte === "malha-ibge"
+      ? "malha oficial IBGE"
+      : detectedMunicipio?.fonte === "wfs-sema"
+        ? "consulta WFS da SEMA"
+        : detectedMunicipio?.fonte === "manual"
+          ? "seleção manual"
+          : "não detectado";
 
   return (
     <div className="space-y-5 sm:space-y-6">
-      <section className="rounded-2xl border border-cyan-500/15 bg-[#0a1214]/80 p-5 sm:p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+      <section className="rounded-2xl border border-cyan-500/15 bg-[#0a1214]/85 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-2">
             <div className="inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-cyan-200">
-              <FileStack size={13} />
-              Processar projeto
+              <Bot size={13} />
+              Oráculo SIMCAR
             </div>
-            <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
-              Projeto Geográfico (SIMCAR)
+            <h2 className="text-xl font-bold tracking-tight text-white sm:text-2xl">
+              Processar projeto — SIMCAR real (SEMA)
             </h2>
             <p className="max-w-3xl text-sm text-slate-400">
-              Fluxo completo no espírito do SIMCAR: <strong className="text-slate-200">Importar</strong> e{' '}
-              <strong className="text-slate-200">Processar</strong> (ProcessarGeo). O processamento gera{' '}
-              <strong className="text-emerald-200">APP, APPP, APPD, APPRL, AURD, ARLDR</strong> por buffers oficiais
-              do Código Florestal + topologia/Anexo 01, e empacota arquivo processado, enviado, conferência e erros
-              de APP.
+              Um único envio prepara o projeto-teste, importa o ZIP, executa o
+              ProcessarGeo e preserva os relatórios e arquivos oficiais de cada
+              rodada.
             </p>
           </div>
-          <div className="flex flex-col items-stretch gap-2">
-            <div className="grid grid-cols-3 gap-2 text-center">
-              {[
-                { label: '1', value: 'Importar' },
-                { label: '2', value: 'Processar' },
-                { label: 'Saída', value: 'ZIP' },
-              ].map((item) => (
-                <div key={item.label} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wider text-slate-500">{item.label}</p>
-                  <p className="mt-1 text-xs font-semibold text-cyan-100">{item.value}</p>
-                </div>
-              ))}
-            </div>
-            {hasWork && (
-              <button
-                type="button"
-                onClick={startNewZip}
-                disabled={uploading || importing || processing}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <RefreshCw size={15} />
-                Reiniciar com outro ZIP
-              </button>
-            )}
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-slate-300">
+              CAR de teste <strong className="text-white">{testCarId}</strong>
+            </span>
+            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-slate-300">
+              Fila{" "}
+              <strong className="text-white">
+                {job?.queuePosition
+                  ? `posição ${job.queuePosition}`
+                  : `${health?.queueLength || 0} job(s)`}
+              </strong>
+            </span>
           </div>
+        </div>
+        <div className="mt-4 flex items-start gap-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-100/90">
+          <ShieldAlert size={17} className="mt-0.5 shrink-0 text-amber-300" />
+          <p>
+            O shape será enviado ao{" "}
+            <strong>projeto-teste do escritório (CAR {testCarId})</strong>,
+            nunca ao CAR do cliente. Os jobs entram em fila e usam a conta
+            técnica; uma sessão manual aberta no SIMCAR pode ser encerrada
+            enquanto o robô trabalha.
+          </p>
         </div>
       </section>
 
-      {/* Upload */}
-      <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold text-white">1. Upload do ZIP</h3>
-            <p className="text-xs text-slate-500 mt-1">ZIP com shapefiles do Projeto Geográfico (ATP, AIR, AVN…).</p>
-          </div>
-          {uploading && <Loader2 size={18} className="animate-spin text-cyan-300" />}
+      {healthLoading ? (
+        <div className="flex items-center justify-center gap-3 rounded-2xl border border-white/10 bg-[#0b1412]/80 px-5 py-10 text-sm text-slate-400">
+          <Loader2 size={19} className="animate-spin text-cyan-300" />
+          Conferindo o servidor do Oráculo…
         </div>
-        <label
-          className={`group relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-8 transition-all cursor-pointer ${
-            file
-              ? 'border-cyan-500/40 bg-cyan-500/5'
-              : 'border-white/10 bg-white/[0.02] hover:border-cyan-500/30 hover:bg-white/[0.03]'
-          }`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'copy';
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            void applyZipFile(e.dataTransfer.files?.[0] || null);
-          }}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".zip,application/zip"
-            className="hidden"
-            onChange={(e) => void applyZipFile(e.target.files?.[0] || null)}
-          />
-          <div
-            className={`rounded-xl p-3 ${file ? 'bg-cyan-500/15 text-cyan-200' : 'bg-white/5 text-slate-400 group-hover:text-cyan-300'}`}
+      ) : healthError ? (
+        <div className="flex flex-col gap-3 rounded-2xl border border-rose-500/25 bg-rose-500/10 p-5 text-sm text-rose-100 sm:flex-row sm:items-center sm:justify-between">
+          <span className="flex items-start gap-2">
+            <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+            {healthError}
+          </span>
+          <button
+            type="button"
+            onClick={() => void loadHealth()}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 px-4 py-2.5 font-semibold hover:bg-white/10 sm:w-auto"
           >
-            <Upload size={22} />
-          </div>
-          <div className="text-center min-w-0">
-            <p className="text-sm font-semibold text-white truncate">
-              {file ? file.name : 'Arraste ou selecione o ZIP do CAR/SIMCAR'}
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              {file
-                ? file.size > 0
-                  ? `${(file.size / 1024).toFixed(0)} KB · ${polygonLayers.length} camada(s)`
-                  : 'Restaurado do histórico'
-                : 'Shapefiles em .zip'}
-            </p>
-          </div>
-          {file && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                resetDraft();
-              }}
-              className="text-xs text-slate-400 underline hover:text-slate-200"
-            >
-              Limpar
-            </button>
-          )}
-        </label>
-        {uploadWarnings.length > 0 && (
-          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-100/90 space-y-1">
-            {uploadWarnings.map((w) => (
-              <p key={w}>{w}</p>
-            ))}
-          </div>
-        )}
-      </section>
+            <RefreshCw size={15} /> Tentar novamente
+          </button>
+        </div>
+      ) : health?.simcarConfigured === false ? (
+        <div className="rounded-2xl border border-amber-500/25 bg-amber-500/10 p-6 text-center">
+          <ShieldAlert size={28} className="mx-auto text-amber-300" />
+          <h3 className="mt-3 text-base font-semibold text-amber-100">
+            O servidor não está configurado para falar com o SIMCAR
+          </h3>
+          <p className="mx-auto mt-2 max-w-xl text-sm text-amber-100/70">
+            Configure as credenciais técnicas no backend. Esta aba não executa
+            validação local nem oferece um resultado alternativo.
+          </p>
+        </div>
+      ) : null}
 
-      {/* Importar */}
-      {uploadId && (
-        <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="text-base font-semibold text-white">2. Importar (conformidade estrutural)</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Equivalente à fila <code className="text-cyan-200/80">[CAR_IMPORTAR_SHAPEFILE]</code>: CRS SIRGAS 2000,
-                2D, nomenclatura, ATP única, atributos e topologia do importador (borda se cruza / pontos repetidos).
-                Se reprovar, o Processar não libera.
+      {health?.simcarConfigured ? (
+        <section className="rounded-2xl border border-white/10 bg-[#0b1412]/85 p-5 sm:p-6">
+          <div className="flex flex-col gap-1">
+            <h3 className="text-base font-semibold text-white">
+              ZIP do recorte SIMCAR
+            </h3>
+            <p className="text-xs text-slate-500">
+              Arraste o pacote de shapefiles e confira o preview antes de
+              iniciar a fila oficial.
+            </p>
+          </div>
+
+          <label
+            className={`group mt-4 flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-7 text-center transition-all ${
+              activeJob || uploading || submitting
+                ? "cursor-not-allowed border-white/5 bg-white/[0.01] opacity-60"
+                : dragging
+                  ? "cursor-copy border-cyan-400/60 bg-cyan-500/10"
+                  : draft.filename
+                    ? "cursor-pointer border-cyan-500/35 bg-cyan-500/5"
+                    : "cursor-pointer border-white/10 bg-white/[0.02] hover:border-cyan-500/30 hover:bg-white/[0.03]"
+            }`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".zip,application/zip"
+              className="hidden"
+              disabled={activeJob || uploading || submitting}
+              onChange={event =>
+                void applyZipFile(event.target.files?.[0] || null)
+              }
+            />
+            <span
+              className={`rounded-xl p-3 ${draft.filename ? "bg-cyan-500/15 text-cyan-200" : "bg-white/5 text-slate-400 group-hover:text-cyan-300"}`}
+            >
+              {uploading ? (
+                <Loader2 size={23} className="animate-spin" />
+              ) : (
+                <Upload size={23} />
+              )}
+            </span>
+            <div className="min-w-0 max-w-full">
+              <p className="truncate text-sm font-semibold text-white">
+                {draft.filename ||
+                  "Arraste ou selecione o ZIP do recorte SIMCAR"}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {uploading
+                  ? "Lendo camadas e localização…"
+                  : draft.filename
+                    ? `${draft.fileSize > 0 ? formatBytes(draft.fileSize) : "restaurado do histórico"} · ${draft.layers.length} camada(s) no preview`
+                    : "Arquivo .zip com os shapefiles do projeto"}
               </p>
             </div>
-            <button
-              type="button"
-              disabled={!canImport}
-              onClick={() => void runImport()}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-teal-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-cyan-900/30 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {importing ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-              Importar
-            </button>
-          </div>
+          </label>
 
-          {importOk !== null && (
-            <div
-              className={`flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between rounded-xl border px-4 py-3 ${
-                importOk
-                  ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-100'
-                  : 'border-rose-500/25 bg-rose-500/10 text-rose-100'
-              }`}
-            >
-              <div className="flex items-start gap-3 min-w-0">
-                {importOk ? <CheckCircle2 size={20} className="shrink-0 mt-0.5" /> : <XCircle size={20} className="shrink-0 mt-0.5" />}
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold">
-                    {importOk
-                      ? 'Situação da importação: Aprovado'
-                      : `Situação da importação: Reprovado (${importErrors} erro(s))`}
+          {draft.uploadId && draft.preview ? (
+            <div className="mt-4 space-y-4 rounded-xl border border-cyan-500/15 bg-black/20 p-4">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                    Camadas
                   </p>
-                  <p className="text-xs opacity-80 mt-0.5">
-                    {importOk
-                      ? 'Importação OK — conformidade e topologia sem inconsistências. O Processar está liberado.'
-                      : 'Corrija os erros encontrados e envie novamente! O processamento não é liberado com importação reprovada.'}
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {draft.preview.layers.length || draft.layers.length}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                    Área aproximada
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {draft.preview.areaHaApprox
+                      ? `${draft.preview.areaHaApprox.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} ha`
+                      : "não informada"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 sm:col-span-2">
+                  <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                    Município detectado
+                  </p>
+                  <p className="mt-1 flex items-center gap-2 text-sm font-semibold text-white">
+                    <MapPin size={14} className="text-cyan-300" />
+                    {detectedMunicipio?.nome || "Não detectado"}
+                  </p>
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    {detectedMunicipio?.ibge
+                      ? `IBGE ${detectedMunicipio.ibge} · ${municipalitySourceLabel}`
+                      : "selecione manualmente abaixo"}
                   </p>
                 </div>
               </div>
-              {importPdfUrl && (
+
+              {needsManualMunicipio ? (
+                <div>
+                  <label
+                    htmlFor="oraculo-municipio"
+                    className="text-xs font-semibold text-slate-300"
+                  >
+                    Município do imóvel em Mato Grosso
+                  </label>
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                    <select
+                      id="oraculo-municipio"
+                      value={selectedMunicipioKey}
+                      onChange={event =>
+                        setSelectedMunicipioKey(event.target.value)
+                      }
+                      disabled={municipiosLoading || municipios.length === 0}
+                      className="min-w-0 flex-1 rounded-xl border border-white/10 bg-[#101817] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-cyan-400/50 disabled:opacity-50"
+                    >
+                      <option value="">Selecione o município…</option>
+                      {municipios.map(municipio => (
+                        <option
+                          key={`${municipio.ibge}-${municipio.chave}`}
+                          value={String(municipio.chave)}
+                        >
+                          {municipio.nome} · IBGE {municipio.ibge}
+                        </option>
+                      ))}
+                    </select>
+                    {municipiosLoading ? (
+                      <span className="inline-flex items-center gap-2 px-3 text-xs text-slate-400">
+                        <Loader2 size={15} className="animate-spin" />
+                        Carregando…
+                      </span>
+                    ) : null}
+                  </div>
+                  {municipiosError ? (
+                    <button
+                      type="button"
+                      onClick={() => void loadMunicipios()}
+                      className="mt-2 inline-flex items-center gap-2 text-xs font-semibold text-rose-300 hover:text-rose-200"
+                    >
+                      <RefreshCw size={13} />
+                      {municipiosError} Tentar novamente
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {draft.warnings.length > 0 ? (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-100/90">
+                  {draft.warnings.map((warning, index) => (
+                    <p key={`${warning}-${index}`} className="mt-1 first:mt-0">
+                      {warning}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="flex flex-col gap-3 border-t border-white/5 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="max-w-xl text-xs text-slate-500">
+                  Fluxo automático: prepara o CAR de teste, importa, processa e
+                  aplica correções mecânicas elegíveis em até 3 rodadas.
+                </p>
                 <button
                   type="button"
-                  onClick={() => void downloadImportPdf()}
-                  className="inline-flex items-center justify-center gap-2 shrink-0 rounded-xl border border-white/15 bg-black/20 px-4 py-2 text-xs font-semibold text-white hover:bg-white/10 transition-colors"
+                  disabled={!canSubmit}
+                  onClick={() => void startPipeline()}
+                  className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-teal-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
                 >
-                  <FileText size={14} />
-                  Baixar PDF da importação
+                  {submitting ? (
+                    <Loader2 size={17} className="animate-spin" />
+                  ) : (
+                    <Play size={17} />
+                  )}
+                  Enviar ao SIMCAR
                 </button>
-              )}
+              </div>
             </div>
-          )}
-
-          {camadasRec.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border border-white/10">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-white/[0.04] text-slate-400 uppercase tracking-wider">
-                  <tr>
-                    <th className="px-3 py-2 font-semibold">Camada</th>
-                    <th className="px-3 py-2 font-semibold">Código SIMCAR</th>
-                    <th className="px-3 py-2 font-semibold">Feições</th>
-                    <th className="px-3 py-2 font-semibold">CRS</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {camadasRec.map((c) => (
-                    <tr key={c.name} className="border-t border-white/5 text-slate-200">
-                      <td className="px-3 py-2 font-medium">{c.name}</td>
-                      <td className="px-3 py-2">{c.code || <span className="text-rose-300">—</span>}</td>
-                      <td className="px-3 py-2 tabular-nums">{c.featureCount}</td>
-                      <td className="px-3 py-2">{c.crsLabel}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {importRows.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border border-rose-500/20 max-h-64 overflow-y-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="sticky top-0 bg-[#121a18] text-slate-400 uppercase tracking-wider">
-                  <tr>
-                    <th className="px-3 py-2">Camada</th>
-                    <th className="px-3 py-2">Tipo</th>
-                    <th className="px-3 py-2">Detalhe</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {importRows.map((row, i) => (
-                    <tr key={`${row.camada}-${row.tipo}-${i}`} className="border-t border-white/5">
-                      <td className="px-3 py-2 text-slate-200">{row.camada}</td>
-                      <td className="px-3 py-2 text-rose-200">{TIPO_LABEL[row.tipo] || row.tipo}</td>
-                      <td className="px-3 py-2 text-slate-400">{row.detalhe}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          ) : null}
         </section>
-      )}
+      ) : null}
 
-      {/* Processar */}
-      {importOk !== null && (
-        <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h3 className="text-base font-semibold text-white">3. Processar Projeto Geográfico</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Equivalente a <code className="text-cyan-200/80">[CAR_PROCESSAR_GEOMETRIAS]</code> / ProcessarGeo:
-                sobreposição, vazios, contenção/sobreposição proibida (Anexo 01), soma AIR×ATP e camadas APP*.
-                Bloqueado enquanto a importação estiver reprovada.
-              </p>
-              {importOk === false && (
-                <p className="text-xs text-rose-300 mt-2 font-medium">
-                  Processar desabilitado — corrija os erros de importação primeiro.
-                </p>
-              )}
-            </div>
-            <button
-              type="button"
-              disabled={!canProcess}
-              onClick={() => void runProcess()}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-900/30 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-              title={
-                importOk === false
-                  ? 'Importação reprovada — processamento não liberado'
-                  : importOk === true
-                    ? 'Processar projeto geográfico'
-                    : 'Importe o ZIP antes de processar'
-              }
-            >
-              {processing ? <Loader2 size={16} className="animate-spin" /> : <Cpu size={16} />}
-              Processar projeto
-            </button>
+      {restoring ? (
+        <div className="flex items-center justify-center gap-3 rounded-2xl border border-white/10 bg-[#0b1412]/80 px-5 py-10 text-sm text-slate-400">
+          <Loader2 size={19} className="animate-spin text-cyan-300" />
+          Restaurando job do histórico…
+        </div>
+      ) : null}
+
+      {legacyView ? (
+        <div className="flex items-start gap-3 rounded-xl border border-slate-500/20 bg-slate-500/5 px-4 py-3 text-xs text-slate-300">
+          <FileArchive size={17} className="mt-0.5 shrink-0" />
+          <p>
+            Este registro pertence ao fluxo legado e está disponível somente
+            para consulta. Novos envios usam exclusivamente o Oráculo SIMCAR.
+          </p>
+        </div>
+      ) : null}
+
+      {job && !legacyView ? (
+        <OraculoTimeline
+          timeline={timeline}
+          status={job.status}
+          percent={percent}
+          round={currentRound}
+          maxRounds={maxRounds}
+          connectionMode={connectionMode}
+        />
+      ) : null}
+
+      {monitorError ? (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-100">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          {monitorError} O navegador continuará tentando pelo snapshot do job.
+        </div>
+      ) : null}
+
+      {job && isTerminal(job.status) ? (
+        <div
+          className={`flex items-start gap-3 rounded-2xl border p-5 ${
+            jobSucceeded
+              ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-100"
+              : jobRejected
+                ? "border-amber-500/25 bg-amber-500/10 text-amber-100"
+                : job.status === "cancelled"
+                  ? "border-orange-500/25 bg-orange-500/10 text-orange-100"
+                  : "border-rose-500/25 bg-rose-500/10 text-rose-100"
+          }`}
+        >
+          {jobSucceeded ? (
+            <CheckCircle2 size={22} className="shrink-0" />
+          ) : job.status === "cancelled" ? (
+            <StopCircle size={22} className="shrink-0" />
+          ) : (
+            <AlertTriangle size={22} className="shrink-0" />
+          )}
+          <div>
+            <p className="text-sm font-semibold">
+              {jobSucceeded
+                ? "Projeto aprovado pelo SIMCAR"
+                : jobRejected
+                  ? job.importOk === false
+                    ? "Importação reprovada pela SEMA"
+                    : "Processamento concluído com pendências"
+                  : job.status === "cancelled"
+                    ? "Job cancelado"
+                    : job.status === "interrupted"
+                      ? "Job interrompido durante reinício do servidor"
+                      : "Falha de infraestrutura no Oráculo"}
+            </p>
+            <p className="mt-1 text-xs opacity-80">
+              {job.error ||
+                job.message ||
+                job.resultado ||
+                "Consulte as rodadas e os artefatos abaixo."}
+            </p>
           </div>
+        </div>
+      ) : null}
 
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 px-4 py-3 max-w-sm">
-            <span className="text-xs text-slate-400">Área mínima de sobreposição/vazio (m²)</span>
-            <input
-              type="number"
-              min="0"
-              step="0.5"
-              value={minOverlapM2}
-              onChange={(e) => setMinOverlapM2(e.target.value)}
-              className="w-24 rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-400/50"
+      {rounds.length > 0 ? (
+        <section className="space-y-3">
+          <div className="flex items-center gap-2 px-1">
+            <FileStack size={17} className="text-cyan-300" />
+            <h3 className="text-base font-semibold text-white">
+              Resultado por rodada
+            </h3>
+          </div>
+          {rounds.map(round => (
+            <RoundCard
+              key={round.n}
+              round={round}
+              artifacts={artifacts.filter(
+                artifact => artifact.round === round.n
+              )}
+              current={round.n === currentRound}
+              onDownload={downloadArtifact}
             />
-          </div>
-
-          {progress && (
-            <div className="space-y-2 rounded-xl border border-white/10 bg-black/20 p-4">
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-300 font-medium">
-                  {progress.layer || progress.stage || '…'}
-                </span>
-                <span className="tabular-nums text-cyan-300 font-bold">{progress.percent ?? 0}%</span>
-              </div>
-              <div className="h-2 rounded-full bg-white/5 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-violet-400 transition-all duration-500"
-                  style={{ width: `${Math.min(100, Number(progress.percent || 0))}%` }}
-                />
-              </div>
-              <p className="text-xs text-slate-500">{progress.message}</p>
-            </div>
-          )}
+          ))}
         </section>
-      )}
+      ) : null}
 
-      {error && (
+      {error ? (
         <div className="flex items-start gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-          <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
           <span>{error}</span>
         </div>
-      )}
+      ) : null}
 
-      {/* Results */}
-      {(rows.length > 0 || downloadUrl || completedMessage) && (
-        <section className="rounded-2xl border border-white/10 bg-[#0b1412]/80 p-5 sm:p-6 space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="text-base font-semibold text-white">4. Resultados</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                {completedMessage ||
-                  `${rows.length} linha(s) · importação ${importErrors} · processamento ${processErrors || rows.length}`}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {downloadUrl && (
-                <button
-                  type="button"
-                  onClick={() => void downloadZip()}
-                  className="inline-flex items-center gap-2 rounded-xl border border-cyan-400/30 bg-cyan-500/15 px-4 py-2.5 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/25"
-                >
-                  <Download size={16} />
-                  Baixar ZIP completo
-                </button>
+      {job || draft.uploadId ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+          {activeJob ? (
+            <button
+              type="button"
+              disabled={cancelling}
+              onClick={() => void cancelJob()}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-400/25 bg-rose-500/10 px-4 py-2.5 text-sm font-semibold text-rose-100 hover:bg-rose-500/20 disabled:opacity-40 sm:w-auto"
+            >
+              {cancelling ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <StopCircle size={16} />
               )}
-              <button
-                type="button"
-                onClick={startNewZip}
-                className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-slate-100 hover:bg-white/[0.08]"
-              >
-                <Plus size={16} />
-                Novo projeto (outro ZIP)
-              </button>
-            </div>
+              Cancelar job
+            </button>
+          ) : null}
+          {job?.status === "failed" && job.uploadId ? (
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => void startPipeline()}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-40 sm:w-auto"
+            >
+              {submitting ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <RefreshCw size={16} />
+              )}
+              Tentar novamente
+            </button>
+          ) : null}
+          {!activeJob ? (
+            <button
+              type="button"
+              onClick={startNewZip}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-slate-100 hover:bg-white/[0.08] sm:w-auto"
+            >
+              <Plus size={16} />
+              Novo projeto (outro ZIP)
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {job?.status === "completed" &&
+      job.ok === false &&
+      job.importOk !== false ? (
+        <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4 text-xs text-violet-100/80">
+          <div className="flex items-center gap-2 font-semibold text-violet-100">
+            <Sparkles size={16} />
+            Correção assistida
           </div>
-
-          {downloadUrl && (
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-100/90 space-y-1">
-              <p className="font-semibold text-emerald-100">Conteúdo do ZIP (estilo SIMCAR)</p>
-              <ul className="list-disc pl-4 space-y-0.5 text-slate-300">
-                <li>
-                  <code className="text-emerald-200">arquivo_processado.zip</code> — limpos +{' '}
-                  <strong>APP / APPP / APPD / APPRL / AURD / ARLDR</strong>
-                </li>
-                <li>
-                  <code className="text-emerald-200">arquivo_enviado.zip</code> — shapefiles originais
-                </li>
-                <li>
-                  <code className="text-emerald-200">arquivo_conferencia.zip</code> — camadas com area_m2 / area_ha
-                </li>
-                <li>
-                  <code className="text-emerald-200">erros_processamento.zip</code> — topologia / Anexo 01
-                </li>
-                <li>
-                  <code className="text-emerald-200">erros_processamento_app.zip</code> — erros de cálculo de APP
-                </li>
-                <li>
-                  <code className="text-slate-200">quadro_areas.csv</code> (inclui APP*) + relatórios
-                </li>
-              </ul>
-            </div>
-          )}
-
-          {warnings.length > 0 && (
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-100/90 space-y-1 max-h-32 overflow-y-auto">
-              {warnings.map((w, i) => (
-                <p key={`${w}-${i}`}>{w}</p>
-              ))}
-            </div>
-          )}
-
-          {rows.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border border-white/10 max-h-96 overflow-y-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="sticky top-0 bg-[#121a18] text-slate-400 uppercase tracking-wider">
-                  <tr>
-                    <th className="px-3 py-2">Camada</th>
-                    <th className="px-3 py-2">Tipo</th>
-                    <th className="px-3 py-2">Feição</th>
-                    <th className="px-3 py-2">Detalhe</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row, i) => (
-                    <tr key={`${row.camada}-${row.tipo}-${row.feicao}-${i}`} className="border-t border-white/5">
-                      <td className="px-3 py-2 text-slate-200">{row.camada}</td>
-                      <td className="px-3 py-2 text-cyan-200">{TIPO_LABEL[row.tipo] || row.tipo}</td>
-                      <td className="px-3 py-2 tabular-nums text-slate-400">{row.feicao || '—'}</td>
-                      <td className="px-3 py-2 text-slate-400 max-w-md">{row.detalhe}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {importRelatorio && (
-            <details className="rounded-xl border border-white/10 bg-black/20">
-              <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-300">
-                Relatório de importação (texto)
-              </summary>
-              <pre className="px-4 pb-4 text-[11px] text-slate-500 whitespace-pre-wrap overflow-x-auto max-h-48">
-                {importRelatorio}
-              </pre>
-            </details>
-          )}
-        </section>
-      )}
+          <p className="mt-1">
+            Quando houver uma ação mecânica segura mapeada, o plano da IA e o
+            botão “Corrigir e reenviar” aparecerão aqui.
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 };

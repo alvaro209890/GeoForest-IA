@@ -83,10 +83,15 @@
 
 ## Fase P4 — front
 
-### T10 — Reescrever `ProcessarProjetoAnalysis.tsx` (ORACULO-only)
+### T10 — Reescrever `ProcessarProjetoAnalysis.tsx` (ORACULO-only) ✅ concluída em 2026-07-16
 - Remover seções locais; dropzone → preview (município + dropdown fallback) → botão único
   "Enviar ao SIMCAR"; componente `OraculoTimeline`; cards por rodada com downloads;
   estados/copy de `05`; SSE com retry + fallback poll
+- Entrega: health/configuração sem fallback local; preview com fonte municipal e dropdown
+  SIMCAR; pipeline único com `autofix=true`; timeline viva; três tentativas SSE antes de poll
+  autenticado; restauração terminal só por snapshot; cancelamento e artefatos por rodada.
+- Histórico recebe somente resumo de rodadas e referências de artefatos (sem `timeline` nem
+  linhas dos PDFs). `tsc --noEmit` e bundle Vite de produção verdes.
 - Commit: `feat(ui): aba Processar projeto 100% SIMCAR real`
 
 ### T11 — Wiring Dashboard (4 pontos) + histórico

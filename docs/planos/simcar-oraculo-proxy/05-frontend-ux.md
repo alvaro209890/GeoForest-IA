@@ -98,3 +98,12 @@ Sem credencial no servidor (`simcarConfigured=false`): a aba mostra estado vazio
 
 - Sem infra de teste de componente no repo → checklist visual em `09-validacao-santa-clara.md`
   + QA Playwright manual como nas outras abas (gotcha preview: usar chrome do sistema).
+
+## Implementação T10 (2026-07-16)
+
+- A aba foi reescrita como ORACULO-only: não chama mais `/importar` nem `/processar` locais.
+- SSE consome envelopes `snapshot|event` reais, tenta reconectar três vezes e então consulta
+  `GET /api/simcar-oraculo/jobs/:id` a cada 5 s; jobs terminais restauram só o snapshot.
+- O callback do Dashboard recebe `roundsSummary` e `artifactRefs`, sem replicar `timeline` ou
+  erros parseados completos. O wiring/coleções e os quatro unions do Dashboard ficam em T11.
+- Verificação estática: TypeScript estrito e build Vite de produção verdes.
