@@ -1355,12 +1355,24 @@ function CbersMapPreview({
   );
 }
 
-export default function Dashboard() {
+interface DashboardProps {
+  initialView?: 'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'features' | 'settings';
+  hideSidebar?: boolean;
+}
+
+export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = false }: DashboardProps) {
   const [input, setInput] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [selectedErrorLocation, setSelectedErrorLocation] = useState<google.maps.LatLngLiteral | null>(null);
   const [selectedErrorLabel, setSelectedErrorLabel] = useState<string | null>(null);
-  const [activeView, setActiveView] = useState<'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'features' | 'settings'>('simcar-clip');
+  const [activeView, setActiveView] = useState<'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'features' | 'settings'>(initialView);
+
+  useEffect(() => {
+    if (initialView) {
+      setActiveView(initialView);
+    }
+  }, [initialView]);
+
   // Sub-abas dentro de "Análise de Erros": vértices próximas x áreas não contidas (containment) x erros de geometria
   const [errorAnalysisTab, setErrorAnalysisTab] = useState<'vertices' | 'containment' | 'geometry' | 'processar-projeto'>('vertices');
   const [manualSection, setManualSection] = useState<string | null>(null);
@@ -7972,8 +7984,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
         );
       })()}
 
-      <aside
-        className={`
+      {!hideSidebar && (
+        <aside
+          className={`
           fixed lg:relative z-30 flex flex-col h-full w-[85vw] max-w-80
           bg-gradient-to-b from-[#0a120e]/98 via-[#0a120e]/95 to-[#0a120e]/98
           backdrop-blur-2xl border-r border-emerald-500/10
@@ -8768,7 +8781,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             )}
           </button>
         </div>
-      </aside>
+        </aside>
+      )}
 
       <main
         className="flex-1 flex flex-col relative h-full w-full overflow-hidden z-10"

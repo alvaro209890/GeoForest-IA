@@ -1,4 +1,4 @@
-﻿import {
+import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithEmailAndPassword,
@@ -61,13 +61,13 @@ export async function handleSignUp(data: SignUpData): Promise<User> {
   } catch (error: any) {
     switch (error.code) {
       case 'auth/email-already-in-use':
-        throw new Error('Este e-mail ja esta cadastrado');
+        throw new Error('Este e-mail já está cadastrado');
       case 'auth/weak-password':
-        throw new Error('A senha e muito fraca. Use pelo menos 6 caracteres');
+        throw new Error('A senha é muito fraca. Use pelo menos 6 caracteres');
       case 'auth/invalid-email':
-        throw new Error('E-mail invalido');
+        throw new Error('E-mail inválido');
       default:
-        throw new Error(error.message || 'Erro ao cadastrar usuario');
+        throw new Error(error.message || 'Erro ao cadastrar usuário');
     }
   }
 }
@@ -91,11 +91,11 @@ export async function handleLogin(email: string, password: string): Promise<User
   } catch (error: any) {
     switch (error.code) {
       case 'auth/user-not-found':
-        throw new Error('Usuario nao encontrado');
+        throw new Error('Usuário não encontrado');
       case 'auth/wrong-password':
         throw new Error('Senha incorreta');
       case 'auth/invalid-email':
-        throw new Error('E-mail invalido');
+        throw new Error('E-mail inválido');
       case 'auth/user-disabled':
         throw new Error('Esta conta foi desativada');
       default:

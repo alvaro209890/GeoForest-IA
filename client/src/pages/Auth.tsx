@@ -1,9 +1,11 @@
-﻿/**
- * Auth Page - Fullscreen, non-scrollable, no top bar artifacts
+/**
+ * Auth Page — GeoForest IA
+ * Design: Pencil v2.14 — Auth Screen
+ * Split layout: Left Brand Column (620px) + Right Card Column (820px)
  */
 
 import { useEffect, useState } from 'react';
-import { Mail, Lock, User, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Mail, Lock, User, Eye, EyeOff, Loader2, Trees } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import TermsOfUseDialog from '@/components/TermsOfUseDialog';
@@ -29,89 +31,37 @@ export default function Auth() {
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
 
+  // Lock body scroll
   useEffect(() => {
-    const prevBodyOverflow = document.body.style.overflow;
-    const prevHtmlOverflow = document.documentElement.style.overflow;
-    const prevBodyHeight = document.body.style.height;
-    const prevHtmlHeight = document.documentElement.style.height;
-    const prevBodyWidth = document.body.style.width;
-    const prevHtmlWidth = document.documentElement.style.width;
-
+    const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    document.documentElement.style.overflow = 'hidden';
-    document.body.style.height = '100%';
-    document.documentElement.style.height = '100%';
-    document.body.style.width = '100%';
-    document.documentElement.style.width = '100%';
-
     return () => {
-      document.body.style.overflow = prevBodyOverflow;
-      document.documentElement.style.overflow = prevHtmlOverflow;
-      document.body.style.height = prevBodyHeight;
-      document.documentElement.style.height = prevHtmlHeight;
-      document.body.style.width = prevBodyWidth;
-      document.documentElement.style.width = prevHtmlWidth;
+      document.body.style.overflow = prevOverflow;
     };
   }, []);
 
+  // Auth state listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) return;
       try {
         await bootstrapAccount(currentUser.displayName || '');
-        setLocation('/dashboard');
+        setLocation('/dashboard/simcar');
       } catch (error) {
         await signOut(auth);
         console.error('[auth-check] falha ao provisionar conta local', error);
-        toast.error('Nao foi possivel validar sua conta agora. Tente novamente.');
+        toast.error('Não foi possível validar sua conta agora. Tente novamente.');
       }
     });
-
     return () => unsubscribe();
   }, [setLocation]);
-
-  const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-
-  const validateSignUp = () => {
-    if (!fullName.trim()) {
-      toast.error('Por favor, insira seu nome completo');
-      return false;
-    }
-    if (!signupEmail.trim() || !validateEmail(signupEmail)) {
-      toast.error('Por favor, insira um e-mail vÃ¡lido');
-      return false;
-    }
-    if (signupPassword.length < 6) {
-      toast.error('A senha deve ter pelo menos 6 caracteres');
-      return false;
-    }
-    if (signupPassword !== signupConfirmPassword) {
-      toast.error('As senhas nÃ£o correspondem');
-      return false;
-    }
-    return true;
-  };
-
-  const validateLogin = () => {
-    if (!loginEmail.trim() || !validateEmail(loginEmail)) {
-      toast.error('Por favor, insira um e-mail vÃ¡lido');
-      return false;
-    }
-    if (!loginPassword.trim()) {
-      toast.error('Por favor, insira sua senha');
-      return false;
-    }
-    return true;
-  };
 
   const wakeBackend = async () => {
     const configuredBase = String(import.meta.env.VITE_API_BASE || '').trim();
     const apiBase = configuredBase ? configuredBase.replace(/\/+$/, '') : '';
     const url = `${apiBase}/api/health`;
     const controller = new AbortController();
-    const timeoutMs = 20000;
-    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-    const startedAt = performance.now();
+    const timer = window.setTimeout(() => controller.abort(), 20000);
     try {
       const res = await fetch(url, {
         method: 'GET',
@@ -121,12 +71,7 @@ export default function Auth() {
       });
       if (!res.ok) {
         console.warn('[auth-wake] backend respondeu com erro', res.status, res.statusText);
-        return;
       }
-      console.info('[auth-wake] ping enviado com sucesso', {
-        status: res.status,
-        elapsedMs: Math.round(performance.now() - startedAt),
-      });
     } catch (error: any) {
       console.warn('[auth-wake] falha ao pingar backend', error?.message || error);
     } finally {
@@ -136,17 +81,12 @@ export default function Auth() {
 
   const onSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validateSignUp()) return;
     setLoading(true);
     void wakeBackend();
     try {
-      await handleSignUp({
-        email: signupEmail,
-        password: signupPassword,
-        fullName,
-      });
+      await handleSignUp({ email: signupEmail, password: signupPassword, fullName });
       toast.success('Cadastro realizado com sucesso!');
-      setLocation('/dashboard');
+      setLocation('/dashboard/simcar');
     } catch (error: any) {
       toast.error(error.message || 'Erro ao cadastrar');
     } finally {
@@ -156,13 +96,12 @@ export default function Auth() {
 
   const onLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validateLogin()) return;
     setLoading(true);
     void wakeBackend();
     try {
       await handleLogin(loginEmail, loginPassword);
       toast.success('Login realizado com sucesso!');
-      setLocation('/dashboard');
+      setLocation('/dashboard/simcar');
     } catch (error: any) {
       toast.error(error.message || 'Erro ao fazer login');
     } finally {
@@ -176,7 +115,7 @@ export default function Auth() {
     try {
       await handleGoogleSignIn();
       toast.success('Login com Google realizado com sucesso!');
-      setLocation('/dashboard');
+      setLocation('/dashboard/simcar');
     } catch (error: any) {
       toast.error(error.message || 'Erro ao entrar com Google');
     } finally {
@@ -185,264 +124,430 @@ export default function Auth() {
   };
 
   return (
-    <div className="fixed inset-0 overflow-auto bg-black">
-      <div className="absolute inset-0 bg-[radial-gradient(1200px_800px_at_20%_10%,rgba(34,197,94,0.25),transparent_60%),radial-gradient(900px_700px_at_80%_20%,rgba(234,179,8,0.18),transparent_60%),linear-gradient(135deg,#0b1f16,#0b1b10_45%,#0a1210)]" />
-      <div className="absolute inset-0 bg-[url('https://files.manuscdn.com/user_upload_by_module/session_file/310419663030608231/aWDbHEOGaMpaIiIr.jpg')] bg-cover bg-center opacity-35" />
-      <div className="absolute inset-0 bg-black/40" />
+    <div className="fixed inset-0 bg-bg-deep overflow-hidden flex">
+      {/* ═══ Background Ambient Effects ═══ */}
+      {/* Dark overlay */}
+      <div className="absolute inset-0 bg-[#050b08]/55 z-0" />
 
-      <div className="relative z-10 h-full w-full flex items-center justify-center px-3 sm:px-4 overflow-y-auto py-4 sm:py-8">
-        <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-8">
-          <div className="hidden lg:flex flex-col justify-center">
-            <div className="inline-flex items-center gap-3 mb-6">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center p-1">
-                <img
-                  src="/logo-no-bg.svg"
-                  alt="GeoForest IA"
-                  className="w-full h-full object-contain"
-                />
-              </div>
+      {/* Background image */}
+      <div
+        className="absolute inset-0 opacity-30 z-0 bg-cover bg-center"
+        style={{
+          backgroundImage: "url('https://files.manuscdn.com/user_upload_by_module/session_file/310419663030608231/aWDbHEOGaMpaIiIr.jpg')",
+        }}
+      />
+
+      {/* Gradient overlay (bottom to top) */}
+      <div
+        className="absolute inset-0 z-0"
+        style={{
+          background: 'linear-gradient(180deg, #00000066 0%, #0000001A 50%, #00000000 100%)',
+        }}
+      />
+
+      {/* Ambient Glow — top left */}
+      <div
+        className="absolute z-0 opacity-60"
+        style={{
+          left: -300,
+          top: -200,
+          width: 1200,
+          height: 1500,
+          borderRadius: '50%',
+          background:
+            'radial-gradient(ellipse at 38% 50%, rgba(52,211,153,0.5) 0%, rgba(22,163,74,0.5) 30%, #050b08 100%)',
+        }}
+      />
+
+      {/* Right Ambient Glow */}
+      <div
+        className="absolute z-0 opacity-35"
+        style={{
+          left: 750,
+          top: 150,
+          width: 700,
+          height: 800,
+          borderRadius: '50%',
+          background:
+            'radial-gradient(ellipse at 50% 50%, rgba(52,211,153,0.22) 0%, rgba(22,163,74,0.22) 35%, #050b08 100%)',
+        }}
+      />
+
+      {/* Card Ambient Glow */}
+      <div
+        className="absolute z-0 opacity-25"
+        style={{
+          left: 750,
+          top: 280,
+          width: 500,
+          height: 500,
+          borderRadius: '50%',
+          background: 'radial-gradient(ellipse at 50% 50%, rgba(52,211,153,0.15) 0%, transparent 100%)',
+        }}
+      />
+
+      {/* ═══ Left Column — Brand ═══ */}
+      <div className="relative z-10 w-full max-w-[620px] flex flex-col justify-center px-[60px] gap-6 hidden lg:flex">
+        {/* Logo Glow (behind logo) */}
+        <div
+          className="absolute opacity-35"
+          style={{
+            left: 48,
+            top: 378,
+            width: 100,
+            height: 100,
+            borderRadius: '50%',
+            background: 'radial-gradient(ellipse at 50% 50%, rgba(52,211,153,0.25) 0%, transparent 100%)',
+          }}
+        />
+
+        {/* Accent Line */}
+        <div
+          className="h-[3px] rounded-sm"
+          style={{
+            width: 40,
+            background: 'linear-gradient(90deg, #34d399, #6ee7b7)',
+          }}
+        />
+
+        {/* Logo Box + Brand Name Row */}
+        <div className="flex items-center gap-4">
+          {/* Logo Box */}
+          <div
+            className="w-14 h-14 rounded-xl flex items-center justify-center shadow-lg"
+            style={{
+              background: 'linear-gradient(135deg, #34d399, #16a34a)',
+            }}
+          >
+            <Trees className="w-8 h-8 text-[#07100d]" />
+          </div>
+          <h1 className="text-[48px] font-bold text-white leading-[1.1] font-heading">
+            GeoForest IA
+          </h1>
+        </div>
+
+        {/* Subtitle */}
+        <p className="text-base text-accent-emerald leading-relaxed">
+          Inteligência Artificial para Engenharia Florestal
+        </p>
+
+        {/* Description */}
+        <p className="text-sm text-text-secondary leading-[1.65] max-w-md">
+          Processamento inteligente de imagens de satélite, identificação de trilhas e estradas
+          florestais, e monitoramento ambiental com tecnologia de ponta.
+        </p>
+
+        {/* Decorative Dots */}
+        <div className="absolute left-[60px] top-[320px] w-1 h-1 rounded-full bg-accent-emerald opacity-40" />
+        <div className="absolute left-[80px] top-[330px] w-1.5 h-1.5 rounded-full bg-accent-emerald opacity-25" />
+        <div className="absolute left-[100px] top-[325px] w-[3px] h-[3px] rounded-full bg-accent-emerald opacity-50" />
+
+        {/* Decorative Tree */}
+        <Trees
+          className="absolute left-[60px] bottom-[306px] w-[18px] h-[18px] text-accent-emerald opacity-15"
+        />
+      </div>
+
+      {/* ═══ Right Column — Auth Card ═══ */}
+      <div className="relative z-10 flex-1 flex items-center justify-center px-10">
+        {/* Mobile Brand (visible only on small screens) */}
+        <div className="lg:hidden absolute top-10 left-0 right-0 flex flex-col items-center gap-2">
+          <div
+            className="w-12 h-12 rounded-xl flex items-center justify-center"
+            style={{ background: 'linear-gradient(135deg, #34d399, #16a34a)' }}
+          >
+            <Trees className="w-7 h-7 text-[#07100d]" />
+          </div>
+          <h1 className="text-2xl font-bold text-white font-heading">GeoForest IA</h1>
+          <p className="text-xs text-accent-emerald">IA aplicada à Engenharia Florestal</p>
+        </div>
+
+        {/* Auth Card */}
+        <div
+          className="w-full max-w-[440px] rounded-3xl border p-8 flex flex-col gap-8"
+          style={{
+            background: 'rgba(255,255,255,0.078)',
+            backdropFilter: 'blur(32px)',
+            WebkitBackdropFilter: 'blur(32px)',
+            borderColor: 'rgba(34,211,238,0.25)',
+            boxShadow:
+              '0 1px 0 rgba(255,255,255,0.05), 0 16px 80px rgba(0,0,0,0.6), 0 0 50px rgba(34,211,238,0.09)',
+          }}
+        >
+          {/* Card Top Accent */}
+          <div
+            className="h-[2px] w-full rounded-full opacity-80"
+            style={{
+              background: 'linear-gradient(90deg, #34d399, #16a34a)',
+            }}
+          />
+
+          {/* Toggle Bar */}
+          <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-white/[0.04] border border-border-subtle">
+            <button
+              onClick={() => setMode('login')}
+              className={`py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                mode === 'login'
+                  ? 'text-white shadow-lg'
+                  : 'text-white/60 hover:text-white/90'
+              }`}
+              style={
+                mode === 'login'
+                  ? { background: 'linear-gradient(135deg, #34d399, #16a34a)' }
+                  : {}
+              }
+            >
+              Entrar
+            </button>
+            <button
+              onClick={() => setMode('signup')}
+              className={`py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                mode === 'signup'
+                  ? 'text-white shadow-lg'
+                  : 'text-white/60 hover:text-white/90'
+              }`}
+              style={
+                mode === 'signup'
+                  ? { background: 'linear-gradient(135deg, #34d399, #16a34a)' }
+                  : {}
+              }
+            >
+              Cadastrar
+            </button>
+          </div>
+
+          {/* ═══ Login Form ═══ */}
+          {mode === 'login' && (
+            <form onSubmit={onLogin} className="space-y-5">
               <div>
-                <h1 className="text-4xl font-bold text-white">GeoForest IA</h1>
-                <p className="text-green-200 text-sm">InteligÃªncia Artificial para Engenharia Florestal</p>
-              </div>
-            </div>
-            <p className="text-green-100/80 text-lg leading-relaxed max-w-md">
-              Plataforma inteligente para apoio tÃ©cnico e anÃ¡lise ambiental com foco em dados florestais.
-            </p>
-          </div>
-
-          <div className="flex flex-col justify-center">
-            <div className="lg:hidden text-center mb-4 sm:mb-6 flex flex-col items-center gap-2 sm:gap-3">
-              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 shadow-lg flex items-center justify-center p-1">
-                <img
-                  src="/logo-no-bg.svg"
-                  alt="GeoForest IA"
-                  className="w-full h-full object-contain"
-                />
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-white">GeoForest IA</h1>
-              <p className="text-green-200 text-xs sm:text-sm">IA aplicada Ã  Engenharia Florestal</p>
-            </div>
-
-            <div className="rounded-2xl sm:rounded-3xl border border-white/15 bg-white/8 backdrop-blur-xl shadow-2xl p-4 sm:p-6 md:p-8">
-              <div className="grid grid-cols-2 gap-2 bg-white/5 p-1 rounded-2xl mb-4 sm:mb-6">
-                <button
-                  onClick={() => setMode('login')}
-                  className={`py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                    mode === 'login'
-                      ? 'bg-green-600 text-white shadow-lg'
-                      : 'text-white/70 hover:text-white'
-                  }`}
-                >
-                  Login
-                </button>
-                <button
-                  onClick={() => setMode('signup')}
-                  className={`py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                    mode === 'signup'
-                      ? 'bg-green-600 text-white shadow-lg'
-                      : 'text-white/70 hover:text-white'
-                  }`}
-                >
-                  Cadastro
-                </button>
+                <label className="block text-xs font-medium text-white/70 mb-2">E-mail</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-2.5 w-4 h-4 text-accent-emerald/70" />
+                  <Input
+                    type="email"
+                    placeholder="seu@email.com"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    className="pl-9 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-accent-emerald/50 focus:ring-accent-emerald/20 h-11 rounded-xl"
+                  />
+                </div>
               </div>
 
-              {mode === 'login' && (
-                <form onSubmit={onLogin} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-medium text-white/80 mb-2">E-mail</label>
-                    <div className="relative">
-                      <Mail className="absolute left-3 top-3 w-4 h-4 text-green-300" />
-                      <Input
-                        type="email"
-                        placeholder="seu@email.com"
-                        value={loginEmail}
-                        onChange={(e) => setLoginEmail(e.target.value)}
-                        className="pl-9 bg-white/10 border-white/15 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-white/80 mb-2">Senha</label>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-3 w-4 h-4 text-green-300" />
-                      <Input
-                        type={showPassword ? 'text' : 'password'}
-                        placeholder="********"
-                        value={loginPassword}
-                        onChange={(e) => setLoginPassword(e.target.value)}
-                        className="pl-9 pr-10 bg-white/10 border-white/15 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-2.5 text-white/60 hover:text-white/90 transition-colors"
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <Button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-semibold py-2.5 rounded-xl transition-all shadow-lg disabled:opacity-50"
-                  >
-                    {loading ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Entrando...
-                      </>
-                    ) : (
-                      'Entrar'
-                    )}
-                  </Button>
-
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-px bg-white/15" />
-                    <span className="text-[11px] text-white/60">ou</span>
-                    <div className="flex-1 h-px bg-white/15" />
-                  </div>
-
-                  <Button
+              <div>
+                <label className="block text-xs font-medium text-white/70 mb-2">Senha</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-2.5 w-4 h-4 text-accent-emerald/70" />
+                  <Input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    className="pl-9 pr-10 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-accent-emerald/50 focus:ring-accent-emerald/20 h-11 rounded-xl"
+                  />
+                  <button
                     type="button"
-                    onClick={onGoogleSignIn}
-                    disabled={loading}
-                    className="w-full bg-white/90 hover:bg-white text-gray-900 font-semibold py-2.5 rounded-xl transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-2.5 text-white/50 hover:text-white/80 transition-colors"
                   >
-                    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.73 1.22 9.23 3.62l6.88-6.88C35.77 2.48 30.2 0 24 0 14.62 0 6.52 5.38 2.56 13.22l8.04 6.25C12.5 13.06 17.78 9.5 24 9.5z"/>
-                      <path fill="#4285F4" d="M46.98 24.55c0-1.64-.15-3.22-.43-4.75H24v9h12.94c-.56 3.02-2.25 5.58-4.79 7.3l7.36 5.72c4.3-3.97 6.47-9.82 6.47-17.27z"/>
-                      <path fill="#FBBC05" d="M10.6 28.22c-.5-1.52-.78-3.14-.78-4.82s.28-3.3.78-4.82l-8.04-6.25C.92 15.41 0 19.6 0 23.4c0 3.8.92 7.99 2.56 11.07l8.04-6.25z"/>
-                      <path fill="#34A853" d="M24 48c6.2 0 11.77-2.05 15.69-5.58l-7.36-5.72c-2.05 1.38-4.66 2.2-8.33 2.2-6.22 0-11.5-3.56-13.4-8.48l-8.04 6.25C6.52 42.62 14.62 48 24 48z"/>
-                    </svg>
-                    Continuar com Google
-                  </Button>
-                </form>
-              )}
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
 
-              {mode === 'signup' && (
-                <form onSubmit={onSignUp} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-medium text-white/80 mb-2">Nome Completo</label>
-                    <div className="relative">
-                      <User className="absolute left-3 top-3 w-4 h-4 text-green-300" />
-                      <Input
-                        type="text"
-                        placeholder="Seu nome completo"
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        className="pl-9 bg-white/10 border-white/15 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
-                      />
-                    </div>
-                  </div>
+              <Button
+                type="submit"
+                disabled={loading}
+                className="w-full h-11 rounded-xl text-sm font-semibold text-white shadow-lg disabled:opacity-50 transition-all"
+                style={{
+                  background: 'linear-gradient(135deg, #34d399, #16a34a)',
+                }}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Entrando...
+                  </>
+                ) : (
+                  'Entrar'
+                )}
+              </Button>
 
-                  <div>
-                    <label className="block text-xs font-medium text-white/80 mb-2">E-mail</label>
-                    <div className="relative">
-                      <Mail className="absolute left-3 top-3 w-4 h-4 text-green-300" />
-                      <Input
-                        type="email"
-                        placeholder="seu@email.com"
-                        value={signupEmail}
-                        onChange={(e) => setSignupEmail(e.target.value)}
-                        className="pl-9 bg-white/10 border-white/15 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
-                      />
-                    </div>
-                  </div>
+              {/* Divider */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-white/10" />
+                <span className="text-[11px] text-white/50">ou</span>
+                <div className="flex-1 h-px bg-white/10" />
+              </div>
 
-                  <div>
-                    <label className="block text-xs font-medium text-white/80 mb-2">Senha</label>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-3 w-4 h-4 text-green-300" />
-                      <Input
-                        type={showPassword ? 'text' : 'password'}
-                        placeholder="********"
-                        value={signupPassword}
-                        onChange={(e) => setSignupPassword(e.target.value)}
-                        className="pl-9 pr-10 bg-white/10 border-white/15 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-2.5 text-white/60 hover:text-white/90 transition-colors"
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
+              {/* Google Sign In */}
+              <Button
+                type="button"
+                onClick={onGoogleSignIn}
+                disabled={loading}
+                className="w-full h-11 rounded-xl text-sm font-semibold text-gray-900 shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 transition-all bg-white/90 hover:bg-white"
+              >
+                <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+                  <path
+                    fill="#EA4335"
+                    d="M24 9.5c3.54 0 6.73 1.22 9.23 3.62l6.88-6.88C35.77 2.48 30.2 0 24 0 14.62 0 6.52 5.38 2.56 13.22l8.04 6.25C12.5 13.06 17.78 9.5 24 9.5z"
+                  />
+                  <path
+                    fill="#4285F4"
+                    d="M46.98 24.55c0-1.64-.15-3.22-.43-4.75H24v9h12.94c-.56 3.02-2.25 5.58-4.79 7.3l7.36 5.72c4.3-3.97 6.47-9.82 6.47-17.27z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M10.6 28.22c-.5-1.52-.78-3.14-.78-4.82s.28-3.3.78-4.82l-8.04-6.25C.92 15.41 0 19.6 0 23.4c0 3.8.92 7.99 2.56 11.07l8.04-6.25z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M24 48c6.2 0 11.77-2.05 15.69-5.58l-7.36-5.72c-2.05 1.38-4.66 2.2-8.33 2.2-6.22 0-11.5-3.56-13.4-8.48l-8.04 6.25C6.52 42.62 14.62 48 24 48z"
+                  />
+                </svg>
+                Continuar com Google
+              </Button>
+            </form>
+          )}
 
-                  <div>
-                    <label className="block text-xs font-medium text-white/80 mb-2">Confirmar Senha</label>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-3 w-4 h-4 text-green-300" />
-                      <Input
-                        type={showPassword ? 'text' : 'password'}
-                        placeholder="********"
-                        value={signupConfirmPassword}
-                        onChange={(e) => setSignupConfirmPassword(e.target.value)}
-                        className="pl-9 pr-10 bg-white/10 border-white/15 text-white placeholder:text-white/40 focus:border-green-400 focus:ring-green-400/40"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-2.5 text-white/60 hover:text-white/90 transition-colors"
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
+          {/* ═══ Sign Up Form ═══ */}
+          {mode === 'signup' && (
+            <form onSubmit={onSignUp} className="space-y-5">
+              <div>
+                <label className="block text-xs font-medium text-white/70 mb-2">
+                  Nome Completo
+                </label>
+                <div className="relative">
+                  <User className="absolute left-3 top-2.5 w-4 h-4 text-accent-emerald/70" />
+                  <Input
+                    type="text"
+                    placeholder="Seu nome completo"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className="pl-9 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-accent-emerald/50 focus:ring-accent-emerald/20 h-11 rounded-xl"
+                  />
+                </div>
+              </div>
 
-                  <Button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-semibold py-2.5 rounded-xl transition-all shadow-lg disabled:opacity-50"
-                  >
-                    {loading ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Cadastrando...
-                      </>
-                    ) : (
-                      'Cadastrar'
-                    )}
-                  </Button>
+              <div>
+                <label className="block text-xs font-medium text-white/70 mb-2">E-mail</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-2.5 w-4 h-4 text-accent-emerald/70" />
+                  <Input
+                    type="email"
+                    placeholder="seu@email.com"
+                    value={signupEmail}
+                    onChange={(e) => setSignupEmail(e.target.value)}
+                    className="pl-9 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-accent-emerald/50 focus:ring-accent-emerald/20 h-11 rounded-xl"
+                  />
+                </div>
+              </div>
 
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-px bg-white/15" />
-                    <span className="text-[11px] text-white/60">ou</span>
-                    <div className="flex-1 h-px bg-white/15" />
-                  </div>
-
-                  <Button
+              <div>
+                <label className="block text-xs font-medium text-white/70 mb-2">Senha</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-2.5 w-4 h-4 text-accent-emerald/70" />
+                  <Input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    value={signupPassword}
+                    onChange={(e) => setSignupPassword(e.target.value)}
+                    className="pl-9 pr-10 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-accent-emerald/50 focus:ring-accent-emerald/20 h-11 rounded-xl"
+                  />
+                  <button
                     type="button"
-                    onClick={onGoogleSignIn}
-                    disabled={loading}
-                    className="w-full bg-white/90 hover:bg-white text-gray-900 font-semibold py-2.5 rounded-xl transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-2.5 text-white/50 hover:text-white/80 transition-colors"
                   >
-                    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.73 1.22 9.23 3.62l6.88-6.88C35.77 2.48 30.2 0 24 0 14.62 0 6.52 5.38 2.56 13.22l8.04 6.25C12.5 13.06 17.78 9.5 24 9.5z"/>
-                      <path fill="#4285F4" d="M46.98 24.55c0-1.64-.15-3.22-.43-4.75H24v9h12.94c-.56 3.02-2.25 5.58-4.79 7.3l7.36 5.72c4.3-3.97 6.47-9.82 6.47-17.27z"/>
-                      <path fill="#FBBC05" d="M10.6 28.22c-.5-1.52-.78-3.14-.78-4.82s.28-3.3.78-4.82l-8.04-6.25C.92 15.41 0 19.6 0 23.4c0 3.8.92 7.99 2.56 11.07l8.04-6.25z"/>
-                      <path fill="#34A853" d="M24 48c6.2 0 11.77-2.05 15.69-5.58l-7.36-5.72c-2.05 1.38-4.66 2.2-8.33 2.2-6.22 0-11.5-3.56-13.4-8.48l-8.04 6.25C6.52 42.62 14.62 48 24 48z"/>
-                    </svg>
-                    Continuar com Google
-                  </Button>
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
 
-                  <div className="pt-1 text-center space-y-2">
-                    <TermsOfUseDialog
-                      triggerClassName="inline-flex items-center gap-2 rounded-lg border border-green-400/30 bg-green-500/10 px-3 py-1.5 text-xs text-green-100 hover:bg-green-500/20 transition-colors"
-                    />
-                    <p className="text-[11px] text-white/55">
-                      Ao cadastrar, voce declara que leu e concorda com os Termos de Uso.
-                    </p>
-                  </div>
-                </form>
-              )}
-            </div>
-          </div>
+              <div>
+                <label className="block text-xs font-medium text-white/70 mb-2">
+                  Confirmar Senha
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-2.5 w-4 h-4 text-accent-emerald/70" />
+                  <Input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    value={signupConfirmPassword}
+                    onChange={(e) => setSignupConfirmPassword(e.target.value)}
+                    className="pl-9 pr-10 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-accent-emerald/50 focus:ring-accent-emerald/20 h-11 rounded-xl"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-2.5 text-white/50 hover:text-white/80 transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                disabled={loading}
+                className="w-full h-11 rounded-xl text-sm font-semibold text-white shadow-lg disabled:opacity-50 transition-all"
+                style={{
+                  background: 'linear-gradient(135deg, #34d399, #16a34a)',
+                }}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Cadastrando...
+                  </>
+                ) : (
+                  'Cadastrar'
+                )}
+              </Button>
+
+              {/* Divider */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-white/10" />
+                <span className="text-[11px] text-white/50">ou</span>
+                <div className="flex-1 h-px bg-white/10" />
+              </div>
+
+              {/* Google Sign In */}
+              <Button
+                type="button"
+                onClick={onGoogleSignIn}
+                disabled={loading}
+                className="w-full h-11 rounded-xl text-sm font-semibold text-gray-900 shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 transition-all bg-white/90 hover:bg-white"
+              >
+                <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+                  <path
+                    fill="#EA4335"
+                    d="M24 9.5c3.54 0 6.73 1.22 9.23 3.62l6.88-6.88C35.77 2.48 30.2 0 24 0 14.62 0 6.52 5.38 2.56 13.22l8.04 6.25C12.5 13.06 17.78 9.5 24 9.5z"
+                  />
+                  <path
+                    fill="#4285F4"
+                    d="M46.98 24.55c0-1.64-.15-3.22-.43-4.75H24v9h12.94c-.56 3.02-2.25 5.58-4.79 7.3l7.36 5.72c4.3-3.97 6.47-9.82 6.47-17.27z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M10.6 28.22c-.5-1.52-.78-3.14-.78-4.82s.28-3.3.78-4.82l-8.04-6.25C.92 15.41 0 19.6 0 23.4c0 3.8.92 7.99 2.56 11.07l8.04-6.25z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M24 48c6.2 0 11.77-2.05 15.69-5.58l-7.36-5.72c-2.05 1.38-4.66 2.2-8.33 2.2-6.22 0-11.5-3.56-13.4-8.48l-8.04 6.25C6.52 42.62 14.62 48 24 48z"
+                  />
+                </svg>
+                Continuar com Google
+              </Button>
+
+              {/* Terms */}
+              <div className="pt-1 text-center space-y-2">
+                <TermsOfUseDialog triggerClassName="inline-flex items-center gap-2 rounded-lg border border-accent-emerald/30 bg-accent-emerald/10 px-3 py-1.5 text-xs text-emerald-100 hover:bg-accent-emerald/20 transition-colors" />
+                <p className="text-[11px] text-white/45">
+                  Ao cadastrar, você declara que leu e concorda com os Termos de Uso.
+                </p>
+              </div>
+            </form>
+          )}
         </div>
       </div>
     </div>

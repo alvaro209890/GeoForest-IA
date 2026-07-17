@@ -5,7 +5,7 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 const Auth = lazy(() => import("./pages/Auth"));
-const Dashboard = lazy(() => import("./pages/Dashboard"));
+const DashboardRouter = lazy(() => import("./pages/DashboardRouter"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 
@@ -20,7 +20,8 @@ function Router() {
     >
       <Switch>
         <Route path="/">{() => <Auth />}</Route>
-        <Route path="/dashboard">{() => <Dashboard />}</Route>
+        <Route path="/dashboard">{() => <DashboardRouter />}</Route>
+        <Route path="/dashboard/*">{() => <DashboardRouter />}</Route>
         <Route path="/404">{() => <NotFound />}</Route>
         <Route>{() => <NotFound />}</Route>
       </Switch>
