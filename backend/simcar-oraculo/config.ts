@@ -1,9 +1,4 @@
-import type { ProcessarMode } from "./types";
-
-const MODES = new Set<ProcessarMode>(["LOCAL", "ORACULO", "HYBRID"]);
-
 export type SimcarOraculoConfig = {
-  mode: ProcessarMode;
   cpf: string;
   senha: string;
   testCarId: string;
@@ -14,30 +9,22 @@ export type SimcarOraculoConfig = {
   baseRefTimeoutMs: number;
   abrangenciaMarginM: number;
   credentialsConfigured: boolean;
+  deepseekConfigured: boolean;
 };
 
 /**
- * Default seguro: LOCAL (CI e máquinas sem credencial).
- * No PC servidor com SIMCAR_CPF/SENHA, defina PROCESSAR_MODE=ORACULO.
+ * O produto é 100% oráculo (D2 — validação local removida). Basta configurar
+ * SIMCAR_CPF/SIMCAR_SENHA no backend do PC servidor; sem credencial as rotas de
+ * mutação respondem erro explícito (não há mais modo LOCAL/HYBRID).
  */
 export function getSimcarOraculoConfig(): SimcarOraculoConfig {
   const cpf = String(process.env.SIMCAR_CPF || "").replace(/\D/g, "");
   const senha = String(process.env.SIMCAR_SENHA || "");
   const credentialsConfigured = Boolean(cpf && senha);
-  const raw = String(process.env.PROCESSAR_MODE || "").trim().toUpperCase();
-  let mode: ProcessarMode = "LOCAL";
-  if (MODES.has(raw as ProcessarMode)) {
-    mode = raw as ProcessarMode;
-  } else if (credentialsConfigured && process.env.PROCESSAR_MODE === undefined) {
-    // sem PROCESSAR_MODE explícito: se tem credencial, ORACULO; senão LOCAL
-    mode = "LOCAL";
-  }
-  // ORACULO/HYBRID sem credencial → força LOCAL com flag
-  if ((mode === "ORACULO" || mode === "HYBRID") && !credentialsConfigured) {
-    mode = "LOCAL";
-  }
+  const deepseekConfigured = Boolean(
+    String(process.env.DEEPSEEK_API_KEY || "").trim(),
+  );
   return {
-    mode,
     cpf,
     senha,
     testCarId: String(process.env.SIMCAR_TEST_CAR_ID || "270069").trim(),
@@ -51,6 +38,7 @@ export function getSimcarOraculoConfig(): SimcarOraculoConfig {
       Number(process.env.SIMCAR_BASEREF_TIMEOUT_MS || 20 * 60 * 1000) || 20 * 60 * 1000,
     abrangenciaMarginM: Number(process.env.SIMCAR_ABRANGENCIA_MARGIN_M || 500) || 500,
     credentialsConfigured,
+    deepseekConfigured,
   };
 }
 

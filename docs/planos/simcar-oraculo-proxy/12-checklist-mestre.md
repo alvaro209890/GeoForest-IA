@@ -67,9 +67,10 @@
 
 ## P7 — Produção
 
-- [ ] Código morto removido + docs atualizadas (T18)
+- [x] Código morto removido + docs atualizadas (T18) — `PROCESSAR_MODE`/`ProcessarMode`/LOCAL-HYBRID
+      fora; gate só por credenciais; `SIMCAR_ORACULO.md`/env example atualizados; tsc + 80/80 offline.
 - [ ] Env no PC servidor (SIMCAR_* + DEEPSEEK_API_KEY do Hermes) (T19)
-- [ ] Deploy backend + front; health `simcarConfigured && deepseekConfigured` (T19)
+- [ ] Deploy backend + front; health `simcarConfigured && deepseekConfigured` (T19) — **código pronto** no `/api/simcar-oraculo/health`
 - [ ] E2E completo de `09` no ambiente real (T19)
 - [ ] Grep de segredos no repo vazio (regra do `08`)
 - [ ] CAR-teste restaurado com o ZIP FINAL da Santa Clara ao encerrar a bateria

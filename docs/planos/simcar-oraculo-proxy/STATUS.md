@@ -264,8 +264,8 @@ Conclusão da prova: o **pipeline/process-autofix encadeia de verdade** no SIMCA
 | ~~T17a~~ | ✅ **D7 acionado** — process live sem AREA_UMIDA `[FINALIZADO]` sem erros (17/07) | Clip fica best-effort no repo/testes |
 | ~~T17b~~ | ✅ `naoCorrigivel` de contenção de úmida com orientação GIS específica | `plan.ts:nonFixableForError` + teste; front já renderiza |
 | ~~T17c~~ | ✅ STATUS/09/12 marcados; commits `docs+test`/`docs`/`feat(autofix)` no `main` | |
-| T18 | Remover `PROCESSAR_MODE`/código local morto + docs `SIMCAR_ORACULO.md` / README | **próximo** |
-| T19 | Env PC servidor, deploy, health `simcarConfigured && deepseekConfigured`, E2E `09`, restaurar FINAL no 270069 | precisa do PC servidor |
+| ~~T18~~ | ✅ Removido `PROCESSAR_MODE`/`ProcessarMode`/modo LOCAL-HYBRID; `config` gate só por credenciais; `deepseekConfigured` centralizado; docs `SIMCAR_ORACULO.md`/env example atualizados | tsc limpo, 80/80 offline |
+| T19 | Env PC servidor, deploy, health `simcarConfigured && deepseekConfigured` (**código pronto**), E2E `09`, restaurar FINAL no 270069 | falta o deploy/ops no PC servidor |
 | Ops | Nunca commitar `.oraculo-scratch/simcar-oraculo.env` (CPF/senha/DeepSeek) | repo público |
 
 **Estimativa residual do plano:** ~8–10% (só P7: T18 limpeza + T19 ops/deploy). Arquitetura

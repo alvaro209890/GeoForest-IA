@@ -127,7 +127,7 @@ export function registerSimcarOraculoRoutes(app: Express): void {
         ok: true,
         testCarId: c.testCarId,
         simcarConfigured: c.credentialsConfigured,
-        deepseekConfigured: Boolean(String(process.env.DEEPSEEK_API_KEY || "").trim()),
+        deepseekConfigured: c.deepseekConfigured,
         queueLength: getSimcarQueueLength(),
       });
     } catch (e: any) {
@@ -694,7 +694,7 @@ export function registerSimcarOraculoRoutes(app: Express): void {
         }
       }
       const c = getSimcarOraculoConfig();
-      res.json({ ok: true, shapePreview: ctx, mode: c.mode, testCarId: c.testCarId });
+      res.json({ ok: true, shapePreview: ctx, testCarId: c.testCarId });
     } catch (e: any) {
       res.status(400).json({ error: e?.message || "Falha no preview." });
     }

@@ -1336,9 +1336,9 @@ export function registerProcessarProjetoRoutes(app: Express): void {
         uploadId,
         filename,
         layers: visibleLayers,
-        mode: oraculoCfg.mode,
         testCarId: oraculoCfg.testCarId,
         simcarConfigured: oraculoCfg.credentialsConfigured,
+        deepseekConfigured: oraculoCfg.deepseekConfigured,
         shapePreview,
         warnings: layers
           .filter((layer) => layer.ignoredReason && layer.featureCount > 0)

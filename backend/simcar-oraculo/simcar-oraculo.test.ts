@@ -11,34 +11,28 @@ import { resolve } from "node:path";
 
 describe("simcar-oraculo/config", () => {
   afterEach(() => {
-    delete process.env.PROCESSAR_MODE;
     delete process.env.SIMCAR_CPF;
     delete process.env.SIMCAR_SENHA;
     delete process.env.SIMCAR_TEST_CAR_ID;
+    delete process.env.DEEPSEEK_API_KEY;
   });
 
-  it("default mode is LOCAL without credentials", () => {
-    delete process.env.PROCESSAR_MODE;
+  it("credentialsConfigured é false sem CPF/senha", () => {
     delete process.env.SIMCAR_CPF;
     delete process.env.SIMCAR_SENHA;
     const c = getSimcarOraculoConfig();
-    expect(c.mode).toBe("LOCAL");
     expect(c.credentialsConfigured).toBe(false);
     expect(c.testCarId).toBe("270069");
+    expect("mode" in c).toBe(false);
   });
 
-  it("honors PROCESSAR_MODE=ORACULO only with credentials", () => {
-    process.env.PROCESSAR_MODE = "ORACULO";
+  it("credentialsConfigured é true com CPF/senha; deepseekConfigured segue a chave", () => {
     process.env.SIMCAR_CPF = "12345678901";
     process.env.SIMCAR_SENHA = "x";
-    expect(getSimcarOraculoConfig().mode).toBe("ORACULO");
-  });
-
-  it("falls back to LOCAL if ORACULO without credentials", () => {
-    process.env.PROCESSAR_MODE = "ORACULO";
-    delete process.env.SIMCAR_CPF;
-    delete process.env.SIMCAR_SENHA;
-    expect(getSimcarOraculoConfig().mode).toBe("LOCAL");
+    expect(getSimcarOraculoConfig().credentialsConfigured).toBe(true);
+    expect(getSimcarOraculoConfig().deepseekConfigured).toBe(false);
+    process.env.DEEPSEEK_API_KEY = "sk-teste";
+    expect(getSimcarOraculoConfig().deepseekConfigured).toBe(true);
   });
 
   it("assertTestCarId só aceita o projeto-teste", () => {

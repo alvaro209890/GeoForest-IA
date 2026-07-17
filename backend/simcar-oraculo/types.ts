@@ -1,7 +1,5 @@
 import type { FixDiffSummary, FixPlan } from "./autofix/types";
 
-export type ProcessarMode = "LOCAL" | "ORACULO" | "HYBRID";
-
 export type OraculoStep =
   | "queued"
   | "login"
