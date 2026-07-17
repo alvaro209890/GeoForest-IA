@@ -5033,7 +5033,8 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     if (initialViewRef.current === 'simcar-clip') {
       setActiveView('simcar-clip');
     }
-    setIsSidebarOpen(false);
+    // Não fechar a sidebar no boot: os cards de histórico moram nela.
+    // Em mobile, o fechamento fica a cargo de onSelectConversation.
   };
 
   const onSelectConversation = async (id: string) => {

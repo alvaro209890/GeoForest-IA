@@ -60,12 +60,13 @@ export const DashboardRouter: React.FC = () => {
   }
 
   // Dashboard principal: SEM Suspense wrapper para evitar que lazy imports
-  // internos do Dashboard capturem o fallback deste router
-  return (
-    <DashboardLayout>
-      <Dashboard key={view} initialView={view} hideSidebar />
-    </DashboardLayout>
-  );
+  // internos do Dashboard capturem o fallback deste router.
+  //
+  // NÃO usar DashboardLayout/Sidebar de navegação aqui nem hideSidebar:
+  // o próprio Dashboard já tem a sidebar com abas + cards de histórico
+  // (recortes SIMCAR, CBERS, Landsat, erros, processar, recibos).
+  // hideSidebar={true} escondia 100% dos cards salvos (regressão do redesign Pencil).
+  return <Dashboard key={view} initialView={view} />;
 };
 
 export default DashboardRouter;

@@ -108,7 +108,11 @@ export async function getDocs<T>(ref: CollectionRef | QueryRef) {
     ),
     { headers: await authHeaders() },
   );
-  const payload = await res.json();
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message = String((payload as any)?.error || `Falha ao listar ${(ref as any).path || "coleção"} (${res.status})`);
+    throw new Error(message);
+  }
   const docs = Array.isArray(payload?.docs)
     ? payload.docs.map((item: any) => toSnapshot<T>(String(item.id || ""), item.data as T))
     : [];
