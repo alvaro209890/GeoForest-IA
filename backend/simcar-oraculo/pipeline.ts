@@ -6,7 +6,7 @@ import {
   saveSimcarOraculoJobSnapshot,
 } from "../local-storage";
 import { assertTestCarId, getSimcarOraculoConfig } from "./config";
-import { simcarPost, withSimcarAuthRetry } from "./client";
+import { simcarDownload, simcarPost, withSimcarAuthRetry } from "./client";
 import { OraculoPipelineCancelledError, isOraculoPipelineCancelledError } from "./errors";
 import { importZipOnTestProjectUnlocked } from "./import-shape";
 import {
@@ -53,6 +53,7 @@ export type OraculoPipelineDependencies = {
   importZip: ImportOperation;
   processGeo: ProcessOperation;
   parseReportPdf: typeof parseSemaReportPdf;
+  downloadArtifact: (pathname: string) => Promise<{ buffer: Buffer; contentType: string | null }>;
   cancelRemote: (phase: "import" | "process", carId: string) => Promise<void>;
   now: () => Date;
 };
@@ -100,6 +101,8 @@ function dependencies(
     importZip: importZipOnTestProjectUnlocked,
     processGeo: processGeoOnTestProjectUnlocked,
     parseReportPdf: parseSemaReportPdf,
+    downloadArtifact: (pathname) =>
+      withSimcarAuthRetry((token) => simcarDownload(token, pathname)),
     cancelRemote: defaultCancelRemote,
     now: () => new Date(),
     ...overrides,
@@ -126,6 +129,7 @@ function createArtifact(args: {
   filename: string;
   contentType: string;
   buffer: Buffer;
+  source: OraculoArtifact["source"];
 }): OraculoArtifact {
   const stored = saveSimcarOraculoArtifact(args);
   return {
@@ -136,6 +140,7 @@ function createArtifact(args: {
     url: artifactUrl(args.jobId, args.key),
     contentType: args.contentType,
     bytes: stored.bytes,
+    source: args.source,
   };
 }
 
@@ -202,6 +207,68 @@ async function executePipeline(args: {
   const addArtifact = (artifact: OraculoArtifact): void => {
     const current = state.artifacts && typeof state.artifacts === "object" ? state.artifacts : {};
     persist({ artifacts: { ...current, [artifact.key]: artifact } });
+  };
+  const addArtifactWarnings = (warnings: string[]): void => {
+    if (!warnings.length) return;
+    const currentRounds = Array.isArray(state.rounds)
+      ? (state.rounds as OraculoRoundResult[])
+      : args.initialRounds;
+    const rounds = currentRounds.map((item) =>
+      item.n === round
+        ? {
+            ...item,
+            artifactWarnings: [...(item.artifactWarnings || []), ...warnings],
+          }
+        : item,
+    );
+    persist({ rounds });
+  };
+  const downloadOptionalArtifacts = async (
+    specs: Array<{
+      key: string;
+      filename: string;
+      pathname: string;
+      label: string;
+    }>,
+  ): Promise<void> => {
+    const warnings: string[] = [];
+    for (const spec of specs) {
+      await checkCancelled();
+      try {
+        const downloaded = await deps.downloadArtifact(spec.pathname);
+        if (!downloaded.buffer.length) throw new Error("arquivo vazio");
+        const artifact = createArtifact({
+          uid: input.uid,
+          jobId,
+          round,
+          key: spec.key,
+          filename: spec.filename,
+          // A SEMA usa application/x-zip-compressed em parte dos endpoints; o contrato
+          // público do artefato normaliza todos estes downloads conhecidos para ZIP.
+          contentType: "application/zip",
+          buffer: downloaded.buffer,
+          source: "sema",
+        });
+        addArtifact(artifact);
+        emit({
+          step: "download_artifacts",
+          message: `${spec.label} baixado da SEMA.`,
+          data: { artifact: spec.key, bytes: artifact.bytes },
+        });
+      } catch (error: any) {
+        const absent = Number(error?.status) === 400 || Number(error?.status) === 404;
+        const warning = absent
+          ? `${spec.label} não disponível nesta rodada.`
+          : `Falha não bloqueante ao baixar ${spec.label}: ${error?.message || error}`;
+        warnings.push(warning);
+        emit({
+          step: "download_artifacts",
+          message: warning,
+          data: { artifact: spec.key, optional: true, httpStatus: error?.status ?? null },
+        });
+      }
+    }
+    addArtifactWarnings(warnings);
   };
   const checkCancelled = async (): Promise<void> => {
     const latest = readOraculoJob(input.uid, jobId);
@@ -276,6 +343,12 @@ async function executePipeline(args: {
       onProgress: (progress) => {
         if (progress.step === "importar") activeRemotePhase = "import";
         if (
+          progress.step === "import_poll" &&
+          String(progress.data?.ImportacaoShapeStatus || "").includes("CONCLUIDO")
+        ) {
+          activeRemotePhase = null;
+        }
+        if (
           progress.step === "import_ok" ||
           progress.step === "import_fail" ||
           progress.step === "failed"
@@ -298,6 +371,7 @@ async function executePipeline(args: {
         filename: "relatorio_importacao_sema.pdf",
         contentType: "application/pdf",
         buffer: importOutcome.pdfBuffer,
+        source: "sema",
       });
       importPdfKey = artifact.key;
       addArtifact(artifact);
@@ -333,6 +407,14 @@ async function executePipeline(args: {
       percent: 70,
       data: { resultado: importOutcome.resultado, errosResumo: importSummary },
     });
+    await downloadOptionalArtifacts([
+      {
+        key: `enviado-zip-r${round}`,
+        filename: "enviado.zip",
+        pathname: `Requerimento/DownloadArquivoEnviado/${carId}`,
+        label: "ZIP enviado",
+      },
+    ]);
 
     if (!importOutcome.ok) {
       emit({
@@ -370,6 +452,12 @@ async function executePipeline(args: {
       onProgress: (progress) => {
         if (progress.step === "processar") activeRemotePhase = "process";
         if (
+          progress.step === "process_poll" &&
+          String(progress.data?.ProcessamentoStatus || "").includes("CONCLUIDO")
+        ) {
+          activeRemotePhase = null;
+        }
+        if (
           progress.step === "process_ok" ||
           progress.step === "process_fail" ||
           progress.step === "failed"
@@ -393,6 +481,7 @@ async function executePipeline(args: {
         filename: "relatorio_processamento_sema.pdf",
         contentType: "application/pdf",
         buffer: processOutcome.pdfBuffer,
+        source: "sema",
       });
       processPdfKey = artifact.key;
       addArtifact(artifact);
@@ -418,6 +507,7 @@ async function executePipeline(args: {
         filename: "erros_processamento_sema.zip",
         contentType: "application/zip",
         buffer: processOutcome.errosZipBuffer,
+        source: "sema",
       });
       processErrosZipKey = artifact.key;
       addArtifact(artifact);
@@ -442,6 +532,26 @@ async function executePipeline(args: {
       percent: 98,
       data: { resultado: processOutcome.resultado, errosResumo: processSummary },
     });
+    await downloadOptionalArtifacts([
+      {
+        key: `processado-zip-r${round}`,
+        filename: "arquivo_processado_sema.zip",
+        pathname: `Requerimento/DownloadArquivoProcessado/${carId}`,
+        label: "ZIP processado",
+      },
+      {
+        key: `conferencia-zip-r${round}`,
+        filename: "arquivo_conferencia_sema.zip",
+        pathname: `Requerimento/DownloadArquivoConferencia/${carId}`,
+        label: "ZIP de conferência",
+      },
+      {
+        key: `pendencias-zip-r${round}`,
+        filename: "arquivo_pendencias_sema.zip",
+        pathname: `Requerimento/DownloadArquivoPendencias/${carId}`,
+        label: "ZIP de pendências",
+      },
+    ]);
     emit({
       step: "done",
       message: processOutcome.ok
@@ -492,10 +602,17 @@ export function startOraculoPipeline(args: StartOraculoPipelineArgs): StartedOra
     filename: "enviado.zip",
     contentType: "application/zip",
     buffer: args.zip,
+    source: "upload",
   });
   const artifacts = { [originalArtifact.key]: originalArtifact };
   const rounds: OraculoRoundResult[] = [
-    { n: round, zipArtifact: originalArtifact.key, import: null, process: null },
+    {
+      n: round,
+      zipArtifact: originalArtifact.key,
+      import: null,
+      process: null,
+      artifactWarnings: [],
+    },
   ];
   const queued = eventAt(deps, round, {
     step: "queued",

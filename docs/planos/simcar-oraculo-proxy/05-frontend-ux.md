@@ -46,7 +46,8 @@
 │ Resultado (por rodada, expansível)                            │
 │ Rodada 1 ✗ process: AREA_UMIDA contida ×41                    │
 │   [📄 PDF importação SEMA] [📄 PDF processamento SEMA]         │
-│   [⬇ ZIP erros SEMA] [⬇ ZIP enviado] [🔍 o que a IA entendeu] │
+│   [⬇ ZIP erros] [⬇ Enviado] [⬇ Processado] [⬇ Conferência]    │
+│   [⬇ Pendências] [🔍 o que a IA entendeu]                     │
 │ Rodada 2 ⏳ …                                                  │
 ├──────────────────────────────────────────────────────────────┤
 │ [✨ Corrigir e reenviar]  (só quando loop automático parou e   │

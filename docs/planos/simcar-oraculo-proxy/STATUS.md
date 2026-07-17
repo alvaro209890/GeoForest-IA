@@ -18,7 +18,7 @@ D6 repo PÚBLICO → segredos só em env.
 | **P1.5** | **Bugs bloqueantes (B1–B9)** | ✅ T1–T3 concluídas; B9 (modo local) sai em T18 |
 | P2 | Município + abrangência | ✅ T4–T6; prepare live em skip e mutações T5 comprovadas |
 | P3 | ProcessarGeo API | ✅ rotas prontas |
-| P3.5 | Pipeline único + SSE + parse PDF | ⏳ T7–T8 concluídas; T9 pendente |
+| P3.5 | Pipeline único + SSE + parse PDF | ✅ T7–T9 concluídas |
 | P4 | Front ORACULO-only | ⏳ T10–T12 |
 | P5 | Autofix import + DeepSeek + loop | ⏳ T13–T16 |
 | P6 | Autofix process | ⏳ T17 |
@@ -84,6 +84,13 @@ B9 comentário × código do default de modo.
   cancel estão autenticadas; jobs são server-owned e a árvore não é servida pelo static;
   `/autofix` responde reserva explícita até P5. Gate acumulado:
   **97/97 testes** do oráculo+geometria, `tsc --noEmit` e build de produção verdes.
+- **T9 concluída (2026-07-16):** cada rodada tenta os artefatos oficiais no momento correto:
+  enviado após import; processado, conferência e pendências após ProcessarGeo; PDF import/
+  process e ZIP de erros já permanecem no mesmo snapshot. 400/404 é ausência opcional e vira
+  `artifactWarnings`, sem falhar o job. Probe live read-only no 270069 confirmou PDFs, ZIP
+  enviado (641.273 bytes) e conferência (811.556 bytes); erros/processado/pendências estavam
+  ausentes com HTTP 400 no estado atual. Nenhuma mutação foi feita. Gate da fase P3.5:
+  **97/97** oráculo+geometria, **11/11** regressão processar-projeto, `tsc` e build verdes.
 
 ## Credenciais
 
@@ -93,6 +100,6 @@ B9 comentário × código do default de modo.
 
 ## Como retomar
 
-1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T9 em diante)
+1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T10 em diante)
 2. Antes de codar SEMA: `11-endpoints-sema-descobertos.md`
 3. Validação: `09-validacao-santa-clara.md`

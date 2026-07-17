@@ -52,6 +52,7 @@ export type OraculoArtifact = {
   url: string;
   contentType: string;
   bytes: number;
+  source: "upload" | "sema" | "autofix";
 };
 
 export type OraculoRoundResult = {
@@ -76,6 +77,7 @@ export type OraculoRoundResult = {
     errosResumo: Array<{ camada: string; erro: string; qtd: number }>;
     parseWarnings: string[];
   };
+  artifactWarnings?: string[];
   fixplan?: string | null;
 };
 

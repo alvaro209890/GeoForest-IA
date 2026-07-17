@@ -62,6 +62,17 @@ describe("startOraculoPipeline", () => {
     const processPdf = fs.readFileSync(
       path.join(fixtureDir, "relatorio_processamento_v22_sema.pdf"),
     );
+    const officialDownloads = new Map<string, Buffer>([
+      ["DownloadArquivoEnviado", Buffer.from("zip-enviado-oficial")],
+      ["DownloadArquivoProcessado", Buffer.from("zip-processado")],
+      ["DownloadArquivoConferencia", Buffer.from("zip-conferencia")],
+      ["DownloadArquivoPendencias", Buffer.from("zip-pendencias")],
+    ]);
+    const downloadArtifact = vi.fn(async (pathname: string) => {
+      const entry = [...officialDownloads.entries()].find(([needle]) => pathname.includes(needle));
+      if (!entry) throw new Error(`download inesperado: ${pathname}`);
+      return { buffer: entry[1], contentType: "application/zip" };
+    });
     const started = pipeline.startOraculoPipeline({
       uid: "uid-pipeline-happy",
       uploadId: "upload-happy",
@@ -113,6 +124,7 @@ describe("startOraculoPipeline", () => {
             timeline: [],
           };
         },
+        downloadArtifact,
         cancelRemote: vi.fn(async () => undefined),
       },
     });
@@ -145,11 +157,27 @@ describe("startOraculoPipeline", () => {
       },
     });
     expect(Object.keys(completed.artifacts).sort()).toEqual([
+      "conferencia-zip-r1",
       "enviado-zip-r1",
       "erros-zip-r1",
       "import-pdf-r1",
+      "pendencias-zip-r1",
       "process-pdf-r1",
+      "processado-zip-r1",
     ]);
+    expect(downloadArtifact.mock.calls.map(([pathname]) => pathname)).toEqual([
+      "Requerimento/DownloadArquivoEnviado/270069",
+      "Requerimento/DownloadArquivoProcessado/270069",
+      "Requerimento/DownloadArquivoConferencia/270069",
+      "Requerimento/DownloadArquivoPendencias/270069",
+    ]);
+    expect(completed.artifacts["enviado-zip-r1"].source).toBe("sema");
+    expect(
+      fs.readFileSync(
+        path.resolve(storageRoot, completed.artifacts["enviado-zip-r1"].relativePath),
+        "utf8",
+      ),
+    ).toBe("zip-enviado-oficial");
     for (const artifact of Object.values(completed.artifacts) as Array<any>) {
       expect(artifact.relativePath).toContain(
         "users/uid-pipeline-happy/simcar-oraculo/job-happy/r1/",
@@ -201,6 +229,9 @@ describe("startOraculoPipeline", () => {
     const importPdf = fs.readFileSync(
       path.join(fixtureDir, "relatorio_importacao_v23_sema.pdf"),
     );
+    const missingOptional = vi.fn(async () => {
+      throw Object.assign(new Error("HTTP 400: arquivo não existe"), { status: 400 });
+    });
     const started = pipeline.startOraculoPipeline({
       uid: "uid-pipeline-rejected",
       uploadId: "upload-rejected",
@@ -227,6 +258,7 @@ describe("startOraculoPipeline", () => {
           timeline: [],
         }),
         processGeo,
+        downloadArtifact: missingOptional,
         cancelRemote: vi.fn(async () => undefined),
       },
     });
@@ -243,6 +275,11 @@ describe("startOraculoPipeline", () => {
     expect(completed.rounds[0].process).toBeNull();
     expect(completed.rounds[0].import.errosResumo).toEqual([
       { camada: "AREA_UMIDA", erro: "A geometria contém pontos repetidos", qtd: 11 },
+    ]);
+    expect(missingOptional).toHaveBeenCalledTimes(1);
+    expect(completed.artifacts["enviado-zip-r1"].source).toBe("upload");
+    expect(completed.rounds[0].artifactWarnings).toEqual([
+      "ZIP enviado não disponível nesta rodada.",
     ]);
     expect(completed.timeline.map((event: any) => event.step)).toContain("import_fail");
   });

@@ -94,6 +94,9 @@ STORAGE_ROOT/users/{uid}/simcar-oraculo/{jobId}/
   r1/relatorio_importacao_sema.pdf
   r1/relatorio_processamento_sema.pdf  # se chegou a processar
   r1/erros_processamento_sema.zip      # se a SEMA gerou
+  r1/arquivo_processado_sema.zip       # opcional (400 = ausente)
+  r1/arquivo_conferencia_sema.zip      # opcional
+  r1/arquivo_pendencias_sema.zip       # opcional
   r2/corrigido.zip                     # rodada de autofix
   r2/fixplan.json                      # ações aplicadas + explicação DeepSeek
   ...

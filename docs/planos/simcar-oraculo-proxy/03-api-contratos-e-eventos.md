@@ -15,7 +15,7 @@ Rotas locais antigas de importar/processar do processar-projeto **morrem** (D2).
 | GET | `/api/simcar-oraculo/jobs/:jobId/events` | **novo** — SSE da timeline (mesmo padrão do processing-jobs atual) |
 | POST | `/api/simcar-oraculo/jobs/:jobId/autofix` | **reservado em T8** — 409 `AUTOFIX_NOT_AVAILABLE`; ativado em T15 |
 | DELETE | `/api/simcar-oraculo/jobs/:jobId` | cancelar (para de pollear; best-effort Cancelar* na SEMA) |
-| GET | `/api/simcar-oraculo/jobs/:jobId/artifact/:key` | download tokenizado: `import-pdf-r{N}`, `process-pdf-r{N}`, `erros-zip-r{N}`, `enviado-zip-r{N}`, `corrigido-zip-r{N}`, `fixplan-r{N}` |
+| GET | `/api/simcar-oraculo/jobs/:jobId/artifact/:key` | download autenticado: PDFs, `erros/enviado/processado/conferencia/pendencias-*-r{N}`, corrigido e fixplan |
 | GET | `/api/simcar-oraculo/health` | mode-less: `{ok, simcarConfigured, testCarId, queueLength, deepseekConfigured}` |
 | GET | `/api/simcar-oraculo/test-project` | Buscar do CAR-teste (leitura) |
 | GET | `/api/simcar-oraculo/municipios` | 142 opções `{chave,nome,ibge}` para fallback manual; cache 24h |
@@ -104,7 +104,7 @@ Mensagens de exemplo (copy do front em 05):
       "key": "import-pdf-r1", "round": 1,
       "relativePath": "users/UID/simcar-oraculo/JOB/r1/relatorio_importacao_sema.pdf",
       "url": "/api/simcar-oraculo/jobs/JOB/artifact/import-pdf-r1",
-      "contentType": "application/pdf", "bytes": 347217
+      "contentType": "application/pdf", "bytes": 347217, "source": "sema"
     }
   }
 }
@@ -114,6 +114,10 @@ SSE envia primeiro `{type:"snapshot", jobId, job}`, depois `{type:"event", ...}`
 cada 15 s. Jobs terminais devolvem apenas o snapshot e fecham a conexão. A rota faz lookup do
 job dentro do UID autenticado — outro usuário recebe 404. O cliente não pode sobrescrever nem
 apagar `simcar_oraculo_jobs` via store genérico, e a árvore de artefatos é excluída do static.
+
+Downloads opcionais inexistentes (HTTP 400/404) não derrubam a rodada: ficam em
+`round.artifactWarnings[]`. `enviado-zip-rN` começa como cópia do upload (`source:"upload"`) e
+é sobrescrito pela cópia oficial (`source:"sema"`) se `DownloadArquivoEnviado` responder.
 
 ## Contratos de erro
 

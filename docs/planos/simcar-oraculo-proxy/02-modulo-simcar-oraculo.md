@@ -73,6 +73,9 @@ Regras:
 - O ZIP original e os resultados ficam em
   `users/{uid}/simcar-oraculo/{jobId}/r{N}/`; o snapshot terminal também é espelhado em
   `job.json`. Downloads só resolvem chaves registradas no doc do próprio usuário/job.
+- T9 substitui `enviado-zip-rN` pela cópia oficial da SEMA quando disponível e coleta, após
+  o processamento atual, `processado-zip-rN`, `conferencia-zip-rN` e `pendencias-zip-rN`.
+  HTTP 400/404 preserva o fluxo e entra em `round.artifactWarnings[]`.
 
 ### `sema-report-parse.ts`
 
@@ -109,6 +112,7 @@ Oráculos reais versionados em `backend/fixtures/teste_1/`:
 | `sema-report-parse` com quatro PDFs reais v21/v22/v23 versionados | P3.5 — 7 testes verdes |
 | pipeline import aprovado→process; import reprovado→stop; cancel mid-import | P3.5/T8 |
 | SSE snapshot/evento/terminal + isolamento por usuário | P3.5/T8 |
+| downloads oficiais completos + ausência HTTP 400 não bloqueante | P3.5/T9 |
 | pipeline: import reprova → não processa → autofix roda → 2ª rodada | P5 (mock SEMA) |
 
 Live (manual, PC): `SIMCAR_LIVE=1` + scripts `scripts/smoke-*.ts` (nunca em CI).

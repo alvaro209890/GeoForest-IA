@@ -35,7 +35,8 @@
       Auth por UID, cancelamento e storage `job/rN` cobertos por testes
 - [x] Import aprovou → ProcessarGeo automático (T8) — import reprovado para sem processar e
       permanece resultado `completed`; ambos os caminhos mockados
-- [ ] Todos os downloads SEMA disponíveis por rodada (T9)
+- [x] Todos os downloads SEMA disponíveis por rodada (T9) — PDFs, erros, enviado, processado,
+      conferência e pendências; 400/404 não bloqueante testado e endpoints revalidados live
 
 ## P4 — Front sem validação local
 

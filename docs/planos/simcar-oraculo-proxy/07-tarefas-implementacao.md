@@ -73,9 +73,12 @@
 - `/autofix` fica registrado e responde 409 explícito até a implementação P5/T15.
 - Commit: `feat(simcar-oraculo): pipeline único upload→prepare→import→process`
 
-### T9 — Downloads SEMA extras
+### T9 — Downloads SEMA extras ✅ concluída em 2026-07-16
 - No fim de cada rodada, baixar o que existir: PDF import, PDF process, erros-zip,
   `DownloadArquivoEnviado`, `DownloadArquivoProcessado` (tolerar 400 = não existe)
+- Entrega ampliada conforme fluxo executivo do `00`: conferência e pendências também são
+  coletadas depois do processamento; probe live read-only confirmou enviado+conferência e
+  respostas 400 opcionais para processado/pendências no estado atual.
 - Commit: `feat(simcar-oraculo): artefatos completos da SEMA por rodada`
 
 ## Fase P4 — front

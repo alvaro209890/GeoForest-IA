@@ -129,12 +129,17 @@ Poll: `BuscarStatusProcessamento` a cada `SIMCAR_POLL_MS` (5 s). Import ~2 min; 
 | `Requerimento/DownloadPdfImportacaoShapefile/{id}` | PDF do relatório de importação (o que o usuário baixa quando reprova) ✅ live |
 | `Requerimento/DownloadPdfRelatorioProcessamento/{id}` | PDF do relatório de processamento ✅ live |
 | `Requerimento/DownloadArquivoErrosProcessamento/{id}` | ZIP shapefile de erros do processamento (400 se não existir) ✅ live |
-| `Requerimento/DownloadArquivoEnviado/{id}` | ZIP enviado atual do CAR (do bundle) |
-| `Requerimento/DownloadArquivoProcessado/{id}` | ZIP processado (com APP/ARL derivadas) (do bundle) |
-| `Requerimento/DownloadArquivoConferencia/{id}` | arquivo de conferência (do bundle) |
-| `Requerimento/DownloadArquivoPendencias/{id}` | pendências (do bundle) |
+| `Requerimento/DownloadArquivoEnviado/{id}` | ZIP enviado atual do CAR — ✅ live T9: 641.273 bytes, ZIP, SHA `33bd2573…d199` |
+| `Requerimento/DownloadArquivoProcessado/{id}` | ZIP processado (com APP/ARL derivadas) — ✅ endpoint live T9; 400 = ausente no estado atual |
+| `Requerimento/DownloadArquivoConferencia/{id}` | arquivo de conferência — ✅ live T9: 811.556 bytes, ZIP, SHA `c9d41599…c55d` |
+| `Requerimento/DownloadArquivoPendencias/{id}` | pendências — ✅ endpoint live T9; 400 = ausente no estado atual |
 | `Requerimento/DownloadArquivoAreaAbrangencia/{id}` | shape da área de abrangência (do bundle) |
 | `Requerimento/DownloadArquivoModelo?requerimentoId={id}` | ZIP modelo da SEMA (do bundle) |
+
+Probe T9: `scripts/probe-downloads.ts`, guard `SIMCAR_LIVE=1` + `assertTestCarId(270069)`,
+somente leitura. PDFs de import/process também responderam; erros de processamento retornou
+400 no estado corrente. O pipeline tenta cada artefato apenas depois da etapa que o gera, para
+não capturar saída antiga do CAR compartilhado.
 
 ## Pendências opcionais / decisões fechadas
 

@@ -28,6 +28,10 @@ Gate offline T8 concluído: mock aprovado encadeou prepare→import→ProcessarG
 parou antes do process e estruturou pontos repetidos ×11; cancelamento durante import tentou o
 endpoint remoto e terminou `cancelled`. A validação live desta seção continua pendente para T19.
 
+Probe live read-only T9 no 270069: PDFs e ZIP enviado/conferência disponíveis; ZIP de erros,
+processado e pendências responderam 400 (ausência válida no estado atual). O probe não alterou
+o CAR; hashes/tamanhos estão em `11-endpoints-sema-descobertos.md`.
+
 ## Checklist P1.5 (rotas persistem de verdade)
 
 - [ ] `POST /api/simcar-oraculo/pipeline` com V24 → doc em `users/{uid}/simcar_oraculo_jobs/{id}` existe e atualiza
