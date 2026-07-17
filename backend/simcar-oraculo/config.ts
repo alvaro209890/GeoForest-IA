@@ -27,7 +27,9 @@ export function getSimcarOraculoConfig(): SimcarOraculoConfig {
   return {
     cpf,
     senha,
-    testCarId: String(process.env.SIMCAR_TEST_CAR_ID || "270069").trim(),
+    // Projeto "Teste" (Id 271442), criado 2025-04-04 — CAR operacional do oráculo no PC servidor.
+    // Override via SIMCAR_TEST_CAR_ID no env. (Histórico: 270069 = Santa clara, usado nas baterias D1.)
+    testCarId: String(process.env.SIMCAR_TEST_CAR_ID || "271442").trim(),
     root:
       process.env.SIMCAR_ROOT ||
       "https://monitoramento.sema.mt.gov.br/simcar/tecnico.api/api",

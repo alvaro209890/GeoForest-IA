@@ -32,3 +32,21 @@ passava `hideSidebar` no `DashboardRouter`. Efeito colateral:
 
 - Front: Firebase Hosting `ia-florestal.web.app`
 - API: `geoforest-api.cursar.space` → backend local :3001
+
+## Atualização — CAR-teste do oráculo = projeto "Teste" (271442)
+
+Confirmado na conta técnica SIMCAR (CPF configurado no env do servidor):
+
+| Campo | Valor |
+|-------|--------|
+| Id | **271442** |
+| PropriedadeNome | **Teste** |
+| DataCriacao | **2025-04-04T13:25:33** |
+| Município | Querência |
+| Situação | `[EM_CADASTRAMENTO]` |
+
+O backend do PC servidor passou a usar `SIMCAR_TEST_CAR_ID=271442` (antes 270069 / Santa clara).
+Imports e ProcessarGeo do oráculo agora sobrescrevem **só** o projeto **Teste**.
+
+Listagem obtida via `POST /Requerimento/ListarRasc` com body completo do app
+(`Filtros.PROPRIEDADE_NOME` + `ItensPorPagina` + `Pagina` + `ColunaOrdenar` + `Colunas`).
