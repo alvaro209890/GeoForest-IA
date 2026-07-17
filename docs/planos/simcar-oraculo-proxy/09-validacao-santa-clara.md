@@ -32,6 +32,12 @@ Probe live read-only T9 no 270069: PDFs e ZIP enviado/conferência disponíveis;
 processado e pendências responderam 400 (ausência válida no estado atual). O probe não alterou
 o CAR; hashes/tamanhos estão em `11-endpoints-sema-descobertos.md`.
 
+Gate offline T13 no V23 real: `remove_duplicate_vertices` alterou as mesmas 11 feições do
+oráculo (73 vértices detalhados pelo detector), descartou 2 registros que colapsaram e deixou
+zero ocorrência. A saída tem as mesmas 38 feições, 48 anéis, 3.187 pontos, sequência de IDs e
+conjuntos de coordenadas do V24 `[FINALIZADO]`; apenas preserva a ordem original dos anéis onde
+o protótipo os ordenava por área. Nenhuma chamada SEMA foi feita nesta prova; rodada real é T16.
+
 ## Checklist P1.5 (rotas persistem de verdade)
 
 - [ ] `POST /api/simcar-oraculo/pipeline` com V24 → doc em `users/{uid}/simcar_oraculo_jobs/{id}` existe e atualiza

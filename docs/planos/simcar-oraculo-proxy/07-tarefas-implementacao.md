@@ -120,10 +120,16 @@
 ## Fase P5 — autofix import
 
 ### T13 — `zip-rewrite.ts` + actions de import
+- **Concluída em 2026-07-16.** Reescritor valida alinhamento SHP/SHX/DBF e preserva
+  byte a byte todas as entradas não tocadas, PRJ/CPG e o DBF da própria camada quando a ordem
+  de registros não muda; índices espaciais obsoletos da camada alterada são descartados.
 - Promover v22/v24 + fixLayerGeometry: `remove_duplicate_vertices`, `clean_degenerate_rings`,
   `unkink_self_intersection`, `remove_glued_holes`, `split_complex_polygon`
 - Test por action: ZIP sintético entra errado → sai sem o defeito → contagens/prj preservados
   (regras de engenharia de `06` viram asserts: sem buffer, fragmentos <100 m² filtrados…)
+- Evidência: 9/9 testes próprios; gate conjunto 53/53; V23 offline produziu as mesmas
+  contagens, IDs e coordenadas do V24 aprovado. O filtro pós-clip <100 m² permanece em T17,
+  pois nenhuma ação de import faz clip.
 - Commit: `feat(autofix): ações mecânicas de importação`
 
 ### T14 — `plan.ts` + `deepseek.ts` + fallback

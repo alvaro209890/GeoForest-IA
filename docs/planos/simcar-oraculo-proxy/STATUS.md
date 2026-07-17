@@ -20,7 +20,7 @@ D6 repo PÚBLICO → segredos só em env.
 | P3 | ProcessarGeo API | ✅ rotas prontas |
 | P3.5 | Pipeline único + SSE + parse PDF | ✅ T7–T9 concluídas |
 | P4 | Front ORACULO-only | ✅ T10–T12 concluídas |
-| P5 | Autofix import + DeepSeek + loop | ⏳ T13–T16 |
+| P5 | Autofix import + DeepSeek + loop | ⏳ T13 concluída; T14–T16 pendentes |
 | P6 | Autofix process | ⏳ T17 |
 | P7 | Limpeza + deploy + E2E | ⏳ T18–T19 |
 
@@ -110,6 +110,16 @@ B9 comentário × código do default de modo.
   participa mais da aba (só compatibilidade/teste legado), enquanto as fases puras seguem
   isoladas como biblioteca. Provas: **4/4** contratos de rota com upload/preview de Querência,
   **42/42** Erros de Geometria, **12/12** regressões locais/PDF e `tsc` verdes. P4 encerrada.
+- **T13 concluída (2026-07-16):** `autofix/zip-rewrite.ts` regrava somente SHP/SHX/DBF da
+  camada tocada, preserva payloads de todas as demais entradas e mantém PRJ/CPG byte a byte;
+  recusa CRS métrico inseguro, desalinhamento SHP/SHX/DBF e geometria de saída inválida. As
+  cinco ações mecânicas de import foram promovidas (`remove_duplicate_vertices`,
+  `clean_degenerate_rings`, `unkink_self_intersection`, `remove_glued_holes` e
+  `split_complex_polygon`), sem `buffer`, com novos IDs nas divisões e encadeamento sobre o
+  ZIP anterior. Gate: **9/9 testes novos**, **42/42** geometria, **2/2** writer e `tsc` verdes.
+  Prova offline no V23 real: 11 feições/73 vértices tratados, 2 registros colapsados removidos,
+  zero ponto repetido restante e mesmas 38 feições/48 anéis/3.187 pontos/IDs/coordenadas do
+  V24 aceito; o reenvio ao SIMCAR permanece reservado à T16.
 
 ## Credenciais
 
@@ -119,6 +129,6 @@ B9 comentário × código do default de modo.
 
 ## Como retomar
 
-1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T13 em diante)
+1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T14 em diante)
 2. Antes de codar SEMA: `11-endpoints-sema-descobertos.md`
 3. Validação: `09-validacao-santa-clara.md`
