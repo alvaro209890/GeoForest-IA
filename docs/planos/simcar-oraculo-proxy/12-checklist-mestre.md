@@ -29,7 +29,8 @@
 
 ## P3.5 — Pipeline
 
-- [ ] Parse PDF SEMA → `errosResumo` (T7, oráculos v22/v23)
+- [x] Parse PDF SEMA → `errosResumo` (T7) — 7 testes; oráculos reais V21, V22-import,
+      V23 e V22-process versionados com SHA-256; colunas coladas/quebras/agregação cobertas
 - [ ] `POST /pipeline` + SSE + artefatos por rodada (T8)
 - [ ] Import aprovou → ProcessarGeo automático (T8)
 - [ ] Todos os downloads SEMA disponíveis por rodada (T9)

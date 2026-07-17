@@ -18,7 +18,7 @@ D6 repo PÚBLICO → segredos só em env.
 | **P1.5** | **Bugs bloqueantes (B1–B9)** | ✅ T1–T3 concluídas; B9 (modo local) sai em T18 |
 | P2 | Município + abrangência | ✅ T4–T6; prepare live em skip e mutações T5 comprovadas |
 | P3 | ProcessarGeo API | ✅ rotas prontas |
-| P3.5 | Pipeline único + SSE + parse PDF | ⏳ T7–T9 |
+| P3.5 | Pipeline único + SSE + parse PDF | ⏳ T7 concluída; T8–T9 pendentes |
 | P4 | Front ORACULO-only | ⏳ T10–T12 |
 | P5 | Autofix import + DeepSeek + loop | ⏳ T13–T16 |
 | P6 | Autofix process | ⏳ T17 |
@@ -70,6 +70,12 @@ B9 comentário × código do default de modo.
   direto + `Limpar` somente no fallback e máquina BaseRef (`null`/CONCLUIDO/ERRO/timeout).
   **11/11 testes**; smoke live com o ZIP FINAL confirmou skip seguro em Querência, abrangência
   já suficiente e zero mutações.
+- **T7 concluída (2026-07-16):** `sema-report-parse.ts` extrai situação e agrega erros mesmo
+  quando as colunas vêm coladas ou a mensagem quebra linha. **7/7 testes** cobrem PDF inválido
+  e os quatro relatórios reais: V21 sobreposição ×1; V22 import aprovado; V23 pontos repetidos
+  ×11; V22 processamento/área úmida não contida ×41. Os PDFs-oráculo estão versionados como
+  fixtures e o parse degradável preserva o PDF com `warnings` em vez de derrubar o job. Gate
+  acumulado: **88/88 testes** do oráculo+geometria, `tsc --noEmit` e build de produção verdes.
 
 ## Credenciais
 
@@ -79,6 +85,6 @@ B9 comentário × código do default de modo.
 
 ## Como retomar
 
-1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T1 em diante)
+1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T8 em diante)
 2. Antes de codar SEMA: `11-endpoints-sema-descobertos.md`
 3. Validação: `09-validacao-santa-clara.md`

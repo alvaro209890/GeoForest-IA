@@ -19,6 +19,11 @@ ZIPs-oráculo (resultados REAIS já conhecidos da SEMA, 16/07):
 Estado do CAR-teste é descartável (D1), mas ao TERMINAR uma bateria: reimportar o FINAL
 para deixar o projeto num estado conhecido.
 
+Calibração offline T7 concluída com cópias imutáveis dos PDFs reais em
+`backend/fixtures/teste_1/`: V21 import (`AREA_UMIDA`, sobreposição ×1), V22 import aprovado,
+V23 import (`AREA_UMIDA`, pontos repetidos ×11) e V22 process (`AREA_UMIDA`, contenção ×41).
+Os hashes SHA-256 e o contrato estruturado estão registrados em `02-modulo-simcar-oraculo.md`.
+
 ## Checklist P1.5 (rotas persistem de verdade)
 
 - [ ] `POST /api/simcar-oraculo/pipeline` com V24 → doc em `users/{uid}/simcar_oraculo_jobs/{id}` existe e atualiza

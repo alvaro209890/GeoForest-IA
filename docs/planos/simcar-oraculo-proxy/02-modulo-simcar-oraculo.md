@@ -70,13 +70,25 @@ Regras:
 
 ### `sema-report-parse.ts`
 
-- Extrair texto do PDF de importação/processamento da SEMA (`pdf-parse` já é dependência do repo).
-- Saída: `{ resumo: [{camada, erro, qtd}], porFeicao?: [{camada, feicao, erro}] , raw: string }`.
+- Implementado em T7: extrai texto do PDF de importação/processamento da SEMA com `pdf-parse`.
+- Saída: `{ tipo, situacao, resumo: [{camada, erro, qtd}], porFeicao, raw, warnings }`.
+- Reconstrói mensagens quebradas em várias linhas, tolera coluna da camada colada ao erro e
+  agrega linhas iguais. Uma camada citada dentro da mensagem (por exemplo `AVN, AUAS`) não é
+  confundida com o início de outro registro.
 - Mensagens-alvo conhecidas (calibradas 16/07): "A geometria contém pontos repetidos",
   "Borda do polígono se cruza", "Duas ou mais bordas ou buracos… se sobrepõem",
   "Polígono complexo…", "Geometria deve ser completamente contida por AVN, AUAS ou AREA_CONSOLIDADA…".
 - Se o parse falhar: PDF continua disponível; `errosResumo=[]` + warning na timeline
   (autofix então usa DeepSeek como fallback de leitura — ver 06).
+
+Oráculos reais versionados em `backend/fixtures/teste_1/`:
+
+| Fixture | SHA-256 | Resultado estruturado |
+|---------|---------|------------------------|
+| `relatorio_importacao_v21_sema.pdf` | `85591101e58745c21b461fbb10857e07d3300976a9dda82d21bbf88048399dae` | `AREA_UMIDA`, bordas/buracos sobrepostos ×1 |
+| `relatorio_importacao_v22_sema.pdf` | `cc4d34c3f0847d856a6999b527a870d192712489779054a47e292511c0a557b1` | aprovado, nenhum erro inventado |
+| `relatorio_importacao_v23_sema.pdf` | `3b262f96acf700338a1024f063b6ed2915ab7ba4e808ac89862f2ed715077b89` | `AREA_UMIDA`, pontos repetidos ×11 |
+| `relatorio_processamento_v22_sema.pdf` | `d44d9e6ce86e0a2a3612eed762b1482713619c62dfa9d1940381dd7dc7adb90f` | `AREA_UMIDA`, fora da cobertura ×41 |
 
 ## Testes do módulo (ampliar)
 
@@ -88,7 +100,7 @@ Regras:
 | `withSimcarAuthRetry` renova em 401 e não loopa | B6 |
 | `prepare-project` com mock (município igual → skip; diferente → salvar+re-Buscar) | P2 |
 | `municipio-mt` centroid Querência → 5107065 | P2 |
-| `sema-report-parse` com os PDFs reais v21/v22/v23 salvos no scratch | P3.5 |
+| `sema-report-parse` com quatro PDFs reais v21/v22/v23 versionados | P3.5 — 7 testes verdes |
 | pipeline: import reprova → não processa → autofix roda → 2ª rodada | P5 (mock SEMA) |
 
 Live (manual, PC): `SIMCAR_LIVE=1` + scripts `scripts/smoke-*.ts` (nunca em CI).

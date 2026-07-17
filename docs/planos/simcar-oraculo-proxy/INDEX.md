@@ -14,9 +14,9 @@ DeepSeek V4 Pro explicando), automático até 3 rodadas.
 | Fase | Status |
 |------|--------|
 | P0/P1/P3 cliente+import+process API | ✅ |
-| P1.5 bugs bloqueantes (B1–B8; B9 fecha com T18) | ✅ T1–T3; 75 testes + `tsc` |
-| P2 município/abrangência (endpoints descobertos ✅) | ⏳ |
-| P3.5 pipeline único + parse PDF | ⏳ |
+| P1.5 bugs bloqueantes (B1–B8; B9 fecha com T18) | ✅ T1–T3 |
+| P2 município/abrangência (endpoints descobertos ✅) | ✅ T4–T6; live no 270069 |
+| P3.5 pipeline único + parse PDF | ⏳ T7 ✅; 88 testes + build; T8–T9 pendentes |
 | P4 front ORACULO-only | ⏳ |
 | P5/P6 autofix + DeepSeek | ⏳ |
 | P7 deploy + E2E | ⏳ |
@@ -42,5 +42,5 @@ DeepSeek V4 Pro explicando), automático até 3 rodadas.
 
 ## Continuar por
 
-1. [STATUS.md](./STATUS.md) → 2. T7 (`sema-report-parse.ts`) em
+1. [STATUS.md](./STATUS.md) → 2. T8 (`pipeline.ts` + rotas + SSE) em
 [07](./07-tarefas-implementacao.md) → 3. contrato canônico: [11](./11-endpoints-sema-descobertos.md)

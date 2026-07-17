@@ -55,9 +55,11 @@
 
 ## Fase P3.5 — pipeline único + parse
 
-### T7 — `sema-report-parse.ts`
+### T7 — `sema-report-parse.ts` ✅ concluída em 2026-07-16
 - pdf-parse nos PDFs reais salvos (v21/v22/v23 do scratch + fixtures) → `errosResumo`
 - Test: v23 → `[{AREA_UMIDA, pontos repetidos, 11}]`; v22-process → contida ×41
+- Evidência adicional: V21 sobreposição ×1, V22 aprovado sem falso positivo, PDF inválido
+  degrada para warning; 7 testes verdes e quatro PDFs-oráculo versionados com hashes em `02`.
 - Commit: `feat(simcar-oraculo): parse dos relatórios PDF da SEMA`
 
 ### T8 — `pipeline.ts` + rotas novas + SSE

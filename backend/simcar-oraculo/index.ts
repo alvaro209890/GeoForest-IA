@@ -19,5 +19,6 @@ export {
   coversShapeBbox,
   expandBboxMeters,
 } from "./prepare-project";
+export { parseSemaReportPdf, parseSemaReportText } from "./sema-report-parse";
 export { registerSimcarOraculoRoutes } from "./routes";
 export type * from "./types";
