@@ -48,6 +48,7 @@ import { registerVerticesRoutes } from "./vertices-proximas";
 import { registerContainmentRoutes } from "./containment-analysis";
 import { registerGeometryErrorsRoutes } from "./geometry-errors";
 import { registerProcessarProjetoRoutes } from "./processar-projeto";
+import { registerSimcarOraculoRoutes } from "./simcar-oraculo";
 import {
   JobCancelledError,
   finishJob,
@@ -540,6 +541,15 @@ async function startServer() {
       /^\/api\/processar-projeto\/jobs\/[^/]+\/events$/,
       /^\/api\/processar-projeto\/download\/[^/]+$/,
       /^\/api\/processar-projeto\/jobs\/[^/]+$/,
+      "/api/simcar-oraculo/health",
+      "/api/simcar-oraculo/test-project",
+      "/api/simcar-oraculo/importar",
+      "/api/simcar-oraculo/processar",
+      "/api/simcar-oraculo/shape-preview",
+      /^\/api\/simcar-oraculo\/jobs\/[^/]+$/,
+      /^\/api\/simcar-oraculo\/jobs\/[^/]+\/pdf-import$/,
+      /^\/api\/simcar-oraculo\/jobs\/[^/]+\/pdf-process$/,
+      /^\/api\/simcar-oraculo\/jobs\/[^/]+\/erros-zip$/,
       "/api/process/cancel",
       "/api/account/bootstrap",
       "/api/me",
@@ -684,6 +694,7 @@ async function startServer() {
   registerContainmentRoutes(app);
   registerGeometryErrorsRoutes(app);
   registerProcessarProjetoRoutes(app);
+  registerSimcarOraculoRoutes(app);
   registerCbersArchiveAdminRoutes(app);
 
   const MODEL_CATALOG = [

@@ -71,6 +71,8 @@ import {
   recognizeSimcarLayer,
   type SimcarLayerCode,
 } from "./simcar-rules";
+import { getSimcarOraculoConfig } from "./simcar-oraculo/config";
+import { extractShapeContext } from "./simcar-oraculo/shape-context";
 import {
   generateSimcarDerivedLayers,
   parsePointRecords,
@@ -1456,11 +1458,22 @@ export function registerProcessarProjetoRoutes(app: Express): void {
         createdAt: new Date().toISOString(),
         expiresAtMs: Date.now() + CACHE_TTL_MS,
       });
+      const oraculoCfg = getSimcarOraculoConfig();
+      let shapePreview: ReturnType<typeof extractShapeContext> | null = null;
+      try {
+        shapePreview = extractShapeContext(zipBuffer);
+      } catch {
+        shapePreview = null;
+      }
       res.json({
         ok: true,
         uploadId,
         filename,
         layers: visibleLayers,
+        mode: oraculoCfg.mode,
+        testCarId: oraculoCfg.testCarId,
+        simcarConfigured: oraculoCfg.credentialsConfigured,
+        shapePreview,
         warnings: layers
           .filter((layer) => layer.ignoredReason && layer.featureCount > 0)
           .map((layer) => `${layer.name}: ${layer.ignoredReason}`),
