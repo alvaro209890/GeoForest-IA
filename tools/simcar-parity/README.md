@@ -15,7 +15,7 @@ observável da API do SIMCAR (`tecnico.api`).
 Copie `.env.example` para `.env` (gitignored se preferir) ou exporte:
 
 ```bash
-export SIMCAR_LOGIN=***REMOVED-CPF***
+export SIMCAR_LOGIN='<cpf-só-dígitos>'   # nunca commitar o CPF real (repo público)
 export SIMCAR_SENHA='***'
 export SIMCAR_REQUERIMENTO_ID=   # id numérico de um rascunho de teste
 ```
