@@ -69,8 +69,8 @@
 
 - [x] Código morto removido + docs atualizadas (T18) — `PROCESSAR_MODE`/`ProcessarMode`/LOCAL-HYBRID
       fora; gate só por credenciais; `SIMCAR_ORACULO.md`/env example atualizados; tsc + 80/80 offline.
-- [ ] Env no PC servidor (SIMCAR_* + DEEPSEEK_API_KEY do Hermes) (T19)
-- [ ] Deploy backend + front; health `simcarConfigured && deepseekConfigured` (T19) — **código pronto** no `/api/simcar-oraculo/health`
+- [x] Env no PC servidor (SIMCAR_* + DEEPSEEK_API_KEY do Hermes) (T19) — `~/.config/geoforest/backend.env` (2026-07-17)
+- [x] Deploy backend + front; health `simcarConfigured && deepseekConfigured` (T19) — backend `geoforest-backend.service` + tunnel `geoforest-api.cursar.space`; front Firebase `ia-florestal.web.app` (2026-07-17)
 - [ ] E2E completo de `09` no ambiente real (T19)
 - [x] Grep de segredos vazio (regra do `08`) — CPF real que estava em `tools/simcar-parity/README.md`
       redigido no HEAD **e purgado de todo o histórico** com `git filter-repo` + `git push --force`

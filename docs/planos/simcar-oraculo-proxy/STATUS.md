@@ -27,7 +27,7 @@ camada AREA_UMIDA** do ZIP de teste, processar sem ela e seguir a bateria sem es
 | P4 | Front ORACULO-only | ✅ T10–T12 concluídas |
 | P5 | Autofix import + DeepSeek + loop | ✅ T13–T16; V23 aprovado live na rodada 2 |
 | **P6** | **Autofix process** | ✅ **gate fechado via D7** (17/07 tarde; ZIP sem AREA_UMIDA processou `[FINALIZADO]` sem erros). Clip best-effort; **T17b concluído** (contenção de úmida sem fix → `naoCorrigivel` com orientação GIS específica) |
-| P7 | Limpeza + deploy + E2E | ⏳ T18–T19 |
+| P7 | Limpeza + deploy + E2E | ⏳ T19 E2E em curso (T18 ✅; ops env+deploy+health ✅ 17/07) |
 
 ## Descobertas de 2026-07-16 (noite) — ver `11-endpoints-sema-descobertos.md`
 
@@ -265,7 +265,7 @@ Conclusão da prova: o **pipeline/process-autofix encadeia de verdade** no SIMCA
 | ~~T17b~~ | ✅ `naoCorrigivel` de contenção de úmida com orientação GIS específica | `plan.ts:nonFixableForError` + teste; front já renderiza |
 | ~~T17c~~ | ✅ STATUS/09/12 marcados; commits `docs+test`/`docs`/`feat(autofix)` no `main` | |
 | ~~T18~~ | ✅ Removido `PROCESSAR_MODE`/`ProcessarMode`/modo LOCAL-HYBRID; `config` gate só por credenciais; `deepseekConfigured` centralizado; docs `SIMCAR_ORACULO.md`/env example atualizados | tsc limpo, 80/80 offline |
-| T19 | Env PC servidor, deploy, health `simcarConfigured && deepseekConfigured` (**código pronto**), E2E `09`, restaurar FINAL no 270069 | falta o deploy/ops no PC servidor |
+| T19 | Env PC servidor, deploy, health `simcarConfigured && deepseekConfigured`, E2E `09`, restaurar FINAL no 270069 | **ops ✅ 17/07** (env server-only, restart systemd, tunnel health, Firebase hosting). E2E Santa Clara FINAL em execução no CAR 270069 |
 | Ops | Nunca commitar `.oraculo-scratch/simcar-oraculo.env` (CPF/senha/DeepSeek) | repo público |
 
 **Estimativa residual do plano:** ~8–10% (só P7: T18 limpeza + T19 ops/deploy). Arquitetura
