@@ -166,11 +166,21 @@
 
 ## Fase P6 — autofix process
 
-### T17 — `clip_layer_to_cover` + clean pós-clip (v23/v9 promovidos)
-- Test: fixture com úmida fora do cover → clip → sem fragmentos <100 m², IDs únicos
-- Live: V22 → fix → reimporta → processa; meta: zerar os 41; reservatório/ARL duplicado
-  aparecem como `naoCorrigivel` com orientação
-- Commit: `feat(autofix): recorte de AREA_UMIDA à cobertura + limpeza`
+### T17 — `clip_layer_to_cover` + clean pós-clip (v23/v9 promovidos) 🔶 EM PROGRESSO
+- **Código (parcial, 2026-07-17):** ação `clip_layer_to_cover`, wiring process no pipeline,
+  testes offline verdes, harness live `pipeline-process-live.test.ts`. Detalhe e evidências:
+  `STATUS.md` seção T17.
+- **Live já tentada:** V22 no 270069 — R1 process ×41 → clip aplicou → R2 process **ainda ×41**
+  → `no_improvement`. Pipeline ok; clip **não** fechou o veredito SEMA.
+- **Hipótese em curso:** SEMA exige contenção em **host individual** (não só união); residual
+  cartográfico (úmida×hidro) não é autofix “perfeito”. WIP: não re-unir pedaços multi-host.
+- **D7 (Álvaro):** se **3 lives** de fix de contenção falharem → **remover AREA_UMIDA** do ZIP
+  de teste no CAR 270069 e processar sem a camada; documentar e seguir P7.
+- Test (ainda obrigatório no fechamento): fixture sintético clip + IDs + &lt;100 m²
+- Live (gate): V22 → fix → reimporta → processa; meta zerar 41 **ou** D7 documentado
+- `naoCorrigivel` para residual cartográfico / reservatório / ARL
+- Commit de fechamento (quando gate fechar): `feat(autofix): recorte de AREA_UMIDA à cobertura + limpeza`
+  (ou `docs+feat` se D7 for o desfecho do teste)
 
 ## Fase P7 — fechamento
 

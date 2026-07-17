@@ -128,7 +128,7 @@ type FixPlan = {
 
 type FixDiffSummary = {
   camada: string;
-  acao: Exclude<FixActionType, "clip_layer_to_cover">;
+  acao: FixActionType;
   alterou: boolean;
   feicoesAfetadas: number[];
   registrosAntes: number;

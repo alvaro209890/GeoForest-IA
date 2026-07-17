@@ -108,9 +108,22 @@ aí é outro job).
 
 - **P5**: dups, anéis degenerados, unkink, buracos colados, polígono complexo. Oráculo de
   teste: V23 (11 pontos repetidos — a rodada deve produzir ZIP que importa FINALIZADO).
+  **✅ fechado live T16.**
 - **P6**: clip úmida→cover + limpeza pós-clip. Oráculo: V22 (41 contenções — após fix,
   reimporta e processa; meta: zerar os 41; pendências restantes de reservatório/ARL são
-  `naoCorrigivel` esperado).
+  `naoCorrigivel` esperado). **🔶 em progresso** — ver STATUS T17.
+
+### Achados T17 (não violar ao retomar)
+
+1. Clip local que altera dezenas de feições **pode** manter ×41 no PDF SEMA — gate só com
+   ProcessarGeo real (`pipeline-process-live.test.ts`).
+2. Preferir **pedaços por host** (AVN **ou** AUAS **ou** CONS) a unir pedaços multi-host numa
+   única feição MultiPolygon.
+3. Residual típico Santa Clara = úmida sobre hidro / buraco de AIR — autofix mecânico tem
+   teto; **D7** (remover AREA_UMIDA do ZIP de teste após 3 lives) é escape autorizado no
+   CAR 270069, não no produto do usuário final.
+4. Variantes manuais no scratch chegaram a **1–3** erros de contenção: há margem de calibração
+   fina (borda/precision), não só “clip ou nada”.
 
 ## Telemetria mínima
 

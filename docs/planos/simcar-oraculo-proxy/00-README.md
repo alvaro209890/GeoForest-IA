@@ -31,6 +31,7 @@ por etapas persistida + SSE.
 | D4 | Loop de correção **automático até 3 rodadas** (`AUTOFIX_MAX_ROUNDS=3`): corrigiu → reimporta → aprovou? processa → reprovou? corrige de novo. Para se não houver ação mapeada, se não melhorar, ou no teto. |
 | D5 | Nome da propriedade do CAR-teste **nunca** é alterado (`PropriedadeNome` intocável); município e demais dados podem. |
 | D6 | Repo é **PÚBLICO** → CPF/senha/chaves NUNCA em arquivo commitado. Valores ficam em env do PC servidor e em `.oraculo-scratch/simcar-oraculo.env` (gitignored) neste PC. |
+| D7 | Se o process de **AREA_UMIDA contida** não fechar em **3 lives** de correção mecânica no CAR-teste 270069, **pode remover AREA_UMIDA** do ZIP de teste e processar sem ela (só teste; não é regra de produto do usuário final). |
 
 ## Fluxo do produto (ponta a ponta)
 
@@ -63,10 +64,10 @@ ZIP do usuário
 | **P2** | Município (Propriedade) + abrangência (Caracterização) com os endpoints REAIS de `11-endpoints-sema-descobertos.md` | ✅ T4–T6 (live no 270069) |
 | **P3** | ProcessarGeo + artefatos | ✅ encadeado no pipeline |
 | **P3.5** | **Pipeline único** upload→prepare→import→process + SSE/timeline + parse do PDF SEMA → `errosResumo` | ✅ T7–T9 |
-| **P4** | Front: remover validação local, timeline oráculo, downloads SEMA, botão Corrigir | ⏳ |
+| **P4** | Front: remover validação local, timeline oráculo, downloads SEMA, botão Corrigir | ✅ T10–T12 |
 | **P5** | Autofix de import (mecânico + DeepSeek planner) + loop 3 rodadas | ✅ V23 live |
-| **P6** | Autofix de process (clip úmida etc.) no mesmo loop | ⏳ |
-| **P7** | Remoção do código local morto + deploy PC servidor + validação E2E (`09`) | ⏳ |
+| **P6** | Autofix de process (clip úmida etc.) no mesmo loop | 🔶 T17 **em progresso** — ver STATUS (live ×41 ainda aberto; D7 fallback) |
+| **P7** | Remoção do código local morto + deploy PC servidor + validação E2E (`09`) | ⏳ T18–T19 |
 
 ## Fora de escopo
 

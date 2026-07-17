@@ -56,6 +56,37 @@ const duplicateDiff = {
   avisos: [],
 };
 
+const clipPlan = {
+  acoes: [
+    {
+      type: "clip_layer_to_cover" as const,
+      layers: ["AREA_UMIDA"],
+      motivo: "A SEMA encontrou área úmida fora da cobertura.",
+    },
+  ],
+  naoCorrigivel: [],
+  explicacaoUsuario: "Recortar AREA_UMIDA à cobertura e reenviar.",
+  confianca: "alta" as const,
+  fonte: "fallback" as const,
+  modelo: null,
+  avisos: [],
+};
+
+const clipDiff = {
+  camada: "AREA_UMIDA",
+  acao: "clip_layer_to_cover" as const,
+  alterou: true,
+  feicoesAfetadas: [1],
+  registrosAntes: 2,
+  registrosDepois: 2,
+  verticesRemovidos: 0,
+  aneisRemovidos: 0,
+  registrosRemovidos: 0,
+  registrosCriados: 1,
+  identificadoresCriados: 1,
+  avisos: ["1 fragmento pós-clip abaixo de 100 m² foi descartado."],
+};
+
 function progress(
   callback: ((event: OraculoProgress) => void) | undefined,
   step: OraculoProgress["step"],
@@ -377,7 +408,7 @@ describe("startOraculoPipeline", () => {
         importZip,
         processGeo,
         buildFixPlan: buildPlan,
-        applyImportFixActions: applyFixes,
+        applyFixActions: applyFixes,
         downloadArtifact: vi.fn(async () => ({
           buffer: Buffer.from("artefato-sema"),
           contentType: "application/zip",
@@ -457,6 +488,137 @@ describe("startOraculoPipeline", () => {
     );
   });
 
+  it("recorta a camada após reprovação do ProcessarGeo e reimporta sem repetir prepare nem a fila", async () => {
+    const processRejectedPdf = fs.readFileSync(
+      path.join(fixtureDir, "relatorio_processamento_v22_sema.pdf")
+    );
+    const enqueue = vi.fn(async <T>(operation: () => Promise<T>) =>
+      operation()
+    );
+    const prepare = vi.fn(async () => ({
+      municipioAntes: "Querência",
+      municipioDepois: "Querência",
+      municipioChanged: false,
+      abrangenciaChanged: false,
+      baserefWaitedMs: 0,
+      warnings: [],
+    }));
+    const importZip = vi.fn(async () => ({
+      ok: true,
+      resultado: "[FINALIZADO]",
+      status: "[CONCLUIDO]",
+      detalhes: "Importação aprovada",
+      raw: {},
+      pdfBuffer: null,
+      timeline: [],
+    }));
+    const processGeo = vi.fn(async () => {
+      const firstRound = processGeo.mock.calls.length === 1;
+      return {
+        ok: !firstRound,
+        resultado: firstRound ? "[COM_PENDENCIA]" : "[FINALIZADO]",
+        status: "[CONCLUIDO]",
+        detalhes: firstRound ? "41 áreas úmidas fora" : "Aprovado",
+        raw: {},
+        pdfBuffer: firstRound ? processRejectedPdf : null,
+        timeline: [],
+      };
+    });
+    const buildPlan = vi.fn(async (input: any) => {
+      expect(input.allowedActions).toEqual(["clip_layer_to_cover"]);
+      return clipPlan;
+    });
+    const applyFixes = vi.fn(async () => ({
+      novoZip: Buffer.from("zip-v22-recortado"),
+      diffResumo: [clipDiff],
+    }));
+    const started = pipeline.startOraculoPipeline({
+      uid: "uid-pipeline-process-autofix",
+      uploadId: "upload-process-autofix",
+      jobId: "job-process-autofix",
+      zip: Buffer.from("zip-v22"),
+      fileName: "v22.zip",
+      shape,
+      autofix: true,
+      dependencies: {
+        enqueue,
+        prepare,
+        importZip,
+        processGeo,
+        buildFixPlan: buildPlan,
+        applyFixActions: applyFixes,
+        downloadArtifact: vi.fn(async () => ({
+          buffer: Buffer.from("artefato-sema"),
+          contentType: "application/zip",
+        })),
+        cancelRemote: vi.fn(async () => undefined),
+      },
+    });
+
+    const completed = await started.completion;
+
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(importZip).toHaveBeenCalledTimes(2);
+    expect(processGeo).toHaveBeenCalledTimes(2);
+    expect(buildPlan).toHaveBeenCalledTimes(1);
+    expect(applyFixes).toHaveBeenCalledTimes(1);
+    expect(importZip.mock.calls[1][0]).toMatchObject({
+      fileName: "corrigido_r2.zip",
+    });
+    expect(importZip.mock.calls[1][0].zip.toString("utf8")).toBe(
+      "zip-v22-recortado"
+    );
+    expect(completed).toMatchObject({
+      status: "completed",
+      ok: true,
+      importOk: true,
+      processOk: true,
+      round: 2,
+    });
+    expect(completed.rounds[0]).toMatchObject({
+      n: 1,
+      process: {
+        ok: false,
+        errosResumo: [
+          {
+            camada: "AREA_UMIDA",
+            erro: "Geometria deve ser completamente contida por AVN, AUAS ou AREA_CONSOLIDADA.",
+            qtd: 41,
+          },
+        ],
+      },
+      autofixPhase: "process",
+      fixPlan: clipPlan,
+      diffResumo: [clipDiff],
+    });
+    expect(completed.rounds[1]).toMatchObject({
+      n: 2,
+      import: { ok: true },
+      process: { ok: true },
+    });
+    const fixPlanJson = JSON.parse(
+      fs.readFileSync(
+        path.resolve(
+          storageRoot,
+          completed.artifacts["fixplan-r1"].relativePath
+        ),
+        "utf8"
+      )
+    );
+    expect(fixPlanJson).toMatchObject({
+      phase: "process",
+      input: { totalErrors: 41 },
+      plan: clipPlan,
+      diffResumo: [clipDiff],
+      resultadoRodadaSeguinte: {
+        round: 2,
+        import: { ok: true },
+        process: { ok: true },
+      },
+    });
+  });
+
   it("para em sem melhora quando a SEMA repete os erros e o mesmo plano", async () => {
     const rejectedPdf = fs.readFileSync(
       path.join(fixtureDir, "relatorio_importacao_v23_sema.pdf")
@@ -498,7 +660,7 @@ describe("startOraculoPipeline", () => {
         importZip,
         processGeo,
         buildFixPlan: buildPlan,
-        applyImportFixActions: applyFixes,
+        applyFixActions: applyFixes,
         downloadArtifact: vi.fn(async () => ({
           buffer: Buffer.from("enviado-sema"),
           contentType: "application/zip",
@@ -596,7 +758,7 @@ describe("startOraculoPipeline", () => {
           };
         }),
         buildFixPlan: buildPlan,
-        applyImportFixActions: applyFixes,
+        applyFixActions: applyFixes,
         downloadArtifact: vi.fn(async () => ({
           buffer: Buffer.from("enviado-sema"),
           contentType: "application/zip",
@@ -691,7 +853,7 @@ describe("startOraculoPipeline", () => {
           modelo: null,
           avisos: [],
         }),
-        applyImportFixActions: applyFixes,
+        applyFixActions: applyFixes,
         downloadArtifact: vi.fn(async () => ({
           buffer: Buffer.from("enviado-sema"),
           contentType: "application/zip",

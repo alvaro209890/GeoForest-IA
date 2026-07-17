@@ -1,13 +1,18 @@
 # STATUS do plano — Oráculo SIMCAR (v2)
 
-**Atualizado:** 2026-07-16 (noite) — plano reescrito (v2) com decisões do Álvaro + descoberta
-completa dos endpoints SEMA. Rodada anterior (Hermes, P0/P1/P3) permanece válida.
+**Atualizado:** 2026-07-17 (manhã) — consolidação pós-P5 e WIP T17 (Codex + Hermes).
+Plano v2 e descoberta de endpoints SEMA (16/07) permanecem válidos.
 
-## Decisões novas (ver 00-README)
+## Decisões (ver 00-README)
 
 D1 CAR-teste 270069 · D2 **remover validação local de vez** · D3 DeepSeek V4 Pro só
 planeja/explica · D4 loop automático ≤3 rodadas · D5 `PropriedadeNome` intocável ·
 D6 repo PÚBLICO → segredos só em env.
+
+**D7 (2026-07-17, Álvaro):** se o erro de process de **AREA_UMIDA contida** não fechar após
+**3 tentativas live** de correção mecânica no CAR-teste, **pode remover completamente a
+camada AREA_UMIDA** do ZIP de teste, processar sem ela e seguir a bateria sem essa camada
+(só no CAR-teste 270069 — não é regra de produto para imóvel real do usuário).
 
 ## Progresso
 
@@ -21,7 +26,7 @@ D6 repo PÚBLICO → segredos só em env.
 | P3.5 | Pipeline único + SSE + parse PDF | ✅ T7–T9 concluídas |
 | P4 | Front ORACULO-only | ✅ T10–T12 concluídas |
 | P5 | Autofix import + DeepSeek + loop | ✅ T13–T16; V23 aprovado live na rodada 2 |
-| P6 | Autofix process | ⏳ T17 |
+| **P6** | **Autofix process** | 🔶 **T17 em progresso** (código + live parcial; gate V22×41 ainda aberto) |
 | P7 | Limpeza + deploy + E2E | ⏳ T18–T19 |
 
 ## Descobertas de 2026-07-16 (noite) — ver `11-endpoints-sema-descobertos.md`
@@ -147,6 +152,79 @@ B9 comentário × código do default de modo.
   Pós-condição read-only: nome “Santa clara” e Querência/5107065 intactos, import concluído;
   processamento ficou `[EM_ABERTO]` porque a prova isolou P5 com `autoProcess:false`.
 
+### T17 (P6) — em progresso (Codex 17/07 manhã + consolidação Hermes)
+
+**Objetivo do gate:** V22 no CAR 270069 → ProcessarGeo sem os **41** erros
+`AREA_UMIDA deve ser completamente contida por AVN, AUAS ou AREA_CONSOLIDADA`.
+
+#### O que o Codex já entregou no código (WIP → commitado nesta rodada)
+
+| Peça | Estado |
+|------|--------|
+| `autofix/actions/clip-layer-to-cover.ts` | implementado (~600+ LOC): clip AREA_UMIDA × AVN/AUAS/CONS, fragmentos &lt;100 m², IDs novos, sem `turf.buffer` |
+| `apply.ts` / `types.ts` | `clip_layer_to_cover` no inventário process; `relatedLayers` no rewrite |
+| `zip-rewrite.ts` | carrega camadas de apoio (AVN/AUAS/CONS) para a ação |
+| `plan.ts` | erro de contenção → `clip_layer_to_cover` (fase process via `allowedActions`) |
+| `pipeline.ts` | fase `process` no autofix + `PROCESS_AUTOFIX_ACTION_TYPES` |
+| Testes offline | `actions.test.ts` (clip sintético + guard import-only) + `pipeline.test.ts` (fase process) **verdes** |
+| Live harness | `pipeline-process-live.test.ts` (`SIMCAR_LIVE=1`, V22 SHA `58d44f…13f49fed`, expect r1×41 → clip → r2 contenção 0) |
+| Scripts de diagnóstico | só em `.oraculo-scratch/*t17*` (gitignored): bisect, candidate ZIPs, equal-host, inside-probe, conference compare |
+
+#### Live já rodado (evidência em `.oraculo-scratch/live-t17-data/`)
+
+Job `live-t17-v22-3d3f62d5-…` (2026-07-17 ~02:30–05:40 local):
+
+1. **R1 import** `[FINALIZADO]`
+2. **R1 process** `[COM_PENDENCIA]` — `AREA_UMIDA` contida **×41** (oráculo esperado)
+3. **Plano DeepSeek:** `clip_layer_to_cover → AREA_UMIDA` (fonte `deepseek-v4-pro`)
+4. **Diff local:** alterou=true; 29 feições; 379 vértices removidos; 3 registros removidos; 1 criado;
+   3 fragmentos &lt;100 m² descartados
+5. **R2 import** `[FINALIZADO]` de novo
+6. **R2 process** ainda **×41** contenção — **sem melhora**
+7. Stop: `no_improvement` (mesma assinatura de ação + mesma qtd de erros)
+
+Conclusão da prova: o **pipeline/process-autofix encadeia de verdade** no SIMCAR real, mas o
+**clip atual não fecha o veredito SEMA** nos 41 (local “parece” recortar; SEMA mantém a contagem).
+
+#### Experimentos Codex (não productizados) — o que ensinaram
+
+| Experimento (scratch) | Resultado SEMA process (ordem de grandeza) | Lição |
+|------------------------|--------------------------------------------|--------|
+| Clip produto (V22) | 41 → 41 | Clip união + limpeza **não basta** sozinho no ProcessarGeo real |
+| Candidates “agressivos” / limpezas | 54–55, 45, **1**, **3** | Dá para **baixar** contagem em variantes manuais; **1 e 3** quase fecham — residual cartográfico fino |
+| Bisect import de variantes | vários `[COM_PENDENCIA]` import | Algumas geometrias de sonda **quebram import** (não só process) |
+| Equal-host / inside squares | sondas | Testar se SEMA aceita polígono “claramente dentro” de um host; ainda restam falhas residuais |
+| Conferência SEMA vs ZIP enviado | scripts `compare-t17-conference` | ProcessarGeo pode avaliar em topologia/BaseRef **diferente** do que o shapefile local assume |
+
+#### Descobertas / hipóteses técnicas (Hermes 17/07)
+
+1. **Clip por união AVN∪AUAS∪CONS** (residual da união ≈ 0) **não implica** aprovação SEMA.
+   Mensagem SEMA usa “contida por AVN, AUAS **ou** AREA_CONSOLIDADA” — leitura forte: cada
+   feição deve caber em **um host individual**, não só na união. Código WIP passou a **não
+   re-unir pedaços de hosts diferentes** e a checar contenção por host (com tolerância).
+2. **~41 úmidas** no Santa Clara batem com a calibração antiga: úmida sobre **hidro / buraco
+   de composição da AIR** (AVN com furo de rio/lagoa). Recortar só a úmida **não recria** o
+   host; partes sobre água somem no clip e o que sobra ainda pode falhar borda/precision SEMA.
+3. **Não clipar AVN por hidrografia** continua regra dura (abriu os 41 no histórico v8→v9).
+4. **Prova local ≠ prova SEMA:** detector GeoForest / residual turf pode dar “ok” e o PDF
+   SEMA manter ×41. Gate T17 **só** com ProcessarGeo real.
+5. **D7 (fallback autorizado):** após 3 tentativas live de fix mecânico de contenção, **remover
+   AREA_UMIDA do ZIP de teste** e seguir process sem a camada no CAR 270069.
+
+#### O que ainda falta (P6 + P7)
+
+| # | Item | Notas |
+|---|------|--------|
+| T17a | Fechar clip (ou estratégia) que **zere** contenção no V22 live **ou** acionar D7 | Preferir clip/host-split; se 3 lives falharem → drop camada no teste |
+| T17b | `naoCorrigivel` explícito p/ residual cartográfico (reservatório/ARL/hidro) | Orientação GIS no front |
+| T17c | Commit message de fechamento + STATUS ☑ quando gate V22 (ou D7 documentado) passar | |
+| T18 | Remover `PROCESSAR_MODE`/código local morto + docs `SIMCAR_ORACULO.md` / README | |
+| T19 | Env PC servidor, deploy, health `simcarConfigured && deepseekConfigured`, E2E `09`, restaurar FINAL no 270069 | |
+| Ops | Nunca commitar `.oraculo-scratch/simcar-oraculo.env` (CPF/senha/DeepSeek) | repo público |
+
+**Estimativa residual do plano:** ~15–20% (T17 difícil + T18/T19 ops). Arquitetura P0–P5 está
+fechada e no `main`.
+
 ## Credenciais
 
 - Conta técnica: valores em `.oraculo-scratch/simcar-oraculo.env` (gitignored, este PC) e no
@@ -155,6 +233,10 @@ B9 comentário × código do default de modo.
 
 ## Como retomar
 
-1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T17 em diante)
-2. Antes de codar SEMA: `11-endpoints-sema-descobertos.md`
-3. Validação: `09-validacao-santa-clara.md`
+1. Ler **esta seção T17** + `06-autofix-roadmap.md` (regras de engenharia) + `09` (oráculos)
+2. `07-tarefas-implementacao.md` → T17 (detalhe) → T18 → T19
+3. Antes de codar SEMA: `11-endpoints-sema-descobertos.md`
+4. Live: `set -a && source .oraculo-scratch/simcar-oraculo.env && set +a` e
+   `SIMCAR_LIVE=1 npx vitest run --root . backend/simcar-oraculo/pipeline-process-live.test.ts`
+5. Se 3 lives de contenção falharem → aplicar **D7** (ZIP sem AREA_UMIDA no CAR-teste) e
+   documentar resultado em `09` + checklist `12`

@@ -6,10 +6,11 @@ import {
   saveSimcarOraculoJobSnapshot,
 } from "../local-storage";
 import { assertTestCarId, getSimcarOraculoConfig } from "./config";
-import { applyImportFixActions } from "./autofix/apply";
+import { applyFixActions } from "./autofix/apply";
 import { buildFixPlan } from "./autofix/plan";
 import {
   IMPORT_AUTOFIX_ACTION_TYPES,
+  PROCESS_AUTOFIX_ACTION_TYPES,
   type ApplyFixPlanResult,
   type FixAction,
   type FixDiffSummary,
@@ -73,7 +74,7 @@ export type OraculoPipelineDependencies = {
   processGeo: ProcessOperation;
   parseReportPdf: typeof parseSemaReportPdf;
   buildFixPlan: typeof buildFixPlan;
-  applyImportFixActions: (
+  applyFixActions: (
     zipBuffer: Buffer,
     actions: FixAction[]
   ) => Promise<ApplyFixPlanResult>;
@@ -133,7 +134,7 @@ function dependencies(
     processGeo: processGeoOnTestProjectUnlocked,
     parseReportPdf: parseSemaReportPdf,
     buildFixPlan,
-    applyImportFixActions,
+    applyFixActions,
     downloadArtifact: pathname =>
       withSimcarAuthRetry(token => simcarDownload(token, pathname)),
     cancelRemote: defaultCancelRemote,
@@ -538,7 +539,10 @@ async function executePipeline(args: {
       reportText: argsPlan.reportText,
       errosResumo: argsPlan.errosResumo,
       previousRound: previousAutofixRound,
-      allowedActions: IMPORT_AUTOFIX_ACTION_TYPES,
+      allowedActions:
+        argsPlan.phase === "import"
+          ? IMPORT_AUTOFIX_ACTION_TYPES
+          : PROCESS_AUTOFIX_ACTION_TYPES,
     });
     await checkCancelled();
     const now = deps.now().toISOString();
@@ -596,7 +600,7 @@ async function executePipeline(args: {
 
     let applied: ApplyFixPlanResult;
     try {
-      applied = await deps.applyImportFixActions(currentZip, plan.acoes);
+      applied = await deps.applyFixActions(currentZip, plan.acoes);
     } catch (error: any) {
       payload.applicationError = String(
         error?.message || "Falha ao aplicar o plano mecânico."

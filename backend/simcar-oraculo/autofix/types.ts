@@ -18,9 +18,13 @@ export const IMPORT_AUTOFIX_ACTION_TYPES = [
   "split_complex_polygon",
 ] as const;
 
+export const PROCESS_AUTOFIX_ACTION_TYPES = ["clip_layer_to_cover"] as const;
+
 export type AutofixActionType = (typeof AUTOFIX_ACTION_TYPES)[number];
 export type ImportAutofixActionType =
   (typeof IMPORT_AUTOFIX_ACTION_TYPES)[number];
+export type ProcessAutofixActionType =
+  (typeof PROCESS_AUTOFIX_ACTION_TYPES)[number];
 
 export type FixAction = {
   type: AutofixActionType;
@@ -70,6 +74,11 @@ export type LayerRewriteContext = {
   crs: CodedCrs;
   records: AutofixPolygonRecord[];
   dbfSchema: DbfFieldDef[];
+  relatedLayers: Array<{
+    layerName: string;
+    crs: CodedCrs;
+    records: Array<Pick<AutofixPolygonRecord, "sourceFeature" | "rings">>;
+  }>;
 };
 
 export type LayerActionMetrics = {
@@ -94,7 +103,7 @@ export type LayerAction = (
 
 export type FixDiffSummary = {
   camada: string;
-  acao: ImportAutofixActionType;
+  acao: AutofixActionType;
   alterou: boolean;
   feicoesAfetadas: number[];
   registrosAntes: number;

@@ -63,6 +63,7 @@ export const unkinkSelfIntersection: LayerAction = context => {
     affectedFeatures.push(source.sourceFeature);
     pieces.forEach((rings, partIndex) => {
       output.push({
+        ...record,
         sourceFeature: source.sourceFeature,
         rings,
         attributes:

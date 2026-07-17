@@ -7,6 +7,7 @@ import type { AutofixPolygonRecord } from "../types";
 
 export type MetricBridge = {
   toMetric: (point: number[]) => [number, number];
+  fromMetric: (point: number[]) => [number, number];
 };
 
 export function createMetricBridge(
@@ -19,7 +20,10 @@ export function createMetricBridge(
     );
   }
   if (crs.kind === "projected") {
-    return { toMetric: point => [Number(point[0]), Number(point[1])] };
+    return {
+      toMetric: point => [Number(point[0]), Number(point[1])],
+      fromMetric: point => [Number(point[0]), Number(point[1])],
+    };
   }
   const parsed: ParsedPolygonRecord[] = records.map((record, index) => ({
     feature: index + 1,
@@ -40,6 +44,18 @@ export function createMetricBridge(
         );
       }
       return projected;
+    },
+    fromMetric: point => {
+      const original = projection.inverse([
+        Number(point[0]),
+        Number(point[1]),
+      ]) as [number, number];
+      if (!Number.isFinite(original[0]) || !Number.isFinite(original[1])) {
+        throw new Error(
+          "Autofix recusado: falha ao voltar a geometria para o CRS original."
+        );
+      }
+      return original;
     },
   };
 }
@@ -320,6 +336,7 @@ export function cloneRecord(
   record: AutofixPolygonRecord
 ): AutofixPolygonRecord {
   return {
+    ...record,
     sourceFeature: record.sourceFeature,
     rings: record.rings.map(ring => ring.map(point => [...point])),
     attributes: { ...record.attributes },

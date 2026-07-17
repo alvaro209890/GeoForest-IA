@@ -55,9 +55,10 @@
 
 ## P6 — Autofix process
 
-- [ ] Clip AREA_UMIDA→cover + limpeza, sem fragmentos <100 m² (T17)
-- [ ] **Prova real: V22 processa sem os 41 erros de úmida (T17)**
-- [ ] Casos de decisão aparecem como "exige edição no GIS" com orientação
+- [x] Código base `clip_layer_to_cover` + testes offline + wiring process (T17 WIP commitado 17/07)
+- [x] Live harness + 1ª prova V22: pipeline aplica clip; SEMA manteve ×41 (evidência STATUS)
+- [ ] **Gate:** V22 processa sem os 41 erros de úmida **ou** D7 (drop AREA_UMIDA no CAR-teste após 3 lives)
+- [ ] Casos de decisão / residual cartográfico como "exige edição no GIS" com orientação
 
 ## P7 — Produção
 

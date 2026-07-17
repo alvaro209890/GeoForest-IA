@@ -47,6 +47,18 @@ oficial devolvido por `DownloadArquivoEnviado` foram byte a byte iguais (SHA-256
 e município Querência/5107065 permaneceram intactos. A prova usou `autoProcess:false` para
 isolar P5; T17 assume o processamento `[EM_ABERTO]`.
 
+### Gate live T17 (process / V22) — parcial 2026-07-17
+
+- Harness: `backend/simcar-oraculo/pipeline-process-live.test.ts` + fixture
+  `Recorte_SANTA_CLARA_V22_16-07-26.zip` SHA-256 `58d44f6117af06861e74c82053577e45ed4fc63e7426e28c4d24e3bb13f49fed`.
+- Job evidência (local scratch): `live-t17-v22-3d3f62d5-107c-423d-8cef-8e11f00107bd`.
+- R1: import FINALIZADO; process COM_PENDENCIA **AREA_UMIDA contida ×41**.
+- Autofix: DeepSeek → `clip_layer_to_cover`; diff local alterou (29 feições / 3 frags &lt;100 m²).
+- R2: import FINALIZADO; process **ainda ×41** → stop `no_improvement`.
+- **Gate T17 ainda ABERTO.** Próximos passos e D7 (drop AREA_UMIDA no teste): `STATUS.md`.
+- Experimentos scratch (candidates/bisect) baixaram contagem até **1–3** em variantes manuais;
+  não productizados.
+
 Gate T14: planner mockado passou 9/9 cenários (JSON válido/inválido, conteúdo vazio, timeout,
 ação fora do inventário, camada inventada e ausência de chave). O teste live isolado com
 DeepSeek V4 Pro e a chave efêmera de `~/.hermes/.env` passou em 8,6 s: propôs somente

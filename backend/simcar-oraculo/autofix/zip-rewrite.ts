@@ -11,8 +11,8 @@ import {
 } from "../../shapefile-writer";
 import { detectCrs, parsePolygonRecords } from "../../vertices-proximas";
 import type {
+  AutofixActionType,
   FixDiffSummary,
-  ImportAutofixActionType,
   LayerAction,
 } from "./types";
 
@@ -104,8 +104,9 @@ function emptyMetrics() {
 export type RewriteZipLayerArgs = {
   zipBuffer: Buffer;
   layer: string;
-  actionType: ImportAutofixActionType;
+  actionType: AutofixActionType;
   action: LayerAction;
+  relatedLayers?: string[];
 };
 
 export type RewriteZipLayerResult = {
@@ -183,6 +184,43 @@ export async function rewriteZipLayer(
   }
 
   const prjInfo = byExtension.get(".prj");
+  const relatedLayers = (args.relatedLayers || []).map(requestedLayer => {
+    const related = resolveLayer(files, requestedLayer);
+    const relatedByExtension = new Map(
+      files
+        .filter(file => sameLayerStem(file.stem, related.stem))
+        .map(file => [file.extension, file])
+    );
+    const relatedShp = relatedByExtension.get(".shp");
+    if (!relatedShp) {
+      throw new Error(
+        `Autofix recusado: camada de apoio ${requestedLayer} não contém .shp.`
+      );
+    }
+    const relatedShpBuffer = originalPayloads.get(relatedShp.name)!;
+    const relatedShapeType =
+      relatedShpBuffer.length >= 36
+        ? relatedShpBuffer.readInt32LE(32)
+        : 0;
+    if (relatedShapeType !== 5) {
+      throw new Error(
+        `Autofix recusado: camada de apoio ${related.layerName} usa shape type ${relatedShapeType}; era esperado Polygon 2D (5).`
+      );
+    }
+    const relatedPrj = relatedByExtension.get(".prj");
+    return {
+      layerName: related.layerName,
+      crs: detectCrs(
+        relatedPrj
+          ? originalPayloads.get(relatedPrj.name)?.toString("utf8")
+          : undefined
+      ),
+      records: parsePolygonRecords(relatedShpBuffer).map(record => ({
+        sourceFeature: record.feature,
+        rings: record.rings.map(ring => ring.map(point => [...point])),
+      })),
+    };
+  });
   const context = {
     layerName: selected.layerName,
     crs: detectCrs(
@@ -194,6 +232,7 @@ export async function rewriteZipLayer(
       rings: record.rings.map(ring => ring.map(point => [...point])),
       attributes: { ...rows[index] },
     })),
+    relatedLayers,
   };
   const transformed = await args.action(context);
   const metrics = { ...emptyMetrics(), ...(transformed.metrics || {}) };

@@ -22,7 +22,7 @@ import {
   parsePolygonRecords,
   type ParsedPolygonRecord,
 } from "../../vertices-proximas";
-import { applyImportFixActions } from "./apply";
+import { applyFixActions, applyImportFixActions } from "./apply";
 import type { FixAction } from "./types";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -109,6 +109,53 @@ async function buildFixtureZip(
     "LEIA-ME.txt",
     Buffer.from("payload intocado com acentuação: ação", "utf8")
   );
+  return Buffer.from(
+    await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" })
+  );
+}
+
+async function buildClipFixtureZip(): Promise<Buffer> {
+  const zip = new JSZip();
+  const addLayer = (
+    name: string,
+    records: ShpRecord[],
+    rows = records.map((_record, index) => ({ ID: index + 1 }))
+  ) => {
+    const built = buildShpAndShx(records, 5);
+    zip.file(`${name}.shp`, built.shp);
+    zip.file(`${name}.shx`, built.shx);
+    zip.file(
+      `${name}.dbf`,
+      buildDbfBuffer(rows, [
+        { name: "ID", type: "N", length: 10, decimals: 0 },
+        { name: "NOME", type: "C", length: 30, decimals: 0 },
+      ])
+    );
+    zip.file(`${name}.prj`, Buffer.from(UTM_PRJ, "utf8"));
+    zip.file(`${name}.cpg`, CPG);
+  };
+
+  addLayer(
+    "AREA_UMIDA",
+    [
+      polygon([
+        cwRect(500000, 8_700_000, 20),
+        cwRect(500100, 8_700_000, 20),
+        cwRect(500200, 8_700_000, 5, 10),
+      ]),
+    ],
+    [{ ID: 7, NOME: "Brejo" }]
+  );
+  addLayer("AVN", [polygon([cwRect(500000, 8_700_000, 15, 20)])]);
+  addLayer("AUAS", [polygon([cwRect(500100, 8_700_000, 20)])]);
+  addLayer(
+    "AREA_CONSOLIDADA",
+    [polygon([cwRect(500200, 8_700_000, 5, 10)])]
+  );
+  zip.file("AREA_UMIDA.sbn", Buffer.from([1, 2, 3]));
+  zip.file("AREA_UMIDA.sbx", Buffer.from([4, 5, 6]));
+  zip.file("AREA_UMIDA.shp.xml", Buffer.from("<stale/>", "utf8"));
+  zip.file("LEIA-ME.txt", Buffer.from("não alterar", "utf8"));
   return Buffer.from(
     await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" })
   );
@@ -435,5 +482,91 @@ describe("autofix de importação — ações mecânicas", () => {
       .join("\n");
 
     expect(source).not.toMatch(/@turf\/buffer|turfBuffer|buffer\s+as\s+turf/i);
+  });
+});
+
+describe("autofix de processamento — recorte à cobertura", () => {
+  it("recorta e retrai AREA_UMIDA, remove fragmentos <100 m² e cria IDs únicos", async () => {
+    const input = await buildClipFixtureZip();
+    const before = await payloads(input);
+    const result = await applyFixActions(input, [
+      {
+        type: "clip_layer_to_cover",
+        layers: ["AREA_UMIDA"],
+        motivo: "área úmida fora da cobertura",
+      },
+    ]);
+    const after = await payloads(result.novoZip);
+    const records = parsePolygonRecords(after.get("AREA_UMIDA.shp")!);
+    const rows = readDbfRows(after.get("AREA_UMIDA.dbf")!);
+
+    expect(records).toHaveLength(2);
+    expect(rows.map(row => row.ID)).toEqual(["7", "8"]);
+    expect(new Set(rows.map(row => row.ID)).size).toBe(rows.length);
+    expect(rows.every(row => row.NOME === "Brejo")).toBe(true);
+    for (const record of records) {
+      const shell = record.rings[0];
+      let twiceArea = 0;
+      for (let index = 0; index < shell.length - 1; index += 1) {
+        twiceArea +=
+          shell[index][0] * shell[index + 1][1] -
+          shell[index + 1][0] * shell[index][1];
+      }
+      expect(Math.abs(twiceArea) / 2).toBeGreaterThanOrEqual(100);
+    }
+    expect(result.diffResumo[0]).toMatchObject({
+      camada: "AREA_UMIDA",
+      acao: "clip_layer_to_cover",
+      alterou: true,
+      feicoesAfetadas: [1],
+      registrosAntes: 1,
+      registrosDepois: 2,
+      registrosCriados: 1,
+      identificadoresCriados: 1,
+    });
+    expect(result.diffResumo[0].avisos.join(" ")).toContain(
+      "abaixo de 100 m²"
+    );
+
+    for (const name of [
+      "AREA_UMIDA.prj",
+      "AREA_UMIDA.cpg",
+      "AVN.shp",
+      "AVN.shx",
+      "AVN.dbf",
+      "AVN.prj",
+      "AVN.cpg",
+      "AUAS.shp",
+      "AUAS.shx",
+      "AUAS.dbf",
+      "AUAS.prj",
+      "AUAS.cpg",
+      "AREA_CONSOLIDADA.shp",
+      "AREA_CONSOLIDADA.shx",
+      "AREA_CONSOLIDADA.dbf",
+      "AREA_CONSOLIDADA.prj",
+      "AREA_CONSOLIDADA.cpg",
+      "LEIA-ME.txt",
+    ]) {
+      expect(after.get(name), `${name} deve permanecer byte a byte`).toEqual(
+        before.get(name)
+      );
+    }
+    expect(after.has("AREA_UMIDA.sbn")).toBe(false);
+    expect(after.has("AREA_UMIDA.sbx")).toBe(false);
+    expect(after.has("AREA_UMIDA.shp.xml")).toBe(false);
+  });
+
+  it("recusa usar a ação de processamento pela API restrita da importação", async () => {
+    const input = await buildClipFixtureZip();
+    await expect(
+      applyImportFixActions(input, [
+        {
+          type: "clip_layer_to_cover",
+          layers: ["AREA_UMIDA"],
+          motivo: "fora da fase",
+        },
+      ])
+    ).rejects.toThrow("não pertence ao autofix de importação");
   });
 });
