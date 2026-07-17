@@ -50,8 +50,8 @@ async function checkForUpdate(): Promise<void> {
  */
 export function setupAutoUpdate(): void {
   if (typeof window === "undefined") return;
-  // primeira checagem logo após o load (dá tempo do deploy propagar entre reloads)
-  window.setTimeout(() => void checkForUpdate(), 30_000);
+  // primeira checagem cedo (CDN propaga em segundos; evita Ctrl+F5 após deploy)
+  window.setTimeout(() => void checkForUpdate(), 8_000);
   window.setInterval(() => void checkForUpdate(), CHECK_INTERVAL_MS);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") void checkForUpdate();
