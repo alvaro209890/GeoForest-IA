@@ -261,15 +261,15 @@ Conclusão da prova: o **pipeline/process-autofix encadeia de verdade** no SIMCA
 
 | # | Item | Notas |
 |---|------|--------|
-| T17a | Fechar clip (ou estratégia) que **zere** contenção no V22 live **ou** acionar D7 | Preferir clip/host-split; se 3 lives falharem → drop camada no teste |
-| T17b | `naoCorrigivel` explícito p/ residual cartográfico (reservatório/ARL/hidro) | Orientação GIS no front |
-| T17c | Commit message de fechamento + STATUS ☑ quando gate V22 (ou D7 documentado) passar | |
-| T18 | Remover `PROCESSAR_MODE`/código local morto + docs `SIMCAR_ORACULO.md` / README | |
-| T19 | Env PC servidor, deploy, health `simcarConfigured && deepseekConfigured`, E2E `09`, restaurar FINAL no 270069 | |
+| ~~T17a~~ | ✅ **D7 acionado** — process live sem AREA_UMIDA `[FINALIZADO]` sem erros (17/07) | Clip fica best-effort no repo/testes |
+| ~~T17b~~ | ✅ `naoCorrigivel` de contenção de úmida com orientação GIS específica | `plan.ts:nonFixableForError` + teste; front já renderiza |
+| ~~T17c~~ | ✅ STATUS/09/12 marcados; commits `docs+test`/`docs`/`feat(autofix)` no `main` | |
+| T18 | Remover `PROCESSAR_MODE`/código local morto + docs `SIMCAR_ORACULO.md` / README | **próximo** |
+| T19 | Env PC servidor, deploy, health `simcarConfigured && deepseekConfigured`, E2E `09`, restaurar FINAL no 270069 | precisa do PC servidor |
 | Ops | Nunca commitar `.oraculo-scratch/simcar-oraculo.env` (CPF/senha/DeepSeek) | repo público |
 
-**Estimativa residual do plano:** ~15–20% (T17 difícil + T18/T19 ops). Arquitetura P0–P5 está
-fechada e no `main`.
+**Estimativa residual do plano:** ~8–10% (só P7: T18 limpeza + T19 ops/deploy). Arquitetura
+P0–P6 fechada e no `main`; gate SIMCAR real provado (import+process live).
 
 ## Credenciais
 
