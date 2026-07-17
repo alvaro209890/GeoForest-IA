@@ -1,3 +1,5 @@
+import type { FixDiffSummary, FixPlan } from "./autofix/types";
+
 export type ProcessarMode = "LOCAL" | "ORACULO" | "HYBRID";
 
 export type OraculoStep =
@@ -79,7 +81,18 @@ export type OraculoRoundResult = {
   };
   artifactWarnings?: string[];
   fixplan?: string | null;
+  fixPlan?: FixPlan | null;
+  diffResumo?: FixDiffSummary[];
+  autofixPhase?: "import" | "process" | null;
 };
+
+export type AutofixStopReason =
+  | "autofix_disabled"
+  | "max_rounds"
+  | "no_mechanical_action"
+  | "no_improvement"
+  | "no_changes"
+  | "apply_failed";
 
 export type MunicipioDetectado = {
   nome: string | null;

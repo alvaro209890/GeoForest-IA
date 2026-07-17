@@ -144,9 +144,14 @@
 - Commit: `feat(autofix): planner DeepSeek V4 Pro com fallback determinístico`
 
 ### T15 — Loop no pipeline (D4) + UI do FixPlan
+- **Concluída em 2026-07-16.** A preparação e a aquisição da fila continuam únicas; cada
+  reprovação elegível gera plano/diff, ZIP corrigido e nova rodada, limitada a 3.
 - Loop ≤3 rodadas com regras de parada (06); artefatos corrigido_rN.zip + fixplan.json;
   front: cards de rodada + modal "o que a IA entendeu" + botão manual pós-parada
 - Test: mock SEMA que aprova na rodada 2; que nunca melhora (para em "sem melhora")
+- Evidência: 7/7 testes do pipeline cobrem também teto 3/3 e ausência de ação; 4/4 contratos
+  SSE/autofix, 78/78 no módulo, `tsc` e build de produção verdes. `fixplan.json` registra
+  erros, fonte/plano, diff e o resultado da rodada seguinte.
 - Commit: `feat(autofix): loop automático corrigir→reenviar (3 rodadas)`
 
 ### T16 — Live P5: oráculo V23

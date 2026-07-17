@@ -20,7 +20,7 @@ D6 repo PÚBLICO → segredos só em env.
 | P3 | ProcessarGeo API | ✅ rotas prontas |
 | P3.5 | Pipeline único + SSE + parse PDF | ✅ T7–T9 concluídas |
 | P4 | Front ORACULO-only | ✅ T10–T12 concluídas |
-| P5 | Autofix import + DeepSeek + loop | ⏳ T13–T14 concluídas; T15–T16 pendentes |
+| P5 | Autofix import + DeepSeek + loop | ⏳ T13–T15 concluídas; T16 pendente |
 | P6 | Autofix process | ⏳ T17 |
 | P7 | Limpeza + deploy + E2E | ⏳ T18–T19 |
 
@@ -129,6 +129,16 @@ B9 comentário × código do default de modo.
   retry, timeout, filtro e ausência de chave; gate acumulado **115/115**. Teste live explícito
   com a chave carregada apenas de `~/.hermes/.env` passou em **8,6 s**, planejando somente
   `remove_duplicate_vertices` para `AREA_UMIDA`; a chave não foi copiada nem persistida.
+- **T15 concluída (2026-07-16):** o pipeline mantém uma única aquisição da fila e um único
+  `prepare`, mas agora reimporta o ZIP corrigido por até três rodadas. Cada tentativa persiste
+  `corrigido_rN.zip`, `fixplan.json`, plano inline, diff e resultado da rodada seguinte. As
+  paradas `max_rounds`, `no_mechanical_action`, `no_improvement`, `no_changes` e
+  `apply_failed` ficam explícitas no snapshot/timeline e nunca repetem uma ação insegura. O
+  front ganhou modal acessível “O que a IA entendeu”, fonte/confiança/ações/contagens e botão
+  pós-parada bloqueado com motivo quando não há ação nova. Testes mockados provam aprovação
+  na rodada 2, “sem melhora”, teto 3/3 e plano sem ação; **78/78 testes do módulo** e `tsc`
+  verdes. A rota manual saiu do placeholder e devolve guardas específicas. Falta a prova live
+  V23 da T16.
 
 ## Credenciais
 
@@ -138,6 +148,6 @@ B9 comentário × código do default de modo.
 
 ## Como retomar
 
-1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T15 em diante)
+1. `12-checklist-mestre.md` (visão) → `07-tarefas-implementacao.md` (T16 em diante)
 2. Antes de codar SEMA: `11-endpoints-sema-descobertos.md`
 3. Validação: `09-validacao-santa-clara.md`

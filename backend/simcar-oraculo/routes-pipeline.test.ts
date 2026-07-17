@@ -36,6 +36,22 @@ function registerSseHandler(): (req: any, res: any) => Promise<void> {
   return handler;
 }
 
+function registerAutofixHandler(): (req: any, res: any) => Promise<void> {
+  let handler: ((req: any, res: any) => Promise<void>) | null = null;
+  const app = {
+    get() {},
+    post(pathname: string, candidate: (req: any, res: any) => Promise<void>) {
+      if (pathname === "/api/simcar-oraculo/jobs/:jobId/autofix") {
+        handler = candidate;
+      }
+    },
+    delete() {},
+  };
+  routes.registerSimcarOraculoRoutes(app as any);
+  if (!handler) throw new Error("Rota autofix não registrada.");
+  return handler;
+}
+
 function fakeExchange(uid: string, jobId: string): {
   req: EventEmitter & Record<string, any>;
   res: Record<string, any>;
@@ -142,5 +158,29 @@ describe("SSE do pipeline SIMCAR", () => {
     expect(res.statusCode).toBe(404);
     expect(chunks.join("\n")).toContain("Job oráculo não encontrado");
     expect(res.headers.has("content-type")).toBe(false);
+  });
+});
+
+describe("POST manual do autofix", () => {
+  it("recusa repetir uma ação depois da parada segura e devolve o motivo", async () => {
+    const handler = registerAutofixHandler();
+    store.persistOraculoJob("uid-autofix", "job-sem-melhora", {
+      status: "completed",
+      ok: false,
+      autofixStopReason: "no_improvement",
+      manualAutofixAvailable: false,
+      manualAutofixReason:
+        "Nenhuma ação mecânica nova está disponível. Edite o ZIP no GIS.",
+    });
+    const { req, res, chunks } = fakeExchange("uid-autofix", "job-sem-melhora");
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(chunks.join(""))).toMatchObject({
+      code: "AUTOFIX_NO_NEW_ACTION",
+      stopReason: "no_improvement",
+      error: expect.stringContaining("Edite o ZIP no GIS"),
+    });
   });
 });

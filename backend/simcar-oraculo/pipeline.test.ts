@@ -24,6 +24,38 @@ const shape: ShapeContext = {
   warnings: [],
 };
 
+const duplicatePlan = {
+  acoes: [
+    {
+      type: "remove_duplicate_vertices" as const,
+      layers: ["AREA_UMIDA"],
+      motivo: "A SEMA encontrou pontos repetidos.",
+    },
+  ],
+  naoCorrigivel: [],
+  explicacaoUsuario:
+    "Remover os vértices repetidos de AREA_UMIDA e reenviar o mesmo projeto.",
+  confianca: "alta" as const,
+  fonte: "fallback" as const,
+  modelo: null,
+  avisos: [],
+};
+
+const duplicateDiff = {
+  camada: "AREA_UMIDA",
+  acao: "remove_duplicate_vertices" as const,
+  alterou: true,
+  feicoesAfetadas: [1],
+  registrosAntes: 1,
+  registrosDepois: 1,
+  verticesRemovidos: 11,
+  aneisRemovidos: 0,
+  registrosRemovidos: 0,
+  registrosCriados: 0,
+  identificadoresCriados: 0,
+  avisos: [],
+};
+
 function progress(
   callback: ((event: OraculoProgress) => void) | undefined,
   step: OraculoProgress["step"],
@@ -282,6 +314,407 @@ describe("startOraculoPipeline", () => {
       "ZIP enviado não disponível nesta rodada.",
     ]);
     expect(completed.timeline.map((event: any) => event.step)).toContain("import_fail");
+  });
+
+  it("corrige uma reprovação e aprova na segunda rodada sem repetir prepare nem a fila", async () => {
+    const rejectedPdf = fs.readFileSync(
+      path.join(fixtureDir, "relatorio_importacao_v23_sema.pdf")
+    );
+    const approvedPdf = fs.readFileSync(
+      path.join(fixtureDir, "relatorio_importacao_v22_sema.pdf")
+    );
+    const processPdf = fs.readFileSync(
+      path.join(fixtureDir, "relatorio_processamento_v22_sema.pdf")
+    );
+    const enqueue = vi.fn(async <T>(operation: () => Promise<T>) =>
+      operation()
+    );
+    const prepare = vi.fn(async () => ({
+      municipioAntes: "Querência",
+      municipioDepois: "Querência",
+      municipioChanged: false,
+      abrangenciaChanged: false,
+      baserefWaitedMs: 0,
+      warnings: [],
+    }));
+    const importZip = vi.fn(async () => {
+      const firstRound = importZip.mock.calls.length === 1;
+      return {
+        ok: !firstRound,
+        resultado: firstRound ? "[COM_PENDENCIA]" : "[FINALIZADO]",
+        status: "[CONCLUIDO]",
+        detalhes: firstRound ? "11 pontos repetidos" : "Importação aprovada",
+        raw: {},
+        pdfBuffer: firstRound ? rejectedPdf : approvedPdf,
+        timeline: [],
+      };
+    });
+    const processGeo = vi.fn(async () => ({
+      ok: true,
+      resultado: "[FINALIZADO]",
+      status: "[CONCLUIDO]",
+      detalhes: "Processamento aprovado",
+      raw: {},
+      pdfBuffer: processPdf,
+      timeline: [],
+    }));
+    const buildPlan = vi.fn(async () => duplicatePlan);
+    const applyFixes = vi.fn(async () => ({
+      novoZip: Buffer.from("zip-corrigido-r2"),
+      diffResumo: [duplicateDiff],
+    }));
+    const started = pipeline.startOraculoPipeline({
+      uid: "uid-pipeline-autofix-ok",
+      uploadId: "upload-autofix-ok",
+      jobId: "job-autofix-ok",
+      zip: Buffer.from("zip-com-pontos-repetidos"),
+      fileName: "v23.zip",
+      shape,
+      autofix: true,
+      dependencies: {
+        enqueue,
+        prepare,
+        importZip,
+        processGeo,
+        buildFixPlan: buildPlan,
+        applyImportFixActions: applyFixes,
+        downloadArtifact: vi.fn(async () => ({
+          buffer: Buffer.from("artefato-sema"),
+          contentType: "application/zip",
+        })),
+        cancelRemote: vi.fn(async () => undefined),
+      },
+    });
+
+    const completed = await started.completion;
+
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(importZip).toHaveBeenCalledTimes(2);
+    expect(importZip.mock.calls[1][0]).toMatchObject({
+      fileName: "corrigido_r2.zip",
+    });
+    expect(importZip.mock.calls[1][0].zip.toString("utf8")).toBe(
+      "zip-corrigido-r2"
+    );
+    expect(buildPlan).toHaveBeenCalledTimes(1);
+    expect(applyFixes).toHaveBeenCalledTimes(1);
+    expect(processGeo).toHaveBeenCalledTimes(1);
+    expect(completed).toMatchObject({
+      status: "completed",
+      ok: true,
+      importOk: true,
+      processOk: true,
+      round: 2,
+      autofixStopReason: null,
+    });
+    expect(completed.rounds).toHaveLength(2);
+    expect(completed.rounds[0]).toMatchObject({
+      n: 1,
+      fixplan: "fixplan-r1",
+      fixPlan: duplicatePlan,
+      diffResumo: [duplicateDiff],
+    });
+    expect(completed.rounds[1]).toMatchObject({
+      n: 2,
+      zipArtifact: "corrigido-zip-r2",
+      import: { ok: true },
+      process: { ok: true },
+    });
+    expect(completed.artifacts["corrigido-zip-r2"].source).toBe("autofix");
+    expect(completed.artifacts["fixplan-r1"].contentType).toBe(
+      "application/json"
+    );
+    const fixPlanJson = JSON.parse(
+      fs.readFileSync(
+        path.resolve(
+          storageRoot,
+          completed.artifacts["fixplan-r1"].relativePath
+        ),
+        "utf8"
+      )
+    );
+    expect(fixPlanJson).toMatchObject({
+      schemaVersion: 1,
+      round: 1,
+      phase: "import",
+      input: { totalErrors: 11 },
+      plan: duplicatePlan,
+      diffResumo: [duplicateDiff],
+      resultadoRodadaSeguinte: {
+        round: 2,
+        import: { ok: true },
+        process: { ok: true },
+      },
+    });
+    expect(completed.timeline.map((event: any) => event.step)).toEqual(
+      expect.arrayContaining([
+        "autofix_plan",
+        "autofix_apply",
+        "import_ok",
+        "done",
+      ])
+    );
+  });
+
+  it("para em sem melhora quando a SEMA repete os erros e o mesmo plano", async () => {
+    const rejectedPdf = fs.readFileSync(
+      path.join(fixtureDir, "relatorio_importacao_v23_sema.pdf")
+    );
+    const importZip = vi.fn(async () => ({
+      ok: false,
+      resultado: "[COM_PENDENCIA]",
+      status: "[CONCLUIDO]",
+      detalhes: "11 pontos repetidos",
+      raw: {},
+      pdfBuffer: rejectedPdf,
+      timeline: [],
+    }));
+    const buildPlan = vi.fn(async () => duplicatePlan);
+    const applyFixes = vi.fn(async () => ({
+      novoZip: Buffer.from("zip-ainda-reprovado"),
+      diffResumo: [duplicateDiff],
+    }));
+    const processGeo = vi.fn(async () => {
+      throw new Error("não deveria processar");
+    });
+    const started = pipeline.startOraculoPipeline({
+      uid: "uid-pipeline-no-improvement",
+      uploadId: "upload-no-improvement",
+      jobId: "job-no-improvement",
+      zip: Buffer.from("zip-quebrado"),
+      fileName: "quebrado.zip",
+      shape,
+      autofix: true,
+      dependencies: {
+        prepare: async () => ({
+          municipioAntes: "Querência",
+          municipioDepois: "Querência",
+          municipioChanged: false,
+          abrangenciaChanged: false,
+          baserefWaitedMs: 0,
+          warnings: [],
+        }),
+        importZip,
+        processGeo,
+        buildFixPlan: buildPlan,
+        applyImportFixActions: applyFixes,
+        downloadArtifact: vi.fn(async () => ({
+          buffer: Buffer.from("enviado-sema"),
+          contentType: "application/zip",
+        })),
+        cancelRemote: vi.fn(async () => undefined),
+      },
+    });
+
+    const completed = await started.completion;
+
+    expect(importZip).toHaveBeenCalledTimes(2);
+    expect(buildPlan).toHaveBeenCalledTimes(2);
+    expect(applyFixes).toHaveBeenCalledTimes(1);
+    expect(processGeo).not.toHaveBeenCalled();
+    expect(completed).toMatchObject({
+      status: "completed",
+      ok: false,
+      importOk: false,
+      processOk: null,
+      round: 2,
+      autofixStopReason: "no_improvement",
+      manualAutofixAvailable: false,
+    });
+    expect(completed.rounds).toHaveLength(2);
+    expect(completed.rounds[1]).toMatchObject({
+      fixplan: "fixplan-r2",
+      fixPlan: duplicatePlan,
+      diffResumo: [],
+    });
+    expect(completed.timeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          step: "autofix_skip",
+          message: expect.stringContaining("sem melhora"),
+          round: 2,
+        }),
+      ])
+    );
+  });
+
+  it("respeita o teto de três rodadas mesmo quando a contagem ainda melhora", async () => {
+    let parsedRound = 0;
+    const importZip = vi.fn(async () => ({
+      ok: false,
+      resultado: "[COM_PENDENCIA]",
+      status: "[CONCLUIDO]",
+      detalhes: "pontos repetidos",
+      raw: {},
+      pdfBuffer: Buffer.from("pdf-sintetico"),
+      timeline: [],
+    }));
+    const buildPlan = vi.fn(async () => duplicatePlan);
+    const applyFixes = vi.fn(async () => ({
+      novoZip: Buffer.from(`zip-corrigido-${applyFixes.mock.calls.length}`),
+      diffResumo: [duplicateDiff],
+    }));
+    const started = pipeline.startOraculoPipeline({
+      uid: "uid-pipeline-max-rounds",
+      uploadId: "upload-max-rounds",
+      jobId: "job-max-rounds",
+      zip: Buffer.from("zip-quebrado"),
+      fileName: "quebrado.zip",
+      shape,
+      autofix: true,
+      maxRounds: 3,
+      dependencies: {
+        prepare: async () => ({
+          municipioAntes: "Querência",
+          municipioDepois: "Querência",
+          municipioChanged: false,
+          abrangenciaChanged: false,
+          baserefWaitedMs: 0,
+          warnings: [],
+        }),
+        importZip,
+        processGeo: vi.fn(async () => {
+          throw new Error("não deveria processar");
+        }),
+        parseReportPdf: vi.fn(async () => {
+          const qtd = [11, 10, 9][parsedRound] || 9;
+          parsedRound += 1;
+          return {
+            tipo: "importacao" as const,
+            situacao: "REPROVADA",
+            resumo: [
+              {
+                camada: "AREA_UMIDA",
+                erro: "A geometria contém pontos repetidos",
+                qtd,
+              },
+            ],
+            porFeicao: [],
+            raw: "Relatório com pontos repetidos",
+            warnings: [],
+          };
+        }),
+        buildFixPlan: buildPlan,
+        applyImportFixActions: applyFixes,
+        downloadArtifact: vi.fn(async () => ({
+          buffer: Buffer.from("enviado-sema"),
+          contentType: "application/zip",
+        })),
+        cancelRemote: vi.fn(async () => undefined),
+      },
+    });
+
+    const completed = await started.completion;
+
+    expect(importZip).toHaveBeenCalledTimes(3);
+    expect(buildPlan).toHaveBeenCalledTimes(2);
+    expect(applyFixes).toHaveBeenCalledTimes(2);
+    expect(completed.rounds).toHaveLength(3);
+    expect(completed).toMatchObject({
+      status: "completed",
+      ok: false,
+      round: 3,
+      maxRounds: 3,
+      autofixStopReason: "max_rounds",
+    });
+    expect(completed.timeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          step: "autofix_skip",
+          message: expect.stringContaining("Teto de rodadas"),
+          round: 3,
+        }),
+      ]),
+    );
+  });
+
+  it("para sem reescrever o ZIP quando o plano não tem ação mecânica", async () => {
+    const applyFixes = vi.fn(async () => {
+      throw new Error("não deveria aplicar");
+    });
+    const started = pipeline.startOraculoPipeline({
+      uid: "uid-pipeline-no-action",
+      uploadId: "upload-no-action",
+      jobId: "job-no-action",
+      zip: Buffer.from("zip-sem-acao"),
+      fileName: "sem-acao.zip",
+      shape,
+      autofix: true,
+      dependencies: {
+        prepare: async () => ({
+          municipioAntes: "Querência",
+          municipioDepois: "Querência",
+          municipioChanged: false,
+          abrangenciaChanged: false,
+          baserefWaitedMs: 0,
+          warnings: [],
+        }),
+        importZip: async () => ({
+          ok: false,
+          resultado: "[COM_PENDENCIA]",
+          status: "[CONCLUIDO]",
+          detalhes: "atributo exige decisão",
+          raw: {},
+          pdfBuffer: Buffer.from("pdf-sintetico"),
+          timeline: [],
+        }),
+        processGeo: vi.fn(async () => {
+          throw new Error("não deveria processar");
+        }),
+        parseReportPdf: async () => ({
+          tipo: "importacao",
+          situacao: "REPROVADA",
+          resumo: [
+            {
+              camada: "RESERVATORIO_ARTIFICIAL",
+              erro: "Campo barramento é obrigatório",
+              qtd: 1,
+            },
+          ],
+          porFeicao: [],
+          raw: "Relatório de atributo obrigatório",
+          warnings: [],
+        }),
+        buildFixPlan: async () => ({
+          acoes: [],
+          naoCorrigivel: [
+            {
+              erro: "RESERVATORIO_ARTIFICIAL: barramento",
+              porque: "Exige decisão cadastral.",
+              orientacao: "Revise o atributo no GIS.",
+            },
+          ],
+          explicacaoUsuario: "Não há correção mecânica segura.",
+          confianca: "baixa",
+          fonte: "fallback",
+          modelo: null,
+          avisos: [],
+        }),
+        applyImportFixActions: applyFixes,
+        downloadArtifact: vi.fn(async () => ({
+          buffer: Buffer.from("enviado-sema"),
+          contentType: "application/zip",
+        })),
+        cancelRemote: vi.fn(async () => undefined),
+      },
+    });
+
+    const completed = await started.completion;
+
+    expect(applyFixes).not.toHaveBeenCalled();
+    expect(completed.rounds).toHaveLength(1);
+    expect(completed.rounds[0]).toMatchObject({
+      fixplan: "fixplan-r1",
+      fixPlan: { acoes: [], fonte: "fallback" },
+    });
+    expect(completed).toMatchObject({
+      status: "completed",
+      ok: false,
+      autofixStopReason: "no_mechanical_action",
+      manualAutofixAvailable: false,
+    });
+    expect(completed.autofixStopMessage).toContain("Revise o atributo no GIS");
   });
 
   it("cancela durante a importação, tenta CancelarImportacaoShape e termina cancelled", async () => {

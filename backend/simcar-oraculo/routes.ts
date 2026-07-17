@@ -366,10 +366,28 @@ export function registerSimcarOraculoRoutes(app: Express): void {
         res.status(404).json({ error: "Job oráculo não encontrado." });
         return;
       }
+      if (!PIPELINE_TERMINAL_STATUSES.has(String(job.status || ""))) {
+        res.status(409).json({
+          error: "O loop automático ainda está em execução.",
+          code: "AUTOFIX_JOB_ACTIVE",
+        });
+        return;
+      }
+      if (job.ok === true) {
+        res.status(409).json({
+          error: "O projeto já foi aprovado; nenhuma correção é necessária.",
+          code: "AUTOFIX_NOT_NEEDED",
+        });
+        return;
+      }
       res.status(409).json({
-        error: "Autofix ainda não está disponível nesta fase do pipeline.",
-        code: "AUTOFIX_NOT_AVAILABLE",
-        hint: "A rota está reservada e será ativada pela fase P5.",
+        error:
+          String(job.manualAutofixReason || "").trim() ||
+          "Nenhuma ação mecânica nova está disponível para este snapshot.",
+        code: "AUTOFIX_NO_NEW_ACTION",
+        stopReason: job.autofixStopReason || null,
+        hint:
+          "Baixe os artefatos, edite o ZIP no GIS e inicie um novo job; a mesma ação não será repetida após uma parada segura.",
       });
     },
   );

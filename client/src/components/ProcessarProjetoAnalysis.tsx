@@ -28,6 +28,14 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type ApiFetch = (
   path: string,
@@ -90,6 +98,49 @@ type ErrorSummary = {
   qtd: number;
 };
 
+type FixActionType =
+  | "remove_duplicate_vertices"
+  | "clean_degenerate_rings"
+  | "unkink_self_intersection"
+  | "remove_glued_holes"
+  | "clip_layer_to_cover"
+  | "split_complex_polygon";
+
+type FixAction = {
+  type: FixActionType;
+  layers: string[];
+  motivo: string;
+};
+
+type FixPlan = {
+  acoes: FixAction[];
+  naoCorrigivel: Array<{
+    erro: string;
+    porque: string;
+    orientacao: string;
+  }>;
+  explicacaoUsuario: string;
+  confianca: "alta" | "media" | "baixa";
+  fonte: "deepseek" | "fallback";
+  modelo: string | null;
+  avisos: string[];
+};
+
+type FixDiffSummary = {
+  camada: string;
+  acao: Exclude<FixActionType, "clip_layer_to_cover">;
+  alterou: boolean;
+  feicoesAfetadas: number[];
+  registrosAntes: number;
+  registrosDepois: number;
+  verticesRemovidos: number;
+  aneisRemovidos: number;
+  registrosRemovidos: number;
+  registrosCriados: number;
+  identificadoresCriados: number;
+  avisos: string[];
+};
+
 type RoundPhase = {
   ok: boolean;
   resultado: string;
@@ -108,6 +159,9 @@ type OraculoRound = {
   process: RoundPhase | null;
   artifactWarnings?: string[];
   fixplan?: string | null;
+  fixPlan?: FixPlan | null;
+  diffResumo?: FixDiffSummary[];
+  autofixPhase?: "import" | "process" | null;
 };
 
 type OraculoArtifact = {
@@ -145,6 +199,10 @@ type OraculoJob = {
   createdAt?: string;
   startedAt?: string;
   finishedAt?: string;
+  autofixStopReason?: string | null;
+  autofixStopMessage?: string | null;
+  manualAutofixAvailable?: boolean;
+  manualAutofixReason?: string | null;
 };
 
 type RoundHistorySummary = {
@@ -300,6 +358,43 @@ function artifactLabel(key: string): string {
 function artifactSortValue(key: string): number {
   const index = ARTIFACT_ORDER.findIndex(prefix => key.startsWith(prefix));
   return index < 0 ? ARTIFACT_ORDER.length : index;
+}
+
+const FIX_ACTION_LABELS: Record<FixActionType, string> = {
+  remove_duplicate_vertices: "Remover vértices repetidos",
+  clean_degenerate_rings: "Limpar anéis degenerados",
+  unkink_self_intersection: "Separar auto-interseções",
+  remove_glued_holes: "Remover buracos colados",
+  clip_layer_to_cover: "Recortar pela cobertura declarada",
+  split_complex_polygon: "Separar polígono complexo",
+};
+
+function actionImpact(action: FixAction, diffResumo: FixDiffSummary[]): string {
+  const matching = diffResumo.filter(
+    diff =>
+      diff.acao === action.type &&
+      action.layers.some(layer => layer === diff.camada)
+  );
+  if (!matching.length) return "Ação planejada; nenhuma alteração aplicada.";
+  const vertices = matching.reduce(
+    (total, diff) => total + diff.verticesRemovidos,
+    0
+  );
+  const affected = new Set(
+    matching.flatMap(diff =>
+      diff.feicoesAfetadas.map(feature => `${diff.camada}:${feature}`)
+    )
+  ).size;
+  const created = matching.reduce(
+    (total, diff) => total + diff.registrosCriados,
+    0
+  );
+  const parts = [
+    `${affected} feição(ões) afetada(s)`,
+    vertices > 0 ? `${vertices} vértice(s) removido(s)` : null,
+    created > 0 ? `${created} registro(s) criado(s)` : null,
+  ].filter(Boolean);
+  return parts.join(" · ");
 }
 
 function countErrors(phase: RoundPhase | null): number {
@@ -580,6 +675,7 @@ type RoundCardProps = {
   artifacts: OraculoArtifact[];
   current: boolean;
   onDownload: (artifact: OraculoArtifact) => void;
+  onOpenFixPlan: (round: OraculoRound) => void;
 };
 
 function RoundCard({
@@ -587,6 +683,7 @@ function RoundCard({
   artifacts,
   current,
   onDownload,
+  onOpenFixPlan,
 }: RoundCardProps): React.ReactElement {
   const sortedArtifacts = useMemo(
     () =>
@@ -721,6 +818,16 @@ function RoundCard({
           </div>
         ) : null}
 
+        {round.fixPlan ? (
+          <button
+            type="button"
+            onClick={() => onOpenFixPlan(round)}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-violet-400/25 bg-violet-500/10 px-3 py-2.5 text-xs font-semibold text-violet-100 transition-colors hover:bg-violet-500/20 sm:w-auto"
+          >
+            <Sparkles size={14} />O que a IA entendeu
+          </button>
+        ) : null}
+
         {sortedArtifacts.length > 0 ? (
           <div>
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
@@ -761,6 +868,161 @@ function RoundCard({
   );
 }
 
+type FixPlanDialogProps = {
+  round: OraculoRound | null;
+  onClose: () => void;
+};
+
+function FixPlanDialog({
+  round,
+  onClose,
+}: FixPlanDialogProps): React.ReactElement {
+  const plan = round?.fixPlan || null;
+  const diffResumo = round?.diffResumo || [];
+
+  return (
+    <Dialog
+      open={Boolean(round && plan)}
+      onOpenChange={open => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent
+        showCloseButton={false}
+        className="max-h-[88vh] max-w-2xl overflow-y-auto border-violet-400/20 bg-[#0b1412] p-0 text-slate-100"
+      >
+        <DialogHeader className="border-b border-white/10 px-5 py-4 pr-14 text-left">
+          <DialogTitle className="flex items-center gap-2 text-base text-white">
+            <Sparkles size={18} className="text-violet-300" />O que a IA
+            entendeu — rodada {round?.n || 1}
+          </DialogTitle>
+          <DialogDescription className="text-xs text-slate-400">
+            Plano explicado pela IA e limitado às correções mecânicas que o
+            GeoForest reconhece com segurança.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogClose asChild>
+          <button
+            type="button"
+            aria-label="Fechar plano de correção"
+            className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-violet-300"
+          >
+            <XCircle size={18} />
+          </button>
+        </DialogClose>
+
+        {plan ? (
+          <div className="space-y-5 px-5 pb-5">
+            <div className="rounded-xl border border-violet-400/15 bg-violet-500/5 p-4">
+              <p className="text-sm leading-relaxed text-violet-50">
+                {plan.explicacaoUsuario}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold uppercase tracking-wider">
+                <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-slate-300">
+                  Fonte:{" "}
+                  {plan.fonte === "deepseek"
+                    ? "DeepSeek"
+                    : "fallback determinístico"}
+                </span>
+                <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-slate-300">
+                  Confiança {plan.confianca}
+                </span>
+                {plan.modelo ? (
+                  <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-slate-300">
+                    {plan.modelo}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+
+            <section aria-labelledby="fix-plan-actions">
+              <h4
+                id="fix-plan-actions"
+                className="text-xs font-semibold uppercase tracking-wider text-slate-400"
+              >
+                Ações mecânicas
+              </h4>
+              {plan.acoes.length > 0 ? (
+                <div className="mt-2 space-y-2">
+                  {plan.acoes.map(action => (
+                    <div
+                      key={`${action.type}-${action.layers.join("-")}`}
+                      className="rounded-xl border border-cyan-400/15 bg-cyan-500/5 p-3"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-cyan-100">
+                          {FIX_ACTION_LABELS[action.type]}
+                        </p>
+                        {action.layers.map(layer => (
+                          <span
+                            key={`${action.type}-${layer}`}
+                            className="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold text-cyan-200"
+                          >
+                            {layer}
+                          </span>
+                        ))}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {action.motivo}
+                      </p>
+                      <p className="mt-2 text-[11px] font-medium text-cyan-200/80">
+                        {actionImpact(action, diffResumo)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 rounded-xl border border-amber-400/20 bg-amber-500/5 p-3 text-xs text-amber-100">
+                  Nenhuma ação mecânica segura foi mapeada.
+                </p>
+              )}
+            </section>
+
+            {plan.naoCorrigivel.length > 0 ? (
+              <section aria-labelledby="fix-plan-manual">
+                <h4
+                  id="fix-plan-manual"
+                  className="text-xs font-semibold uppercase tracking-wider text-slate-400"
+                >
+                  Exige decisão técnica
+                </h4>
+                <div className="mt-2 space-y-2">
+                  {plan.naoCorrigivel.map((issue, index) => (
+                    <div
+                      key={`${issue.erro}-${index}`}
+                      className="rounded-xl border border-amber-400/15 bg-amber-500/5 p-3"
+                    >
+                      <p className="text-xs font-semibold text-amber-100">
+                        {issue.erro}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {issue.porque}
+                      </p>
+                      <p className="mt-2 text-xs text-amber-100/80">
+                        {issue.orientacao}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {plan.avisos.length > 0 ? (
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400">
+                {plan.avisos.map((warning, index) => (
+                  <p key={`${warning}-${index}`} className="mt-1 first:mt-0">
+                    {warning}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const ProcessarProjetoAnalysis: React.FC<Props> = ({
   apiFetch,
   onJobSnapshot,
@@ -785,6 +1047,9 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({
   const [monitorError, setMonitorError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [legacyView, setLegacyView] = useState(false);
+  const [selectedFixPlanRound, setSelectedFixPlanRound] =
+    useState<OraculoRound | null>(null);
+  const [requestingAutofix, setRequestingAutofix] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const healthAbortRef = useRef<AbortController | null>(null);
@@ -1021,6 +1286,7 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({
     setMonitorError(null);
     setError(null);
     setLegacyView(false);
+    setSelectedFixPlanRound(null);
     setRestoring(true);
     setJob(null);
     jobRef.current = null;
@@ -1080,6 +1346,8 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({
     setMonitorError(null);
     setError(null);
     setLegacyView(false);
+    setSelectedFixPlanRound(null);
+    setRequestingAutofix(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
@@ -1106,6 +1374,7 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({
       jobRef.current = null;
       setJob(null);
       setLegacyView(false);
+      setSelectedFixPlanRound(null);
       setError(null);
       setMonitorError(null);
       setSelectedMunicipioKey("");
@@ -1342,6 +1611,56 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({
     }
   }, [apiFetch, applyJobSnapshot]);
 
+  const openFixPlan = useCallback((round: OraculoRound) => {
+    setSelectedFixPlanRound(round);
+  }, []);
+
+  const closeFixPlan = useCallback(() => {
+    setSelectedFixPlanRound(null);
+  }, []);
+
+  const requestManualAutofix = useCallback(async () => {
+    const current = jobRef.current;
+    if (
+      !current ||
+      !isTerminal(current.status) ||
+      current.manualAutofixAvailable !== true
+    )
+      return;
+    setRequestingAutofix(true);
+    setError(null);
+    try {
+      const response = await apiFetch(
+        `/api/simcar-oraculo/jobs/${encodeURIComponent(current.jobId)}/autofix`,
+        { method: "POST" }
+      );
+      if (!response.ok) throw new Error(await readApiError(response));
+      const payload = await response.json();
+      const resumedJobId = String(payload?.jobId || current.jobId).trim();
+      const resumed = payload?.job
+        ? ({ ...payload.job, jobId: resumedJobId } as OraculoJob)
+        : {
+            ...current,
+            jobId: resumedJobId,
+            status: "queued",
+            stage: "queued",
+            ok: null,
+            message: "Correção manual adicionada à fila do SIMCAR.",
+          };
+      applyJobSnapshot(resumed);
+      monitorJob(resumedJobId);
+      toast.success("Correção adicionada à fila do SIMCAR.");
+    } catch (caught: unknown) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Falha ao solicitar a correção assistida."
+      );
+    } finally {
+      setRequestingAutofix(false);
+    }
+  }, [apiFetch, applyJobSnapshot, monitorJob]);
+
   const downloadArtifact = useCallback(
     async (artifact: OraculoArtifact) => {
       try {
@@ -1371,6 +1690,7 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({
 
   const timeline = Array.isArray(job?.timeline) ? job.timeline : [];
   const rounds = Array.isArray(job?.rounds) ? job.rounds : [];
+  const lastFixPlanRound = rounds.findLast(round => Boolean(round.fixPlan));
   const artifacts = Object.values(job?.artifacts || {});
   const currentRound = Math.max(1, Number(job?.round || rounds.at(-1)?.n || 1));
   const maxRounds = Math.max(1, Number(job?.maxRounds || 3));
@@ -1741,6 +2061,7 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({
               )}
               current={round.n === currentRound}
               onDownload={downloadArtifact}
+              onOpenFixPlan={openFixPlan}
             />
           ))}
         </section>
@@ -1798,20 +2119,58 @@ const ProcessarProjetoAnalysis: React.FC<Props> = ({
         </div>
       ) : null}
 
-      {job?.status === "completed" &&
-      job.ok === false &&
-      job.importOk !== false ? (
-        <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4 text-xs text-violet-100/80">
+      {job?.status === "completed" && job.ok === false ? (
+        <section className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4 text-xs text-violet-100/80">
           <div className="flex items-center gap-2 font-semibold text-violet-100">
             <Sparkles size={16} />
             Correção assistida
           </div>
-          <p className="mt-1">
-            Quando houver uma ação mecânica segura mapeada, o plano da IA e o
-            botão “Corrigir e reenviar” aparecerão aqui.
+          <p className="mt-2 leading-relaxed">
+            {job.autofixStopMessage ||
+              "O loop automático terminou. Consulte o plano e os artefatos antes de editar o projeto no GIS."}
           </p>
-        </div>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            {lastFixPlanRound ? (
+              <button
+                type="button"
+                onClick={() => openFixPlan(lastFixPlanRound)}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2.5 font-semibold text-violet-50 hover:bg-violet-500/20 sm:w-auto"
+              >
+                <Sparkles size={15} /> Ver último plano
+              </button>
+            ) : null}
+            <button
+              type="button"
+              disabled={
+                job.manualAutofixAvailable !== true || requestingAutofix
+              }
+              onClick={() => void requestManualAutofix()}
+              title={
+                job.manualAutofixAvailable
+                  ? "Aplicar a nova ação mapeada e reenviar"
+                  : job.manualAutofixReason ||
+                    "Sem ação mecânica nova; edite o ZIP no GIS e inicie outro job."
+              }
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-4 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
+            >
+              {requestingAutofix ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <Sparkles size={15} />
+              )}
+              Corrigir e reenviar
+            </button>
+          </div>
+          {job.manualAutofixAvailable !== true ? (
+            <p className="mt-2 text-[11px] text-violet-100/60">
+              {job.manualAutofixReason ||
+                "O botão fica bloqueado quando não existe uma ação nova e segura para aplicar."}
+            </p>
+          ) : null}
+        </section>
       ) : null}
+
+      <FixPlanDialog round={selectedFixPlanRound} onClose={closeFixPlan} />
     </div>
   );
 };

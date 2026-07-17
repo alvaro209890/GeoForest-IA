@@ -78,13 +78,13 @@ mutação SEMA ocorreu.
 
 - [ ] V23 com autofix ligado → rodada 1 reprova, FixPlan gerado (explicação DeepSeek visível),
       rodada 2 importa **[FINALIZADO]** no SIMCAR real
-- [ ] fixplan.json salvo com ações + fonte (deepseek|fallback)
+- [x] fixplan.json salvo com ações + fonte (deepseek|fallback) — contrato e round-trip mock T15
 - [ ] Derrubar DEEPSEEK_API_KEY → mesmo fluxo funciona via fallback (explicação template)
 - [ ] V22 (P6) → clip de úmida na rodada 2 → process real sem os 41; reservatório/ARL dup
       reportados como "exige edição no GIS" (naoCorrigivel)
-- [ ] ZIP que não melhora (subir 2× o mesmo quebrado sem ação nova) → para com "sem melhora"
+- [x] ZIP que não melhora (subir 2× o mesmo quebrado sem ação nova) → para com "sem melhora"
       antes do teto; botão manual desabilitado com motivo
-- [ ] 3 rodadas sem sucesso → para no teto com resumo do que sobrou
+- [x] 3 rodadas sem sucesso → para no teto com resumo do que sobrou (mock decrescente T15)
 
 ## Anti-regressão
 

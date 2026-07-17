@@ -18,7 +18,7 @@ DeepSeek V4 Pro explicando), automático até 3 rodadas.
 | P2 município/abrangência (endpoints descobertos ✅) | ✅ T4–T6; live no 270069 |
 | P3.5 pipeline único + parse PDF | ✅ T7–T9; 97 testes + live downloads |
 | P4 front ORACULO-only | ✅ T10–T12 |
-| P5/P6 autofix + DeepSeek | ⏳ T13–T14 ✅; T15–T17 pendentes |
+| P5/P6 autofix + DeepSeek | ⏳ T13–T15 ✅; T16–T17 pendentes |
 | P7 deploy + E2E | ⏳ |
 
 ## Arquivos
@@ -42,5 +42,5 @@ DeepSeek V4 Pro explicando), automático até 3 rodadas.
 
 ## Continuar por
 
-1. [STATUS.md](./STATUS.md) → 2. T15 (loop automático + FixPlan na UI) em
+1. [STATUS.md](./STATUS.md) → 2. T16 (prova live do V23 via loop automático) em
 [07](./07-tarefas-implementacao.md) → 3. contrato canônico: [11](./11-endpoints-sema-descobertos.md)

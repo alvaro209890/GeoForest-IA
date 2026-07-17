@@ -13,7 +13,7 @@ Rotas locais antigas de importar/processar do processar-projeto **morrem** (D2).
 | POST | `/api/simcar-oraculo/pipeline` | **novo** — `{uploadId, autoProcess?: true, autofix?: true}` → `202 {jobId, queuePosition}` |
 | GET | `/api/simcar-oraculo/jobs/:jobId` | snapshot do job (poll fallback) |
 | GET | `/api/simcar-oraculo/jobs/:jobId/events` | **novo** — SSE da timeline (mesmo padrão do processing-jobs atual) |
-| POST | `/api/simcar-oraculo/jobs/:jobId/autofix` | **reservado em T8** — 409 `AUTOFIX_NOT_AVAILABLE`; ativado em T15 |
+| POST | `/api/simcar-oraculo/jobs/:jobId/autofix` | guarda manual T15: só pode avançar com ação nova; job ativo/aprovado/sem ação retorna 409 específico e nunca repete plano após parada segura |
 | DELETE | `/api/simcar-oraculo/jobs/:jobId` | cancelar (para de pollear; best-effort Cancelar* na SEMA) |
 | GET | `/api/simcar-oraculo/jobs/:jobId/artifact/:key` | download autenticado: PDFs, `erros/enviado/processado/conferencia/pendencias-*-r{N}`, corrigido e fixplan |
 | GET | `/api/simcar-oraculo/health` | mode-less: `{ok, simcarConfigured, testCarId, queueLength, deepseekConfigured}` |
@@ -92,7 +92,11 @@ Mensagens de exemplo (copy do front em 05):
                   "pdf": "import-pdf-r1",
                   "errosResumo": [{ "camada": "AREA_UMIDA", "erro": "A geometria contém pontos repetidos", "qtd": 11 }] },
       "process": null,
-      "fixplan": "fixplan-r1"
+      "fixplan": "fixplan-r1",
+      "fixPlan": { "acoes": [{ "type": "remove_duplicate_vertices", "layers": ["AREA_UMIDA"] }],
+                   "fonte": "deepseek", "confianca": "alta" },
+      "diffResumo": [{ "camada": "AREA_UMIDA", "acao": "remove_duplicate_vertices",
+                        "alterou": true, "verticesRemovidos": 11 }]
     },
     { "n": 2, "zipArtifact": "corrigido-zip-r2", "import": { "resultado": "[FINALIZADO]", "pdf": "import-pdf-r2" },
       "process": { "resultado": "[COM_PENDENCIA]", "pdf": "process-pdf-r2", "errosZip": "erros-zip-r2",
