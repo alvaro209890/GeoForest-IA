@@ -57,8 +57,11 @@
 
 - [x] Código base `clip_layer_to_cover` + testes offline + wiring process (T17 WIP commitado 17/07)
 - [x] Live harness + 1ª prova V22: pipeline aplica clip; SEMA manteve ×41 (evidência STATUS)
-- [ ] **Gate:** V22 processa sem os 41 erros de úmida **ou** D7 (drop AREA_UMIDA no CAR-teste após 3 lives)
+- [ ] **Gate:** V22 processa sem os 41 erros de úmida **ou** D7 (drop AREA_UMIDA no CAR-teste)
+      — **caminho escolhido: D7** (2026-07-17). Fixture `Recorte_SANTA_CLARA_SEM_UMIDA.zip`
+      (SHA `98a9f5f2…`) + harness `pipeline-process-d7-live.test.ts` prontos; live pendente.
 - [ ] Casos de decisão / residual cartográfico como "exige edição no GIS" com orientação
+      (produto: contenção de úmida que o clip não fecha → `naoCorrigivel`, não drop da camada)
 
 ## P7 — Produção
 

@@ -157,6 +157,31 @@ B9 comentário × código do default de modo.
 **Objetivo do gate:** V22 no CAR 270069 → ProcessarGeo sem os **41** erros
 `AREA_UMIDA deve ser completamente contida por AVN, AUAS ou AREA_CONSOLIDADA`.
 
+#### Retomada 2026-07-17 (tarde) — decisão: fechar T17 por **D7** (Álvaro)
+
+Como as tentativas de clip não zeraram os 41 no ProcessarGeo real (ver abaixo), o Álvaro
+optou por acionar o **D7 direto**: fechar o gate de validação processando o ZIP da Santa
+Clara **sem a camada AREA_UMIDA** (só no CAR-teste 270069; **não** é regra de produto — para
+o usuário final, contenção de úmida que o clip não fecha vira `naoCorrigivel` com orientação GIS).
+
+Feito nesta retomada (tudo fora do repo público — segredos/shapes gitignored):
+
+- **Credenciais LIVE** em `.oraculo-scratch/simcar-oraculo.env` (CPF/senha SIMCAR + `DEEPSEEK_API_KEY`,
+  `PROCESSAR_MODE=ORACULO`, `SIMCAR_TEST_CAR_ID=270069`). `.oraculo-scratch/` está no `.gitignore`.
+- **Smoke read-only validado:** login TÉCNICO ok; `Buscar/270069` = "Santa clara", município
+  **Querência/5107065**, `Situacao [EM_CADASTRAMENTO]`; status atual import `[FINALIZADO]`,
+  process `[COM_PENDENCIA]` (resíduo da bateria V22).
+- **Fixture D7 preparada e pinada:** o arquivo entregue continha as camadas dentro de uma
+  pasta-wrapper + um zip aninhado; ambos os pacotes internos são byte-a-byte iguais e **nenhum**
+  tem `AREA_UMIDA`. Reempacotado limpo (shapefiles na raiz, 27 camadas, todos componentes):
+  `.oraculo-scratch/santa_clara/Recorte_SANTA_CLARA_SEM_UMIDA.zip`
+  SHA-256 `98a9f5f21a1088d1d3868acca2ee644071cf37236800a613f0152493934d98ec`.
+- **Harness live D7:** `backend/simcar-oraculo/pipeline-process-d7-live.test.ts` (opt-in
+  `SIMCAR_LIVE=1`, pinado no SHA acima). Assert: process sem contenção de úmida, sem camada
+  `AREA_UMIDA` em erro algum, e o loop **não** aplica `clip_layer_to_cover` (nada mecânico a fazer).
+
+Próximo passo: rodar o live D7 (muta o CAR-teste), registrar resultado e fechar o gate P6.
+
 #### O que o Codex já entregou no código (WIP → commitado nesta rodada)
 
 | Peça | Estado |

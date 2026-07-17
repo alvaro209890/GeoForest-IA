@@ -59,6 +59,22 @@ isolar P5; T17 assume o processamento `[EM_ABERTO]`.
 - Experimentos scratch (candidates/bisect) baixaram contagem até **1–3** em variantes manuais;
   não productizados.
 
+### Gate D7 (process sem AREA_UMIDA) — em execução 2026-07-17 (tarde)
+
+Decisão do Álvaro: fechar o T17 por **D7** (só no CAR-teste 270069). Fixture pinada:
+
+| ZIP | SHA-256 | Import esperado | Process esperado |
+|-----|---------|-----------------|------------------|
+| `.oraculo-scratch/santa_clara/Recorte_SANTA_CLARA_SEM_UMIDA.zip` | `98a9f5f2…934d98ec` | [FINALIZADO] | pendências cadastrais (reservatório/ARL), **zero** contenção de AREA_UMIDA |
+
+Origem da fixture: arquivo entregue pelo Álvaro (`Arquivo Enviado sem área umida.zip`), que
+trazia as camadas numa pasta-wrapper + um zip aninhado — os dois pacotes internos são iguais e
+nenhum contém `AREA_UMIDA`. Reempacotado limpo (27 camadas na raiz, componentes .shp/.shx/.dbf/.prj
+completos). Harness: `backend/simcar-oraculo/pipeline-process-d7-live.test.ts` (opt-in `SIMCAR_LIVE=1`).
+
+Smoke read-only prévio (login + Buscar): CAR 270069 "Santa clara", Querência/5107065,
+`[EM_CADASTRAMENTO]`; baseline import `[FINALIZADO]`, process `[COM_PENDENCIA]`.
+
 Gate T14: planner mockado passou 9/9 cenários (JSON válido/inválido, conteúdo vazio, timeout,
 ação fora do inventário, camada inventada e ausência de chave). O teste live isolado com
 DeepSeek V4 Pro e a chave efêmera de `~/.hermes/.env` passou em 8,6 s: propôs somente
