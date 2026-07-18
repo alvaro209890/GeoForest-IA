@@ -6,7 +6,7 @@ import {
     type AuasLayer,
     type ScconAlert,
 } from "./auas-sccon";
-import { readDbfRows, type DbfFieldDef } from "./shapefile-writer";
+import { readDbfRows, parseDbfSchema, type DbfFieldDef } from "./shapefile-writer";
 
 /** Quadrado fechado (EPSG:4674) centrado em (cx, cy) com meio-lado d. */
 function square(cx: number, cy: number, d = 0.01): number[][] {
@@ -80,6 +80,34 @@ describe("updateAuasWithAlerts", () => {
         expect(d0.n_alertas_intersect).toBe(2);
         expect(d0.data_alerta_min).toBe("17/03/2020");
         expect(d0.data_alerta_max).toBe("01/05/2021");
+    });
+
+    it("coage ABERTURA Date (YYYYMMDD) para Char e não corrompe a data gravada", () => {
+        // Regressão: shapefile real traz ABERTURA como Date/8 ("20230615"). Antes do fix,
+        // buildDbfBuffer colapsava "17/03/2020" → "17032020" num campo lido como YYYYMMDD.
+        const layer: AuasLayer = {
+            ...makeLayer(),
+            fields: [
+                { name: "ID", type: "N", length: 18, decimals: 0 },
+                { name: "ABERTURA", type: "D", length: 8, decimals: 0 },
+            ],
+            rows: [
+                { ID: "10", ABERTURA: "20230615" },
+                { ID: "20", ABERTURA: "20230615" },
+            ],
+        };
+        const alerts: ScconAlert[] = [
+            alert(-52.0, -12.0, "2020-03-17T12:36:54", "CUT", 11), // toca poly 1
+        ];
+        const res = updateAuasWithAlerts(layer, alerts, { dateRule: "min" });
+
+        const abert = parseDbfSchema(res.dbf).find((f) => f.name.toUpperCase() === "ABERTURA");
+        expect(abert?.type).toBe("C");
+        expect(abert?.length).toBeGreaterThanOrEqual(10);
+
+        const rows = readDbfRows(res.dbf);
+        expect(rows[0].ABERTURA).toBe("17/03/2020"); // atualizada, sem corrupção
+        expect(rows[1].ABERTURA).toBe("15/06/2023"); // original YYYYMMDD → BR, preservada
     });
 
     it("usa a data MAX quando dateRule=max", () => {

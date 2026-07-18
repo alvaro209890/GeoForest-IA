@@ -442,6 +442,54 @@ function fmtBr(d: Date | null): string | null {
 }
 
 /**
+ * Interpreta o valor bruto de ABERTURA em qualquer um dos formatos que aparecem
+ * na prática: DBF Date `YYYYMMDD`, brasileiro `DD/MM/YYYY` ou ISO `YYYY-MM-DD`.
+ * Data local (sem UTC) para casar 1:1 com `fmtBr`.
+ */
+function parseAberturaToDate(raw: unknown): Date | null {
+    const s = String(raw ?? "").trim();
+    if (!s) return null;
+    let m = s.match(/^(\d{4})(\d{2})(\d{2})$/); // DBF Date YYYYMMDD
+    if (m) {
+        const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
+    m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); // DD/MM/YYYY
+    if (m) {
+        const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
+    m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // ISO YYYY-MM-DD[...]
+    if (m) {
+        const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
+    return null;
+}
+
+/** Normaliza qualquer ABERTURA para o texto brasileiro DD/MM/YYYY (ou "" se ilegível). */
+function normalizeAberturaBr(raw: unknown): string {
+    return fmtBr(parseAberturaToDate(raw)) || "";
+}
+
+/**
+ * ABERTURA é sempre gravada como texto DD/MM/YYYY (Char, largura ≥10). Se o
+ * shapefile original trouxer o campo como Date (`D`, largura 8, `YYYYMMDD`), o
+ * `buildDbfBuffer` colapsaria os dígitos e corromperia a data — por isso o campo
+ * é coagido para Char na saída, alinhado ao comportamento do script Python.
+ */
+function coerceAberturaFieldToChar(
+    fields: DbfFieldDef[],
+    aberturaField: string,
+): DbfFieldDef[] {
+    return fields.map((f) =>
+        f.name === aberturaField
+            ? { name: f.name, type: "C", length: Math.max(10, f.length), decimals: 0 }
+            : f,
+    );
+}
+
+/**
  * Faz o join espacial e devolve o DBF atualizado (coluna ABERTURA) mais o
  * relatório por polígono. Função pura (testável sem rede).
  */
@@ -489,7 +537,8 @@ export function updateAuasWithAlerts(
             }
         }
 
-        const oldStr = (row[aberturaField] ?? "").trim() || null;
+        const oldRaw = (row[aberturaField] ?? "").trim();
+        const oldStr = normalizeAberturaBr(oldRaw) || oldRaw || null;
         let newDate: Date | null = null;
         let dataMin: Date | null = null;
         let dataMax: Date | null = null;
@@ -509,6 +558,11 @@ export function updateAuasWithAlerts(
         } else {
             semAlertaFeatures.push(rec.feature);
         }
+        // Mesmo sem alerta, reescreve a data original como texto DD/MM/YYYY para
+        // que o campo (coagido para Char) fique consistente em todas as feições.
+        if (newDate === null) {
+            row[aberturaField] = normalizeAberturaBr(oldRaw);
+        }
 
         details.push({
             index: rowIdx,
@@ -523,7 +577,8 @@ export function updateAuasWithAlerts(
         });
     }
 
-    const dbf = buildDbfBuffer(rows as Array<Record<string, string | number | null>>, layer.fields);
+    const outputFields = coerceAberturaFieldToChar(layer.fields, aberturaField);
+    const dbf = buildDbfBuffer(rows as Array<Record<string, string | number | null>>, outputFields);
     return {
         dbf,
         updated,
@@ -571,7 +626,7 @@ export function buildSemAlertaPoints(
             coordinates: pt,
             attributes: {
                 ID: idField ? row[idField] ?? null : null,
-                ABERTURA: (row[aberturaField] ?? "").trim() || null,
+                ABERTURA: normalizeAberturaBr(row[aberturaField]) || null,
                 area_ha: Number(areaHa.toFixed(6)),
                 idx_auas: rec.feature - 1,
                 motivo: "sem_alerta_SCCON",
@@ -804,9 +859,13 @@ async function buildOutputZip(
 
 /* ─── Rotas HTTP (SSE + download) ─────────────────────────────── */
 
-type CachedZip = { buffer: Buffer; filename: string; expiresAt: number };
+type CachedZip = { buffer: Buffer; filename: string; expiresAt: number; uid: string };
 const DOWNLOAD_TTL_MS = 30 * 60 * 1000;
 const downloadCache = new Map<string, CachedZip>();
+
+function uidOf(req: Request): string {
+    return String((req as any).authUid || "").trim();
+}
 
 setInterval(() => {
     const now = Date.now();
@@ -834,6 +893,11 @@ export function registerAuasScconRoutes(app: Express) {
     });
 
     app.post("/api/auas-sccon/process", async (req: Request, res: Response) => {
+        const uid = uidOf(req);
+        if (!uid) {
+            res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+            return;
+        }
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Connection", "keep-alive");
@@ -881,6 +945,7 @@ export function registerAuasScconRoutes(app: Express) {
                 buffer: result.zip,
                 filename: result.filename,
                 expiresAt: Date.now() + DOWNLOAD_TTL_MS,
+                uid,
             });
 
             sendSSE(res, {
@@ -901,9 +966,19 @@ export function registerAuasScconRoutes(app: Express) {
     });
 
     app.get("/api/auas-sccon/download/:jobId", (req: Request, res: Response) => {
+        const uid = uidOf(req);
+        if (!uid) {
+            res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+            return;
+        }
         const cached = downloadCache.get(String(req.params.jobId));
         if (!cached || cached.expiresAt <= Date.now()) {
             if (cached) downloadCache.delete(String(req.params.jobId));
+            res.status(404).json({ error: "Download expirado ou não encontrado. Processe novamente." });
+            return;
+        }
+        if (cached.uid !== uid) {
+            // Não vaza existência do artefato de outro usuário.
             res.status(404).json({ error: "Download expirado ou não encontrado. Processe novamente." });
             return;
         }
