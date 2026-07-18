@@ -116,3 +116,7 @@ tools/simcar-parity/.scramble.tmp.cjs
 .oraculo-scratch/
 __tmp_*.ts
 fazendas_unidas.zip
+
+# Python
+__pycache__/
+*.pyc

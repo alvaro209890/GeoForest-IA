@@ -38,6 +38,7 @@ import {
     detectCrs,
     getZipLayerGroups,
     parsePolygonRecords,
+    ringGroupsForRecord,
     SIRGAS_2000_PRJ,
     type ParsedPolygonRecord,
     type ZipEntry,
@@ -325,16 +326,55 @@ function toWgs84(projDef: string | null, x: number, y: number): [number, number]
     }
 }
 
+/** Reprojeta um anel para EPSG:4674 e o fecha; devolve null se degenerar. */
+function ringToWgsClosed(ring: number[][], projDef: string | null): number[][] | null {
+    if (ring.length < 3) return null;
+    const r = ring.map(([x, y]) => toWgs84(projDef, x, y));
+    const first = r[0];
+    const last = r[r.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) r.push([first[0], first[1]]);
+    return r.length >= 4 ? r : null;
+}
+
+/**
+ * Converte um registro poligonal (no CRS da AUAS) em Feature EPSG:4674
+ * respeitando a topologia: cada parte (casca) vira um polígono e os buracos
+ * ficam nas suas cascas. Um registro multi-parte vira MultiPolygon — antes
+ * todas as partes/buracos eram achatadas num único Polygon (2ª casca virava
+ * "buraco"), corrompendo o spatial join. Usa a classificação por profundidade
+ * de `ringGroupsForRecord`.
+ */
+function recordToWgsFeature(
+    record: ParsedPolygonRecord,
+    projDef: string | null,
+): Feature<Polygon | MultiPolygon> | null {
+    const groups = ringGroupsForRecord(record);
+    const parts = new Map<number, { shell: number[][] | null; holes: number[][][] }>();
+    for (const g of [...groups].sort((a, b) => a.part - b.part || a.ring - b.ring)) {
+        const wgs = ringToWgsClosed(g.coords, projDef);
+        if (!wgs) continue;
+        const entry = parts.get(g.part) || { shell: null, holes: [] };
+        if (g.ring === 1 && !entry.shell) entry.shell = wgs;
+        else entry.holes.push(wgs);
+        parts.set(g.part, entry);
+    }
+    const polys = [...parts.values()]
+        .filter((p) => p.shell)
+        .map((p) => [p.shell as number[][], ...p.holes]);
+    if (!polys.length) return ringsToWgsFeature(record.rings, projDef);
+    try {
+        return polys.length === 1 ? turfPolygon(polys[0]) : turfMultiPolygon(polys);
+    } catch {
+        return null;
+    }
+}
+
 /** Converte anéis (no CRS da AUAS) em Feature Polygon EPSG:4674, fechando anéis. */
 function ringsToWgsFeature(rings: number[][][], projDef: string | null): Feature<Polygon> | null {
     const outRings: number[][][] = [];
     for (const ring of rings) {
-        if (ring.length < 3) continue;
-        const r = ring.map(([x, y]) => toWgs84(projDef, x, y));
-        const first = r[0];
-        const last = r[r.length - 1];
-        if (first[0] !== last[0] || first[1] !== last[1]) r.push([first[0], first[1]]);
-        if (r.length >= 4) outRings.push(r);
+        const r = ringToWgsClosed(ring, projDef);
+        if (r) outRings.push(r);
     }
     if (!outRings.length) return null;
     try {
@@ -434,11 +474,17 @@ function bboxOverlap(
     return !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
 }
 
+/**
+ * Formata em DD/MM/YYYY usando o calendário **UTC**. Datas de alerta chegam como
+ * `new Date(alertDetectedDate)` — se a API mandar data pura (`2020-03-17`) ou com
+ * `Z`, os getters locais devolveriam o dia anterior em fuso negativo (Cuiabá
+ * UTC-4). UTC casa 1:1 com a porção de data da string e com `parseAberturaToDate`.
+ */
 function fmtBr(d: Date | null): string | null {
     if (!d || Number.isNaN(d.getTime())) return null;
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    return `${dd}/${mm}/${d.getFullYear()}`;
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    return `${dd}/${mm}/${d.getUTCFullYear()}`;
 }
 
 /**
@@ -449,21 +495,16 @@ function fmtBr(d: Date | null): string | null {
 function parseAberturaToDate(raw: unknown): Date | null {
     const s = String(raw ?? "").trim();
     if (!s) return null;
+    const utc = (y: number, mo: number, d: number): Date | null => {
+        const dt = new Date(Date.UTC(y, mo - 1, d));
+        return Number.isNaN(dt.getTime()) ? null : dt;
+    };
     let m = s.match(/^(\d{4})(\d{2})(\d{2})$/); // DBF Date YYYYMMDD
-    if (m) {
-        const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-        return Number.isNaN(d.getTime()) ? null : d;
-    }
+    if (m) return utc(Number(m[1]), Number(m[2]), Number(m[3]));
     m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); // DD/MM/YYYY
-    if (m) {
-        const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
-        return Number.isNaN(d.getTime()) ? null : d;
-    }
+    if (m) return utc(Number(m[3]), Number(m[2]), Number(m[1]));
     m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // ISO YYYY-MM-DD[...]
-    if (m) {
-        const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-        return Number.isNaN(d.getTime()) ? null : d;
-    }
+    if (m) return utc(Number(m[1]), Number(m[2]), Number(m[3]));
     return null;
 }
 
@@ -504,10 +545,10 @@ export function updateAuasWithAlerts(
     const idField = layer.fields.find((f) => f.name.toUpperCase() === "ID")?.name;
 
     // Pré-computa bbox de cada AUAS (em 4674) + feature turf.
-    const auasFeatures = new Map<number, Feature<Polygon>>();
+    const auasFeatures = new Map<number, Feature<Polygon | MultiPolygon>>();
     const auasBboxes = new Map<number, [number, number, number, number]>();
     for (const rec of layer.records) {
-        const feat = ringsToWgsFeature(rec.rings, layer.projDef);
+        const feat = recordToWgsFeature(rec, layer.projDef);
         if (feat) {
             auasFeatures.set(rec.feature, feat);
             auasBboxes.set(rec.feature, turfBbox(feat) as [number, number, number, number]);
@@ -604,14 +645,20 @@ export function buildSemAlertaPoints(
 
     for (const rec of layer.records) {
         if (!featSet.has(rec.feature)) continue;
-        const feat = ringsToWgsFeature(rec.rings, layer.projDef);
+        const feat = recordToWgsFeature(rec, layer.projDef);
         if (!feat) continue;
         let pt: [number, number];
         try {
             pt = turfPointOnFeature(feat).geometry.coordinates as [number, number];
         } catch {
-            // fallback: primeiro vértice
-            pt = feat.geometry.coordinates[0][0] as [number, number];
+            // fallback: primeiro vértice da 1ª casca (Polygon ou MultiPolygon)
+            const coords = feat.geometry.coordinates as number[][][] | number[][][][];
+            const firstRing = (
+                feat.geometry.type === "MultiPolygon"
+                    ? (coords as number[][][][])[0]?.[0]
+                    : (coords as number[][][])[0]
+            );
+            pt = (firstRing?.[0] ?? [0, 0]) as [number, number];
         }
         // area geodésica (m²) via turf (assume lon/lat) → ha
         let areaHa = 0;

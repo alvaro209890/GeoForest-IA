@@ -17,6 +17,15 @@ import geopandas as gpd
 from shapely import make_valid
 
 
+def utm_epsg_for(gdf: gpd.GeoDataFrame) -> int:
+    """EPSG UTM SIRGAS 2000 (fuso S) pela longitude média do dado."""
+    g = gdf.to_crs(4674) if gdf.crs and gdf.crs.to_epsg() != 4674 else gdf
+    minx, _, maxx, _ = g.total_bounds
+    lon = (minx + maxx) / 2.0
+    zone = int((lon + 180) // 6) + 1  # 20, 21 ou 22 em MT
+    return 31960 + zone  # 31980=20S, 31981=21S, 31982=22S
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--auas", required=True)
@@ -39,7 +48,9 @@ def main():
     has = joined["index_right"].notna().groupby(joined.index).any()
     sem = auas.loc[~has].copy()
 
-    sem_m = sem.to_crs(31982)
+    # Zona UTM SIRGAS 2000 por longitude do centroide (MT abrange 20S/21S/22S),
+    # em vez de 31982 fixo — evita área distorcida no oeste do estado.
+    sem_m = sem.to_crs(utm_epsg_for(sem))
     sem_m["area_ha"] = sem_m.geometry.area / 10000.0
     pts_m = sem_m.copy()
     pts_m["geometry"] = sem_m.geometry.representative_point()

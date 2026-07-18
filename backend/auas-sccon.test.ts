@@ -110,6 +110,37 @@ describe("updateAuasWithAlerts", () => {
         expect(rows[1].ABERTURA).toBe("15/06/2023"); // original YYYYMMDD → BR, preservada
     });
 
+    it("trata registro multi-parte como MultiPolygon (não achata 2ª casca em buraco)", () => {
+        // Regressão #4: uma feição com dois quadrados disjuntos. Antes, ringsToWgsFeature
+        // jogava a 2ª casca como "buraco" da 1ª → alerta sobre a 2ª parte era perdido.
+        const layer: AuasLayer = {
+            ...makeLayer(),
+            records: [
+                { feature: 1, rings: [square(-52.0, -12.0, 0.01), square(-40.0, -5.0, 0.01)] },
+                { feature: 2, rings: [square(-53.0, -13.0)] },
+            ],
+            rows: [
+                { ID: "1", ABERTURA: "01/01/2016" },
+                { ID: "2", ABERTURA: "01/01/2016" },
+            ],
+        };
+        const alerts: ScconAlert[] = [
+            alert(-40.0, -5.0, "2020-03-17T12:36:54", "CUT", 11), // toca só a 2ª parte
+        ];
+        const res = updateAuasWithAlerts(layer, alerts, { dateRule: "min" });
+        expect(res.updated).toBe(1);
+        expect(readDbfRows(res.dbf)[0].ABERTURA).toBe("17/03/2020");
+    });
+
+    it("data de alerta é interpretada em UTC (não desloca o dia)", () => {
+        // Regressão #3: date-only/Z parseava para meia-noite UTC; getters locais em
+        // fuso negativo devolviam o dia anterior. Agora fmtBr usa UTC.
+        const layer = makeLayer();
+        const alerts: ScconAlert[] = [alert(-52.0, -12.0, "2020-03-17T00:00:00Z", "CUT", 11)];
+        const res = updateAuasWithAlerts(layer, alerts, { dateRule: "min" });
+        expect(readDbfRows(res.dbf)[0].ABERTURA).toBe("17/03/2020");
+    });
+
     it("usa a data MAX quando dateRule=max", () => {
         const layer = makeLayer();
         const alerts: ScconAlert[] = [

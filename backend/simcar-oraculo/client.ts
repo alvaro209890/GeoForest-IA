@@ -122,13 +122,22 @@ export async function simcarLogin(cpf: string, senha: string): Promise<string> {
   throw lastErr || new Error("login SIMCAR falhou após retentativas.");
 }
 
+let loginInFlight: Promise<string> | null = null;
+
 export async function getSimcarToken(): Promise<string> {
   if (tokenCache && tokenCache.expiresAtMs > Date.now() + 60_000) {
     return tokenCache.token;
   }
+  // Conta SIMCAR é de sessão única: logins concorrentes se invalidam. Coalesce as
+  // chamadas simultâneas (pipeline na fila + endpoints read-only fora dela) num
+  // único login em voo, para não derrubar a sessão em uso.
+  if (loginInFlight) return loginInFlight;
   const c = getSimcarOraculoConfig();
   if (!c.cpf || !c.senha) throw new Error("SIMCAR_CPF/SIMCAR_SENHA não configurados.");
-  return simcarLogin(c.cpf, c.senha);
+  loginInFlight = simcarLogin(c.cpf, c.senha).finally(() => {
+    loginInFlight = null;
+  });
+  return loginInFlight;
 }
 
 export function clearSimcarTokenCache(): void {

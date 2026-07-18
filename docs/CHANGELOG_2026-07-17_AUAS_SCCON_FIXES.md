@@ -56,11 +56,55 @@ Depois do fix (mesmo dado real): esquema `{type:"C",length:10}`, valores
 - Live: `runAuasSccon` ponta a ponta com AUAS real — SCCON OK (359 alertas), DBF
   de saída correto.
 
-## Pendências conhecidas (não neste commit)
+---
 
-- #3 `fmtBr` das datas de alerta usa timezone local (possível off-by-one em
-  `alertDetectedDate` date-only/midnight-UTC).
-- #4 `ringsToWgsFeature` achata multi-parte/buracos num único Polygon → join
-  espacial impreciso em AUAS multi-parte.
-- #5 scripts Python: UTM 31982 hardcoded; `int(auas.at[idx,"ID"])` sem guard.
-- #6 `waitBaseRef` desiste após ~15s; endpoints read-only do oráculo fora da fila serial.
+# Rodada 2 (2026-07-18) — precisão de data/join + robustez
+
+## Fix #3 — Datas de alerta em UTC (evita off-by-one)
+
+`fmtBr` usava getters locais; `new Date(alertDetectedDate)` com data pura
+(`2020-03-17`) ou `Z` cairia no dia anterior em fuso negativo (Cuiabá UTC-4).
+Agora `fmtBr` usa `getUTC*` e `parseAberturaToDate` constrói via `Date.UTC(...)`
+— calendário UTC determinístico, independente do fuso do servidor. Teste de
+regressão com alerta `2020-03-17T00:00:00Z` → `17/03/2020`.
+
+## Fix #4 — Multi-parte/buracos no spatial join
+
+`ringsToWgsFeature` empilhava todos os anéis num único Polygon: a 2ª casca de
+uma feição multi-parte virava "buraco" e alertas sobre ela eram perdidos. Novo
+`recordToWgsFeature` usa a classificação por profundidade de
+`ringGroupsForRecord` (`vertices-proximas.ts`) para montar **MultiPolygon**
+correto (cascas + buracos nas suas cascas). Teste com feição de dois quadrados
+disjuntos: alerta na 2ª parte agora é detectado.
+
+## Fix #5 — Scripts Python
+
+- `gerar_pontos_sem_alerta.py`: `utm_epsg_for()` escolhe a zona UTM (20/21/22S)
+  pela longitude do centroide em vez de `31982` fixo → `area_ha` correta no
+  oeste de MT.
+- `atualizar_datas_auas_sccon.py`: guarda a coluna `ID` (`has_id`) antes de
+  `int(...)` → sem `KeyError` em AUAS sem campo `ID`.
+
+## Fix #8 — Login SIMCAR concorrente
+
+`getSimcarToken` (`simcar-oraculo/client.ts`) agora coalesce logins simultâneos
+num único `loginInFlight`: endpoints read-only fora da fila serial não disparam
+mais um 2º login que invalidaria a sessão única em uso por um pipeline.
+
+## Revisado — sem alteração
+
+- **#6/#7 `waitBaseRef`**: o retorno após 3 polls nulos é calibração deliberada
+  (`null` = SEMA sem processamento ativo; preparação real reporta `[EXECUTANDO]`
+  e é aguardada até `[CONCLUIDO]`). Forçar carência penalizaria todo job. Mantido.
+
+## Verificação rodada 2
+
+- 6 testes em `auas-sccon.test.ts` (2 novos: multi-parte e UTC); suíte total
+  **188 passando**, `tsc` limpo, Python `py_compile` OK.
+- Live: `runAuasSccon` com AUAS real segue OK (12/34 datadas, ABERTURA C/10).
+
+## Pendências restantes
+
+Nenhuma da lista original. Melhorias futuras possíveis (não bugs): rotear os
+endpoints read-only do oráculo pela fila serial além do dedup de login; testes
+E2E automatizados do AUAS com fixtures multi-parte/hole reais.
