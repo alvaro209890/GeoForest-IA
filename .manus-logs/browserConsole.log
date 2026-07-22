@@ -201,3 +201,48 @@
 [2026-02-19T02:14:30.996Z] {"timestamp":1771467270596,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
 [2026-02-19T02:14:44.997Z] {"timestamp":1771467284738,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
 [2026-02-19T02:14:44.997Z] {"timestamp":1771467284739,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-07-17T13:06:25.241Z] {"timestamp":1784293583189,"level":"DEBUG","args":["[Manus] Debug collector initialized (no rrweb, UI events only)"],"stack":null}
+[2026-07-17T13:06:25.241Z] {"timestamp":1784293583210,"level":"DEBUG","args":["[vite] connected."],"stack":null}
+[2026-07-17T13:06:25.241Z] {"timestamp":1784293584610,"level":"INFO","args":["%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools","font-weight:bold"],"stack":null}
+[2026-07-17T13:06:31.274Z] {"timestamp":1784293590828,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:06:43.207Z] {"timestamp":1784293601455,"level":"ERROR","args":["[auth-check] falha ao provisionar conta local",{"type":"Error","message":"Falha ao provisionar conta local.","stack":"Error: Falha ao provisionar conta local.\n    at bootstrapAccount (http://localhost:3000/src/lib/auth.ts:32:11)\n    at async Object.next (http://localhost:3000/src/pages/Auth.tsx:51:9)"}],"stack":"Error\n    at console.<computed> [as error] (http://localhost:3000/__manus__/debug-collector.js:396:37)\n    at Object.next (http://localhost:3000/src/pages/Auth.tsx:55:17)"}
+[2026-07-17T13:07:27.782Z] {"timestamp":1784293647098,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-07-17T13:07:27.782Z] {"timestamp":1784293647099,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Auth.tsx"],"stack":null}
+[2026-07-17T13:07:37.771Z] {"timestamp":1784293655832,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-07-17T13:07:37.771Z] {"timestamp":1784293655832,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Auth.tsx"],"stack":null}
+[2026-07-17T13:07:45.214Z] {"timestamp":1784293665163,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:07:49.200Z] {"timestamp":1784293667254,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:07:59.200Z] {"timestamp":1784293677652,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:08:23.769Z] {"timestamp":1784293702776,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Auth.tsx"],"stack":null}
+[2026-07-17T13:08:23.769Z] {"timestamp":1784293702776,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-07-17T13:08:37.784Z] {"timestamp":1784293716867,"level":"DEBUG","args":["[vite]","hot updated: /src/App.tsx"],"stack":null}
+[2026-07-17T13:08:37.784Z] {"timestamp":1784293716867,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-07-17T13:08:59.777Z] {"timestamp":1784293739315,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-07-17T13:09:21.342Z] {"timestamp":1784293759556,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:09:29.196Z] {"timestamp":1784293768357,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:09:32.684Z] {"timestamp":1784293770674,"level":"DEBUG","args":["[Manus] Debug collector initialized (no rrweb, UI events only)"],"stack":null}
+[2026-07-17T13:09:32.684Z] {"timestamp":1784293770699,"level":"DEBUG","args":["[vite] connected."],"stack":null}
+[2026-07-17T13:09:32.684Z] {"timestamp":1784293770781,"level":"INFO","args":["%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools","font-weight:bold"],"stack":null}
+[2026-07-17T13:09:34.684Z] {"timestamp":1784293774283,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:10:42.799Z] {"timestamp":1784293842115,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Auth.tsx"],"stack":null}
+[2026-07-17T13:10:42.799Z] {"timestamp":1784293842115,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-07-17T13:10:48.785Z] {"timestamp":1784293848493,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Auth.tsx"],"stack":null}
+[2026-07-17T13:10:48.785Z] {"timestamp":1784293848493,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-07-17T13:13:44.693Z] {"timestamp":1784294023803,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:46.732Z] {"timestamp":1784294024942,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:46.732Z] {"timestamp":1784294025260,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:46.732Z] {"timestamp":1784294025456,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:46.732Z] {"timestamp":1784294025628,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:46.732Z] {"timestamp":1784294025832,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:46.732Z] {"timestamp":1784294026048,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:46.732Z] {"timestamp":1784294026226,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:46.732Z] {"timestamp":1784294026397,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:46.732Z] {"timestamp":1784294026551,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:46.732Z] {"timestamp":1784294026709,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:48.685Z] {"timestamp":1784294026897,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:48.685Z] {"timestamp":1784294027086,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:48.685Z] {"timestamp":1784294027188,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:48.685Z] {"timestamp":1784294027421,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:13:56.751Z] {"timestamp":1784294036735,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
+[2026-07-17T13:14:36.779Z] {"timestamp":1784294075974,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
+[2026-07-17T13:14:36.779Z] {"timestamp":1784294075981,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
