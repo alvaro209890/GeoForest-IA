@@ -38,6 +38,7 @@ import {
     detectCrs,
     getZipLayerGroups,
     parsePolygonRecords,
+    ringGroupsForRecord,
     SIRGAS_2000_PRJ,
     type ParsedPolygonRecord,
     type ZipEntry,
@@ -325,16 +326,55 @@ function toWgs84(projDef: string | null, x: number, y: number): [number, number]
     }
 }
 
+/** Reprojeta um anel para EPSG:4674 e o fecha; devolve null se degenerar. */
+function ringToWgsClosed(ring: number[][], projDef: string | null): number[][] | null {
+    if (ring.length < 3) return null;
+    const r = ring.map(([x, y]) => toWgs84(projDef, x, y));
+    const first = r[0];
+    const last = r[r.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) r.push([first[0], first[1]]);
+    return r.length >= 4 ? r : null;
+}
+
+/**
+ * Converte um registro poligonal (no CRS da AUAS) em Feature EPSG:4674
+ * respeitando a topologia: cada parte (casca) vira um polígono e os buracos
+ * ficam nas suas cascas. Um registro multi-parte vira MultiPolygon — antes
+ * todas as partes/buracos eram achatadas num único Polygon (2ª casca virava
+ * "buraco"), corrompendo o spatial join. Usa a classificação por profundidade
+ * de `ringGroupsForRecord`.
+ */
+function recordToWgsFeature(
+    record: ParsedPolygonRecord,
+    projDef: string | null,
+): Feature<Polygon | MultiPolygon> | null {
+    const groups = ringGroupsForRecord(record);
+    const parts = new Map<number, { shell: number[][] | null; holes: number[][][] }>();
+    for (const g of [...groups].sort((a, b) => a.part - b.part || a.ring - b.ring)) {
+        const wgs = ringToWgsClosed(g.coords, projDef);
+        if (!wgs) continue;
+        const entry = parts.get(g.part) || { shell: null, holes: [] };
+        if (g.ring === 1 && !entry.shell) entry.shell = wgs;
+        else entry.holes.push(wgs);
+        parts.set(g.part, entry);
+    }
+    const polys = [...parts.values()]
+        .filter((p) => p.shell)
+        .map((p) => [p.shell as number[][], ...p.holes]);
+    if (!polys.length) return ringsToWgsFeature(record.rings, projDef);
+    try {
+        return polys.length === 1 ? turfPolygon(polys[0]) : turfMultiPolygon(polys);
+    } catch {
+        return null;
+    }
+}
+
 /** Converte anéis (no CRS da AUAS) em Feature Polygon EPSG:4674, fechando anéis. */
 function ringsToWgsFeature(rings: number[][][], projDef: string | null): Feature<Polygon> | null {
     const outRings: number[][][] = [];
     for (const ring of rings) {
-        if (ring.length < 3) continue;
-        const r = ring.map(([x, y]) => toWgs84(projDef, x, y));
-        const first = r[0];
-        const last = r[r.length - 1];
-        if (first[0] !== last[0] || first[1] !== last[1]) r.push([first[0], first[1]]);
-        if (r.length >= 4) outRings.push(r);
+        const r = ringToWgsClosed(ring, projDef);
+        if (r) outRings.push(r);
     }
     if (!outRings.length) return null;
     try {
@@ -434,11 +474,60 @@ function bboxOverlap(
     return !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
 }
 
+/**
+ * Formata em DD/MM/YYYY usando o calendário **UTC**. Datas de alerta chegam como
+ * `new Date(alertDetectedDate)` — se a API mandar data pura (`2020-03-17`) ou com
+ * `Z`, os getters locais devolveriam o dia anterior em fuso negativo (Cuiabá
+ * UTC-4). UTC casa 1:1 com a porção de data da string e com `parseAberturaToDate`.
+ */
 function fmtBr(d: Date | null): string | null {
     if (!d || Number.isNaN(d.getTime())) return null;
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    return `${dd}/${mm}/${d.getFullYear()}`;
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    return `${dd}/${mm}/${d.getUTCFullYear()}`;
+}
+
+/**
+ * Interpreta o valor bruto de ABERTURA em qualquer um dos formatos que aparecem
+ * na prática: DBF Date `YYYYMMDD`, brasileiro `DD/MM/YYYY` ou ISO `YYYY-MM-DD`.
+ * Data local (sem UTC) para casar 1:1 com `fmtBr`.
+ */
+function parseAberturaToDate(raw: unknown): Date | null {
+    const s = String(raw ?? "").trim();
+    if (!s) return null;
+    const utc = (y: number, mo: number, d: number): Date | null => {
+        const dt = new Date(Date.UTC(y, mo - 1, d));
+        return Number.isNaN(dt.getTime()) ? null : dt;
+    };
+    let m = s.match(/^(\d{4})(\d{2})(\d{2})$/); // DBF Date YYYYMMDD
+    if (m) return utc(Number(m[1]), Number(m[2]), Number(m[3]));
+    m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); // DD/MM/YYYY
+    if (m) return utc(Number(m[3]), Number(m[2]), Number(m[1]));
+    m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // ISO YYYY-MM-DD[...]
+    if (m) return utc(Number(m[1]), Number(m[2]), Number(m[3]));
+    return null;
+}
+
+/** Normaliza qualquer ABERTURA para o texto brasileiro DD/MM/YYYY (ou "" se ilegível). */
+function normalizeAberturaBr(raw: unknown): string {
+    return fmtBr(parseAberturaToDate(raw)) || "";
+}
+
+/**
+ * ABERTURA é sempre gravada como texto DD/MM/YYYY (Char, largura ≥10). Se o
+ * shapefile original trouxer o campo como Date (`D`, largura 8, `YYYYMMDD`), o
+ * `buildDbfBuffer` colapsaria os dígitos e corromperia a data — por isso o campo
+ * é coagido para Char na saída, alinhado ao comportamento do script Python.
+ */
+function coerceAberturaFieldToChar(
+    fields: DbfFieldDef[],
+    aberturaField: string,
+): DbfFieldDef[] {
+    return fields.map((f) =>
+        f.name === aberturaField
+            ? { name: f.name, type: "C", length: Math.max(10, f.length), decimals: 0 }
+            : f,
+    );
 }
 
 /**
@@ -456,10 +545,10 @@ export function updateAuasWithAlerts(
     const idField = layer.fields.find((f) => f.name.toUpperCase() === "ID")?.name;
 
     // Pré-computa bbox de cada AUAS (em 4674) + feature turf.
-    const auasFeatures = new Map<number, Feature<Polygon>>();
+    const auasFeatures = new Map<number, Feature<Polygon | MultiPolygon>>();
     const auasBboxes = new Map<number, [number, number, number, number]>();
     for (const rec of layer.records) {
-        const feat = ringsToWgsFeature(rec.rings, layer.projDef);
+        const feat = recordToWgsFeature(rec, layer.projDef);
         if (feat) {
             auasFeatures.set(rec.feature, feat);
             auasBboxes.set(rec.feature, turfBbox(feat) as [number, number, number, number]);
@@ -489,7 +578,8 @@ export function updateAuasWithAlerts(
             }
         }
 
-        const oldStr = (row[aberturaField] ?? "").trim() || null;
+        const oldRaw = (row[aberturaField] ?? "").trim();
+        const oldStr = normalizeAberturaBr(oldRaw) || oldRaw || null;
         let newDate: Date | null = null;
         let dataMin: Date | null = null;
         let dataMax: Date | null = null;
@@ -509,6 +599,11 @@ export function updateAuasWithAlerts(
         } else {
             semAlertaFeatures.push(rec.feature);
         }
+        // Mesmo sem alerta, reescreve a data original como texto DD/MM/YYYY para
+        // que o campo (coagido para Char) fique consistente em todas as feições.
+        if (newDate === null) {
+            row[aberturaField] = normalizeAberturaBr(oldRaw);
+        }
 
         details.push({
             index: rowIdx,
@@ -523,7 +618,8 @@ export function updateAuasWithAlerts(
         });
     }
 
-    const dbf = buildDbfBuffer(rows as Array<Record<string, string | number | null>>, layer.fields);
+    const outputFields = coerceAberturaFieldToChar(layer.fields, aberturaField);
+    const dbf = buildDbfBuffer(rows as Array<Record<string, string | number | null>>, outputFields);
     return {
         dbf,
         updated,
@@ -549,14 +645,20 @@ export function buildSemAlertaPoints(
 
     for (const rec of layer.records) {
         if (!featSet.has(rec.feature)) continue;
-        const feat = ringsToWgsFeature(rec.rings, layer.projDef);
+        const feat = recordToWgsFeature(rec, layer.projDef);
         if (!feat) continue;
         let pt: [number, number];
         try {
             pt = turfPointOnFeature(feat).geometry.coordinates as [number, number];
         } catch {
-            // fallback: primeiro vértice
-            pt = feat.geometry.coordinates[0][0] as [number, number];
+            // fallback: primeiro vértice da 1ª casca (Polygon ou MultiPolygon)
+            const coords = feat.geometry.coordinates as number[][][] | number[][][][];
+            const firstRing = (
+                feat.geometry.type === "MultiPolygon"
+                    ? (coords as number[][][][])[0]?.[0]
+                    : (coords as number[][][])[0]
+            );
+            pt = (firstRing?.[0] ?? [0, 0]) as [number, number];
         }
         // area geodésica (m²) via turf (assume lon/lat) → ha
         let areaHa = 0;
@@ -571,7 +673,7 @@ export function buildSemAlertaPoints(
             coordinates: pt,
             attributes: {
                 ID: idField ? row[idField] ?? null : null,
-                ABERTURA: (row[aberturaField] ?? "").trim() || null,
+                ABERTURA: normalizeAberturaBr(row[aberturaField]) || null,
                 area_ha: Number(areaHa.toFixed(6)),
                 idx_auas: rec.feature - 1,
                 motivo: "sem_alerta_SCCON",
@@ -804,9 +906,13 @@ async function buildOutputZip(
 
 /* ─── Rotas HTTP (SSE + download) ─────────────────────────────── */
 
-type CachedZip = { buffer: Buffer; filename: string; expiresAt: number };
+type CachedZip = { buffer: Buffer; filename: string; expiresAt: number; uid: string };
 const DOWNLOAD_TTL_MS = 30 * 60 * 1000;
 const downloadCache = new Map<string, CachedZip>();
+
+function uidOf(req: Request): string {
+    return String((req as any).authUid || "").trim();
+}
 
 setInterval(() => {
     const now = Date.now();
@@ -834,6 +940,11 @@ export function registerAuasScconRoutes(app: Express) {
     });
 
     app.post("/api/auas-sccon/process", async (req: Request, res: Response) => {
+        const uid = uidOf(req);
+        if (!uid) {
+            res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+            return;
+        }
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Connection", "keep-alive");
@@ -881,6 +992,7 @@ export function registerAuasScconRoutes(app: Express) {
                 buffer: result.zip,
                 filename: result.filename,
                 expiresAt: Date.now() + DOWNLOAD_TTL_MS,
+                uid,
             });
 
             sendSSE(res, {
@@ -901,9 +1013,19 @@ export function registerAuasScconRoutes(app: Express) {
     });
 
     app.get("/api/auas-sccon/download/:jobId", (req: Request, res: Response) => {
+        const uid = uidOf(req);
+        if (!uid) {
+            res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+            return;
+        }
         const cached = downloadCache.get(String(req.params.jobId));
         if (!cached || cached.expiresAt <= Date.now()) {
             if (cached) downloadCache.delete(String(req.params.jobId));
+            res.status(404).json({ error: "Download expirado ou não encontrado. Processe novamente." });
+            return;
+        }
+        if (cached.uid !== uid) {
+            // Não vaza existência do artefato de outro usuário.
             res.status(404).json({ error: "Download expirado ou não encontrado. Processe novamente." });
             return;
         }

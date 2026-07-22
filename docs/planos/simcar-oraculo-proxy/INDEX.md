@@ -19,8 +19,8 @@ DeepSeek V4 Pro explicando), automático até 3 rodadas.
 | P3.5 pipeline único + parse PDF | ✅ T7–T9 |
 | P4 front ORACULO-only | ✅ T10–T12 |
 | P5 autofix import + DeepSeek + loop | ✅ T13–T16 (V23 live) |
-| P6 autofix process (clip úmida) | 🔶 T17 **em progresso** — código+live; gate ×41 aberto; D7 fallback |
-| P7 deploy + E2E | ⏳ T18–T19 |
+| P6 autofix process (clip úmida) | ✅ fechado via D7 (17/07); V22 sem AREA_UMIDA processou sem erros |
+| P7 deploy + E2E | ✅ T18–T19 (17/07) — backend+front deploy, E2E real, restore FINAL |
 
 ## Arquivos
 

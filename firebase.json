@@ -15,11 +15,11 @@
           ]
         },
         {
-          "regex": "^/[^.]*$",
+          "source": "/",
           "headers": [
             {
               "key": "Cache-Control",
-              "value": "no-cache, no-store, max-age=0, must-revalidate"
+              "value": "no-cache"
             }
           ]
         },
@@ -28,7 +28,16 @@
           "headers": [
             {
               "key": "Cache-Control",
-              "value": "no-cache, no-store, max-age=0, must-revalidate"
+              "value": "no-cache"
+            }
+          ]
+        },
+        {
+          "regex": "^/[^.]*$",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache"
             }
           ]
         },
@@ -37,7 +46,7 @@
           "headers": [
             {
               "key": "Cache-Control",
-              "value": "no-cache, no-store, max-age=0, must-revalidate"
+              "value": "no-cache"
             }
           ]
         },
@@ -84,11 +93,11 @@
           ]
         },
         {
-          "regex": "^/[^.]*$",
+          "source": "/",
           "headers": [
             {
               "key": "Cache-Control",
-              "value": "no-cache, no-store, max-age=0, must-revalidate"
+              "value": "no-cache"
             }
           ]
         },
@@ -97,7 +106,16 @@
           "headers": [
             {
               "key": "Cache-Control",
-              "value": "no-cache, no-store, max-age=0, must-revalidate"
+              "value": "no-cache"
+            }
+          ]
+        },
+        {
+          "regex": "^/[^.]*$",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache"
             }
           ]
         },
@@ -106,7 +124,7 @@
           "headers": [
             {
               "key": "Cache-Control",
-              "value": "no-cache, no-store, max-age=0, must-revalidate"
+              "value": "no-cache"
             }
           ]
         },

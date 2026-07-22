@@ -271,6 +271,7 @@ def update_auas(
     auas = auas.copy()
     auas["ABERTURA"] = abert_dt  # temp datetime; convertido ao salvar
 
+    has_id = "ID" in auas.columns
     updated = 0
     details = []
     for idx in auas.index:
@@ -289,7 +290,11 @@ def update_auas(
         details.append(
             {
                 "index": int(idx),
-                "ID": int(auas.at[idx, "ID"]) if pd.notnull(auas.at[idx, "ID"]) else None,
+                "ID": (
+                    int(auas.at[idx, "ID"])
+                    if has_id and pd.notnull(auas.at[idx, "ID"])
+                    else None
+                ),
                 "ABERTURA_antes": _fmt_br(old),
                 "ABERTURA_depois": _fmt_br(new_ts if new_ts is not None else old),
                 "n_alertas_intersect": n,

@@ -556,6 +556,8 @@ async function startServer() {
       /^\/api\/simcar-oraculo\/jobs\/[^/]+\/pdf-import$/,
       /^\/api\/simcar-oraculo\/jobs\/[^/]+\/pdf-process$/,
       /^\/api\/simcar-oraculo\/jobs\/[^/]+\/erros-zip$/,
+      "/api/auas-sccon/process",
+      /^\/api\/auas-sccon\/download\/[^/]+$/,
       "/api/process/cancel",
       "/api/account/bootstrap",
       "/api/me",

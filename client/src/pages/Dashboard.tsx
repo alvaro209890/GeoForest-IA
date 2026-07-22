@@ -95,7 +95,6 @@ import { nanoid } from 'nanoid';
 import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog';
 import ContainmentAnalysis, { type ContainmentRow, type ContainmentSummary } from '@/components/ContainmentAnalysis';
 import GeometryErrorsAnalysis, { type GeometryErrorRow, type GeometrySummary } from '@/components/GeometryErrorsAnalysis';
-import ProcessarProjetoAnalysis, { type ProcessarHistoryItem } from '@/components/ProcessarProjetoAnalysis';
 import AuasSccon from '@/components/AuasSccon';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
@@ -1378,7 +1377,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   }, [initialView]);
 
   // Sub-abas dentro de "Análise de Erros": vértices próximas x áreas não contidas (containment) x erros de geometria
-  const [errorAnalysisTab, setErrorAnalysisTab] = useState<'vertices' | 'containment' | 'geometry' | 'processar-projeto'>('vertices');
+  const [errorAnalysisTab, setErrorAnalysisTab] = useState<'vertices' | 'containment' | 'geometry'>('vertices');
   const [manualSection, setManualSection] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1537,8 +1536,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   const [containmentJobId, setContainmentJobId] = useState<string | null>(null);
   const [geometryHistory, setGeometryHistory] = useState<GeometryHistoryItem[]>([]);
   const [geometryJobId, setGeometryJobId] = useState<string | null>(null);
-  const [processarHistory, setProcessarHistory] = useState<ProcessarHistoryItem[]>([]);
-  const [processarJobId, setProcessarJobId] = useState<string | null>(null);
   const [verticesIncludeOriginals, setVerticesIncludeOriginals] = useState(true);
   const [verticesIncludeReport, setVerticesIncludeReport] = useState(true);
   const [verticesIncludeCsv, setVerticesIncludeCsv] = useState(true);
@@ -2397,163 +2394,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
       } : undefined,
     };
   }, []);
-
-  const mapProcessarDocToHistoryItem = useCallback((
-    docId: string,
-    data: any,
-    sourceCollection: ProcessarHistoryItem['sourceCollection'] = data?.sourceCollection === 'simcar_oraculo_jobs'
-      ? 'simcar_oraculo_jobs'
-      : 'processar_projeto_jobs',
-  ): ProcessarHistoryItem => {
-    const rawStatus = String(data?.status || '').trim().toLowerCase();
-    const type = String(data?.type || '').trim().toLowerCase();
-    let status: ProcessarHistoryItem['status'] = 'processing';
-    if (
-      rawStatus === 'processing' ||
-      rawStatus === 'running' ||
-      rawStatus === 'completed' ||
-      rawStatus === 'failed' ||
-      rawStatus === 'cancelled' ||
-      rawStatus === 'cancel_requested' ||
-      rawStatus === 'interrupted' ||
-      rawStatus === 'uploaded' ||
-      rawStatus === 'deleted' ||
-      rawStatus === 'queued' ||
-      rawStatus === 'import_ok' ||
-      rawStatus === 'import_failed'
-    ) {
-      status = rawStatus;
-    } else if (type === 'import' && (data?.ok === true || data?.importOk === true)) {
-      status = 'import_ok';
-    } else if (type === 'import') {
-      status = 'import_failed';
-    } else if (type === 'upload') {
-      status = 'uploaded';
-    }
-    const rawRounds = Array.isArray(data?.rounds) ? data.rounds : [];
-    const artifactRefs = Array.isArray(data?.artifactRefs)
-      ? data.artifactRefs
-      : data?.artifacts && typeof data.artifacts === 'object'
-        ? Object.values(data.artifacts)
-        : [];
-    const roundsSummary: NonNullable<ProcessarHistoryItem['roundsSummary']> = Array.isArray(data?.roundsSummary)
-      ? data.roundsSummary
-      : rawRounds.map((round: any) => ({
-          n: Math.max(1, Number(round?.n || 1)),
-          importOk: typeof round?.import?.ok === 'boolean' ? round.import.ok : null,
-          processOk: typeof round?.process?.ok === 'boolean' ? round.process.ok : null,
-          importResult: round?.import?.resultado ? String(round.import.resultado) : undefined,
-          processResult: round?.process?.resultado ? String(round.process.resultado) : undefined,
-          artifactKeys: artifactRefs
-            .filter((artifact: any) => Number(artifact?.round || 0) === Number(round?.n || 1))
-            .map((artifact: any) => String(artifact?.key || ''))
-            .filter(Boolean),
-        }));
-    const sumPhaseErrors = (phase: 'import' | 'process') => rawRounds.reduce(
-      (total: number, round: any) => total + (Array.isArray(round?.[phase]?.errosResumo)
-        ? round[phase].errosResumo.reduce(
-            (phaseTotal: number, item: any) => phaseTotal + Math.max(0, Number(item?.qtd || 0)),
-            0,
-          )
-        : 0),
-      0,
-    );
-    const importErrors = Number.isFinite(Number(data?.importErrors))
-      ? Number(data.importErrors)
-      : rawRounds.length > 0
-        ? sumPhaseErrors('import')
-        : undefined;
-    const processErrors = Number.isFinite(Number(data?.processErrors))
-      ? Number(data.processErrors)
-      : rawRounds.length > 0
-        ? sumPhaseErrors('process')
-        : undefined;
-    const pipelineSource = sourceCollection === 'simcar_oraculo_jobs' || type === 'pipeline';
-    const importOk = typeof data?.importOk === 'boolean'
-      ? data.importOk
-      : pipelineSource
-        ? null
-        : typeof data?.ok === 'boolean'
-          ? data.ok
-          : status === 'import_ok' || status === 'completed' || status === 'processing'
-            ? true
-            : status === 'import_failed'
-              ? false
-              : null;
-    const processOk = typeof data?.processOk === 'boolean' ? data.processOk : null;
-    const percentFallback =
-      status === 'completed' || status === 'import_ok'
-        ? 100
-        : status === 'import_failed'
-          ? 30
-          : status === 'uploaded'
-            ? 5
-            : 0;
-    return {
-      id: String(data?.id || docId),
-      jobId: String(data?.jobId || docId),
-      filename: String(data?.sourceFilename || data?.filename || 'Processar projeto'),
-      timestamp: toIsoDateFromUnknown(
-        data?.finishedAt || data?.completedAt || data?.updatedAt || data?.createdAt || data?.timestamp,
-      ),
-      status,
-      type: type || undefined,
-      sourceCollection,
-      stage: data?.stage ? String(data.stage) : undefined,
-      percent: Math.max(0, Math.min(100, Math.round(Number(data?.percent || percentFallback)))),
-      message: data?.message ? String(data.message) : undefined,
-      error: data?.error ? String(data.error) : undefined,
-      uploadId: data?.uploadId ? String(data.uploadId) : type === 'upload' ? String(data?.jobId || docId) : undefined,
-      importId: data?.importId ? String(data.importId) : type === 'import' ? String(data?.jobId || docId) : undefined,
-      downloadUrl: data?.downloadUrl ? resolveBackendUrl(String(data.downloadUrl)) : undefined,
-      importPdfUrl: data?.importPdfUrl || data?.pdfUrl
-        ? resolveBackendUrl(String(data.importPdfUrl || data.pdfUrl))
-        : undefined,
-      resultRows: Array.isArray(data?.resultRows) ? data.resultRows as ProcessarHistoryItem['resultRows'] : undefined,
-      importRows: Array.isArray(data?.importRows)
-        ? data.importRows as ProcessarHistoryItem['importRows']
-        : Array.isArray(data?.rows)
-          ? data.rows as ProcessarHistoryItem['importRows']
-          : undefined,
-      warnings: Array.isArray(data?.warnings) ? data.warnings.map((item: any) => String(item)) : undefined,
-      camadasReconhecidas: Array.isArray(data?.camadasReconhecidas) ? data.camadasReconhecidas : undefined,
-      importOk,
-      processOk,
-      importErrors,
-      processErrors,
-      totalErrors: Number.isFinite(Number(data?.totalErrors))
-        ? Number(data.totalErrors)
-        : typeof importErrors === 'number' || typeof processErrors === 'number'
-          ? (importErrors || 0) + (processErrors || 0)
-          : undefined,
-      relatorioTexto: data?.relatorioTexto ? String(data.relatorioTexto) : undefined,
-      resultado: data?.resultado ? String(data.resultado) : undefined,
-      roundCount: Math.max(0, Number(data?.roundCount ?? rawRounds.length)),
-      roundsSummary,
-      artifactRefs: artifactRefs as ProcessarHistoryItem['artifactRefs'],
-    };
-  }, []);
-
-  const handleProcessarJobSnapshot = useCallback((job: Record<string, unknown>) => {
-    const jobId = String(job?.jobId || job?.id || '').trim();
-    if (!jobId) return;
-    const item = mapProcessarDocToHistoryItem(jobId, job, 'simcar_oraculo_jobs');
-    if (item.status !== 'uploaded' && item.status !== 'deleted') {
-      setProcessarHistory((current) => {
-        const index = current.findIndex((entry) => entry.jobId === item.jobId);
-        if (index < 0) return [item, ...current];
-        const next = [...current];
-        next[index] = item;
-        return next;
-      });
-    }
-    setProcessarJobId(item.jobId);
-  }, [mapProcessarDocToHistoryItem]);
-
-  const selectedProcessarHistoryEntry = useMemo(
-    () => processarHistory.find((entry) => entry.jobId === processarJobId) || null,
-    [processarHistory, processarJobId],
-  );
 
   const appendVerticesJobToConversation = useCallback(async (job: VerticesHistoryItem) => {
     if (!conversationsRef || !verticesJobsRef || !job?.jobId || job.status !== 'completed') return null;
@@ -4288,8 +4128,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
         setContainmentJobsRef(containmentRef);
         const geometryRef = collection(db, 'users', currentUser.uid, 'geometry_errors_jobs');
         setGeometryJobsRef(geometryRef);
-        const processarLegacyRef = collection(db, 'users', currentUser.uid, 'processar_projeto_jobs');
-        const simcarOraculoRef = collection(db, 'users', currentUser.uid, 'simcar_oraculo_jobs');
         const receiptsColRef = collection(db, 'users', currentUser.uid, 'receipts');
         setReceiptsRef(receiptsColRef);
         const cbersRef = collection(db, 'users', currentUser.uid, 'cbers_wpm_jobs');
@@ -4493,62 +4331,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
           }
         } catch (error) {
           console.warn('Falha ao carregar histórico de erros de geometria salvo:', error);
-        }
-
-        try {
-          const [oraculoResult, legacyResult] = await Promise.allSettled([
-            getDocs(query(simcarOraculoRef, orderBy('updatedAtMs', 'desc'))),
-            getDocs(query(processarLegacyRef, orderBy('updatedAtMs', 'desc'))),
-          ]);
-          if (oraculoResult.status === 'rejected' && legacyResult.status === 'rejected') {
-            throw oraculoResult.reason;
-          }
-          if (oraculoResult.status === 'rejected') {
-            console.warn('Falha ao carregar jobs novos do Oráculo SIMCAR:', oraculoResult.reason);
-          }
-          if (legacyResult.status === 'rejected') {
-            console.warn('Falha ao carregar histórico legado de Processar projeto:', legacyResult.reason);
-          }
-          const byJobId = new Map<string, ProcessarHistoryItem>();
-          if (oraculoResult.status === 'fulfilled') {
-            oraculoResult.value.forEach((docSnap) => {
-              const item = mapProcessarDocToHistoryItem(
-                docSnap.id,
-                docSnap.data() as any,
-                'simcar_oraculo_jobs',
-              );
-              if (item.status !== 'deleted' && item.status !== 'uploaded') byJobId.set(item.jobId, item);
-            });
-          }
-          if (legacyResult.status === 'fulfilled') {
-            legacyResult.value.forEach((docSnap) => {
-              const item = mapProcessarDocToHistoryItem(
-                docSnap.id,
-                docSnap.data() as any,
-                'processar_projeto_jobs',
-              );
-              if (item.status !== 'deleted' && item.status !== 'uploaded' && !byJobId.has(item.jobId)) {
-                byJobId.set(item.jobId, item);
-              }
-            });
-          }
-          const processarEntries = [...byJobId.values()].sort(
-            (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-          );
-          setProcessarHistory(processarEntries);
-          const runningProcessar = processarEntries.find((entry) =>
-            entry.status === 'processing' ||
-            entry.status === 'running' ||
-            entry.status === 'queued' ||
-            entry.status === 'cancel_requested',
-          );
-          if (runningProcessar) {
-            setActiveView('vertices-proximas');
-            setErrorAnalysisTab('processar-projeto');
-            setProcessarJobId(runningProcessar.jobId);
-          }
-        } catch (error) {
-          console.warn('Falha ao carregar histórico de Processar projeto:', error);
         }
 
         try {
@@ -8397,96 +8179,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <p className="text-[10px] text-slate-600 mt-1">Use a aba para fazer upload</p>
                 </div>
               )
-            ) : errorAnalysisTab === 'processar-projeto' ? (
-              processarHistory.length > 0 ? (
-                processarHistory.map((entry) => {
-                  const running =
-                    entry.status === 'processing' ||
-                    entry.status === 'running' ||
-                    entry.status === 'queued' ||
-                    entry.status === 'cancel_requested';
-                  const statusLabel =
-                    entry.status === 'queued'
-                      ? 'Na fila'
-                      : entry.status === 'cancel_requested'
-                        ? 'Cancelando'
-                        : entry.status === 'processing' || entry.status === 'running'
-                          ? 'Processando'
-                      : entry.status === 'completed'
-                        ? entry.importOk === false
-                          ? 'Import reprovada'
-                          : entry.processOk === false
-                            ? 'Com pendência'
-                            : entry.processOk === true
-                              ? (entry.roundCount || 0) > 1
-                                ? 'Corrigido'
-                                : 'Aprovado'
-                              : 'Concluído'
-                        : entry.status === 'cancelled'
-                          ? 'Cancelado'
-                          : entry.status === 'interrupted'
-                            ? 'Interrompido'
-                          : entry.status === 'import_ok'
-                            ? 'Import OK'
-                            : entry.status === 'import_failed'
-                              ? 'Import reprovada'
-                              : 'Falhou';
-                  const statusColor =
-                    running
-                      ? 'text-amber-300'
-                      : (entry.status === 'completed' && entry.importOk !== false && entry.processOk !== false) || entry.status === 'import_ok'
-                        ? 'text-emerald-300'
-                      : entry.status === 'cancelled'
-                        ? 'text-orange-300'
-                        : 'text-red-300';
-                  const detail =
-                    entry.sourceCollection === 'simcar_oraculo_jobs' || entry.type === 'pipeline'
-                      ? `${entry.roundCount || 1} rodada(s) · ${entry.importErrors || 0} import. · ${entry.processErrors || 0} proc.`
-                      : entry.status === 'import_ok' || entry.status === 'import_failed'
-                      ? `${entry.importErrors ?? entry.importRows?.length ?? 0} erro(s) import.`
-                      : `${entry.totalErrors ?? entry.resultRows?.length ?? 0} linha(s) · ${entry.processErrors ?? 0} proc.`;
-                  const dateLabel = new Date(entry.timestamp).toLocaleString('pt-BR', {
-                    dateStyle: 'short',
-                    timeStyle: 'short',
-                  });
-                  return (
-                    <button
-                      type="button"
-                      key={entry.jobId}
-                      className={`w-full flex items-center gap-3 p-3 text-left rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${processarJobId === entry.jobId ? 'bg-cyan-500/10 border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.06)]' : 'bg-[#100d18]/70 hover:bg-[#171322] hover:border-cyan-500/20'}`}
-                      onClick={() => {
-                        setProcessarJobId(entry.jobId);
-                        setErrorAnalysisTab('processar-projeto');
-                      }}
-                    >
-                      <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${processarJobId === entry.jobId ? 'bg-gradient-to-br from-cyan-500 to-teal-500 text-white shadow-md shadow-cyan-900/40' : 'bg-white/5 text-slate-400 group-hover:text-cyan-300 group-hover:bg-cyan-500/10'}`}>
-                        <FileStack size={18} />
-                      </div>
-                      <div className="flex-1 min-w-0 block">
-                        <p className={`text-sm truncate font-medium ${processarJobId === entry.jobId ? 'text-cyan-100' : 'text-slate-200 group-hover:text-cyan-100'}`}>{entry.filename}</p>
-                        <div className="flex items-center gap-2 mt-1 opacity-80">
-                          <span className="text-[10px] uppercase tracking-wider font-semibold text-cyan-300">
-                            {entry.percent}%
-                          </span>
-                          <span className={`text-[10px] font-semibold uppercase tracking-wider ${statusColor}`}>
-                            {statusLabel}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-500 mt-0.5 truncate">{detail}</p>
-                        <p className="text-[10px] text-slate-600 mt-0.5 truncate">
-                          {dateLabel}{entry.sourceCollection === 'processar_projeto_jobs' ? ' · legado' : ''}
-                        </p>
-                      </div>
-                    </button>
-                  );
-                })
-              ) : (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <FileStack size={32} className="text-slate-600 mb-3" />
-                  <p className="text-sm text-slate-400">Nenhum projeto processado</p>
-                  <p className="text-[10px] text-slate-600 mt-1">Importe um ZIP na aba Processar projeto</p>
-                </div>
-              )
             ) : (
             verticesHistory.length > 0 ? (
               verticesHistory.map((entry) => (
@@ -12017,29 +11709,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     <AlertTriangle size={15} />
                     <span className="truncate">Erros de Geometria</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setErrorAnalysisTab('processar-projeto')}
-                    className={`relative z-10 flex items-center justify-center gap-2 py-2.5 px-2 sm:px-3 rounded-xl transition-all duration-300 text-[11px] sm:text-xs font-semibold ${
-                      errorAnalysisTab === 'processar-projeto'
-                        ? 'bg-gradient-to-r from-cyan-600 to-teal-600 text-white shadow-lg shadow-cyan-900/30'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
-                    }`}
-                  >
-                    <FileStack size={15} />
-                    <span className="truncate">Processar projeto</span>
-                  </button>
                 </div>
               </div>
 
-              {errorAnalysisTab === 'processar-projeto' ? (
-                <ProcessarProjetoAnalysis
-                  apiFetch={apiFetch}
-                  selectedJobId={processarJobId}
-                  historyEntry={selectedProcessarHistoryEntry}
-                  onJobSnapshot={handleProcessarJobSnapshot}
-                />
-              ) : errorAnalysisTab === 'geometry' ? (
+              {errorAnalysisTab === 'geometry' ? (
                 <GeometryErrorsAnalysis
                   apiFetch={apiFetch}
                   onHighlightLocation={(loc, lbl) => {
