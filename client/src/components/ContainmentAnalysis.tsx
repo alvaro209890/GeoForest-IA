@@ -14,6 +14,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { fileToBase64 } from '@/lib/api';
 
 type ApiFetch = (
   path: string,
@@ -64,18 +65,6 @@ type Props = {
   onJobSnapshot?: (job: Record<string, unknown>) => void;
   onHighlightLocation?: (location: { lat: number; lng: number } | null, label: string | null) => void;
 };
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || '');
-      resolve(result.includes(',') ? result.split(',').pop() || '' : result);
-    };
-    reader.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
-    reader.readAsDataURL(file);
-  });
-}
 
 async function readApiError(response: Response): Promise<string> {
   try {

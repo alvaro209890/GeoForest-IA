@@ -12,6 +12,8 @@
     "start": "NODE_ENV=production node dist/index.js",
     "preview": "vite preview --host",
     "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "eval:atp": "node scripts/evaluate-atp-analyses.mjs",
     "format": "prettier --write ."
   },

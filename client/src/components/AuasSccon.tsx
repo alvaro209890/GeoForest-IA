@@ -11,22 +11,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { auth } from '@/lib/firebase';
-
-/* ─── API base (mesma regra do Dashboard) ─────────────────────── */
-const DEFAULT_PRODUCTION_API_BASE = 'https://geoforest-api.cursar.space';
-const CONFIGURED_API_BASE = String(
-  import.meta.env.VITE_API_BASE ||
-    (typeof window !== 'undefined' && /\.web\.app$/i.test(window.location.hostname)
-      ? DEFAULT_PRODUCTION_API_BASE
-      : ''),
-)
-  .trim()
-  .replace(/\/+$/, '');
-const apiUrl = (path: string) => {
-  if (!path) return CONFIGURED_API_BASE || '';
-  if (!CONFIGURED_API_BASE) return path;
-  return `${CONFIGURED_API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
-};
+import { apiUrl, fileToBase64 } from '@/lib/api';
 
 type DateRule = 'min' | 'max';
 
@@ -63,18 +48,6 @@ type DoneEvent = {
   downloadUrl: string;
   report: Report;
 };
-
-async function fileToBase64(file: File): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
-    reader.onload = () => {
-      const result = String(reader.result || '');
-      resolve(result.includes(',') ? result.split(',').pop() || '' : result);
-    };
-    reader.readAsDataURL(file);
-  });
-}
 
 export default function AuasSccon() {
   const [file, setFile] = useState<File | null>(null);

@@ -71,6 +71,23 @@ import {
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { motion, AnimatePresence } from 'framer-motion';
+import {
+  CbersMapPreview,
+  cbersGeometryCenter,
+  cbersGeometryCoordinates,
+  DASHBOARD_VIEW_LABELS,
+  DashboardSidebarTabs,
+  useDashboardNavigation,
+  type DashboardView,
+  type CbersGeoJsonGeometry,
+} from '@/dashboard';
+import {
+  apiFetch as apiFetchShared,
+  apiUrl,
+  fileToBase64,
+  readApiError as readApiErrorShared,
+  resolveBackendUrl,
+} from '@/lib/api';
 import { fetchSignInMethodsForEmail, onAuthStateChanged, sendPasswordResetEmail, signOut } from 'firebase/auth';
 import {
   collection,
@@ -89,15 +106,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MapView } from '@/components/Map';
 import TermsOfUseDialog from '@/components/TermsOfUseDialog';
-import ReceiptsHub from '@/components/ReceiptsHub';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog';
-import ContainmentAnalysis, { type ContainmentRow, type ContainmentSummary } from '@/components/ContainmentAnalysis';
-import GeometryErrorsAnalysis, { type GeometryErrorRow, type GeometrySummary } from '@/components/GeometryErrorsAnalysis';
-import AuasSccon from '@/components/AuasSccon';
+import type { ContainmentRow, ContainmentSummary } from '@/components/ContainmentAnalysis';
+import type { GeometryErrorRow, GeometrySummary } from '@/components/GeometryErrorsAnalysis';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
+const ReceiptsHub = lazy(() => import('@/components/ReceiptsHub'));
+const AuasSccon = lazy(() => import('@/components/AuasSccon'));
+const ContainmentAnalysis = lazy(() => import('@/components/ContainmentAnalysis'));
+const GeometryErrorsAnalysis = lazy(() => import('@/components/GeometryErrorsAnalysis'));
 
 type DocumentReference = ReturnType<typeof doc>;
 
@@ -418,11 +437,6 @@ type SimcarServerRuntimeState = {
   hasCompletedAuas: boolean;
 };
 
-type CbersGeoJsonGeometry = {
-  type: 'Polygon' | 'MultiPolygon';
-  coordinates: any;
-};
-
 type CbersEstimate = {
   downloadBytes: number;
   downloadMb: number;
@@ -705,22 +719,6 @@ const DEFAULT_SETTINGS: UserSettings = {
 
 const SETTINGS_THEME_OPTIONS = ['Escuro (Floresta)', 'Claro (Dia)'] as const;
 const SETTINGS_FONT_SIZE_OPTIONS = ['Pequeno', 'Padrão', 'Grande'] as const;
-
-const DEFAULT_PRODUCTION_API_BASE = 'https://geoforest-api.cursar.space';
-const CONFIGURED_API_BASE = String(
-  import.meta.env.VITE_API_BASE ||
-  (typeof window !== 'undefined' && /\.web\.app$/i.test(window.location.hostname) ? DEFAULT_PRODUCTION_API_BASE : '')
-).trim().replace(/\/+$/, '');
-const apiUrl = (path: string) => {
-  if (!path) return CONFIGURED_API_BASE || '';
-  if (!CONFIGURED_API_BASE) return path;
-  return `${CONFIGURED_API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
-};
-const resolveBackendUrl = (url?: string) => {
-  const raw = String(url || '').trim();
-  if (!raw) return '';
-  return raw.startsWith('/api/') ? apiUrl(raw) : raw;
-};
 
 const sanitizeMessagesForFirestore = (msgs: ChatMessage[]) =>
   msgs.map((m) => {
@@ -1180,24 +1178,6 @@ const simcarAuasVerdictClass = (verdict: NonNullable<SimcarAuasMeta['yearVerdict
   return 'border-slate-500/20 bg-slate-500/10 text-slate-300';
 };
 
-const cbersGeometryCoordinates = (geometry?: CbersGeoJsonGeometry | null): Array<Array<[number, number]>> => {
-  if (!geometry) return [];
-  if (geometry.type === 'Polygon') return geometry.coordinates as Array<Array<[number, number]>>;
-  if (geometry.type === 'MultiPolygon') {
-    return (geometry.coordinates as Array<Array<Array<[number, number]>>>).flat();
-  }
-  return [];
-};
-
-const cbersGeometryCenter = (geometry?: CbersGeoJsonGeometry | null): google.maps.LatLngLiteral => {
-  const rings = cbersGeometryCoordinates(geometry);
-  const points = rings.flat();
-  if (!points.length) return { lat: -12.5, lng: -55.5 };
-  const lng = points.reduce((acc, point) => acc + Number(point[0] || 0), 0) / points.length;
-  const lat = points.reduce((acc, point) => acc + Number(point[1] || 0), 0) / points.length;
-  return { lat, lng };
-};
-
 const cbersOutputFilename = (itemId?: string | null) => {
   const stem = String(itemId || 'CBERS_4A_WPM')
     .trim()
@@ -1265,99 +1245,8 @@ const landsatArchiveZipUrl = (item?: LandsatHistoryItem | LandsatScene | null) =
   return `/api/landsat/wms-download?layerName=${encodeURIComponent(String(layerName))}`;
 };
 
-function CbersMapPreview({
-  propertyGeometry,
-  sceneGeometry,
-}: {
-  propertyGeometry?: CbersGeoJsonGeometry | null;
-  sceneGeometry?: CbersGeoJsonGeometry | null;
-}) {
-  const [mapFailed, setMapFailed] = useState(false);
-  const overlaysRef = useRef<google.maps.Polygon[]>([]);
-  const draw = useCallback((map: google.maps.Map) => {
-    overlaysRef.current.forEach((overlay) => overlay.setMap(null));
-    overlaysRef.current = [];
-    const bounds = new google.maps.LatLngBounds();
-    const addGeometry = (geometry: CbersGeoJsonGeometry | null | undefined, color: string, fillOpacity: number) => {
-      for (const ring of cbersGeometryCoordinates(geometry)) {
-        const path = ring.map(([lng, lat]) => ({ lat: Number(lat), lng: Number(lng) }));
-        if (path.length < 3) continue;
-        path.forEach((point) => bounds.extend(point));
-        const polygon = new google.maps.Polygon({
-          paths: path,
-          strokeColor: color,
-          strokeOpacity: 0.95,
-          strokeWeight: 2,
-          fillColor: color,
-          fillOpacity,
-          map,
-        });
-        overlaysRef.current.push(polygon);
-      }
-    };
-    addGeometry(sceneGeometry, '#f59e0b', 0.08);
-    addGeometry(propertyGeometry, '#22d3ee', 0.22);
-    if (!bounds.isEmpty()) map.fitBounds(bounds, 36);
-  }, [propertyGeometry, sceneGeometry]);
-
-  if (mapFailed) {
-    const rings = [
-      ...cbersGeometryCoordinates(sceneGeometry).map((ring) => ({ ring, color: '#f59e0b', fill: 'rgba(245,158,11,0.08)' })),
-      ...cbersGeometryCoordinates(propertyGeometry).map((ring) => ({ ring, color: '#22d3ee', fill: 'rgba(34,211,238,0.22)' })),
-    ];
-    const points = rings.flatMap((item) => item.ring);
-    if (!points.length) {
-      return (
-        <div className="flex h-[260px] items-center justify-center rounded-xl border border-white/10 bg-black/30 text-sm text-slate-500">
-          Mapa indisponível para esta geometria.
-        </div>
-      );
-    }
-    const xs = points.map((point) => point[0]);
-    const ys = points.map((point) => point[1]);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-    const width = Math.max(0.000001, maxX - minX);
-    const height = Math.max(0.000001, maxY - minY);
-    return (
-      <div className="h-[260px] overflow-hidden rounded-xl border border-white/10 bg-black/30">
-        <svg viewBox="0 0 100 100" className="h-full w-full">
-          {rings.map((item, idx) => {
-            const pointsAttr = item.ring
-              .map(([lng, lat]) => `${((lng - minX) / width) * 90 + 5},${95 - ((lat - minY) / height) * 90}`)
-              .join(' ');
-            return (
-              <polygon
-                key={`${item.color}-${idx}`}
-                points={pointsAttr}
-                fill={item.fill}
-                stroke={item.color}
-                strokeWidth="1.2"
-              />
-            );
-          })}
-        </svg>
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-hidden rounded-xl border border-white/10 bg-black/30">
-      <MapView
-        className="h-[260px] w-full"
-        initialCenter={cbersGeometryCenter(propertyGeometry || sceneGeometry)}
-        initialZoom={10}
-        onMapReady={draw}
-        onLoadError={() => setMapFailed(true)}
-      />
-    </div>
-  );
-}
-
 interface DashboardProps {
-  initialView?: 'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'auas-sccon' | 'features' | 'settings';
+  initialView?: DashboardView;
   hideSidebar?: boolean;
 }
 
@@ -1366,7 +1255,8 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [selectedErrorLocation, setSelectedErrorLocation] = useState<google.maps.LatLngLiteral | null>(null);
   const [selectedErrorLabel, setSelectedErrorLabel] = useState<string | null>(null);
-  const [activeView, setActiveView] = useState<'simcar-clip' | 'simcar-receipts' | 'cbers-wpm' | 'landsat' | 'vertices-proximas' | 'auas-sccon' | 'features' | 'settings'>(initialView);
+  const [activeView, setActiveView] = useState<DashboardView>(initialView);
+  const { navigateView } = useDashboardNavigation(setActiveView);
   const initialViewRef = React.useRef(initialView);
 
   useEffect(() => {
@@ -1924,49 +1814,8 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     });
   }, []);
 
-  const apiFetch = useCallback(
-    async (
-      path: string,
-      init?: RequestInit,
-      options?: { auth?: boolean },
-    ): Promise<Response> => {
-      const useAuth = options?.auth !== false;
-      const headers = new Headers(init?.headers || {});
-      const hasBody = typeof init?.body !== 'undefined' && init?.body !== null;
-      if (hasBody && !(init?.body instanceof FormData) && !headers.has('Content-Type')) {
-        headers.set('Content-Type', 'application/json');
-      }
-      if (useAuth) {
-        const user = auth.currentUser;
-        if (!user) {
-          throw new Error('Usuário não autenticado.');
-        }
-        const token = await user.getIdToken();
-        headers.set('Authorization', `Bearer ${token}`);
-      }
-      return fetch(apiUrl(path), {
-        ...init,
-        headers,
-      });
-    },
-    []
-  );
-
-  const readApiError = useCallback(async (response: Response) => {
-    const fallback = { error: `Erro ${response.status}` };
-    const text = await response.text();
-    if (!text) return fallback;
-    try {
-      return JSON.parse(text);
-    } catch {
-      const isHtml = /^\s*</.test(text);
-      return {
-        error: isHtml
-          ? `A API retornou HTML em vez de JSON (${response.status}). Recarregue a página e tente novamente.`
-          : text.slice(0, 500),
-      };
-    }
-  }, []);
+  const apiFetch = apiFetchShared;
+  const readApiError = readApiErrorShared;
 
   const requestProcessCancel = useCallback(
     async (jobId: string | null | undefined) => {
@@ -2043,7 +1892,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     const notice = message || 'Voce esta sem creditos. Adicione creditos para continuar.';
     toast.error(notice);
     setChatError(notice);
-    setActiveView('settings');
+    navigateView('settings');
     setBillingTopupOpen(true);
   }, []);
 
@@ -2296,17 +2145,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
   };
 
-  const fileToBase64Payload = useCallback((file: File) => {
-    return new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = String(reader.result || '');
-        resolve(result.split(',').pop() || '');
-      };
-      reader.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
-      reader.readAsDataURL(file);
-    });
-  }, []);
+  const fileToBase64Payload = fileToBase64;
 
   const mapVerticesDocToHistoryItem = useCallback((docId: string, data: any): VerticesHistoryItem => {
     const rawStatus = String(data?.status || '').trim().toLowerCase();
@@ -2550,7 +2389,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
 
   const selectVerticesHistoryEntry = useCallback((entry: VerticesHistoryItem) => {
     verticesEventsAbortRef.current?.abort();
-    setActiveView('vertices-proximas');
+    navigateView('vertices-proximas');
     setVerticesFile(null);
     setVerticesUploadId(null);
     setVerticesLayers([]);
@@ -4279,7 +4118,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
           setVerticesHistory(verticesEntries);
           const runningVertices = verticesEntries.find((entry) => entry.status === 'processing');
           if (runningVertices) {
-            setActiveView('vertices-proximas');
+            navigateView('vertices-proximas');
             setVerticesProcessing(true);
             setVerticesJobId(runningVertices.jobId);
             setVerticesProgress({
@@ -4306,7 +4145,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
           setContainmentHistory(containmentEntries);
           const runningContainment = containmentEntries.find((entry) => entry.status === 'processing');
           if (runningContainment) {
-            setActiveView('vertices-proximas');
+            navigateView('vertices-proximas');
             setErrorAnalysisTab('containment');
             setContainmentJobId(runningContainment.jobId);
           }
@@ -4325,7 +4164,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
           setGeometryHistory(geometryEntries);
           const runningGeometry = geometryEntries.find((entry) => entry.status === 'processing');
           if (runningGeometry) {
-            setActiveView('vertices-proximas');
+            navigateView('vertices-proximas');
             setErrorAnalysisTab('geometry');
             setGeometryJobId(runningGeometry.jobId);
           }
@@ -4773,7 +4612,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     setActiveConversationRef(docRef);
     setMessages(initialMessages);
     if (initialViewRef.current === 'simcar-clip') {
-      setActiveView('simcar-clip');
+      navigateView('simcar-clip');
     }
   };
 
@@ -4815,7 +4654,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     setActiveConversationId(id);
     setActiveConversationRef(docRef);
     if (initialViewRef.current === 'simcar-clip') {
-      setActiveView('simcar-clip');
+      navigateView('simcar-clip');
     }
     // Não fechar a sidebar no boot: os cards de histórico moram nela.
     // Em mobile, o fechamento fica a cargo de onSelectConversation.
@@ -7786,7 +7625,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           ${isSidebarOpen ? 'translate-x-0 lg:w-80 lg:max-w-80' : '-translate-x-full lg:translate-x-0 lg:w-80 lg:max-w-80'}
         `}
       >
-        <div className="p-5 flex items-center gap-3 cursor-pointer group/sidebar-logo" onClick={() => setActiveView('simcar-clip')}>
+        <div className="p-5 flex items-center gap-3 cursor-pointer group/sidebar-logo" onClick={() => navigateView('simcar-clip')}>
           <div className="relative">
             <div className="absolute inset-0 bg-emerald-500/60 blur-xl rounded-full animate-pulse opacity-60 group-hover/sidebar-logo:opacity-100 transition-opacity duration-500"></div>
             <div className="relative bg-gradient-to-br from-emerald-400 to-green-600 p-2 rounded-xl shadow-lg shadow-emerald-900/50 group-hover/sidebar-logo:shadow-emerald-500/30 transition-shadow duration-300">
@@ -7805,95 +7644,22 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
         <div className="px-1 sm:px-3 mb-3 space-y-2">
           {/* ─── Abas — Segmented Control Moderno ─── */}
-          <div className="relative p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm overflow-hidden">
-            <div className="flex sm:grid sm:grid-cols-6 gap-0.5 relative scroll-tabs">
-              {/* Fundo ativo aplicado direto no botão — alinhamento perfeito, sem slider frágil */}
-              <button
-                onClick={() => {
-                  setActiveView('simcar-clip');
-                  if (simcarClipLayers.length === 0 && !simcarClipLayersLoading) {
-                    loadSimcarClipLayers();
-                  }
-                }}
-                style={activeView === 'simcar-clip' ? { background: 'linear-gradient(135deg, #7c3aed, #6366f1)', boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)' } : undefined}
-                className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
-                  activeView === 'simcar-clip'
-                    ? 'text-white'
-                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
-                }`}
-              >
-                <Scissors size={16} className={activeView === 'simcar-clip' ? 'drop-shadow-[0_0_6px_rgba(167,139,250,0.5)]' : ''} />
-                <span className="block leading-none text-[10px] tracking-wide">SIMCAR</span>
-              </button>
-              <button
-                onClick={() => setActiveView('simcar-receipts')}
-                style={activeView === 'simcar-receipts' ? { background: 'linear-gradient(135deg, #059669, #84cc16)', boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)' } : undefined}
-                className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
-                  activeView === 'simcar-receipts'
-                    ? 'text-white'
-                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
-                }`}
-              >
-                <Receipt size={16} className={activeView === 'simcar-receipts' ? 'drop-shadow-[0_0_6px_rgba(16,185,129,0.5)]' : ''} />
-                <span className="block leading-none text-[10px] tracking-wide">Recibos</span>
-              </button>
-              <button
-                onClick={() => setActiveView('cbers-wpm')}
-                style={activeView === 'cbers-wpm' ? { background: 'linear-gradient(135deg, #06b6d4, #10b981)', boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)' } : undefined}
-                className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
-                  activeView === 'cbers-wpm'
-                    ? 'text-white'
-                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
-                }`}
-              >
-                <Satellite size={16} className={activeView === 'cbers-wpm' ? 'drop-shadow-[0_0_6px_rgba(34,211,238,0.5)]' : ''} />
-                <span className="block leading-none text-[10px] tracking-wide">CBERS</span>
-              </button>
-              <button
-                onClick={() => setActiveView('landsat')}
-                style={activeView === 'landsat' ? { background: 'linear-gradient(135deg, #0ea5e9, #10b981)', boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)' } : undefined}
-                className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
-                  activeView === 'landsat'
-                    ? 'text-white'
-                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
-                }`}
-              >
-                <Layers size={16} className={activeView === 'landsat' ? 'drop-shadow-[0_0_6px_rgba(56,189,248,0.5)]' : ''} />
-                <span className="block leading-none text-[10px] tracking-wide">Landsat</span>
-              </button>
-              <button
-                onClick={() => setActiveView('vertices-proximas')}
-                style={activeView === 'vertices-proximas' ? { background: 'linear-gradient(135deg, #8b5cf6, #10b981)', boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)' } : undefined}
-                className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
-                  activeView === 'vertices-proximas'
-                    ? 'text-white'
-                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
-                }`}
-              >
-                <Network size={16} className={activeView === 'vertices-proximas' ? 'drop-shadow-[0_0_6px_rgba(167,139,250,0.5)]' : ''} />
-                <span className="block leading-none text-[10px] tracking-wide">Erros</span>
-              </button>
-              <button
-                onClick={() => setActiveView('auas-sccon')}
-                style={activeView === 'auas-sccon' ? { background: 'linear-gradient(135deg, #059669, #16a34a)', boxShadow: '0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)' } : undefined}
-                className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
-                  activeView === 'auas-sccon'
-                    ? 'text-white'
-                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
-                }`}
-              >
-                <CalendarClock size={16} className={activeView === 'auas-sccon' ? 'drop-shadow-[0_0_6px_rgba(16,185,129,0.5)]' : ''} />
-                <span className="block leading-none text-[10px] tracking-wide">AUAS</span>
-              </button>
-            </div>
-          </div>
+          <DashboardSidebarTabs
+            activeView={activeView}
+            onNavigate={(view) => {
+              navigateView(view);
+              if (view === 'simcar-clip' && simcarClipLayers.length === 0 && !simcarClipLayersLoading) {
+                loadSimcarClipLayers();
+              }
+            }}
+          />
 
           {/* ─── Botão de ação contextual (camada única — evita “++” do botão em anel) ─── */}
           {activeView === 'simcar-clip' && (
             <button
               type="button"
-              onClick={() => { resetSimcarDraft('auto-clip'); setActiveView('simcar-clip'); }}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 py-2.5 px-3 text-sm font-semibold text-white shadow-lg shadow-purple-900/30 transition-all"
+              onClick={() => { resetSimcarDraft('auto-clip'); navigateView('simcar-clip'); }}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 py-2.5 px-3 text-sm font-semibold text-white shadow-lg shadow-emerald-900/30 transition-all"
             >
               <Plus size={16} strokeWidth={2.25} className="shrink-0" aria-hidden />
               <span>Novo Recorte</span>
@@ -8362,7 +8128,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       // Clear active clip if it was this one
                       if (simcarClipJobId === clip.jobId) {
                         resetSimcarDraft('auto-clip');
-                        setActiveView('simcar-clip');
+                        navigateView('simcar-clip');
                       }
                     }}
                     className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition block"
@@ -8447,7 +8213,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 
         <div className="p-4 border-t border-white/5">
           <button
-            onClick={() => setActiveView('features')}
+            onClick={() => navigateView('features')}
             className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'features' ? 'bg-white/10' : ''}`}
           >
             <BookOpen size={18} className={`transition-colors ${activeView === 'features' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
@@ -8456,7 +8222,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </span>
           </button>
           <button
-            onClick={() => setActiveView('settings')}
+            onClick={() => navigateView('settings')}
             className={`w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group mb-2 ${activeView === 'settings' ? 'bg-white/10' : ''}`}
           >
             <Settings size={18} className={`transition-colors ${activeView === 'settings' ? 'text-emerald-400' : 'text-slate-500 group-hover:text-emerald-400'}`} />
@@ -8507,7 +8273,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <div className="flex items-center gap-2 min-w-0">
               <Zap size={16} className="text-emerald-400 fill-current shrink-0" />
               <span className="font-medium text-slate-200 text-sm sm:text-base truncate">
-                {activeView === 'simcar-clip' ? 'Recorte SIMCAR' : activeView === 'simcar-receipts' ? 'Recibos SIMCAR' : activeView === 'cbers-wpm' ? 'CBERS 4A WPM' : activeView === 'landsat' ? 'Landsat WMS' : activeView === 'vertices-proximas' ? 'Análise de Erros' : activeView === 'auas-sccon' ? 'AUAS × SCCON' : activeView === 'features' ? 'Funcionalidades' : 'Configurações'}
+                {DASHBOARD_VIEW_LABELS[activeView]}
               </span>
             </div>
           </div>
@@ -10229,6 +9995,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           </div>
         ) : activeView === 'simcar-receipts' ? (
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-slate-400 text-sm">Carregando recibos...</div>}>
           <ReceiptsHub
             apiFetch={apiFetch}
             onReceiptDownloaded={(receipt) => {
@@ -10253,6 +10020,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               }
             }}
           />
+          </Suspense>
         ) : activeView === 'cbers-wpm' ? (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
             <div className="max-w-6xl mx-auto space-y-5 sm:space-y-6">
@@ -11713,6 +11481,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               </div>
 
               {errorAnalysisTab === 'geometry' ? (
+                <Suspense fallback={<div className="rounded-xl border border-white/10 bg-black/20 p-6 text-sm text-slate-400">Carregando análise de geometria...</div>}>
                 <GeometryErrorsAnalysis
                   apiFetch={apiFetch}
                   onHighlightLocation={(loc, lbl) => {
@@ -11743,7 +11512,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     }
                   }}
                 />
+                </Suspense>
               ) : errorAnalysisTab === 'containment' ? (
+                <Suspense fallback={<div className="rounded-xl border border-white/10 bg-black/20 p-6 text-sm text-slate-400">Carregando análise de contenção...</div>}>
                 <ContainmentAnalysis
                   apiFetch={apiFetch}
                   onHighlightLocation={(loc, lbl) => {
@@ -11774,6 +11545,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     }
                   }}
                 />
+                </Suspense>
               ) : (
               <>
               <section className="rounded-2xl border border-violet-500/15 bg-[#0b1110]/80 p-5 sm:p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
@@ -12222,7 +11994,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           </div>
         ) : activeView === 'auas-sccon' ? (
-          <AuasSccon />
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-slate-400 text-sm">Carregando AUAS × SCCON...</div>}>
+            <AuasSccon />
+          </Suspense>
         ) : activeView === 'features' ? (
           <Suspense fallback={
             <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
@@ -12234,9 +12008,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             <FeaturesManual
               manualSection={manualSection}
               setManualSection={setManualSection}
-              onGoChat={() => setActiveView('simcar-clip')}
-              onGoSimcar={() => setActiveView('simcar-clip')}
-              onGoCbers={() => setActiveView('cbers-wpm')}
+              onGoChat={() => navigateView('simcar-clip')}
+              onGoSimcar={() => navigateView('simcar-clip')}
+              onGoCbers={() => navigateView('cbers-wpm')}
             />
           </Suspense>
         ) : (
