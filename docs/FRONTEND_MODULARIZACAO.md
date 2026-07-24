@@ -1,12 +1,12 @@
 # Modularização do Frontend Dashboard
 
-Documento vivo da quebra do monólito `client/src/pages/Dashboard.tsx` (~13k linhas).
+Documento vivo da quebra do monólito `client/src/pages/Dashboard.tsx`.
 
 ## Objetivo
 
 Separar o Dashboard em módulos com responsabilidades claras, sem mudar o comportamento das ferramentas (SIMCAR, CBERS, Landsat, Erros, AUAS, Recibos, Settings).
 
-## Fase 1 — Fundação (esta PR)
+## Fase 1 — Fundação
 
 ### O que foi feito
 
@@ -33,6 +33,21 @@ Separar o Dashboard em módulos com responsabilidades claras, sem mudar o compor
 - `DashboardRouter.tsx` — usa `getViewFromPath`.
 - `AuasSccon`, `ContainmentAnalysis`, `GeometryErrorsAnalysis` — usam `fileToBase64` / `apiUrl` de `@/lib/api`.
 
+## Fase 2 — SettingsPanel (esta PR)
+
+### O que foi feito
+
+| Módulo | Caminho | Papel |
+|--------|---------|--------|
+| Tipos/constantes de settings | `client/src/dashboard/settings/types.ts` | `UserSettings`, `DEFAULT_SETTINGS`, opções de tema/fonte |
+| Painel Settings | `client/src/dashboard/panels/SettingsPanel.tsx` | UI de perfil, créditos/billing e segurança |
+
+### Integração
+
+- `Dashboard.tsx` lazy-loada `SettingsPanel` sob `activeView === 'settings'`.
+- Estado de settings/billing e o modal de topup permanecem em `Dashboard` (props + callbacks para o painel).
+- Barrel `client/src/dashboard/index.ts` reexporta tipos de settings e props do painel.
+
 ## Testes
 
 ```bash
@@ -45,13 +60,12 @@ Cobertura inicial: `client/src/dashboard/routes.test.ts` (mapeamento path ↔ vi
 
 ## Fases seguintes (roadmap)
 
-1. **Painel Settings** — extrair JSX/estado de configurações + billing para `dashboard/panels/SettingsPanel.tsx`.
-2. **Painel CBERS** — mover estado + UI CBERS (~800 linhas) para `panels/CbersPanel.tsx` + hook `useCbersJobs`.
-3. **Painel Landsat** — espelhar CBERS.
-4. **Painel SIMCAR** — maior superfície; extrair em subpainéis (upload, progresso, resultado).
-5. **Painel Erros** — vértices + wrappers dos analyses já lazy.
-6. **Fetch sob demanda** — carregar histórico só da `activeView`.
-7. **Remover código morto** — `ProcessarProjetoAnalysis.tsx`, `Home.tsx` placeholder.
+1. **Painel CBERS** — mover estado + UI CBERS (~800 linhas) para `panels/CbersPanel.tsx` + hook `useCbersJobs`.
+2. **Painel Landsat** — espelhar CBERS.
+3. **Painel SIMCAR** — maior superfície; extrair em subpainéis (upload, progresso, resultado).
+4. **Painel Erros** — vértices + wrappers dos analyses já lazy.
+5. **Fetch sob demanda** — carregar histórico só da `activeView`.
+6. **Remover código morto** — `ProcessarProjetoAnalysis.tsx`, `Home.tsx` placeholder.
 
 ## Convenções
 
@@ -66,5 +80,6 @@ Cobertura inicial: `client/src/dashboard/routes.test.ts` (mapeamento path ↔ vi
 1. Login → `/dashboard/simcar` na URL.
 2. Clicar CBERS → URL `/dashboard/cbers`; F5 mantém a aba.
 3. Voltar no browser → volta para SIMCAR sem perder a sessão.
-4. Abrir Recibos / AUAS / Manual → loading curto (lazy) depois o painel.
+4. Abrir Recibos / AUAS / Manual / Configurações → loading curto (lazy) depois o painel.
 5. Novo Recorte / abas ativas em verde esmeralda.
+6. Em Configurações: saldo, histórico e “Adicionar créditos” (modal de topup ainda no Dashboard).
