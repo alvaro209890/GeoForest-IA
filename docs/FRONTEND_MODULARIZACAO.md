@@ -83,3 +83,26 @@ Cobertura inicial: `client/src/dashboard/routes.test.ts` (mapeamento path ↔ vi
 4. Abrir Recibos / AUAS / Manual / Configurações → loading curto (lazy) depois o painel.
 5. Novo Recorte / abas ativas em verde esmeralda.
 6. Em Configurações: saldo, histórico e “Adicionar créditos” (modal de topup ainda no Dashboard).
+
+## Status GitHub / Deploy
+
+- **Mergeado em `main`**: commit `4a2a4e40` (fases 1–2 + firebase-tools).
+- **Build**: `pnpm build:app` → `dist/public` (`SettingsPanel` ~27 KB; `DashboardRouter` ~478 KB).
+- **Firebase Hosting**: deploy **pendente** neste ambiente cloud (sem `firebase login` nem `FIREBASE_TOKEN`). Projeto: `ia-florestal` → `https://ia-florestal.web.app`.
+
+### Publicar hosting (PC já autenticado)
+
+```bash
+git pull origin main
+pnpm install
+pnpm build:app
+pnpm exec firebase deploy --only hosting --project ia-florestal
+```
+
+Token para CI/cloud agent (gerar no PC logado):
+
+```bash
+firebase login:ci
+export FIREBASE_TOKEN='...'
+pnpm exec firebase deploy --only hosting --project ia-florestal --non-interactive
+```

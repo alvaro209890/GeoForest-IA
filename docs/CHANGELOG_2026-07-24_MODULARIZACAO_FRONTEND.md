@@ -41,13 +41,15 @@ Documento de acompanhamento: [FRONTEND_MODULARIZACAO.md](./FRONTEND_MODULARIZACA
 
 ## Validação
 
-- `pnpm test` — testes de rotas OK
+- `pnpm test` — 15 testes OK (rotas + api)
 - `pnpm check` — sem erros novos no client (backend `jszip` pré-existente)
-- `pnpm build:app` — OK; chunks lazy incluem Settings além de:
-  - `AuasSccon-*.js`
-  - `ContainmentAnalysis-*.js`
-  - `GeometryErrorsAnalysis-*.js`
-  - `ReceiptsHub-*.js`
-  - `FeaturesManual-*.js`
-  - `SettingsPanel-*.js`
-  - `DashboardRouter-*.js` reduz com a extração do Settings (próximas fases: CBERS/Landsat/SIMCAR)
+- `pnpm build:app` — OK; chunks lazy:
+  - `SettingsPanel-*.js` (~27 KB)
+  - `AuasSccon-*.js` / `ContainmentAnalysis-*.js` / `GeometryErrorsAnalysis-*.js`
+  - `ReceiptsHub-*.js` / `FeaturesManual-*.js`
+  - `DashboardRouter-*.js` ~478 KB (era ~502 KB)
+
+## GitHub
+
+- Mergeado em **`main`** (`4a2a4e40`).
+- Deploy Firebase Hosting neste ambiente cloud: **bloqueado** (sem sessão/`FIREBASE_TOKEN`). Instruções em `FRONTEND_MODULARIZACAO.md`.
