@@ -1,0 +1,60 @@
+import type { CbersGeoJsonGeometry } from '../components/CbersMapPreview';
+
+export type LandsatComposition = 'false_color' | 'natural_color';
+export type LandsatJobStatus = 'processing' | 'completed' | 'failed' | 'cancelled';
+
+export type LandsatScene = {
+  id: string;
+  source: 'local_wms' | 'usgs_stac';
+  collectionId?: string;
+  platform?: string;
+  sensor?: string;
+  path: string;
+  row: string;
+  orbit: string;
+  year: string;
+  date: string;
+  datetime: string;
+  cloudCover: number | null;
+  composition: LandsatComposition;
+  compositionLabel: string;
+  bbox: [number, number, number, number] | null;
+  geometry?: CbersGeoJsonGeometry;
+  thumbnailUrl?: string;
+  coveragePercent?: number;
+  coversArea?: boolean;
+  assetKeys?: string[];
+  downloadBytes?: number | null;
+  wmsAvailable?: boolean;
+  wmsLayerName?: string;
+  wmsStoreName?: string;
+  wmsUrl?: string;
+  wmsDownloadUrl?: string;
+  sourcePath?: string;
+  outputFilename?: string;
+};
+
+export type LandsatHistoryItem = {
+  id: string;
+  jobId: string;
+  filename: string;
+  timestamp: string;
+  createdAt?: string;
+  updatedAt?: string;
+  status: LandsatJobStatus;
+  stage?: string;
+  percent: number;
+  message?: string;
+  error?: string;
+  sceneId?: string;
+  composition?: LandsatComposition;
+  scene?: LandsatScene | null;
+  outputUrl?: string;
+  outputRelativePath?: string;
+  outputFilename?: string;
+  outputBytes?: number;
+  wmsLayerName?: string;
+  wmsStoreName?: string;
+  wmsUrl?: string;
+  wmsDownloadUrl?: string;
+};

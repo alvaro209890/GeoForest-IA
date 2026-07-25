@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
-import { snapClippedGeometryToBoundary } from "./simcar-clip";
+import { snapClippedGeometryToBoundary } from "./simcar-clip-snap";
 
 // Casos montados no equador: 1e-6 grau ≈ 0,111 m (lon e lat).
 const METER_LON = 1 / 111320;
