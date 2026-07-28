@@ -74,6 +74,41 @@ function centroidFromPolygon(polygon: Polygon | MultiPolygon): [number, number] 
   return n ? [sx / n, sy / n] : [0, 0];
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatFetchError(error: unknown): string {
+  const message = String((error as Error)?.message || error || "fetch failed");
+  const cause = (error as { cause?: unknown })?.cause;
+  const code = String((cause as { code?: string })?.code || "");
+  if (/fetch failed|ETIMEDOUT|ENETUNREACH|ECONNRESET|ENOTFOUND/i.test(`${message} ${code}`)) {
+    return "Serviço de roteamento OSRM indisponível no momento. Tente novamente em instantes.";
+  }
+  return message;
+}
+
+async function fetchOsrmJson(url: string): Promise<Record<string, unknown>> {
+  const attempts = Number(process.env.CROQUI_OSRM_RETRIES || 3);
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!response.ok) {
+        throw new Error(`OSRM indisponível (${response.status}). Verifique CROQUI_OSRM_BASE_URL.`);
+      }
+      return (await response.json()) as Record<string, unknown>;
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await sleep(1000 * attempt);
+    }
+  }
+  throw new Error(formatFetchError(lastError));
+}
+
 export async function fetchDrivingRoute(
   startLon: number,
   startLat: number,
@@ -84,14 +119,7 @@ export async function fetchDrivingRoute(
   const url =
     `${OSRM_BASE}/route/v1/driving/${coordPath}` +
     "?overview=full&steps=true&geometries=geojson&annotations=false";
-  const response = await fetch(url, {
-    headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(60000),
-  });
-  if (!response.ok) {
-    throw new Error(`OSRM indisponível (${response.status}). Verifique CROQUI_OSRM_BASE_URL.`);
-  }
-  const data = (await response.json()) as {
+  const data = await fetchOsrmJson(url) as {
     code?: string;
     routes?: Array<{
       distance?: number;

@@ -176,6 +176,15 @@ export async function detectarMunicipioWfsSema(
   return { nome, ibge, fonte: "wfs-sema" };
 }
 
+export function getMunicipioFeatureByIbge(ibge: string | null | undefined): MunicipioFeature | null {
+  const code = String(ibge || "").trim();
+  if (!/^51\d{5}$/.test(code)) return null;
+  for (const item of municipioIndex()) {
+    if (item.feature.properties.ibge === code) return item.feature;
+  }
+  return null;
+}
+
 export async function detectarMunicipioMtComFallback(
   coordinate: [number, number],
 ): Promise<MunicipioDetectado | null> {

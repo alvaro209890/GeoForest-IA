@@ -26,7 +26,7 @@ import {
 } from "./local-storage";
 import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
 import { parseUserShapefile } from "./simcar-clip";
-import { detectarMunicipioMtComFallback } from "./simcar-oraculo/municipio-mt";
+import { detectarMunicipioMtComFallback, getMunicipioFeatureByIbge } from "./simcar-oraculo/municipio-mt";
 import { formatDmsPair } from "./croqui/coords";
 import { resolveLandmark } from "./croqui/landmarks";
 import { buildCroquiNarrative } from "./croqui/narrative";
@@ -124,7 +124,8 @@ export async function generateCroquiArtifacts(args: {
     fonte: "nao-detectado" as const,
   };
   const municipioNome = municipio.nome || "Mato Grosso";
-  const landmark = resolveLandmark(municipio.nome, municipio.ibge, null);
+  const municipioFeature = getMunicipioFeatureByIbge(municipio.ibge);
+  const landmark = resolveLandmark(municipio.nome, municipio.ibge, municipioFeature);
   const dest = destinationOnPolygonBoundary(atpGeometry, landmark.lon, landmark.lat);
   const route = await fetchDrivingRoute(landmark.lon, landmark.lat, dest.lon, dest.lat);
   const startDms = formatDmsPair(landmark.lon, landmark.lat);
