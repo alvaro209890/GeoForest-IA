@@ -175,8 +175,8 @@ async function runCroquiJob(args: {
 
     progress(uid, jobId, { status: "processing", stage: "parse", percent: 10, message: "Lendo shapefile ATP..." });
     const inputPath = String(upload.inputRelativePath || "");
-    const zipBuffer = fs.readFileSync(getAbsoluteStoragePath(inputPath));
-    const parsed = parseUserShapefile(zipBuffer);
+    const inputZipBuffer = fs.readFileSync(getAbsoluteStoragePath(inputPath));
+    const parsed = parseUserShapefile(inputZipBuffer);
     if (parsed.polygons.length !== 1) {
       throw new Error("O ZIP deve conter exatamente um polígono ATP.");
     }
