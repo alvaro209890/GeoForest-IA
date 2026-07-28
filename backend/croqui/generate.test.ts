@@ -25,10 +25,18 @@ describe("croqui narrative + kml", () => {
         roadName: "MT-109",
       },
       {
+        lon: -52.215,
+        lat: -12.585,
+        dms: "(-12°34'48.00\"S, 52°12'36.00\"O)",
+        distanceFromPrevM: 10700,
+        instruction: "Siga em frente pela MT-109",
+        roadName: "MT-109",
+      },
+      {
         lon: -52.21,
         lat: -12.58,
-        dms: "(-12°34'48.00\"S, 52°12'36.00\"O)",
-        distanceFromPrevM: 12000,
+        dms: "(-12°34'20.00\"S, 52°12'00.00\"O)",
+        distanceFromPrevM: 5000,
         instruction: "Chegada ao destino",
         roadName: "",
       },
@@ -38,6 +46,7 @@ describe("croqui narrative + kml", () => {
   it("gera narrativa com município e propriedade", () => {
     const text = buildCroquiNarrative({
       municipioNome: "Querência",
+      municipioIbge: "5107909",
       propertyName: "Fazenda Teste",
       landmark: {
         label: "rotatória MT-109",
@@ -74,5 +83,7 @@ describe("croqui narrative + kml", () => {
     expect(kml).toContain("Medida do caminho");
     expect(kml).toContain("<Polygon>");
     expect(kml).toContain("Fazenda Teste");
+    expect(kml).toContain("msn_ylw-pushpin");
+    expect(kml).toContain("Meus lugares");
   });
 });

@@ -13,7 +13,7 @@ describe("croqui coords", () => {
   });
 
   it("formata distâncias em km e metros", () => {
-    expect(formatDistance(10700)).toBe("10.7 km");
+    expect(formatDistance(10700)).toBe("10,7 km");
     expect(formatDistance(298)).toBe("298 m");
   });
 });

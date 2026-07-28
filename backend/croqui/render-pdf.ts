@@ -4,16 +4,11 @@ import type { CroquiRoute } from "./routing";
 
 const PAGE_W = 842;
 const PAGE_H = 595;
-const MAP_X = 28;
-const MAP_Y = 28;
-const MAP_W = 500;
-const MAP_H = 539;
-const PANEL_X = 540;
-const PANEL_W = PAGE_W - PANEL_X - 28;
+const HEADER_H = 92;
 
 function expandBbox(
   coords: Position[],
-  paddingRatio = 0.12,
+  paddingRatio = 0.1,
 ): [number, number, number, number] {
   let minX = Infinity;
   let minY = Infinity;
@@ -36,8 +31,8 @@ function project(
   bbox: [number, number, number, number],
 ): [number, number] {
   const [minX, minY, maxX, maxY] = bbox;
-  const x = MAP_X + ((lon - minX) / (maxX - minX)) * MAP_W;
-  const y = MAP_Y + MAP_H - ((lat - minY) / (maxY - minY)) * MAP_H;
+  const x = ((lon - minX) / (maxX - minX)) * PAGE_W;
+  const y = PAGE_H - ((lat - minY) / (maxY - minY)) * PAGE_H;
   return [x, y];
 }
 
@@ -45,7 +40,7 @@ async function fetchMapImage(bbox: [number, number, number, number]): Promise<Bu
   const [minX, minY, maxX, maxY] = bbox;
   const url =
     "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export" +
-    `?bbox=${minX},${minY},${maxX},${maxY}&bboxSR=4326&imageSR=4326&size=1200,900&format=png&f=image`;
+    `?bbox=${minX},${minY},${maxX},${maxY}&bboxSR=4326&imageSR=4326&size=1684,1190&format=jpg&f=image`;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(45000) });
     if (!res.ok) return null;
@@ -71,6 +66,14 @@ function polygonRings(geometry: Polygon | MultiPolygon): Position[][] {
   return geometry.coordinates.map((p) => p[0]);
 }
 
+function drawYellowPin(doc: InstanceType<typeof PDFDocument>, x: number, y: number): void {
+  doc.save();
+  doc.fillColor("#ffff00").strokeColor("#333333").lineWidth(0.6);
+  doc.circle(x, y - 4, 4).fillAndStroke();
+  doc.moveTo(x, y).lineTo(x - 3, y + 8).lineTo(x + 3, y + 8).closePath().fillAndStroke();
+  doc.restore();
+}
+
 export async function buildCroquiPdfBuffer(args: {
   title: string;
   narrative: string;
@@ -93,17 +96,17 @@ export async function buildCroquiPdfBuffer(args: {
     doc.on("error", reject);
     doc.addPage({ size: [PAGE_W, PAGE_H], margin: 0 });
 
-    doc.rect(MAP_X, MAP_Y, MAP_W, MAP_H).fill("#e8ecef");
+    doc.rect(0, 0, PAGE_W, PAGE_H).fill("#d8dde0");
     if (mapImage) {
       try {
-        doc.image(mapImage, MAP_X, MAP_Y, { width: MAP_W, height: MAP_H });
+        doc.image(mapImage, 0, 0, { width: PAGE_W, height: PAGE_H });
       } catch {
         // fallback sem imagem
       }
     }
 
     doc.save();
-    doc.lineWidth(3).strokeColor("#ff0000");
+    doc.lineWidth(3.5).strokeColor("#ff0000");
     const routePts = route.coordinates;
     if (routePts.length >= 2) {
       const [x0, y0] = project(routePts[0][0], routePts[0][1], bbox);
@@ -115,7 +118,7 @@ export async function buildCroquiPdfBuffer(args: {
       doc.stroke();
     }
 
-    doc.lineWidth(2).strokeColor("#00ffff");
+    doc.lineWidth(2.5).strokeColor("#00ffff");
     for (const ring of polygonRings(atpGeometry)) {
       if (ring.length < 3) continue;
       const [fx, fy] = project(ring[0][0], ring[0][1], bbox);
@@ -127,56 +130,58 @@ export async function buildCroquiPdfBuffer(args: {
       doc.closePath().stroke();
     }
 
-    doc.fillColor("#ff0000");
-    for (const w of args.route.waypoints) {
+    for (const w of route.waypoints) {
       const [x, y] = project(w.lon, w.lat, bbox);
-      doc.circle(x, y, 3).fill();
+      drawYellowPin(doc, x, y);
     }
     doc.restore();
 
-    doc.rect(PANEL_X, MAP_Y, PANEL_W, MAP_H).fill("#ffffff");
-    doc.fillColor("#1f4e79").font("Helvetica-Bold").fontSize(18);
-    doc.text(title, PANEL_X + 12, MAP_Y + 14, { width: PANEL_W - 24 });
+    doc.save();
+    doc.fillColor("#ffffff").fillOpacity(0.9);
+    doc.rect(0, 0, PAGE_W, HEADER_H).fill();
+    doc.fillOpacity(1);
+    doc.restore();
 
-    doc.font("Helvetica-Bold").fontSize(11).fillColor("#1f4e79");
-    doc.text("Legenda", PANEL_X + 12, MAP_Y + 48);
-    doc.font("Helvetica-Bold").fontSize(10).text("Caminho", PANEL_X + 12, MAP_Y + 64);
+    doc.font("Helvetica-Bold").fontSize(13).fillColor("#000000");
+    doc.text(title, 21, 24, { width: 480, lineBreak: false });
 
-    doc.font("Helvetica").fontSize(8.5).fillColor("#000000");
-    doc.text(narrative.replace(/\n/g, " "), PANEL_X + 12, MAP_Y + 78, {
-      width: PANEL_W - 24,
-      lineGap: 2,
+    doc.font("Helvetica-Bold").fontSize(10);
+    doc.text("Legenda", 726, 21, { width: 100, align: "left", lineBreak: false });
+    doc.text("Caminho", 749, 41, { width: 80, align: "left", lineBreak: false });
+    doc.text("Coordenadas", 749, 58, { width: 80, align: "left", lineBreak: false });
+
+    doc.font("Helvetica").fontSize(9).fillColor("#000000");
+    doc.text(narrative.replace(/\s+/g, " "), 21, 49, {
+      width: 500,
+      lineGap: 1.5,
     });
 
-    const coordY = MAP_Y + 280;
-    doc.font("Helvetica-Bold").fontSize(10).fillColor("#1f4e79");
-    doc.text("Coordenadas", PANEL_X + 12, coordY);
-    doc.font("Helvetica").fontSize(8).fillColor("#000000");
-    doc.text(coordinateLines.join("\n"), PANEL_X + 12, coordY + 14, {
-      width: PANEL_W - 24,
-      lineGap: 1,
+    doc.font("Helvetica").fontSize(7.5);
+    doc.text(coordinateLines.join("\n"), 580, 72, {
+      width: 240,
+      lineGap: 0.5,
+      align: "left",
     });
 
-    const northX = PANEL_X + PANEL_W - 50;
-    const northY = MAP_Y + MAP_H - 70;
-    doc.font("Helvetica-Bold").fontSize(14).fillColor("#000").text("N", northX, northY);
-    doc.moveTo(northX + 6, northY + 18).lineTo(northX + 6, northY + 38).stroke();
-    doc.moveTo(northX + 6, northY + 18).lineTo(northX + 2, northY + 24).stroke();
-    doc.moveTo(northX + 6, northY + 18).lineTo(northX + 10, northY + 24).stroke();
+    const northX = PAGE_W - 42;
+    const northY = PAGE_H - 58;
+    doc.font("Helvetica-Bold").fontSize(13).fillColor("#000");
+    doc.text("N", northX, northY, { lineBreak: false });
+    doc.lineWidth(1.5).strokeColor("#000");
+    doc.moveTo(northX + 5, northY + 14).lineTo(northX + 5, northY + 32).stroke();
+    doc.moveTo(northX + 5, northY + 14).lineTo(northX + 1, northY + 20).stroke();
+    doc.moveTo(northX + 5, northY + 14).lineTo(northX + 9, northY + 20).stroke();
 
-    const scaleX = PANEL_X + 12;
-    const scaleY = MAP_Y + MAP_H - 36;
-    const scaleBarW = 80;
+    const scaleX = 24;
+    const scaleY = PAGE_H - 28;
+    const scaleBarW = 72;
     doc.lineWidth(2).strokeColor("#000");
     doc.moveTo(scaleX, scaleY).lineTo(scaleX + scaleBarW, scaleY).stroke();
-    doc.font("Helvetica").fontSize(9).fillColor("#000");
-    doc.text(`${scaleKm} km`, scaleX, scaleY + 4);
+    doc.font("Helvetica").fontSize(8).fillColor("#000");
+    doc.text(`${scaleKm} km`, scaleX, scaleY + 3, { lineBreak: false });
 
-    doc.font("Helvetica").fontSize(7).fillColor("#666666");
-    doc.text("Image Landsat / Copernicus", PANEL_X + 12, MAP_Y + MAP_H - 14, {
-      width: PANEL_W - 24,
-      align: "right",
-    });
+    doc.font("Helvetica").fontSize(7).fillColor("#ffffff");
+    doc.text("Image Airbus", PAGE_W - 120, PAGE_H - 14, { width: 110, align: "right", lineBreak: false });
 
     doc.end();
   });

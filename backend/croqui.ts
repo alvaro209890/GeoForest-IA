@@ -27,7 +27,7 @@ import {
 import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
 import { parseUserShapefile } from "./simcar-clip";
 import { detectarMunicipioMtComFallback, getMunicipioFeatureByIbge } from "./simcar-oraculo/municipio-mt";
-import { formatDmsPair } from "./croqui/coords";
+import { formatDmsPair, safeFileStem } from "./croqui/coords";
 import { resolveLandmark } from "./croqui/landmarks";
 import { buildCroquiNarrative } from "./croqui/narrative";
 import { destinationOnPolygonBoundary, fetchDrivingRoute } from "./croqui/routing";
@@ -124,22 +124,26 @@ export async function generateCroquiArtifacts(args: {
     fonte: "nao-detectado" as const,
   };
   const municipioNome = municipio.nome || "Mato Grosso";
+  const municipioIbge = municipio.ibge || null;
   const municipioFeature = getMunicipioFeatureByIbge(municipio.ibge);
   const landmark = resolveLandmark(municipio.nome, municipio.ibge, municipioFeature);
   const dest = destinationOnPolygonBoundary(atpGeometry, landmark.lon, landmark.lat);
   const route = await fetchDrivingRoute(landmark.lon, landmark.lat, dest.lon, dest.lat);
   const startDms = formatDmsPair(landmark.lon, landmark.lat);
+  const atpInQuerencia = municipioIbge === "5107909";
   const narrative = buildCroquiNarrative({
     municipioNome,
+    municipioIbge,
     propertyName,
     landmark,
     route,
     startDms,
   });
   const coordinateLines = route.waypoints.map((w) => w.dms.replace(/^\(|\)$/g, ""));
+  const fileStem = safeFileStem(title);
 
   const kml = buildCroquiKml({ title, propertyName, atpGeometry, route });
-  const docx = await buildCroquiDocxBuffer(narrative);
+  const docx = await buildCroquiDocxBuffer(narrative, atpInQuerencia);
   const pdf = await buildCroquiPdfBuffer({
     title,
     narrative,
@@ -148,13 +152,17 @@ export async function generateCroquiArtifacts(args: {
     route,
   });
 
+  const pdfName = `${fileStem}.pdf`;
+  const docxName = `${fileStem}.docx`;
+  const kmlName = `${fileStem}.kml`;
+
   return {
     narrative,
     municipioNome,
     files: [
-      { name: "croqui.pdf", buffer: pdf },
-      { name: "croqui.docx", buffer: docx },
-      { name: "croqui.kml", buffer: Buffer.from(kml, "utf8") },
+      { name: pdfName, buffer: pdf },
+      { name: docxName, buffer: docx },
+      { name: kmlName, buffer: Buffer.from(kml, "utf8") },
     ],
   };
 }
@@ -196,11 +204,7 @@ async function runCroquiJob(args: {
     }
 
     progress(uid, jobId, { stage: "export", percent: 75, message: "Gerando PDF, Word e KML..." });
-    const zipBuffer = await buildOutputZip([
-      { name: "croqui.pdf", buffer: result.files.find((f) => f.name === "croqui.pdf")!.buffer },
-      { name: "croqui.docx", buffer: result.files.find((f) => f.name === "croqui.docx")!.buffer },
-      { name: "croqui.kml", buffer: result.files.find((f) => f.name === "croqui.kml")!.buffer },
-    ]);
+    const zipBuffer = await buildOutputZip(result.files);
 
     const stored = saveUserBuffer({
       uid,
@@ -210,6 +214,7 @@ async function runCroquiJob(args: {
     });
 
     const downloadUrl = stored.publicUrl;
+    const fileNames = result.files.map((f) => f.name);
     progress(uid, jobId, {
       status: "completed",
       stage: "done",
@@ -218,7 +223,7 @@ async function runCroquiJob(args: {
       municipioNome: result.municipioNome,
       title,
       propertyName,
-      files: ["croqui.pdf", "croqui.docx", "croqui.kml"],
+      files: fileNames,
       outputRelativePath: stored.relativePath,
       outputUrl: downloadUrl,
       downloadUrl,

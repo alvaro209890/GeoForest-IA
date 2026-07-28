@@ -1,19 +1,35 @@
 import { Document, Packer, Paragraph, TextRun } from "docx";
+import { buildCroquiDocxParagraphs } from "./narrative";
 
-export async function buildCroquiDocxBuffer(narrative: string): Promise<Buffer> {
-  const paragraphs = narrative
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map(
-      (line) =>
-        new Paragraph({
-          children: [new TextRun({ text: line, size: 24 })],
-          spacing: { after: 200 },
-        }),
-    );
+export async function buildCroquiDocxBuffer(
+  narrative: string,
+  atpInQuerencia = false,
+): Promise<Buffer> {
+  const paragraphs = buildCroquiDocxParagraphs(narrative, atpInQuerencia).map(
+    (text) =>
+      new Paragraph({
+        children: [
+          new TextRun({
+            text,
+            font: "Calibri",
+            size: 22,
+          }),
+        ],
+        spacing: { after: 120, line: 276 },
+      }),
+  );
+
   const doc = new Document({
-    sections: [{ properties: {}, children: paragraphs.length ? paragraphs : [new Paragraph("")] }],
+    sections: [
+      {
+        properties: {
+          page: {
+            margin: { top: 1134, right: 1134, bottom: 1134, left: 1134 },
+          },
+        },
+        children: paragraphs.length ? paragraphs : [new Paragraph("")],
+      },
+    ],
   });
   return Packer.toBuffer(doc);
 }

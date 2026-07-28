@@ -1,0 +1,4 @@
+{"content":"ola","role":"user"}
+{"content":"Olá! Em que posso ajudar?","reasoning":"O usuário disse \"ola\". Devo responder de forma concisa e direta, conforme as regras. Um simples \"Olá! Em que posso ajudar?\" é suficiente, mas as regras dizem para NUNCA começar com certas frases. \"Olá!\" não está na lista de proibições (Claro!, Vou..., Aqui está..., Pronto!). Mas também diz \"SEJA CONCISO. Respostas finais: até 3 frases curtas, direto ao ponto.\" e \"NUNCA repita o que o usuário pediu.\"\n\nEntão vou apenas cumprimentar de volta de forma simples e perguntar no que posso ajudar.","role":"assistant"}
+{"content":"tudo bem com voce","role":"user"}
+{"content":"Tudo ótimo! Em que posso te ajudar com o projeto **GeoForest-IA**?","reasoning":"O usuário está perguntando como estou. É uma pergunta casual. Vou responder de forma amigável e direta, seguindo o estilo conciso.","role":"assistant"}

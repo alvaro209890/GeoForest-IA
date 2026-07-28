@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GeoForest IA — Inteligência Artificial para Engenharia Florestal</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    color: #1e293b;
+    background: #f8fafc;
+    line-height: 1.6;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    background: linear-gradient(135deg, #0f2b1f 0%, #1a4a2e 40%, #2d6a3f 100%);
+    color: #fff;
+    padding: 100px 24px 80px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 120"><path d="M0 60 Q150 0 300 60 Q450 120 600 60 Q750 0 900 60 Q1050 120 1200 60 L1200 120 L0 120 Z" fill="rgba(255,255,255,0.04)"/></svg>') repeat-x bottom;
+    background-size: 1200px 120px;
+  }
+  .hero-badge {
+    display: inline-block;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 50px;
+    padding: 6px 20px;
+    font-size: 14px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 28px;
+    backdrop-filter: blur(8px);
+  }
+  .hero h1 {
+    font-size: clamp(2.2rem, 5vw, 3.8rem);
+    font-weight: 800;
+    line-height: 1.15;
+    max-width: 800px;
+    margin: 0 auto 20px;
+  }
+  .hero h1 span { color: #86efac; }
+  .hero p {
+    font-size: clamp(1rem, 2vw, 1.25rem);
+    max-width: 620px;
+    margin: 0 auto 36px;
+    opacity: 0.88;
+  }
+  .hero-actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 12px 28px;
+    border-radius: 50px;
+    font-weight: 600;
+    font-size: 15px;
+    text-decoration: none;
+    transition: all 0.25s;
+    cursor: pointer;
+    border: none;
+  }
+  .btn-primary { background: #22c55e; color: #052e16; }
+  .btn-primary:hover { background: #16a34a; transform: translateY(-2px); box-shadow: 0 8px 24px rgba(34,197,94,0.35); }
+  .btn-outline { border: 2px solid rgba(255,255,255,0.5); color: #fff; background: transparent; }
+  .btn-outline:hover { background: rgba(255,255,255,0.08); transform: translateY(-2px); }
+
+  /* ── Stats ── */
+  .stats {
+    display: flex; justify-content: center; gap: 48px; flex-wrap: wrap;
+    padding: 48px 24px 56px;
+    background: #fff;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .stat { text-align: center; }
+  .stat-num { font-size: 2.4rem; font-weight: 800; color: #166534; }
+  .stat-label { font-size: 14px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* ── Sections ── */
+  section { padding: 80px 24px; }
+  .container { max-width: 1100px; margin: 0 auto; }
+  .section-tag {
+    display: inline-block;
+    background: #dcfce7;
+    color: #166534;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 4px 14px;
+    border-radius: 50px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .section-title {
+    font-size: clamp(1.6rem, 3.5vw, 2.2rem);
+    font-weight: 800;
+    color: #0f2b1f;
+    margin-bottom: 14px;
+  }
+  .section-subtitle { color: #475569; max-width: 600px; margin-bottom: 40px; font-size: 1.05rem; }
+
+  /* ── Features Grid ── */
+  .features { background: #fff; }
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 24px;
+  }
+  .feature-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 28px 24px;
+    transition: all 0.25s;
+  }
+  .feature-card:hover { border-color: #86efac; box-shadow: 0 4px 20px rgba(34,197,94,0.08); transform: translateY(-3px); }
+  .feature-icon {
+    width: 48px; height: 48px;
+    background: #dcfce7;
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    margin-bottom: 16px;
+  }
+  .feature-card h3 { font-size: 1.1rem; margin-bottom: 8px; color: #0f2b1f; }
+  .feature-card p { color: #475569; font-size: 0.94rem; }
+
+  /* ── Modules ── */
+  .modules { background: #f1f5f9; }
+  .modules-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+  }
+  .module-card {
+    background: #fff;
+    border-radius: 14px;
+    padding: 24px;
+    border-left: 4px solid #22c55e;
+    transition: all 0.25s;
+  }
+  .module-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
+  .module-card h4 { color: #166534; margin-bottom: 6px; font-size: 1.05rem; }
+  .module-card p { color: #475569; font-size: 0.92rem; }
+
+  /* ── Tech Stack ── */
+  .tech { background: #fff; }
+  .tech-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+  }
+  .tech-item {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    font-weight: 600;
+    color: #334155;
+    transition: all 0.2s;
+  }
+  .tech-item:hover { border-color: #22c55e; color: #166534; }
+
+  /* ── CTA ── */
+  .cta {
+    background: linear-gradient(135deg, #0f2b1f 0%, #1a4a2e 100%);
+    color: #fff;
+    text-align: center;
+  }
+  .cta .section-title { color: #fff; }
+  .cta .section-subtitle { color: rgba(255,255,255,0.75); margin-left: auto; margin-right: auto; }
+
+  /* ── Footer ── */
+  footer {
+    text-align: center;
+    padding: 32px 24px;
+    background: #0f2b1f;
+    color: rgba(255,255,255,0.6);
+    font-size: 14px;
+  }
+  footer a { color: #86efac; text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  /* ── Responsive ── */
+  @media (max-width: 640px) {
+    .hero { padding: 64px 20px 56px; }
+    .stats { gap: 28px; }
+    section { padding: 56px 20px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ HERO ═══════════════ -->
+<header class="hero">
+  <div class="hero-badge">🌲 Mato Grosso · Brasil</div>
+  <h1>Inteligência Artificial para <span>Engenharia Florestal</span></h1>
+  <p>
+    Automatize o licenciamento ambiental no SIMCAR/SEMA-MT com recorte de camadas,
+    análise de geometria, imagens de satélite e IA generativa — tudo em uma plataforma integrada.
+  </p>
+  <div class="hero-actions">
+    <a href="https://ia-florestal.web.app" class="btn btn-primary" target="_blank" rel="noopener">
+      🌐 Acessar Plataforma
+    </a>
+    <a href="#modulos" class="btn btn-outline">
+      ↓ Explorar Funcionalidades
+    </a>
+  </div>
+</header>
+
+<!-- ═══════════════ STATS ═══════════════ -->
+<div class="stats">
+  <div class="stat"><div class="stat-num">27</div><div class="stat-label">Camadas SIMCAR</div></div>
+  <div class="stat"><div class="stat-num">3</div><div class="stat-label">Modelos de IA</div></div>
+  <div class="stat"><div class="stat-num">~42k</div><div class="stat-label">Linhas de Código</div></div>
+  <div class="stat"><div class="stat-num">8</div><div class="stat-label">Módulos de Análise</div></div>
+</div>
+
+<!-- ═══════════════ FEATURES ═══════════════ -->
+<section class="features">
+  <div class="container">
+    <div class="section-tag">Por que o GeoForest?</div>
+    <h2 class="section-title">Tudo que você precisa para licenciamento ambiental</h2>
+    <p class="section-subtitle">Substitua dias de trabalho manual por minutos de processamento automatizado com precisão de engenharia.</p>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🗺️</div>
+        <h3>Recorte Inteligente SIMCAR</h3>
+        <p>Recorte automático de 27 camadas do SIMCAR/SEMA-MT sobre o shapefile da sua propriedade. Suporte a polígonos, multipolígonos e pontos (NASCENTE).</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">✅</div>
+        <h3>Validação de Geometria</h3>
+        <p>Detecta automaticamente bordas que se cruzam, pontos repetidos, sobreposições, frestas (gaps) e vértices próximos — com tolerâncias calibradas pelo PDF oficial da SEMA.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🤖</div>
+        <h3>IA Generativa (LLMs)</h3>
+        <p>Chat com inteligência artificial treinada na legislação florestal brasileira. Base de conhecimento com 29 documentos cobrindo Código Florestal, SNUC, INs e TRs da SEMA.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🛰️</div>
+        <h3>Imagens de Satélite</h3>
+        <p>Busca, download e processamento de imagens CBERS-4A WPM e Landsat 8/9. Pansharpening, composições RGB e WMS público via GeoServer.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📊</div>
+        <h3>Relatórios Automáticos</h3>
+        <p>Geração de planilhas XLSX com quantitativos, relatórios PDF profissionais e shapefiles prontos para o SIMCAR — tudo formatado no padrão SEMA.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔮</div>
+        <h3>Oráculo Autofix</h3>
+        <p>Sistema com DeepSeek que analisa erros de geometria e sugere correções automáticas: clip, merge, delete, simplify — reduzindo horas de edição manual no QGIS.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ MODULES ═══════════════ -->
+<section class="modules" id="modulos">
+  <div class="container">
+    <div class="section-tag">Funcionalidades</div>
+    <h2 class="section-title">Módulos de análise geoespacial</h2>
+    <p class="section-subtitle">Ferramentas especializadas para cada etapa do processo de licenciamento.</p>
+
+    <div class="modules-grid">
+      <div class="module-card">
+        <h4>📐 Recorte SIMCAR</h4>
+        <p>Recorte WFS e local de camadas como APP, RL, AUAS, AVN, rios, nascentes e áreas consolidadas sobre o imóvel rural.</p>
+      </div>
+      <div class="module-card">
+        <h4>🔍 Processar Projeto</h4>
+        <p>Fluxo Importar → ProcessarGeo com paridade ao importador oficial da SEMA. Geração de APP, APPD, ARLDR e quadro de áreas.</p>
+      </div>
+      <div class="module-card">
+        <h4>📏 Vértices Próximos</h4>
+        <p>Localiza pares de vértices muito próximos dentro do mesmo anel, feição e camada — essencial para validação topológica.</p>
+      </div>
+      <div class="module-card">
+        <h4>🔲 Áreas Não Contidas</h4>
+        <p>Diagnostica o erro "Geometria deve ser completamente contida por AVN/AUAS/AREA_CONSOLIDADA" do validador SEMA.</p>
+      </div>
+      <div class="module-card">
+        <h4>🐛 Erros de Geometria</h4>
+        <p>Detecta bordas que se cruzam, vértices duplicados, anéis abertos e orientação incorreta — com relatório detalhado.</p>
+      </div>
+      <div class="module-card">
+        <h4>🛰️ CBERS & Landsat</h4>
+        <p>Pipeline completo: busca STAC → download → pansharpening GDAL → GeoTIFF → publicação GeoServer → WMS público.</p>
+      </div>
+      <div class="module-card">
+        <h4>🌿 AUAS / SCCON</h4>
+        <p>Integração com alertas de desmatamento e Áreas de Uso Alternativo do Solo do sistema SCCON.</p>
+      </div>
+      <div class="module-card">
+        <h4>📋 Recibos SIMCAR</h4>
+        <p>Busca e download de recibos de processamento do SIMCAR e APF Rural para controle documental.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ TECH STACK ═══════════════ -->
+<section class="tech">
+  <div class="container">
+    <div class="section-tag">Tecnologia</div>
+    <h2 class="section-title">Stack moderno e robusto</h2>
+    <p class="section-subtitle">Construído com as melhores tecnologias open-source para desempenho e confiabilidade.</p>
+
+    <div class="tech-grid">
+      <div class="tech-item">⚛️ React 19</div>
+      <div class="tech-item">🎨 Tailwind CSS 4</div>
+      <div class="tech-item">📦 Vite 7</div>
+      <div class="tech-item">🟢 Node.js + Express</div>
+      <div class="tech-item">🗺️ Turf.js + Proj4</div>
+      <div class="tech-item">🐍 GDAL</div>
+      <div class="tech-item">🌍 GeoServer</div>
+      <div class="tech-item">🧠 Groq · Gemini · DeepSeek</div>
+      <div class="tech-item">🔥 Firebase Auth</div>
+      <div class="tech-item">☁️ Cloudinary</div>
+      <div class="tech-item">📄 PDFKit · ExcelJS</div>
+      <div class="tech-item">🖼️ Sharp</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ CTA ═══════════════ -->
+<section class="cta">
+  <div class="container">
+    <h2 class="section-title">Pronto para agilizar seu licenciamento ambiental?</h2>
+    <p class="section-subtitle">
+      Acesse a plataforma agora e descubra como a inteligência artificial pode transformar seu fluxo de trabalho no SIMCAR.
+    </p>
+    <a href="https://ia-florestal.web.app" class="btn btn-primary" target="_blank" rel="noopener" style="font-size:16px;padding:14px 36px;">
+      🌐 Acessar GeoForest IA
+    </a>
+  </div>
+</section>
+
+<!-- ═══════════════ FOOTER ═══════════════ -->
+<footer>
+  <p>© 2026 <a href="https://ia-florestal.web.app" target="_blank" rel="noopener">GeoForest IA</a> · Inteligência Artificial para Engenharia Florestal · Mato Grosso, Brasil</p>
+  <p style="margin-top:6px;">API: <a href="https://geoforest-api.cursar.space" target="_blank" rel="noopener">geoforest-api.cursar.space</a> · WMS: <a href="https://wms.cursar.space" target="_blank" rel="noopener">wms.cursar.space</a></p>
+</footer>
+
+</body>
+</html>
