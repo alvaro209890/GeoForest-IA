@@ -46,6 +46,7 @@ import { registerLandsatRoutes } from "./landsat";
 import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-archive";
 import { registerVerticesRoutes } from "./vertices-proximas";
 import { registerContainmentRoutes } from "./containment-analysis";
+import { registerOverlapRoutes } from "./overlap-analysis";
 import { registerGeometryErrorsRoutes } from "./geometry-errors";
 import { registerProcessarProjetoRoutes } from "./processar-projeto";
 import { registerSimcarOraculoRoutes } from "./simcar-oraculo";
@@ -528,6 +529,13 @@ async function startServer() {
       /^\/api\/containment\/jobs\/[^/]+\/events$/,
       /^\/api\/containment\/download\/[^/]+$/,
       /^\/api\/containment\/jobs\/[^/]+$/,
+      "/api/overlap/upload",
+      "/api/overlap/process",
+      "/api/overlap/sources/health",
+      /^\/api\/overlap\/jobs\/[^/]+\/status$/,
+      /^\/api\/overlap\/jobs\/[^/]+\/events$/,
+      /^\/api\/overlap\/download\/[^/]+$/,
+      /^\/api\/overlap\/jobs\/[^/]+$/,
       "/api/geometry-errors/upload",
       "/api/geometry-errors/process",
       /^\/api\/geometry-errors\/jobs\/[^/]+\/status$/,
@@ -713,6 +721,7 @@ async function startServer() {
   registerLandsatRoutes(app);
   registerVerticesRoutes(app);
   registerContainmentRoutes(app);
+  registerOverlapRoutes(app);
   registerGeometryErrorsRoutes(app);
   registerProcessarProjetoRoutes(app);
   registerSimcarOraculoRoutes(app);

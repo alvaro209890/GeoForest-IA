@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   CalendarClock,
+  Combine,
   Layers,
   Network,
   Receipt,
@@ -62,6 +63,13 @@ export const DASHBOARD_TABS: DashboardTabDef[] = [
     activeGradient: 'linear-gradient(135deg, #059669, #16a34a)',
     iconGlowClass: 'drop-shadow-[0_0_6px_rgba(16,185,129,0.5)]',
   },
+  {
+    id: 'sobreposicoes',
+    label: 'Sobrepos.',
+    Icon: Combine,
+    activeGradient: 'linear-gradient(135deg, #0d9488, #10b981)',
+    iconGlowClass: 'drop-shadow-[0_0_6px_rgba(45,212,191,0.5)]',
+  },
 ];
 
 type DashboardSidebarTabsProps = {
@@ -76,7 +84,7 @@ type DashboardSidebarTabsProps = {
 export function DashboardSidebarTabs({ activeView, onNavigate }: DashboardSidebarTabsProps) {
   return (
     <div className="relative p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm overflow-hidden">
-      <div className="flex sm:grid sm:grid-cols-6 gap-0.5 relative scroll-tabs" role="tablist" aria-label="Ferramentas do dashboard">
+      <div className="flex sm:grid sm:grid-cols-7 gap-0.5 relative scroll-tabs" role="tablist" aria-label="Ferramentas do dashboard">
         {DASHBOARD_TABS.map((tab) => {
           const active = activeView === tab.id;
           const Icon = tab.Icon;

@@ -55,6 +55,11 @@ import {
     type SupportedPolygonGeometry,
 } from "./wfs-intersection";
 import {
+    fetchSigefBoundaryByParcelCode,
+    parsePolygonGeometryFromGml,
+    SIGEF_WFS_TIMEOUT_MS,
+} from "./sigef-client";
+import {
     parseDbfSchema,
     buildShpAndShx,
     buildPointShpAndShx,
@@ -102,12 +107,6 @@ const MODELO_ZIP_PATH = path.resolve(__dirname, "..", "Arquivo Modelo.zip");
 const SIMCAR_LOCAL_SHAPES_ROOT =
     process.env.SIMCAR_LOCAL_SHAPES_ROOT ||
     "/media/server/HD Backup/VETOR/CAR_Digital/current/datasets/simcar_digital";
-const SIGEF_WFS_BASE_URL =
-    process.env.SIGEF_WFS_BASE_URL ||
-    "https://acervofundiario.incra.gov.br/i3geo/ogc.php?tema=certificada_sigef_particular_mt";
-const SIGEF_WFS_TYPENAME = "certificada_sigef_particular_mt";
-const SIGEF_WFS_FILTER_PARAM = "map_layer_certificada_sigef_particular_mt_filter";
-const SIGEF_WFS_TIMEOUT_MS = Number(process.env.SIGEF_WFS_TIMEOUT_MS || Math.max(WFS_TIMEOUT_MS, 120000));
 const SEMA_CAR_REQUIRED_WFS_LAYER =
     process.env.SEMA_CAR_REQUIRED_WFS_LAYER || "Geoportal:MVW_REQUERIMENTO_ATP";
 const WFS_MAX_FEATURES = 50000;
@@ -7986,117 +7985,6 @@ function normalizeCarLookupValues(raw: string): string[] {
     );
 }
 
-function xmlDecode(value: string): string {
-    return String(value || "")
-        .replace(/&quot;/g, "\"")
-        .replace(/&apos;/g, "'")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&amp;/g, "&");
-}
-
-function normalizeSigefParcelCode(raw: string): string {
-    return String(raw || "").trim();
-}
-
-function buildSigefI3geoFilter(parcelCode: string): string {
-    const safeValue = parcelCode.replace(/'/g, "''");
-    return `(('[parcela_codigo]'='${safeValue}'))`;
-}
-
-function buildSigefWfsUrl(parcelCode: string, options: { includePropertyName?: boolean } = {}): string {
-    const url = new URL(SIGEF_WFS_BASE_URL);
-    url.searchParams.set(SIGEF_WFS_FILTER_PARAM, buildSigefI3geoFilter(parcelCode));
-    url.searchParams.set("SERVICE", "WFS");
-    url.searchParams.set("VERSION", "1.0.0");
-    url.searchParams.set("REQUEST", "GetFeature");
-    url.searchParams.set("TYPENAME", SIGEF_WFS_TYPENAME);
-    url.searchParams.set("MAXFEATURES", "1");
-    if (options.includePropertyName !== false) {
-        url.searchParams.set("propertyName", "msGeometry,parcela_codigo");
-    }
-    return url.toString();
-}
-
-function parseGmlCoordinates(text: string): number[][] {
-    const coords = String(text || "")
-        .trim()
-        .split(/\s+/g)
-        .map((pair) => pair.trim())
-        .filter(Boolean)
-        .map((pair) => {
-            const [xRaw, yRaw] = pair.split(",");
-            const x = Number(xRaw);
-            const y = Number(yRaw);
-            return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null;
-        })
-        .filter((coord): coord is number[] => Array.isArray(coord));
-    if (coords.length >= 3) {
-        const first = coords[0];
-        const last = coords[coords.length - 1];
-        if (first[0] !== last[0] || first[1] !== last[1]) coords.push([first[0], first[1]]);
-    }
-    return coords;
-}
-
-function parseGmlPosList(text: string): number[][] {
-    const values = String(text || "")
-        .trim()
-        .split(/\s+/g)
-        .map((n) => Number(n))
-        .filter(Number.isFinite);
-    const coords: number[][] = [];
-    for (let i = 0; i + 1 < values.length; i += 2) {
-        const a = values[i];
-        const b = values[i + 1];
-        const looksLikeLatLonAxis = Math.abs(a) <= 30 && Math.abs(b) >= 30;
-        coords.push(looksLikeLatLonAxis ? [b, a] : [a, b]);
-    }
-    if (coords.length >= 3) {
-        const first = coords[0];
-        const last = coords[coords.length - 1];
-        if (first[0] !== last[0] || first[1] !== last[1]) coords.push([first[0], first[1]]);
-    }
-    return coords;
-}
-
-function parseSigefGeometryFromGml(xml: string): Polygon | MultiPolygon | null {
-    const featureMatch = String(xml || "").match(/<gml:featureMember\b[\s\S]*?<\/gml:featureMember>/i);
-    if (!featureMatch) return null;
-    return parsePolygonGeometryFromGml(featureMatch[0]);
-}
-
-function parsePolygonGeometryFromGml(xml: string): Polygon | MultiPolygon | null {
-    const geometryXml = String(xml || "");
-    const polygons: number[][][][] = [];
-    const polygonRegex = /<gml:Polygon\b[^>]*>([\s\S]*?)<\/gml:Polygon>/gi;
-    let polygonMatch: RegExpExecArray | null;
-    while ((polygonMatch = polygonRegex.exec(geometryXml))) {
-        const polygonXml = polygonMatch[1];
-        const rings: number[][][] = [];
-        const coordinatesRegex = /<gml:coordinates\b[^>]*>([\s\S]*?)<\/gml:coordinates>/gi;
-        const posListRegex = /<gml:posList\b[^>]*>([\s\S]*?)<\/gml:posList>/gi;
-        let coordMatch: RegExpExecArray | null;
-        while ((coordMatch = coordinatesRegex.exec(polygonXml))) {
-            const ring = parseGmlCoordinates(xmlDecode(coordMatch[1]));
-            if (ring.length >= 4) rings.push(ring);
-        }
-        while ((coordMatch = posListRegex.exec(polygonXml))) {
-            const ring = parseGmlPosList(xmlDecode(coordMatch[1]));
-            if (ring.length >= 4) rings.push(ring);
-        }
-        if (rings.length > 0) polygons.push(rings);
-    }
-
-    if (polygons.length === 1) {
-        return { type: "Polygon", coordinates: polygons[0] };
-    }
-    if (polygons.length > 1) {
-        return { type: "MultiPolygon", coordinates: polygons };
-    }
-    return null;
-}
-
 async function fetchCarBoundaryFromWfs(
     fieldName: string,
     fieldValue: string,
@@ -8149,55 +8037,6 @@ async function fetchCarBoundaryFromWfs(
     return {
         type: "Feature",
         properties: { [fieldName]: fieldValue },
-        geometry,
-    };
-}
-
-async function fetchSigefBoundaryByParcelCode(parcelCodeRaw: string): Promise<Feature<Polygon | MultiPolygon>> {
-    const parcelCode = normalizeSigefParcelCode(parcelCodeRaw);
-    if (!parcelCode) throw new Error("Código da parcela SIGEF inválido.");
-
-    const errors: string[] = [];
-    let xml = "";
-    for (const includePropertyName of [true, false]) {
-        const wfsUrl = buildSigefWfsUrl(parcelCode, { includePropertyName });
-        try {
-            xml = await fetchTextWithTimeout(wfsUrl, SIGEF_WFS_TIMEOUT_MS);
-            break;
-        } catch (error: any) {
-            errors.push(String(error?.message || error || "falha desconhecida"));
-        }
-    }
-    if (!xml) {
-        throw new Error(
-            `Não foi possível consultar o WFS do SIGEF/INCRA para a parcela ${parcelCode}. ` +
-            `O serviço externo não respondeu dentro de ${Math.round(SIGEF_WFS_TIMEOUT_MS / 1000)}s. ` +
-            `Detalhes: ${errors.slice(0, 2).join(" | ")}`,
-        );
-    }
-    if (/<(?:ServiceExceptionReport|ows:ExceptionReport)\b/i.test(xml)) {
-        const detail = xmlDecode(
-            xml.match(/<(?:ServiceException|ows:ExceptionText)\b[^>]*>([\s\S]*?)<\/(?:ServiceException|ows:ExceptionText)>/i)?.[1] || "",
-        ).replace(/\s+/g, " ").trim();
-        throw new Error(detail || "O WFS do SIGEF/INCRA retornou erro ao consultar a parcela.");
-    }
-    if (!/<gml:featureMember\b/i.test(xml)) {
-        throw new Error(`Nenhuma certificação SIGEF encontrada para parcela_codigo: ${parcelCode}`);
-    }
-
-    const returnedCode = xmlDecode(
-        xml.match(/<ms:parcela_codigo\b[^>]*>([\s\S]*?)<\/ms:parcela_codigo>/i)?.[1] || "",
-    ).trim();
-    if (returnedCode.toLowerCase() !== parcelCode.toLowerCase()) {
-        throw new Error(`O WFS do SIGEF não retornou a parcela solicitada (${parcelCode}).`);
-    }
-
-    const geometry = parseSigefGeometryFromGml(xml);
-    if (!geometry) throw new Error("A geometria retornada pelo WFS do SIGEF não é um polígono válido.");
-
-    return {
-        type: "Feature",
-        properties: { parcela_codigo: returnedCode },
         geometry,
     };
 }

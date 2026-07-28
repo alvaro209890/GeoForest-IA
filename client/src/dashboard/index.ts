@@ -60,3 +60,17 @@ export { mapLandsatDocToHistoryItem, normalizeLandsatScene } from './landsat/map
 export { useLandsatJobs } from './hooks/useLandsatJobs';
 export type { UseLandsatJobsReturn, UseLandsatJobsDeps } from './hooks/useLandsatJobs';
 export type { LandsatPanelProps } from './panels/LandsatPanel';
+export type {
+  OverlapMode,
+  OverlapJobStatus,
+  OverlapModeOption,
+  OverlapHistoryItem,
+} from './sobreposicoes/types';
+export {
+  overlapZipFilename,
+  overlapDownloadUrl,
+} from './sobreposicoes/filenames';
+export { mapOverlapDocToHistoryItem } from './sobreposicoes/mapDoc';
+export { useOverlapJobs } from './hooks/useOverlapJobs';
+export type { UseOverlapJobsReturn, UseOverlapJobsDeps } from './hooks/useOverlapJobs';
+export type { SobreposicoesPanelProps } from './panels/SobreposicoesPanel';

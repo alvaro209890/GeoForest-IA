@@ -10,6 +10,7 @@ export type DashboardView =
   | 'landsat'
   | 'vertices-proximas'
   | 'auas-sccon'
+  | 'sobreposicoes'
   | 'features'
   | 'settings';
 
@@ -19,7 +20,8 @@ export type DashboardTabId =
   | 'cbers-wpm'
   | 'landsat'
   | 'vertices-proximas'
-  | 'auas-sccon';
+  | 'auas-sccon'
+  | 'sobreposicoes';
 
 export const DASHBOARD_VIEW_LABELS: Record<DashboardView, string> = {
   'simcar-clip': 'Recorte SIMCAR',
@@ -28,6 +30,7 @@ export const DASHBOARD_VIEW_LABELS: Record<DashboardView, string> = {
   landsat: 'Landsat WMS',
   'vertices-proximas': 'Análise de Erros',
   'auas-sccon': 'AUAS × SCCON',
+  sobreposicoes: 'Sobreposições',
   features: 'Funcionalidades',
   settings: 'Configurações',
 };

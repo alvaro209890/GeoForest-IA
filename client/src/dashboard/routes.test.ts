@@ -11,6 +11,7 @@ describe('dashboard routes', () => {
     ['/dashboard/landsat', 'landsat'],
     ['/dashboard/erros', 'vertices-proximas'],
     ['/dashboard/auas', 'auas-sccon'],
+    ['/dashboard/sobreposicoes', 'sobreposicoes'],
     ['/dashboard/manual', 'features'],
     ['/dashboard/configuracoes', 'settings'],
     ['/dashboard/chat', 'simcar-clip'],
@@ -30,6 +31,7 @@ describe('dashboard routes', () => {
       'landsat',
       'vertices-proximas',
       'auas-sccon',
+      'sobreposicoes',
       'features',
       'settings',
     ];

@@ -11,6 +11,7 @@ export const DASHBOARD_PATH_TO_VIEW: Record<string, DashboardView> = {
   '/dashboard/landsat': 'landsat',
   '/dashboard/erros': 'vertices-proximas',
   '/dashboard/auas': 'auas-sccon',
+  '/dashboard/sobreposicoes': 'sobreposicoes',
   '/dashboard/manual': 'features',
   '/dashboard/configuracoes': 'settings',
   '/dashboard/chat': 'simcar-clip',
@@ -23,6 +24,7 @@ export const DASHBOARD_VIEW_TO_PATH: Record<DashboardView, string> = {
   landsat: '/dashboard/landsat',
   'vertices-proximas': '/dashboard/erros',
   'auas-sccon': '/dashboard/auas',
+  sobreposicoes: '/dashboard/sobreposicoes',
   features: '/dashboard/manual',
   settings: '/dashboard/configuracoes',
 };

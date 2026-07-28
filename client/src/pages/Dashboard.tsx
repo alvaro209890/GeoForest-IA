@@ -59,6 +59,7 @@ import {
   ShieldAlert,
   FileStack,
   CalendarClock,
+  Combine,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -67,6 +68,7 @@ import {
   DashboardSidebarTabs,
   useCbersJobs,
   useLandsatJobs,
+  useOverlapJobs,
   useDashboardNavigation,
   type DashboardView,
 } from '@/dashboard';
@@ -114,6 +116,7 @@ const GeometryErrorsAnalysis = lazy(() => import('@/components/GeometryErrorsAna
 const SettingsPanel = lazy(() => import('@/dashboard/panels/SettingsPanel'));
 const CbersPanel = lazy(() => import('@/dashboard/panels/CbersPanel'));
 const LandsatPanel = lazy(() => import('@/dashboard/panels/LandsatPanel'));
+const SobreposicoesPanel = lazy(() => import('@/dashboard/panels/SobreposicoesPanel'));
 
 type DocumentReference = ReturnType<typeof doc>;
 
@@ -1824,6 +1827,25 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     deleteLandsatJob,
   } = landsat;
 
+  const overlapDownloadZipRef = useRef<(url?: string | null, filename?: string) => void | Promise<void>>(async () => {});
+  const overlapDownloadZip = useCallback((url?: string | null, filename?: string) => {
+    return overlapDownloadZipRef.current(url, filename);
+  }, []);
+
+  const overlap = useOverlapJobs({
+    apiFetch,
+    downloadZip: overlapDownloadZip,
+    fileToBase64Payload,
+  });
+  const {
+    overlapHistory,
+    overlapJobId,
+    resetOverlapDraft,
+    selectOverlapHistoryEntry,
+    hydrateFromDocs: hydrateOverlapFromDocs,
+    deleteOverlapJob,
+  } = overlap;
+
   const mapVerticesDocToHistoryItem = useCallback((docId: string, data: any): VerticesHistoryItem => {
     const rawStatus = String(data?.status || '').trim().toLowerCase();
     const status: VerticesHistoryItem['status'] =
@@ -2659,6 +2681,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
         setReceiptsRef(receiptsColRef);
         const cbersRef = collection(db, 'users', currentUser.uid, 'cbers_wpm_jobs');
         const landsatRef = collection(db, 'users', currentUser.uid, 'landsat_jobs');
+        const overlapRef = collection(db, 'users', currentUser.uid, 'overlap_jobs');
 
         const nextSettingsRef = doc(db, 'users', currentUser.uid, 'settings', 'preferences');
         setSettingsRef(nextSettingsRef);
@@ -2900,6 +2923,14 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
           console.warn('Falha ao carregar histórico Landsat salvo:', error);
         }
 
+        try {
+          const overlapSnap = await getDocs(query(overlapRef, orderBy('updatedAtMs', 'desc')));
+          const docs = overlapSnap.docs.map((docSnap: any) => ({ id: docSnap.id, data: docSnap.data() as any }));
+          hydrateOverlapFromDocs(docs);
+        } catch (error) {
+          console.warn('Falha ao carregar histórico de sobreposições:', error);
+        }
+
         if (list.length === 0) {
           await createConversation(collRef);
         } else {
@@ -2916,7 +2947,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     });
 
     return () => unsubscribe();
-  }, [mapVerticesDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, hydrateCbersFromDocs, hydrateLandsatFromDocs, selectSimcarClipEntry, setLocation]);
+  }, [mapVerticesDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, hydrateCbersFromDocs, hydrateLandsatFromDocs, hydrateOverlapFromDocs, selectSimcarClipEntry, setLocation]);
 
   useEffect(() => {
     const uid = String(userProfile?.uid || '').trim();
@@ -3672,6 +3703,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
 
   cbersDownloadZipRef.current = downloadSimcarZip;
   landsatDownloadZipRef.current = downloadSimcarZip;
+  overlapDownloadZipRef.current = downloadSimcarZip;
 
   const openSimcarPdfInNewTab = useCallback((url?: string | null) => {
     const resolved = resolveBackendUrl(url || '');
@@ -6311,6 +6343,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <span>Nova Landsat</span>
             </button>
           )}
+          {activeView === 'sobreposicoes' && (
+            <button
+              type="button"
+              onClick={() => resetOverlapDraft()}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 py-2.5 px-3 text-sm font-semibold text-white shadow-lg shadow-teal-900/30 transition-all"
+            >
+              <Plus size={16} strokeWidth={2.25} className="shrink-0" aria-hidden />
+              <span>Nova Análise</span>
+            </button>
+          )}
           {activeView === 'vertices-proximas' && (
             <button
               type="button"
@@ -6440,6 +6482,66 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <Layers size={16} />
                 </div>
                 <p className="text-xs text-slate-500">Nenhuma imagem Landsat.</p>
+              </div>
+            )
+          ) : activeView === 'sobreposicoes' ? (
+            overlapHistory.length > 0 ? (
+              overlapHistory.map((entry) => (
+                <div
+                  key={entry.id}
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${overlapJobId === entry.jobId ? 'bg-teal-500/10 border-teal-500/20 shadow-[0_0_15px_rgba(20,184,166,0.06)]' : 'bg-[#071413]/60 hover:bg-[#101b1a] hover:border-teal-500/20'}`}
+                  onClick={() => selectOverlapHistoryEntry(entry)}
+                >
+                  <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${overlapJobId === entry.jobId ? 'bg-gradient-to-br from-teal-500 to-emerald-500 text-white shadow-md shadow-teal-900/40' : 'bg-white/5 text-slate-400 group-hover:text-teal-300 group-hover:bg-teal-500/10'}`}>
+                    <Combine size={18} />
+                  </div>
+                  <div className="flex-1 min-w-0 block">
+                    <p className={`text-sm truncate font-medium ${overlapJobId === entry.jobId ? 'text-teal-100' : 'text-slate-200 group-hover:text-teal-100'}`}>{entry.filename}</p>
+                    <div className="flex items-center gap-2 mt-1 opacity-80">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold text-teal-300">
+                        {entry.percent}%
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
+                          ? 'text-amber-300'
+                          : entry.status === 'completed'
+                            ? 'text-emerald-300'
+                            : entry.status === 'cancelled'
+                              ? 'text-orange-300'
+                              : 'text-red-300'
+                          }`}
+                      >
+                        {entry.status === 'processing'
+                          ? 'Processando'
+                          : entry.status === 'completed'
+                            ? 'Concluído'
+                            : entry.status === 'cancelled'
+                              ? 'Cancelado'
+                              : 'Falhou'}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 truncate text-[10px] text-slate-500">
+                      {entry.targetCount ? `${entry.targetCount} imóvel(is)` : 'Sobreposições'} • {(entry.modes || []).length} modo(s)
+                    </p>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void deleteOverlapJob(entry);
+                    }}
+                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
+                    title="Excluir análise"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-6 block">
+                <div className="inline-flex justify-center items-center w-10 h-10 rounded-full bg-white/5 text-slate-500 mb-2">
+                  <Combine size={16} />
+                </div>
+                <p className="text-xs text-slate-500">Nenhuma análise de sobreposição.</p>
               </div>
             )
           ) : activeView === 'vertices-proximas' ? (
@@ -8666,6 +8768,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           }>
             <LandsatPanel landsat={landsat} />
+          </Suspense>
+        ) : activeView === 'sobreposicoes' ? (
+          <Suspense fallback={
+            <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+              <div className="max-w-6xl mx-auto">
+                <div className="rounded-2xl border border-white/10 bg-[#0e1612]/70 p-6 text-sm text-slate-300">Carregando Sobreposições...</div>
+              </div>
+            </div>
+          }>
+            <SobreposicoesPanel overlap={overlap} />
           </Suspense>
         ) : activeView === 'vertices-proximas' ? (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">

@@ -112,6 +112,13 @@ Cobertura: `routes.test.ts`, `cbers/*`, `landsat/filenames.test.ts`, `landsat/ma
 4. **Remover código morto** — `ProcessarProjetoAnalysis.tsx`, `Home.tsx` placeholder.
 5. **Backend** — continuar slices de `simcar-clip.ts` (SSE helpers, parse shapefile).
 
+## Fase 5 entregue (2026-07-28) — Sobreposições
+
+- Aba `sobreposicoes` (`/dashboard/sobreposicoes`): hook `useOverlapJobs` + `SobreposicoesPanel`.
+- Backend `overlap-analysis.ts` + cliente `sigef-client.ts`.
+- Docs: `SOBREPOSICOES_CAR_SIGEF.md`, `CHANGELOG_2026-07-28_SOBREPOSICOES.md`.
+- Testes dashboard: incluir `sobreposicoes/mapDoc.test.ts` (34 passed no pacote dashboard).
+
 ## Convenções
 
 - Novos painéis em `client/src/dashboard/panels/<Nome>Panel.tsx`.

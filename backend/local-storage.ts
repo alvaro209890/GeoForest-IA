@@ -35,6 +35,8 @@ const USER_DIRS = [
   "vertices/output",
   "containment/input",
   "containment/output",
+  "overlap/input",
+  "overlap/output",
   "geometry-errors/input",
   "geometry-errors/output",
   "simcar-oraculo/input",
@@ -285,6 +287,8 @@ export function saveUserBuffer(args: {
     | "vertices/output"
     | "containment/input"
     | "containment/output"
+    | "overlap/input"
+    | "overlap/output"
     | "geometry-errors/input"
     | "geometry-errors/output"
     | "processar-projeto/input"
