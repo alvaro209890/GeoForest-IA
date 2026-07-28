@@ -91,8 +91,12 @@ type DashboardSidebarTabsProps = {
  */
 export function DashboardSidebarTabs({ activeView, onNavigate }: DashboardSidebarTabsProps) {
   return (
-    <div className="relative p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm overflow-hidden">
-      <div className="flex sm:grid sm:grid-cols-8 gap-0.5 relative scroll-tabs" role="tablist" aria-label="Ferramentas do dashboard">
+    <div className="relative rounded-2xl border border-white/[0.06] bg-white/[0.03] p-1 backdrop-blur-sm">
+      <div
+        className="grid grid-cols-4 gap-1"
+        role="tablist"
+        aria-label="Ferramentas do dashboard"
+      >
         {DASHBOARD_TABS.map((tab) => {
           const active = activeView === tab.id;
           const Icon = tab.Icon;
@@ -103,6 +107,7 @@ export function DashboardSidebarTabs({ activeView, onNavigate }: DashboardSideba
               role="tab"
               aria-selected={active}
               aria-label={tab.label}
+              title={tab.label}
               onClick={() => onNavigate(tab.id)}
               style={
                 active
@@ -112,12 +117,14 @@ export function DashboardSidebarTabs({ activeView, onNavigate }: DashboardSideba
                     }
                   : undefined
               }
-              className={`relative z-10 flex flex-1 flex-col items-center gap-1 py-2.5 px-1 rounded-xl transition-all duration-300 text-xs font-semibold ${
-                active ? 'text-white' : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
+              className={`relative z-10 flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-2 transition-all duration-300 ${
+                active ? 'text-white' : 'text-slate-500 hover:bg-white/[0.04] hover:text-slate-300'
               }`}
             >
-              <Icon size={16} className={active ? tab.iconGlowClass : ''} aria-hidden />
-              <span className="block leading-none text-[10px] tracking-wide">{tab.label}</span>
+              <Icon size={15} className={active ? tab.iconGlowClass : ''} aria-hidden />
+              <span className="block w-full truncate text-center text-[9px] font-semibold leading-tight tracking-wide">
+                {tab.label}
+              </span>
             </button>
           );
         })}
