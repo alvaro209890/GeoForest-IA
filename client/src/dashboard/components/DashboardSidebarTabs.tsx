@@ -3,6 +3,7 @@ import {
   CalendarClock,
   Combine,
   Layers,
+  Map,
   Network,
   Receipt,
   Satellite,
@@ -70,6 +71,13 @@ export const DASHBOARD_TABS: DashboardTabDef[] = [
     activeGradient: 'linear-gradient(135deg, #0d9488, #10b981)',
     iconGlowClass: 'drop-shadow-[0_0_6px_rgba(45,212,191,0.5)]',
   },
+  {
+    id: 'croqui',
+    label: 'Croqui',
+    Icon: Map,
+    activeGradient: 'linear-gradient(135deg, #d97706, #f59e0b)',
+    iconGlowClass: 'drop-shadow-[0_0_6px_rgba(245,158,11,0.5)]',
+  },
 ];
 
 type DashboardSidebarTabsProps = {
@@ -84,7 +92,7 @@ type DashboardSidebarTabsProps = {
 export function DashboardSidebarTabs({ activeView, onNavigate }: DashboardSidebarTabsProps) {
   return (
     <div className="relative p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm overflow-hidden">
-      <div className="flex sm:grid sm:grid-cols-7 gap-0.5 relative scroll-tabs" role="tablist" aria-label="Ferramentas do dashboard">
+      <div className="flex sm:grid sm:grid-cols-8 gap-0.5 relative scroll-tabs" role="tablist" aria-label="Ferramentas do dashboard">
         {DASHBOARD_TABS.map((tab) => {
           const active = activeView === tab.id;
           const Icon = tab.Icon;

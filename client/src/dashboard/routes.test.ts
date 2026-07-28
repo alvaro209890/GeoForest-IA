@@ -12,6 +12,7 @@ describe('dashboard routes', () => {
     ['/dashboard/erros', 'vertices-proximas'],
     ['/dashboard/auas', 'auas-sccon'],
     ['/dashboard/sobreposicoes', 'sobreposicoes'],
+    ['/dashboard/croqui', 'croqui'],
     ['/dashboard/manual', 'features'],
     ['/dashboard/configuracoes', 'settings'],
     ['/dashboard/chat', 'simcar-clip'],
@@ -32,6 +33,7 @@ describe('dashboard routes', () => {
       'vertices-proximas',
       'auas-sccon',
       'sobreposicoes',
+      'croqui',
       'features',
       'settings',
     ];

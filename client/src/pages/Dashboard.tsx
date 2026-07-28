@@ -60,6 +60,7 @@ import {
   FileStack,
   CalendarClock,
   Combine,
+  Map as MapIcon,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -69,6 +70,7 @@ import {
   useCbersJobs,
   useLandsatJobs,
   useOverlapJobs,
+  useCroquiJobs,
   useDashboardNavigation,
   type DashboardView,
 } from '@/dashboard';
@@ -117,6 +119,7 @@ const SettingsPanel = lazy(() => import('@/dashboard/panels/SettingsPanel'));
 const CbersPanel = lazy(() => import('@/dashboard/panels/CbersPanel'));
 const LandsatPanel = lazy(() => import('@/dashboard/panels/LandsatPanel'));
 const SobreposicoesPanel = lazy(() => import('@/dashboard/panels/SobreposicoesPanel'));
+const CroquiPanel = lazy(() => import('@/dashboard/panels/CroquiPanel'));
 
 type DocumentReference = ReturnType<typeof doc>;
 
@@ -1846,6 +1849,25 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     deleteOverlapJob,
   } = overlap;
 
+  const croquiDownloadZipRef = useRef<(url?: string | null, filename?: string) => void | Promise<void>>(async () => {});
+  const croquiDownloadZip = useCallback((url?: string | null, filename?: string) => {
+    return croquiDownloadZipRef.current(url, filename);
+  }, []);
+
+  const croqui = useCroquiJobs({
+    apiFetch,
+    downloadZip: croquiDownloadZip,
+    fileToBase64Payload,
+  });
+  const {
+    croquiHistory,
+    croquiJobId,
+    resetCroquiDraft,
+    selectCroquiHistoryEntry,
+    hydrateFromDocs: hydrateCroquiFromDocs,
+    deleteCroquiJob,
+  } = croqui;
+
   const mapVerticesDocToHistoryItem = useCallback((docId: string, data: any): VerticesHistoryItem => {
     const rawStatus = String(data?.status || '').trim().toLowerCase();
     const status: VerticesHistoryItem['status'] =
@@ -2682,6 +2704,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
         const cbersRef = collection(db, 'users', currentUser.uid, 'cbers_wpm_jobs');
         const landsatRef = collection(db, 'users', currentUser.uid, 'landsat_jobs');
         const overlapRef = collection(db, 'users', currentUser.uid, 'overlap_jobs');
+        const croquiRef = collection(db, 'users', currentUser.uid, 'croqui_jobs');
 
         const nextSettingsRef = doc(db, 'users', currentUser.uid, 'settings', 'preferences');
         setSettingsRef(nextSettingsRef);
@@ -2931,6 +2954,14 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
           console.warn('Falha ao carregar histórico de sobreposições:', error);
         }
 
+        try {
+          const croquiSnap = await getDocs(query(croquiRef, orderBy('updatedAtMs', 'desc')));
+          const docs = croquiSnap.docs.map((docSnap: any) => ({ id: docSnap.id, data: docSnap.data() as any }));
+          hydrateCroquiFromDocs(docs);
+        } catch (error) {
+          console.warn('Falha ao carregar histórico de croquis:', error);
+        }
+
         if (list.length === 0) {
           await createConversation(collRef);
         } else {
@@ -2947,7 +2978,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     });
 
     return () => unsubscribe();
-  }, [mapVerticesDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, hydrateCbersFromDocs, hydrateLandsatFromDocs, hydrateOverlapFromDocs, selectSimcarClipEntry, setLocation]);
+  }, [mapVerticesDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, hydrateCbersFromDocs, hydrateLandsatFromDocs, hydrateOverlapFromDocs, hydrateCroquiFromDocs, selectSimcarClipEntry, setLocation]);
 
   useEffect(() => {
     const uid = String(userProfile?.uid || '').trim();
@@ -3704,6 +3735,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   cbersDownloadZipRef.current = downloadSimcarZip;
   landsatDownloadZipRef.current = downloadSimcarZip;
   overlapDownloadZipRef.current = downloadSimcarZip;
+  croquiDownloadZipRef.current = downloadSimcarZip;
 
   const openSimcarPdfInNewTab = useCallback((url?: string | null) => {
     const resolved = resolveBackendUrl(url || '');
@@ -6353,6 +6385,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <span>Nova Análise</span>
             </button>
           )}
+          {activeView === 'croqui' && (
+            <button
+              type="button"
+              onClick={() => resetCroquiDraft()}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 py-2.5 px-3 text-sm font-semibold text-white shadow-lg shadow-amber-900/30 transition-all"
+            >
+              <Plus size={16} strokeWidth={2.25} className="shrink-0" aria-hidden />
+              <span>Novo Croqui</span>
+            </button>
+          )}
           {activeView === 'vertices-proximas' && (
             <button
               type="button"
@@ -6542,6 +6584,66 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <Combine size={16} />
                 </div>
                 <p className="text-xs text-slate-500">Nenhuma análise de sobreposição.</p>
+              </div>
+            )
+          ) : activeView === 'croqui' ? (
+            croquiHistory.length > 0 ? (
+              croquiHistory.map((entry) => (
+                <div
+                  key={entry.id}
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${croquiJobId === entry.jobId ? 'bg-amber-500/10 border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.06)]' : 'bg-[#141008]/60 hover:bg-[#1b160c] hover:border-amber-500/20'}`}
+                  onClick={() => selectCroquiHistoryEntry(entry)}
+                >
+                  <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${croquiJobId === entry.jobId ? 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-md shadow-amber-900/40' : 'bg-white/5 text-slate-400 group-hover:text-amber-300 group-hover:bg-amber-500/10'}`}>
+                    <MapIcon size={18} />
+                  </div>
+                  <div className="flex-1 min-w-0 block">
+                    <p className={`text-sm truncate font-medium ${croquiJobId === entry.jobId ? 'text-amber-100' : 'text-slate-200 group-hover:text-amber-100'}`}>{entry.title || entry.filename}</p>
+                    <div className="flex items-center gap-2 mt-1 opacity-80">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold text-amber-300">
+                        {entry.percent}%
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
+                          ? 'text-amber-300'
+                          : entry.status === 'completed'
+                            ? 'text-emerald-300'
+                            : entry.status === 'cancelled'
+                              ? 'text-orange-300'
+                              : 'text-red-300'
+                          }`}
+                      >
+                        {entry.status === 'processing'
+                          ? 'Processando'
+                          : entry.status === 'completed'
+                            ? 'Concluído'
+                            : entry.status === 'cancelled'
+                              ? 'Cancelado'
+                              : 'Falhou'}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 truncate text-[10px] text-slate-500">
+                      {entry.municipioNome || 'Croqui'} • PDF + DOCX + KML
+                    </p>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void deleteCroquiJob(entry.jobId);
+                    }}
+                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
+                    title="Excluir croqui"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-6 block">
+                <div className="inline-flex justify-center items-center w-10 h-10 rounded-full bg-white/5 text-slate-500 mb-2">
+                  <MapIcon size={16} />
+                </div>
+                <p className="text-xs text-slate-500">Nenhum croqui gerado.</p>
               </div>
             )
           ) : activeView === 'vertices-proximas' ? (
@@ -8778,6 +8880,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           }>
             <SobreposicoesPanel overlap={overlap} />
+          </Suspense>
+        ) : activeView === 'croqui' ? (
+          <Suspense fallback={
+            <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+              <div className="max-w-6xl mx-auto">
+                <div className="rounded-2xl border border-white/10 bg-[#0e1612]/70 p-6 text-sm text-slate-300">Carregando Croqui...</div>
+              </div>
+            </div>
+          }>
+            <CroquiPanel croqui={croqui} />
           </Suspense>
         ) : activeView === 'vertices-proximas' ? (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">

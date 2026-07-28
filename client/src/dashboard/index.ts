@@ -73,4 +73,6 @@ export {
 export { mapOverlapDocToHistoryItem } from './sobreposicoes/mapDoc';
 export { useOverlapJobs } from './hooks/useOverlapJobs';
 export type { UseOverlapJobsReturn, UseOverlapJobsDeps } from './hooks/useOverlapJobs';
-export type { SobreposicoesPanelProps } from './panels/SobreposicoesPanel';
+export { useCroquiJobs } from './hooks/useCroquiJobs';
+export type { UseCroquiJobsReturn, UseCroquiJobsDeps } from './hooks/useCroquiJobs';
+export type { CroquiPanelProps } from './panels/CroquiPanel';

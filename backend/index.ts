@@ -47,6 +47,7 @@ import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-arc
 import { registerVerticesRoutes } from "./vertices-proximas";
 import { registerContainmentRoutes } from "./containment-analysis";
 import { registerOverlapRoutes } from "./overlap-analysis";
+import { registerCroquiRoutes } from "./croqui";
 import { registerGeometryErrorsRoutes } from "./geometry-errors";
 import { registerProcessarProjetoRoutes } from "./processar-projeto";
 import { registerSimcarOraculoRoutes } from "./simcar-oraculo";
@@ -722,6 +723,7 @@ async function startServer() {
   registerVerticesRoutes(app);
   registerContainmentRoutes(app);
   registerOverlapRoutes(app);
+  registerCroquiRoutes(app);
   registerGeometryErrorsRoutes(app);
   registerProcessarProjetoRoutes(app);
   registerSimcarOraculoRoutes(app);

@@ -11,6 +11,7 @@ export type DashboardView =
   | 'vertices-proximas'
   | 'auas-sccon'
   | 'sobreposicoes'
+  | 'croqui'
   | 'features'
   | 'settings';
 
@@ -21,7 +22,8 @@ export type DashboardTabId =
   | 'landsat'
   | 'vertices-proximas'
   | 'auas-sccon'
-  | 'sobreposicoes';
+  | 'sobreposicoes'
+  | 'croqui';
 
 export const DASHBOARD_VIEW_LABELS: Record<DashboardView, string> = {
   'simcar-clip': 'Recorte SIMCAR',
@@ -31,6 +33,7 @@ export const DASHBOARD_VIEW_LABELS: Record<DashboardView, string> = {
   'vertices-proximas': 'Análise de Erros',
   'auas-sccon': 'AUAS × SCCON',
   sobreposicoes: 'Sobreposições',
+  croqui: 'Croqui',
   features: 'Funcionalidades',
   settings: 'Configurações',
 };
