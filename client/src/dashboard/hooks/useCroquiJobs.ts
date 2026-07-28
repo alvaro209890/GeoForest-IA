@@ -177,7 +177,10 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ zipBase64, filename: croquiFile.name }),
       });
-      if (!response.ok) throw new Error(await readApiError(response));
+      if (!response.ok) {
+        const err = await readApiError(response);
+        throw new Error(err?.error || 'Falha no upload.');
+      }
       const data = await response.json();
       setCroquiUploadId(String(data.uploadId));
       toast.success('ATP importado.');
@@ -218,7 +221,10 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uploadId, title, propertyName }),
       });
-      if (!response.ok) throw new Error(await readApiError(response));
+      if (!response.ok) {
+        const err = await readApiError(response);
+        throw new Error(err?.error || 'Falha ao gerar croqui.');
+      }
       const data = await response.json();
       const jobId = String(data.jobId);
       setCroquiJobId(jobId);

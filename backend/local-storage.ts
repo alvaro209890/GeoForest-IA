@@ -37,6 +37,8 @@ const USER_DIRS = [
   "containment/output",
   "overlap/input",
   "overlap/output",
+  "croqui/input",
+  "croqui/output",
   "geometry-errors/input",
   "geometry-errors/output",
   "simcar-oraculo/input",
@@ -208,7 +210,7 @@ function resolveDocPathFromSegments(segments: string[]): string | null {
   }
   const docId = parts[3];
   if (!docId) return null;
-  const allowed = new Set(["conversations", "simcar_clips", "cbers_wpm_jobs", "landsat_jobs", "vertices_jobs", "processing_jobs", "containment_jobs", "geometry_errors_jobs", "processar_projeto_jobs", "simcar_oraculo_jobs", "receipts"]);
+  const allowed = new Set(["conversations", "simcar_clips", "cbers_wpm_jobs", "landsat_jobs", "vertices_jobs", "processing_jobs", "containment_jobs", "geometry_errors_jobs", "processar_projeto_jobs", "simcar_oraculo_jobs", "receipts", "croqui_jobs"]);
   if (!allowed.has(parts[2])) return null;
   return path.join(getUserDir(uid), parts[2], `${docId}.json`);
 }
@@ -216,7 +218,7 @@ function resolveDocPathFromSegments(segments: string[]): string | null {
 function resolveCollectionDirFromSegments(segments: string[]): string | null {
   const parts = segments.filter(Boolean).map((part) => safeSegment(part));
   if (parts[0] !== "users" || !parts[1] || !parts[2]) return null;
-  const allowed = new Set(["conversations", "simcar_clips", "cbers_wpm_jobs", "landsat_jobs", "vertices_jobs", "processing_jobs", "containment_jobs", "geometry_errors_jobs", "processar_projeto_jobs", "simcar_oraculo_jobs", "receipts"]);
+  const allowed = new Set(["conversations", "simcar_clips", "cbers_wpm_jobs", "landsat_jobs", "vertices_jobs", "processing_jobs", "containment_jobs", "geometry_errors_jobs", "processar_projeto_jobs", "simcar_oraculo_jobs", "receipts", "croqui_jobs"]);
   if (!allowed.has(parts[2])) return null;
   return path.join(getUserDir(parts[1]), parts[2]);
 }
