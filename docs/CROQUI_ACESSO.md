@@ -5,6 +5,7 @@ croquis aprovados que estão em `Croquis/`. Aba **Croqui** do dashboard (`/dashb
 
 - [Os modelos](#os-modelos)
 - [Fluxo](#fluxo)
+- [Uso no dashboard](#uso-no-dashboard)
 - [Ponto de partida](#ponto-de-partida)
 - [Roteiro](#roteiro)
 - [Base do mapa](#base-do-mapa)
@@ -53,6 +54,19 @@ O que foi medido nos modelos e virou especificação:
 6. **Artefatos** — PDF, DOCX e KML, empacotados num ZIP.
 
 O job roda de forma assíncrona com progresso por SSE e histórico em `users/{uid}/croqui_jobs`.
+
+## Uso no dashboard
+
+Aba **Croqui** (`/dashboard/croqui`):
+
+1. Informe **título** e **nome da propriedade**.
+2. Envie o shapefile ATP em `.zip` — **arraste o arquivo para a área tracejada** ou clique em
+   **Selecionar ZIP**. Só `.zip` é aceito (extensão ou `application/zip`).
+3. Clique em **Gerar croqui** e acompanhe o progresso.
+4. Baixe o ZIP com PDF, DOCX e KML.
+
+Durante o upload/processamento a área de drop fica desabilitada. Soltar um arquivo que não seja ZIP
+mostra erro e não troca a seleção atual.
 
 ## Ponto de partida
 

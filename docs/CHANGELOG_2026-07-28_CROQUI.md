@@ -1,5 +1,15 @@
 # Changelog — Croqui de acesso
 
+## 2026-07-29 — drag-and-drop do ZIP no dashboard
+
+- A área de envio da ATP na aba **Croqui** aceita **arrastar e soltar** o `.zip` (além do clique
+  em Selecionar ZIP), no mesmo padrão das outras abas.
+- Validação no drop/seleção: só `.zip` / `application/zip`; outros tipos mostram toast de erro.
+- Drop desabilitado enquanto upload ou job estão em andamento.
+- Docs: seção **Uso no dashboard** em `docs/CROQUI_ACESSO.md`.
+
+---
+
 ## 2026-07-29 — croqui no padrão dos modelos aprovados
 
 Calibrado contra `Croquis/` (`chacara_02`, `Fazenda Irmaos Sebald-lote 121B`,
