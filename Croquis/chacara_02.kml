@@ -1,0 +1,458 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+<Document>
+	<name>chacara_02.kml</name>
+	<open>1</open>
+	<atom:link rel="app" href="https://www.google.com/earth/about/versions/#earth-pro" title="Google Earth Pro 7.3.6.10201"></atom:link>
+	<Schema name="Chacara_02" id="S_Chacara_02_SSSSSSSSSSSSSSSSSSSSSDDS">
+		<SimpleField type="long" name="id_2"><displayName>&lt;b&gt;id&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="distrito"><displayName>&lt;b&gt;distrito&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="zona"><displayName>&lt;b&gt;zona&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="setor"><displayName>&lt;b&gt;setor&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="loteamento"><displayName>&lt;b&gt;loteamento&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="quadra"><displayName>&lt;b&gt;quadra&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="lote"><displayName>&lt;b&gt;lote&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="logradouro"><displayName>&lt;b&gt;logradouro&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="num_lograd"><displayName>&lt;b&gt;num_lograd&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="cadastro"><displayName>&lt;b&gt;cadastro&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="inscri_imo"><displayName>&lt;b&gt;inscri_imo&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="cart_cns"><displayName>&lt;b&gt;cart_cns&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="cart_livro"><displayName>&lt;b&gt;cart_livro&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="matricula"><displayName>&lt;b&gt;matricula&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="cart_digit"><displayName>&lt;b&gt;cart_digit&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="area"><displayName>&lt;b&gt;area&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="test_princ"><displayName>&lt;b&gt;test_princ&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="test_secun"><displayName>&lt;b&gt;test_secun&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="geo"><displayName>&lt;b&gt;geo&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="revisao"><displayName>&lt;b&gt;revisao&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="sit_jur"><displayName>&lt;b&gt;sit_jur&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="cons_averb"><displayName>&lt;b&gt;cons_averb&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="double" name="area_cons"><displayName>&lt;b&gt;area_cons&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="double" name="iden"><displayName>&lt;b&gt;iden&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="plus_code"><displayName>&lt;b&gt;plus_code&lt;/b&gt;</displayName>
+</SimpleField>
+	</Schema>
+	<Style id="falseColor">
+		<BalloonStyle>
+			<text><![CDATA[<table border="0">
+  <tr><td><b>id</b></td><td>$[Chacara_02/id_2]</td></tr>
+  <tr><td><b>distrito</b></td><td>$[Chacara_02/distrito]</td></tr>
+  <tr><td><b>zona</b></td><td>$[Chacara_02/zona]</td></tr>
+  <tr><td><b>setor</b></td><td>$[Chacara_02/setor]</td></tr>
+  <tr><td><b>loteamento</b></td><td>$[Chacara_02/loteamento]</td></tr>
+  <tr><td><b>quadra</b></td><td>$[Chacara_02/quadra]</td></tr>
+  <tr><td><b>lote</b></td><td>$[Chacara_02/lote]</td></tr>
+  <tr><td><b>logradouro</b></td><td>$[Chacara_02/logradouro]</td></tr>
+  <tr><td><b>num_lograd</b></td><td>$[Chacara_02/num_lograd]</td></tr>
+  <tr><td><b>cadastro</b></td><td>$[Chacara_02/cadastro]</td></tr>
+  <tr><td><b>inscri_imo</b></td><td>$[Chacara_02/inscri_imo]</td></tr>
+  <tr><td><b>cart_cns</b></td><td>$[Chacara_02/cart_cns]</td></tr>
+  <tr><td><b>cart_livro</b></td><td>$[Chacara_02/cart_livro]</td></tr>
+  <tr><td><b>matricula</b></td><td>$[Chacara_02/matricula]</td></tr>
+  <tr><td><b>cart_digit</b></td><td>$[Chacara_02/cart_digit]</td></tr>
+  <tr><td><b>area</b></td><td>$[Chacara_02/area]</td></tr>
+  <tr><td><b>test_princ</b></td><td>$[Chacara_02/test_princ]</td></tr>
+  <tr><td><b>test_secun</b></td><td>$[Chacara_02/test_secun]</td></tr>
+  <tr><td><b>geo</b></td><td>$[Chacara_02/geo]</td></tr>
+  <tr><td><b>revisao</b></td><td>$[Chacara_02/revisao]</td></tr>
+  <tr><td><b>sit_jur</b></td><td>$[Chacara_02/sit_jur]</td></tr>
+  <tr><td><b>cons_averb</b></td><td>$[Chacara_02/cons_averb]</td></tr>
+  <tr><td><b>area_cons</b></td><td>$[Chacara_02/area_cons]</td></tr>
+  <tr><td><b>iden</b></td><td>$[Chacara_02/iden]</td></tr>
+  <tr><td><b>plus_code</b></td><td>$[Chacara_02/plus_code]</td></tr>
+</table>]]></text>
+		</BalloonStyle>
+		<LineStyle>
+			<color>ff0000ff</color>
+			<width>3</width>
+		</LineStyle>
+		<PolyStyle>
+			<colorMode>random</colorMode>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<Style id="falseColor0">
+		<BalloonStyle>
+			<text><![CDATA[<table border="0">
+  <tr><td><b>id</b></td><td>$[Chacara_02/id_2]</td></tr>
+  <tr><td><b>distrito</b></td><td>$[Chacara_02/distrito]</td></tr>
+  <tr><td><b>zona</b></td><td>$[Chacara_02/zona]</td></tr>
+  <tr><td><b>setor</b></td><td>$[Chacara_02/setor]</td></tr>
+  <tr><td><b>loteamento</b></td><td>$[Chacara_02/loteamento]</td></tr>
+  <tr><td><b>quadra</b></td><td>$[Chacara_02/quadra]</td></tr>
+  <tr><td><b>lote</b></td><td>$[Chacara_02/lote]</td></tr>
+  <tr><td><b>logradouro</b></td><td>$[Chacara_02/logradouro]</td></tr>
+  <tr><td><b>num_lograd</b></td><td>$[Chacara_02/num_lograd]</td></tr>
+  <tr><td><b>cadastro</b></td><td>$[Chacara_02/cadastro]</td></tr>
+  <tr><td><b>inscri_imo</b></td><td>$[Chacara_02/inscri_imo]</td></tr>
+  <tr><td><b>cart_cns</b></td><td>$[Chacara_02/cart_cns]</td></tr>
+  <tr><td><b>cart_livro</b></td><td>$[Chacara_02/cart_livro]</td></tr>
+  <tr><td><b>matricula</b></td><td>$[Chacara_02/matricula]</td></tr>
+  <tr><td><b>cart_digit</b></td><td>$[Chacara_02/cart_digit]</td></tr>
+  <tr><td><b>area</b></td><td>$[Chacara_02/area]</td></tr>
+  <tr><td><b>test_princ</b></td><td>$[Chacara_02/test_princ]</td></tr>
+  <tr><td><b>test_secun</b></td><td>$[Chacara_02/test_secun]</td></tr>
+  <tr><td><b>geo</b></td><td>$[Chacara_02/geo]</td></tr>
+  <tr><td><b>revisao</b></td><td>$[Chacara_02/revisao]</td></tr>
+  <tr><td><b>sit_jur</b></td><td>$[Chacara_02/sit_jur]</td></tr>
+  <tr><td><b>cons_averb</b></td><td>$[Chacara_02/cons_averb]</td></tr>
+  <tr><td><b>area_cons</b></td><td>$[Chacara_02/area_cons]</td></tr>
+  <tr><td><b>iden</b></td><td>$[Chacara_02/iden]</td></tr>
+  <tr><td><b>plus_code</b></td><td>$[Chacara_02/plus_code]</td></tr>
+</table>]]></text>
+		</BalloonStyle>
+		<LineStyle>
+			<color>ff0000ff</color>
+			<width>3</width>
+		</LineStyle>
+		<PolyStyle>
+			<colorMode>random</colorMode>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<StyleMap id="falseColor1">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#falseColor</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#falseColor0</styleUrl>
+		</Pair>
+	</StyleMap>
+	<Style id="inline">
+		<LineStyle>
+			<color>ff00aaff</color>
+			<width>2</width>
+		</LineStyle>
+		<PolyStyle>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<StyleMap id="inline0">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#inline4</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#inline7</styleUrl>
+		</Pair>
+	</StyleMap>
+	<Style id="inline1">
+		<LineStyle>
+			<color>ff00aaff</color>
+			<width>2</width>
+		</LineStyle>
+		<PolyStyle>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<Style id="inline2">
+		<LineStyle>
+			<color>ff00aaff</color>
+			<width>2</width>
+		</LineStyle>
+		<PolyStyle>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<Style id="inline3">
+		<LineStyle>
+			<color>ff00aaff</color>
+			<width>2</width>
+		</LineStyle>
+		<PolyStyle>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<Style id="inline4">
+		<LineStyle>
+			<color>ff00aaff</color>
+			<width>2</width>
+		</LineStyle>
+		<PolyStyle>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<StyleMap id="inline5">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#inline</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#inline1</styleUrl>
+		</Pair>
+	</StyleMap>
+	<StyleMap id="inline6">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#inline2</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#inline3</styleUrl>
+		</Pair>
+	</StyleMap>
+	<Style id="inline7">
+		<LineStyle>
+			<color>ff00aaff</color>
+			<width>2</width>
+		</LineStyle>
+		<PolyStyle>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<StyleMap id="msn_ylw-pushpin">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#sn_ylw-pushpin</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#sh_ylw-pushpin0</styleUrl>
+		</Pair>
+	</StyleMap>
+	<StyleMap id="msn_ylw-pushpin0">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#sn_ylw-pushpin0</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#sh_ylw-pushpin</styleUrl>
+		</Pair>
+	</StyleMap>
+	<Style id="sh_ylw-pushpin">
+		<IconStyle>
+			<scale>1.06364</scale>
+			<Icon>
+				<href>http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href>
+			</Icon>
+			<hotSpot x="20" y="2" xunits="pixels" yunits="pixels"/>
+		</IconStyle>
+		<LabelStyle>
+			<scale>0.9</scale>
+		</LabelStyle>
+	</Style>
+	<Style id="sh_ylw-pushpin0">
+		<IconStyle>
+			<scale>1.06364</scale>
+			<Icon>
+				<href>http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href>
+			</Icon>
+			<hotSpot x="20" y="2" xunits="pixels" yunits="pixels"/>
+		</IconStyle>
+		<LabelStyle>
+			<scale>0.9</scale>
+		</LabelStyle>
+	</Style>
+	<Style id="sn_ylw-pushpin">
+		<IconStyle>
+			<scale>0.9</scale>
+			<Icon>
+				<href>http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href>
+			</Icon>
+			<hotSpot x="20" y="2" xunits="pixels" yunits="pixels"/>
+		</IconStyle>
+		<LabelStyle>
+			<scale>0.9</scale>
+		</LabelStyle>
+	</Style>
+	<Style id="sn_ylw-pushpin0">
+		<IconStyle>
+			<scale>0.9</scale>
+			<Icon>
+				<href>http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href>
+			</Icon>
+			<hotSpot x="20" y="2" xunits="pixels" yunits="pixels"/>
+		</IconStyle>
+		<LabelStyle>
+			<scale>0.9</scale>
+		</LabelStyle>
+	</Style>
+	<Folder>
+		<name>Meus lugares</name>
+		<open>1</open>
+		<Style>
+			<ListStyle>
+				<listItemType>check</listItemType>
+				<ItemIcon>
+					<state>open</state>
+					<href>:/mysavedplaces_open.png</href>
+				</ItemIcon>
+				<ItemIcon>
+					<state>closed</state>
+					<href>:/mysavedplaces_closed.png</href>
+				</ItemIcon>
+				<bgColor>00ffffff</bgColor>
+				<maxSnippetLines>2</maxSnippetLines>
+			</ListStyle>
+		</Style>
+		<Placemark>
+			<name>Medida do caminho</name>
+			<styleUrl>#inline5</styleUrl>
+			<LineString>
+				<tessellate>1</tessellate>
+				<coordinates>
+					-52.19219390294769,-12.59998804250796,0 -52.19462345852463,-12.59938161429316,0 -52.19500695281305,-12.59928090356948,0 -52.19512357006485,-12.59915902434925,0 -52.19545621562919,-12.59908759814585,0 -52.19648552475887,-12.59884519511199,0 -52.19762898232239,-12.59871160537328,0 -52.2006575312584,-12.5987164743574,0 -52.20599267034046,-12.59868753954244,0 -52.21080791459676,-12.59870643053667,0 -52.21486939909691,-12.59873921438645,0 -52.21958674611928,-12.59872623399206,0 
+				</coordinates>
+			</LineString>
+		</Placemark>
+		<Placemark>
+			<name>12°35&apos;55.45&quot;S,  52°13&apos;10.55&quot;O</name>
+			<LookAt>
+				<longitude>-52.21942384454529</longitude>
+				<latitude>-12.59828313024121</latitude>
+				<altitude>0</altitude>
+				<heading>-0.006710086715384326</heading>
+				<tilt>27.84630396104889</tilt>
+				<range>269.2776390549179</range>
+				<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+			</LookAt>
+			<styleUrl>#msn_ylw-pushpin</styleUrl>
+			<Point>
+				<gx:drawOrder>1</gx:drawOrder>
+				<coordinates>-52.21959722222223,-12.59873611111111,0</coordinates>
+			</Point>
+		</Placemark>
+		<Placemark>
+			<name>Medida do caminho</name>
+			<styleUrl>#inline0</styleUrl>
+			<LineString>
+				<tessellate>1</tessellate>
+				<coordinates>
+					-52.21958809971398,-12.59870616305111,0 -52.21957673597984,-12.60415164368634,0 
+				</coordinates>
+			</LineString>
+		</Placemark>
+		<Placemark>
+			<name>12°36&apos;15.12&quot;S,  52°13&apos;10.42&quot;O</name>
+			<LookAt>
+				<longitude>-52.22090278917295</longitude>
+				<latitude>-12.60146876044659</latitude>
+				<altitude>0</altitude>
+				<heading>0.006318754759032074</heading>
+				<tilt>14.99630607394636</tilt>
+				<range>1840.487950743808</range>
+				<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+			</LookAt>
+			<styleUrl>#msn_ylw-pushpin</styleUrl>
+			<Point>
+				<gx:drawOrder>1</gx:drawOrder>
+				<coordinates>-52.21956111111112,-12.6042,0</coordinates>
+			</Point>
+		</Placemark>
+		<Placemark>
+			<name>12°36&apos;15.38&quot;S,  52°13&apos;19.35&quot;O</name>
+			<LookAt>
+				<longitude>-52.22139512352378</longitude>
+				<latitude>-12.60391053054783</latitude>
+				<altitude>0</altitude>
+				<heading>-0.001641636276158728</heading>
+				<tilt>20.74243485710394</tilt>
+				<range>514.9061500399176</range>
+				<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+			</LookAt>
+			<styleUrl>#msn_ylw-pushpin</styleUrl>
+			<Point>
+				<gx:drawOrder>1</gx:drawOrder>
+				<coordinates>-52.22204166666667,-12.60427222222222,0</coordinates>
+			</Point>
+		</Placemark>
+		<Placemark>
+			<name>Medida do caminho</name>
+			<styleUrl>#inline6</styleUrl>
+			<LineString>
+				<tessellate>1</tessellate>
+				<coordinates>
+					-52.21955557974999,-12.60418124703081,0 -52.22203163593457,-12.60424991525427,0 
+				</coordinates>
+			</LineString>
+		</Placemark>
+		<Placemark>
+			<styleUrl>#falseColor1</styleUrl>
+			<ExtendedData>
+				<SchemaData schemaUrl="#S_Chacara_02_SSSSSSSSSSSSSSSSSSSSSDDS">
+					<SimpleData name="id_2">8300</SimpleData>
+					<SimpleData name="distrito">001</SimpleData>
+					<SimpleData name="zona">001</SimpleData>
+					<SimpleData name="setor">0026</SimpleData>
+					<SimpleData name="loteamento">0001</SimpleData>
+					<SimpleData name="quadra">C</SimpleData>
+					<SimpleData name="lote">C.002</SimpleData>
+					<SimpleData name="logradouro">81470</SimpleData>
+					<SimpleData name="num_lograd"></SimpleData>
+					<SimpleData name="cadastro">3463</SimpleData>
+					<SimpleData name="inscri_imo">001.CH.C.02</SimpleData>
+					<SimpleData name="cart_cns">064204</SimpleData>
+					<SimpleData name="cart_livro">2</SimpleData>
+					<SimpleData name="matricula">527</SimpleData>
+					<SimpleData name="cart_digit">00</SimpleData>
+					<SimpleData name="area"></SimpleData>
+					<SimpleData name="test_princ"></SimpleData>
+					<SimpleData name="test_secun"></SimpleData>
+					<SimpleData name="geo">NÃO</SimpleData>
+					<SimpleData name="revisao"></SimpleData>
+					<SimpleData name="sit_jur">PARTICULARES</SimpleData>
+					<SimpleData name="cons_averb"></SimpleData>
+					<SimpleData name="area_cons">0</SimpleData>
+					<SimpleData name="iden">0</SimpleData>
+					<SimpleData name="plus_code">58V9</SimpleData>
+				</SchemaData>
+			</ExtendedData>
+			<Polygon>
+				<outerBoundaryIs>
+					<LinearRing>
+						<coordinates>
+							-52.22329613668308,-12.60885399279019,0 -52.22148415275499,-12.60886041328604,0 -52.22147773632597,-12.60491731359004,0 -52.22147675256469,-12.60431243767419,0 -52.22330501897114,-12.60430937909178,0 -52.22329613668308,-12.60885399279019,0 
+						</coordinates>
+					</LinearRing>
+				</outerBoundaryIs>
+			</Polygon>
+		</Placemark>
+		<Placemark>
+			<name>Lagoa Betis (12°36&apos;0.14&quot;S,  52°11&apos;32.00&quot;O)</name>
+			<LookAt>
+				<longitude>-52.19041239239692</longitude>
+				<latitude>-12.60017461254185</latitude>
+				<altitude>0</altitude>
+				<heading>-2.27134433008196</heading>
+				<tilt>6.861492651367007</tilt>
+				<range>1874.960689168461</range>
+				<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+			</LookAt>
+			<styleUrl>#msn_ylw-pushpin0</styleUrl>
+			<Point>
+				<gx:drawOrder>1</gx:drawOrder>
+				<coordinates>-52.19222222222222,-12.60003888888889,0</coordinates>
+			</Point>
+		</Placemark>
+	</Folder>
+</Document>
+</kml>

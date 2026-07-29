@@ -1,188 +1,395 @@
 import PDFDocument from "pdfkit";
 import type { MultiPolygon, Polygon, Position } from "geojson";
+import { bboxOfPositions, fetchBasemapImage, pickScaleBar, resolveMapFrame } from "./basemap";
+import type { MapFrame } from "./basemap";
+import { formatDmsLabel } from "./coords";
+import { sedesNaBbox } from "./landmarks";
+import type { PlaceLabel } from "./landmarks";
 import type { CroquiRoute } from "./routing";
+
+/**
+ * Layout dos croquis modelo (pasta `Croquis/`): A4 paisagem com o mapa ocupando
+ * a página inteira, caixa branca do roteiro sobreposta no topo-esquerdo, caixa
+ * "Legenda" no topo-direito, seta N e barra de escala no canto inferior direito.
+ */
 
 const PAGE_W = 842;
 const PAGE_H = 595;
-const HEADER_H = 92;
+const MAP_MARGIN = 8;
+const MAP_X = MAP_MARGIN;
+const MAP_Y = MAP_MARGIN;
+const MAP_W = PAGE_W - MAP_MARGIN * 2;
+const MAP_H = PAGE_H - MAP_MARGIN * 2;
 
-function expandBbox(
-  coords: Position[],
-  paddingRatio = 0.1,
-): [number, number, number, number] {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const [x, y] of coords) {
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-  }
-  const padX = (maxX - minX) * paddingRatio || 0.02;
-  const padY = (maxY - minY) * paddingRatio || 0.02;
-  return [minX - padX, minY - padY, maxX + padX, maxY + padY];
-}
+const BOX_INSET = 6;
+const BOX_PAD = 8;
+const LEGEND_W = 118;
+const LEGEND_H = 56;
 
-function project(
-  lon: number,
-  lat: number,
-  bbox: [number, number, number, number],
-): [number, number] {
-  const [minX, minY, maxX, maxY] = bbox;
-  const x = ((lon - minX) / (maxX - minX)) * PAGE_W;
-  const y = PAGE_H - ((lat - minY) / (maxY - minY)) * PAGE_H;
-  return [x, y];
-}
+const ROUTE_COLOR = "#ff5500";
+const POLYGON_COLOR = "#ff0000";
+const PIN_COLOR = "#ffe200";
 
-async function fetchMapImage(bbox: [number, number, number, number]): Promise<Buffer | null> {
-  const [minX, minY, maxX, maxY] = bbox;
-  const url =
-    "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export" +
-    `?bbox=${minX},${minY},${maxX},${maxY}&bboxSR=4326&imageSR=4326&size=1684,1190&format=jpg&f=image`;
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(45000) });
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    return buf.length > 1000 ? buf : null;
-  } catch {
-    return null;
-  }
-}
-
-function pickScaleKm(bbox: [number, number, number, number]): number {
-  const [minX, minY, maxX, maxY] = bbox;
-  const widthDeg = maxX - minX;
-  const km = widthDeg * 111 * Math.cos((((minY + maxY) / 2) * Math.PI) / 180);
-  if (km <= 12) return 7;
-  if (km <= 25) return 15;
-  if (km <= 50) return 40;
-  return Math.round(km / 4);
-}
+type Doc = InstanceType<typeof PDFDocument>;
+type Rect = { x: number; y: number; w: number; h: number };
 
 function polygonRings(geometry: Polygon | MultiPolygon): Position[][] {
-  if (geometry.type === "Polygon") return [geometry.coordinates[0]];
-  return geometry.coordinates.map((p) => p[0]);
+  if (geometry.type === "Polygon") return geometry.coordinates;
+  return geometry.coordinates.flat();
 }
 
-function drawYellowPin(doc: InstanceType<typeof PDFDocument>, x: number, y: number): void {
+function overlaps(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function insideMap(rect: Rect): boolean {
+  return (
+    rect.x >= MAP_X &&
+    rect.y >= MAP_Y &&
+    rect.x + rect.w <= MAP_X + MAP_W &&
+    rect.y + rect.h <= MAP_Y + MAP_H
+  );
+}
+
+/** Texto branco com contorno escuro, como os rótulos do Google Earth. */
+function haloText(doc: Doc, text: string, x: number, y: number): void {
   doc.save();
-  doc.fillColor("#ffff00").strokeColor("#333333").lineWidth(0.6);
-  doc.circle(x, y - 4, 4).fillAndStroke();
-  doc.moveTo(x, y).lineTo(x - 3, y + 8).lineTo(x + 3, y + 8).closePath().fillAndStroke();
+  doc.fillColor("#1a1a1a");
+  for (const [dx, dy] of [
+    [-0.7, 0],
+    [0.7, 0],
+    [0, -0.7],
+    [0, 0.7],
+  ]) {
+    doc.text(text, x + dx, y + dy, { lineBreak: false });
+  }
+  doc.fillColor("#ffffff");
+  doc.text(text, x, y, { lineBreak: false });
   doc.restore();
+}
+
+/** Pushpin amarelo no estilo `ylw-pushpin` do Google Earth, ancorado na ponta. */
+function drawPushpin(doc: Doc, x: number, y: number): void {
+  doc.save();
+  doc.lineWidth(0.9).strokeColor("#3d3d3d");
+  doc.moveTo(x, y).lineTo(x + 3.4, y - 12).stroke();
+  doc.fillColor(PIN_COLOR).strokeColor("#7a6a00").lineWidth(0.7);
+  doc.circle(x + 4.6, y - 14.4, 4.4).fillAndStroke();
+  doc.fillColor("#fff8b0");
+  doc.circle(x + 3.4, y - 15.6, 1.5).fill();
+  doc.restore();
+}
+
+function drawWhiteBox(doc: Doc, rect: Rect): void {
+  doc.save();
+  doc.fillOpacity(0.93).fillColor("#ffffff");
+  doc.rect(rect.x, rect.y, rect.w, rect.h).fill();
+  doc.fillOpacity(1).lineWidth(0.6).strokeColor("#8c8c8c");
+  doc.rect(rect.x, rect.y, rect.w, rect.h).stroke();
+  doc.restore();
+}
+
+function drawLegend(doc: Doc, rect: Rect): void {
+  drawWhiteBox(doc, rect);
+  doc.save();
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#000000");
+  doc.text("Legenda", rect.x, rect.y + 7, { width: rect.w, align: "center", lineBreak: false });
+
+  const iconX = rect.x + 14;
+  const pathY = rect.y + 27;
+  doc.lineWidth(1.6).strokeColor(ROUTE_COLOR);
+  doc.moveTo(iconX - 5, pathY + 3).lineTo(iconX, pathY - 2).lineTo(iconX + 5, pathY + 2).stroke();
+  doc.fillColor(ROUTE_COLOR);
+  for (const [cx, cy] of [
+    [iconX - 5, pathY + 3],
+    [iconX, pathY - 2],
+    [iconX + 5, pathY + 2],
+  ]) {
+    doc.circle(cx, cy, 1.5).fill();
+  }
+  doc.font("Helvetica").fontSize(9).fillColor("#000000");
+  doc.text("Caminho", rect.x + 28, pathY - 3.5, { lineBreak: false });
+
+  const pinY = rect.y + 46;
+  doc.save();
+  doc.scale(0.62, 0.62, { origin: [iconX, pinY] });
+  drawPushpin(doc, iconX, pinY + 5);
+  doc.restore();
+  doc.font("Helvetica").fontSize(9).fillColor("#000000");
+  doc.text("Coordenadas", rect.x + 28, pinY - 3.5, { lineBreak: false });
+  doc.restore();
+}
+
+function drawNorthArrow(doc: Doc, cx: number, baseY: number): void {
+  doc.save();
+  doc.lineJoin("round");
+  const tipY = baseY - 26;
+  const path = () => {
+    doc.moveTo(cx - 7, baseY - 12);
+    doc.lineTo(cx, tipY);
+    doc.lineTo(cx + 7, baseY - 12);
+    doc.lineTo(cx, baseY - 17);
+    doc.closePath();
+  };
+  path();
+  doc.lineWidth(2.6).strokeColor("#ffffff").stroke();
+  path();
+  doc.fillColor("#000000").fill();
+
+  doc.font("Helvetica-Bold").fontSize(14);
+  doc.fillColor("#ffffff");
+  for (const [dx, dy] of [
+    [-0.8, 0],
+    [0.8, 0],
+    [0, -0.8],
+    [0, 0.8],
+  ]) {
+    doc.text("N", cx - 6 + dx, baseY - 11 + dy, { width: 12, align: "center", lineBreak: false });
+  }
+  doc.fillColor("#000000");
+  doc.text("N", cx - 6, baseY - 11, { width: 12, align: "center", lineBreak: false });
+  doc.restore();
+}
+
+function drawScaleBar(doc: Doc, frame: MapFrame, rightX: number, baseY: number): void {
+  const bar = pickScaleBar(frame.metersPerPoint, 150);
+  doc.save();
+  doc.font("Helvetica").fontSize(8.5);
+  const labelW = doc.widthOfString(bar.label) + 6;
+  const boxW = bar.widthPt + labelW + 14;
+  const boxH = 15;
+  const boxX = rightX - boxW;
+  const boxY = baseY - boxH;
+
+  doc.fillOpacity(0.88).fillColor("#ffffff");
+  doc.rect(boxX, boxY, boxW, boxH).fill();
+  doc.fillOpacity(1);
+
+  const lineY = boxY + boxH / 2;
+  const lineX = boxX + 7;
+  doc.lineWidth(1.2).strokeColor("#000000");
+  doc.moveTo(lineX, lineY).lineTo(lineX + bar.widthPt, lineY).stroke();
+  doc.moveTo(lineX, lineY - 3.5).lineTo(lineX, lineY + 3.5).stroke();
+  doc.moveTo(lineX + bar.widthPt, lineY - 3.5).lineTo(lineX + bar.widthPt, lineY + 3.5).stroke();
+
+  doc.fillColor("#000000");
+  doc.text(bar.label, lineX + bar.widthPt + 6, lineY - 4.2, { lineBreak: false });
+  doc.restore();
+}
+
+function measureHeaderHeight(doc: Doc, title: string, narrative: string, innerW: number): number {
+  doc.font("Helvetica-Bold").fontSize(15);
+  const titleH = doc.heightOfString(title, { width: innerW });
+  doc.font("Helvetica").fontSize(9);
+  const bodyH = doc.heightOfString(narrative, { width: innerW, lineGap: 2 });
+  return BOX_PAD * 2 + titleH + 6 + bodyH;
+}
+
+function drawHeader(doc: Doc, rect: Rect, title: string, narrative: string): void {
+  drawWhiteBox(doc, rect);
+  doc.save();
+  const innerW = rect.w - BOX_PAD * 2;
+  doc.font("Helvetica-Bold").fontSize(15).fillColor("#000000");
+  doc.text(title, rect.x + BOX_PAD, rect.y + BOX_PAD, { width: innerW });
+  doc.font("Helvetica").fontSize(9).fillColor("#000000");
+  doc.text(narrative, rect.x + BOX_PAD, doc.y + 6, { width: innerW, lineGap: 2 });
+  doc.restore();
+}
+
+/**
+ * Rótulos de contexto sobre a imagem: nome das cidades e sigla das rodovias do
+ * percurso, no lugar dos rótulos que a base licenciada não fornece.
+ */
+function drawContextLabels(
+  doc: Doc,
+  places: PlaceLabel[],
+  route: CroquiRoute,
+  frame: MapFrame,
+  occupied: Rect[],
+): Rect[] {
+  const placed = [...occupied];
+
+  doc.font("Helvetica-Bold").fontSize(10);
+  for (const place of places) {
+    const [px, py] = frame.project(place.lon, place.lat);
+    const w = doc.widthOfString(place.nome);
+    const rect: Rect = { x: MAP_X + px - w / 2, y: MAP_Y + py - 5, w, h: 12 };
+    if (!insideMap(rect) || placed.some((other) => overlaps(rect, other))) continue;
+    placed.push(rect);
+    haloText(doc, place.nome, rect.x, rect.y);
+  }
+
+  doc.font("Helvetica-Bold").fontSize(8.5);
+  const vistas = new Set<string>();
+  for (let i = 0; i < route.waypoints.length - 1; i++) {
+    const via = String(route.waypoints[i].roadName || "").trim();
+    // Só sigla de rodovia, como nos modelos — nome de rua urbana polui o mapa.
+    if (!/^[A-Z]{2}-\d+/.test(via) || vistas.has(via)) continue;
+    const inicio = route.waypoints[i].coordIndex;
+    const fim = route.waypoints[i + 1].coordIndex;
+    const meio = route.coordinates[Math.floor((inicio + fim) / 2)];
+    if (!meio) continue;
+    const [px, py] = frame.project(meio[0], meio[1]);
+    const w = doc.widthOfString(via);
+    const rect: Rect = { x: MAP_X + px - w / 2, y: MAP_Y + py - 15, w, h: 11 };
+    if (!insideMap(rect) || placed.some((other) => overlaps(rect, other))) continue;
+    vistas.add(via);
+    placed.push(rect);
+    haloText(doc, via, rect.x, rect.y);
+  }
+
+  return placed;
+}
+
+/** Coloca o rótulo DMS ao lado do pin, desviando das caixas e dos outros rótulos. */
+function drawWaypointLabels(
+  doc: Doc,
+  route: CroquiRoute,
+  frame: MapFrame,
+  occupied: Rect[],
+): Rect[] {
+  doc.font("Helvetica").fontSize(8.5);
+  const placed = [...occupied];
+  for (const waypoint of route.waypoints) {
+    const [px, py] = frame.project(waypoint.lon, waypoint.lat);
+    const x = MAP_X + px;
+    const y = MAP_Y + py;
+    if (!insideMap({ x, y, w: 0, h: 0 })) continue;
+
+    const label = formatDmsLabel(waypoint.lon, waypoint.lat);
+    const w = doc.widthOfString(label);
+    const h = 11;
+    const candidates: Rect[] = [
+      { x: x + 12, y: y - 22, w, h },
+      { x: x - w - 6, y: y - 22, w, h },
+      { x: x + 12, y: y - 6, w, h },
+      { x: x - w - 6, y: y - 6, w, h },
+      { x: x - w / 2, y: y + 4, w, h },
+    ];
+    const spot =
+      candidates.find(
+        (rect) => insideMap(rect) && !placed.some((other) => overlaps(rect, other)),
+      ) || candidates[0];
+    placed.push(spot);
+    haloText(doc, label, spot.x, spot.y);
+  }
+  return placed;
 }
 
 export async function buildCroquiPdfBuffer(args: {
   title: string;
   narrative: string;
-  coordinateLines: string[];
   atpGeometry: Polygon | MultiPolygon;
   route: CroquiRoute;
 }): Promise<Buffer> {
-  const { title, narrative, coordinateLines, atpGeometry, route } = args;
+  const { title, narrative, atpGeometry, route } = args;
+
   const allCoords: Position[] = [...route.coordinates];
   for (const ring of polygonRings(atpGeometry)) allCoords.push(...ring);
-  const bbox = expandBbox(allCoords);
-  const mapImage = await fetchMapImage(bbox);
-  const scaleKm = pickScaleKm(bbox);
 
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0, autoFirstPage: false });
+  const chunks: Buffer[] = [];
+  const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0, autoFirstPage: false });
+  const finished = new Promise<Buffer>((resolve, reject) => {
     doc.on("data", (c) => chunks.push(c));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
+  });
+
+  // Mede a caixa antes de enquadrar: o conteúdo tem que nascer abaixo dela.
+  const legendRect: Rect = {
+    x: MAP_X + MAP_W - BOX_INSET - LEGEND_W,
+    y: MAP_Y + BOX_INSET,
+    w: LEGEND_W,
+    h: LEGEND_H,
+  };
+  const headerW = legendRect.x - (MAP_X + BOX_INSET) - 8;
+  const headerRect: Rect = {
+    x: MAP_X + BOX_INSET,
+    y: MAP_Y + BOX_INSET,
+    w: headerW,
+    h: measureHeaderHeight(doc, title, narrative, headerW - BOX_PAD * 2),
+  };
+
+  const frame = resolveMapFrame({
+    contentBbox: bboxOfPositions(allCoords),
+    widthPt: MAP_W,
+    heightPt: MAP_H,
+    topInsetPt: Math.max(headerRect.h, LEGEND_H) + BOX_INSET * 2,
+  });
+  const basemap = await fetchBasemapImage(frame);
+
+  {
     doc.addPage({ size: [PAGE_W, PAGE_H], margin: 0 });
 
-    doc.rect(0, 0, PAGE_W, PAGE_H).fill("#d8dde0");
-    if (mapImage) {
+    doc.rect(0, 0, PAGE_W, PAGE_H).fill("#ffffff");
+    doc.rect(MAP_X, MAP_Y, MAP_W, MAP_H).fill("#d8dde0");
+    if (basemap) {
       try {
-        doc.image(mapImage, 0, 0, { width: PAGE_W, height: PAGE_H });
+        doc.image(basemap.buffer, MAP_X, MAP_Y, { width: MAP_W, height: MAP_H });
       } catch {
-        // fallback sem imagem
+        // segue com o fundo neutro
       }
     }
 
+    const toPage = (lon: number, lat: number): [number, number] => {
+      const [px, py] = frame.project(lon, lat);
+      return [MAP_X + px, MAP_Y + py];
+    };
+
     doc.save();
-    doc.lineWidth(3.5).strokeColor("#ff0000");
-    const routePts = route.coordinates;
-    if (routePts.length >= 2) {
-      const [x0, y0] = project(routePts[0][0], routePts[0][1], bbox);
+    doc.rect(MAP_X, MAP_Y, MAP_W, MAP_H).clip();
+
+    if (route.coordinates.length >= 2) {
+      doc.lineWidth(3).strokeColor(ROUTE_COLOR).lineJoin("round").lineCap("round");
+      const [x0, y0] = toPage(route.coordinates[0][0], route.coordinates[0][1]);
       doc.moveTo(x0, y0);
-      for (let i = 1; i < routePts.length; i++) {
-        const [x, y] = project(routePts[i][0], routePts[i][1], bbox);
+      for (let i = 1; i < route.coordinates.length; i++) {
+        const [x, y] = toPage(route.coordinates[i][0], route.coordinates[i][1]);
         doc.lineTo(x, y);
       }
       doc.stroke();
     }
 
-    doc.lineWidth(2.5).strokeColor("#00ffff");
+    doc.lineWidth(2).strokeColor(POLYGON_COLOR).lineJoin("round");
     for (const ring of polygonRings(atpGeometry)) {
       if (ring.length < 3) continue;
-      const [fx, fy] = project(ring[0][0], ring[0][1], bbox);
+      const [fx, fy] = toPage(ring[0][0], ring[0][1]);
       doc.moveTo(fx, fy);
       for (let i = 1; i < ring.length; i++) {
-        const [x, y] = project(ring[i][0], ring[i][1], bbox);
+        const [x, y] = toPage(ring[i][0], ring[i][1]);
         doc.lineTo(x, y);
       }
       doc.closePath().stroke();
     }
 
-    for (const w of route.waypoints) {
-      const [x, y] = project(w.lon, w.lat, bbox);
-      drawYellowPin(doc, x, y);
+    for (const waypoint of route.waypoints) {
+      const [x, y] = toPage(waypoint.lon, waypoint.lat);
+      drawPushpin(doc, x, y);
     }
     doc.restore();
 
-    doc.save();
-    doc.fillColor("#ffffff").fillOpacity(0.9);
-    doc.rect(0, 0, PAGE_W, HEADER_H).fill();
-    doc.fillOpacity(1);
-    doc.restore();
+    const scaleRect: Rect = { x: MAP_X + MAP_W - 230, y: MAP_Y + MAP_H - 62, w: 230, h: 62 };
+    // Os DMS dos pontos vêm primeiro: são o conteúdo do croqui e têm prioridade
+    // sobre os rótulos de contexto. Com a base do Google os rótulos já vêm na imagem.
+    const ocupado = drawWaypointLabels(doc, route, frame, [headerRect, legendRect, scaleRect]);
+    if (basemap?.provider !== "google") {
+      drawContextLabels(doc, sedesNaBbox(frame.bboxLonLat), route, frame, ocupado);
+    }
 
-    doc.font("Helvetica-Bold").fontSize(13).fillColor("#000000");
-    doc.text(title, 21, 24, { width: 480, lineBreak: false });
+    drawHeader(doc, headerRect, title, narrative);
+    drawLegend(doc, legendRect);
+    drawNorthArrow(doc, MAP_X + MAP_W - 26, MAP_Y + MAP_H - 30);
+    drawScaleBar(doc, frame, MAP_X + MAP_W - 8, MAP_Y + MAP_H - 8);
 
-    doc.font("Helvetica-Bold").fontSize(10);
-    doc.text("Legenda", 726, 21, { width: 100, align: "left", lineBreak: false });
-    doc.text("Caminho", 749, 41, { width: 80, align: "left", lineBreak: false });
-    doc.text("Coordenadas", 749, 58, { width: 80, align: "left", lineBreak: false });
-
-    doc.font("Helvetica").fontSize(9).fillColor("#000000");
-    doc.text(narrative.replace(/\s+/g, " "), 21, 49, {
-      width: 500,
-      lineGap: 1.5,
-    });
-
-    doc.font("Helvetica").fontSize(7.5);
-    doc.text(coordinateLines.join("\n"), 580, 72, {
-      width: 240,
-      lineGap: 0.5,
-      align: "left",
-    });
-
-    const northX = PAGE_W - 42;
-    const northY = PAGE_H - 58;
-    doc.font("Helvetica-Bold").fontSize(13).fillColor("#000");
-    doc.text("N", northX, northY, { lineBreak: false });
-    doc.lineWidth(1.5).strokeColor("#000");
-    doc.moveTo(northX + 5, northY + 14).lineTo(northX + 5, northY + 32).stroke();
-    doc.moveTo(northX + 5, northY + 14).lineTo(northX + 1, northY + 20).stroke();
-    doc.moveTo(northX + 5, northY + 14).lineTo(northX + 9, northY + 20).stroke();
-
-    const scaleX = 24;
-    const scaleY = PAGE_H - 28;
-    const scaleBarW = 72;
-    doc.lineWidth(2).strokeColor("#000");
-    doc.moveTo(scaleX, scaleY).lineTo(scaleX + scaleBarW, scaleY).stroke();
-    doc.font("Helvetica").fontSize(8).fillColor("#000");
-    doc.text(`${scaleKm} km`, scaleX, scaleY + 3, { lineBreak: false });
-
-    doc.font("Helvetica").fontSize(7).fillColor("#ffffff");
-    doc.text("Image Airbus", PAGE_W - 120, PAGE_H - 14, { width: 110, align: "right", lineBreak: false });
+    if (basemap?.attribution) {
+      doc.save();
+      doc.font("Helvetica").fontSize(7).fillColor("#ffffff");
+      haloText(doc, basemap.attribution, MAP_X + 6, MAP_Y + MAP_H - 13);
+      doc.restore();
+    }
 
     doc.end();
-  });
+  }
+
+  return finished;
 }

@@ -1,0 +1,191 @@
+import { describe, expect, it } from "vitest";
+import { length as turfLength, lineString } from "@turf/turf";
+import type { Polygon } from "geojson";
+import { formatDmsPair } from "./coords";
+import {
+  classifyManeuver,
+  destinationOnPolygonBoundary,
+  primaryRoadRef,
+  resolveRoadLabel,
+  simplifyRouteSteps,
+  trimRouteAtPolygon,
+} from "./routing";
+import type { CroquiRoute, ManeuverKind, RouteWaypoint } from "./routing";
+
+function waypoint(
+  lon: number,
+  lat: number,
+  distanceToNextM: number,
+  maneuver: ManeuverKind,
+  roadName = "",
+  coordIndex = 0,
+): RouteWaypoint {
+  return {
+    lon,
+    lat,
+    dms: formatDmsPair(lon, lat),
+    distanceToNextM,
+    maneuver,
+    roadName,
+    coordIndex,
+  };
+}
+
+describe("croqui routing", () => {
+  it("usa a primeira sigla quando o OSRM devolve várias", () => {
+    expect(primaryRoadRef("BR-158 | BR-242")).toBe("BR-158");
+    expect(primaryRoadRef("BR-158; BR-242")).toBe("BR-158");
+    expect(primaryRoadRef("")).toBe("");
+    expect(primaryRoadRef(undefined)).toBe("");
+  });
+
+  it("cai para a sigla da rodovia quando a via não tem nome", () => {
+    // No rural de MT o OSRM devolve name vazio e ref preenchido.
+    expect(resolveRoadLabel("", "BR-158 | BR-242")).toBe("BR-158");
+    expect(resolveRoadLabel("Avenida Padre João Bosco", "BR-158")).toBe(
+      "Avenida Padre João Bosco",
+    );
+    expect(resolveRoadLabel("-", "MT-020")).toBe("MT-020");
+    expect(resolveRoadLabel("", "")).toBe("");
+  });
+
+  it("classifica as manobras do OSRM", () => {
+    expect(classifyManeuver("depart", undefined)).toBe("depart");
+    expect(classifyManeuver("arrive", "left")).toBe("arrive");
+    expect(classifyManeuver("turn", "left")).toBe("left");
+    expect(classifyManeuver("turn", "sharp right")).toBe("right");
+    expect(classifyManeuver("continue", "straight")).toBe("straight");
+    expect(classifyManeuver("roundabout", undefined)).toBe("roundabout");
+    expect(classifyManeuver("fork", "slight left")).toBe("fork");
+    expect(classifyManeuver("merge", "slight right")).toBe("merge");
+  });
+
+  it("funde trechos curtos e continuações na mesma via", () => {
+    const simplificado = simplifyRouteSteps(
+      [
+        waypoint(-52.2, -12.6, 1200, "depart", "MT-242"),
+        waypoint(-52.21, -12.61, 800, "straight", "MT-242"),
+        waypoint(-52.22, -12.62, 150, "right", "Rua A"),
+        waypoint(-52.23, -12.63, 4000, "left", "MT-243"),
+        waypoint(-52.24, -12.64, 0, "arrive"),
+      ],
+      300,
+    );
+
+    // MT-242 vira um trecho só; a Rua A de 150 m é absorvida pela curva seguinte.
+    expect(simplificado.map((w) => w.maneuver)).toEqual(["depart", "right", "arrive"]);
+    expect(simplificado[0].distanceToNextM).toBe(2000);
+    expect(simplificado[1].distanceToNextM).toBe(4150);
+    // O total percorrido não muda.
+    const antes = 1200 + 800 + 150 + 4000;
+    expect(simplificado.reduce((acc, w) => acc + w.distanceToNextM, 0)).toBe(antes);
+  });
+
+  it("preserva o último ponto mesmo com trecho curto", () => {
+    const simplificado = simplifyRouteSteps(
+      [
+        waypoint(-52.2, -12.6, 50, "depart", "MT-242"),
+        waypoint(-52.21, -12.61, 0, "arrive"),
+      ],
+      300,
+    );
+    expect(simplificado).toHaveLength(2);
+    expect(simplificado[1].maneuver).toBe("arrive");
+  });
+
+  it("corta a rota onde ela cruza a divisa do imóvel", () => {
+    const quadrado: Polygon = {
+      type: "Polygon",
+      coordinates: [
+        [
+          [-52.0, -12.0],
+          [-51.9, -12.0],
+          [-51.9, -11.9],
+          [-52.0, -11.9],
+          [-52.0, -12.0],
+        ],
+      ],
+    };
+    const coordinates = [
+      [-52.2, -11.95],
+      [-52.1, -11.95],
+      [-51.95, -11.95], // já dentro do quadrado
+    ];
+    const rota: CroquiRoute = {
+      coordinates,
+      waypoints: [
+        waypoint(-52.2, -11.95, 20000, "depart", "MT-242", 0),
+        waypoint(-51.95, -11.95, 0, "arrive", "", 2),
+      ],
+      totalDistanceM: 20000,
+      arrivalSide: null,
+      geometry: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } },
+    };
+
+    const { route, trimmed } = trimRouteAtPolygon(rota, quadrado);
+    expect(trimmed).toBe(true);
+    const fim = route.coordinates[route.coordinates.length - 1];
+    expect(fim[0]).toBeCloseTo(-52.0, 6); // exatamente na divisa oeste
+    expect(route.waypoints[route.waypoints.length - 1].maneuver).toBe("arrive");
+    expect(route.waypoints[route.waypoints.length - 1].dms).toBe(formatDmsPair(fim[0], fim[1]));
+    // O total passa a vir da geometria cortada, não do valor que veio do OSRM.
+    expect(route.totalDistanceM).toBeLessThan(
+      turfLength(lineString(coordinates), { units: "meters" }),
+    );
+    expect(route.totalDistanceM).toBeCloseTo(
+      turfLength(lineString(route.coordinates), { units: "meters" }),
+      6,
+    );
+  });
+
+  it("devolve a rota intacta quando ela não entra no imóvel", () => {
+    const quadrado: Polygon = {
+      type: "Polygon",
+      coordinates: [
+        [
+          [-52.0, -12.0],
+          [-51.9, -12.0],
+          [-51.9, -11.9],
+          [-52.0, -11.9],
+          [-52.0, -12.0],
+        ],
+      ],
+    };
+    const coordinates = [
+      [-52.3, -11.95],
+      [-52.2, -11.95],
+    ];
+    const rota: CroquiRoute = {
+      coordinates,
+      waypoints: [
+        waypoint(-52.3, -11.95, 10000, "depart", "", 0),
+        waypoint(-52.2, -11.95, 0, "arrive", "", 1),
+      ],
+      totalDistanceM: 10000,
+      arrivalSide: null,
+      geometry: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } },
+    };
+    const { route, trimmed } = trimRouteAtPolygon(rota, quadrado);
+    expect(trimmed).toBe(false);
+    expect(route).toBe(rota);
+  });
+
+  it("encontra o ponto da divisa mais próximo como destino de fallback", () => {
+    const quadrado: Polygon = {
+      type: "Polygon",
+      coordinates: [
+        [
+          [-52.0, -12.0],
+          [-51.9, -12.0],
+          [-51.9, -11.9],
+          [-52.0, -11.9],
+          [-52.0, -12.0],
+        ],
+      ],
+    };
+    const destino = destinationOnPolygonBoundary(quadrado, -52.2, -11.95);
+    // Tolerância de ~10 m: o turf interpola o ponto mais próximo sobre a esfera.
+    expect(destino.lon).toBeCloseTo(-52.0, 4);
+    expect(destino.lat).toBeCloseTo(-11.95, 3);
+  });
+});

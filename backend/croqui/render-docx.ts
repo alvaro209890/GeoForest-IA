@@ -1,11 +1,8 @@
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { buildCroquiDocxParagraphs } from "./narrative";
 
-export async function buildCroquiDocxBuffer(
-  narrative: string,
-  atpInQuerencia = false,
-): Promise<Buffer> {
-  const paragraphs = buildCroquiDocxParagraphs(narrative, atpInQuerencia).map(
+export async function buildCroquiDocxBuffer(narrative: string): Promise<Buffer> {
+  const paragraphs = buildCroquiDocxParagraphs(narrative).map(
     (text) =>
       new Paragraph({
         children: [

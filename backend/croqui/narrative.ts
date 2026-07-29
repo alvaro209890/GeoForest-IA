@@ -2,115 +2,130 @@ import { formatDistance } from "./coords";
 import type { CroquiLandmark } from "./landmarks";
 import type { CroquiRoute, RouteWaypoint } from "./routing";
 
-const QUERENCIA_IBGE = "5107909";
+/**
+ * Roteiro no padrão dos croquis modelo: parágrafo corrido em que cada trecho
+ * traz a distância percorrida seguida do DMS do ponto de CHEGADA desse trecho.
+ *
+ *   Inicia-se o croqui na MT-243, no ponto (A).
+ *   Siga em frente por 1,1 km até o ponto (B).
+ *   Vire à direita e siga por 5,1 km até o ponto (C).
+ *   O destino estará à esquerda.
+ */
 
-function roadLabel(road: string): string {
-  const r = String(road || "").trim();
-  if (!r || r === "-") return "estrada";
-  return r;
+function comVia(road: string): string {
+  const clean = String(road || "").trim();
+  return clean && clean !== "-" ? ` pela ${clean}` : "";
 }
 
-function stepPhrase(
-  step: RouteWaypoint,
-  stepIndex: number,
-  propertyName: string,
-  atpInQuerencia: boolean,
-  isLast: boolean,
+/** Frase de um trecho: sai da manobra de `from` e termina no ponto `to`. */
+function legPhrase(
+  from: RouteWaypoint,
+  to: RouteWaypoint,
+  isFirst: boolean,
+  omitRoad = false,
 ): string {
-  const dist = formatDistance(step.distanceFromPrevM);
-  const road = roadLabel(step.roadName);
-  const dms = step.dms;
-  const ins = step.instruction.toLowerCase();
+  const dist = formatDistance(from.distanceToNextM);
+  const via = omitRoad ? "" : comVia(from.roadName);
+  const destino = `até o ponto ${to.dms}`;
 
-  if (isLast && (step.instruction.includes("Chegada") || ins.includes("destino"))) {
-    return `Onde se encontra a sede da propriedade.`;
+  if (isFirst || from.maneuver === "depart") {
+    return `Siga em frente${via} por ${dist} ${destino}.`;
   }
+  if (from.maneuver === "left" || from.maneuver === "right") {
+    const lado = from.maneuver === "left" ? "esquerda" : "direita";
+    return via
+      ? `Vire à ${lado} e siga em frente${via} por ${dist} ${destino}.`
+      : `Vire à ${lado} e siga por ${dist} ${destino}.`;
+  }
+  if (from.maneuver === "roundabout") {
+    return `Na rotatória, siga${via || " em frente"} por ${dist} ${destino}.`;
+  }
+  if (from.maneuver === "fork") {
+    return `Na bifurcação, siga em frente${via} por ${dist} ${destino}.`;
+  }
+  if (from.maneuver === "merge") {
+    return `Entre${via || " na via"} e siga por ${dist} ${destino}.`;
+  }
+  return `Siga em frente${via} por ${dist} ${destino}.`;
+}
 
-  if (stepIndex === 0) {
-    if (atpInQuerencia) {
-      return `Siga sentido ao ${propertyName.trim()} pela ${road} por ${dist} até o ponto ${dms}.`;
-    }
-    return `Siga em frente pela ${road} por ${dist} até o ponto ${dms}.`;
+/**
+ * Abertura do roteiro. `usouVia` avisa que a via já foi nomeada aqui — nos
+ * modelos, o primeiro trecho não a repete ("Inicia-se o croqui na MT-243...
+ * Siga em frente por 1,1 km...").
+ */
+function introPhrase(args: {
+  municipioNome: string;
+  landmark: CroquiLandmark;
+  primeiraVia: string;
+  startDms: string;
+}): { text: string; usouVia: boolean } {
+  const { municipioNome, landmark, primeiraVia, startDms } = args;
+  if (landmark.fonte === "curado" && landmark.introSuffix) {
+    return {
+      text: `Inicia-se o croqui ${landmark.introSuffix}, no ponto ${startDms}.`,
+      usouVia: false,
+    };
   }
-
-  if (ins.includes("entroncamento")) {
-    if (ins.includes("direita")) {
-      return `Ao chegar no entroncamento, vire à direita pela ${road} e siga em frente por ${dist} até o ponto ${dms}.`;
-    }
-    return `Chegando ao entroncamento, siga em frente pela ${road} por ${dist} até o ponto ${dms}.`;
+  if (primeiraVia) {
+    return {
+      text: `Inicia-se o croqui na ${primeiraVia}, no ponto ${startDms}.`,
+      usouVia: true,
+    };
   }
-  if (ins.includes("bifurcação") || ins.includes("bifurcacao") || ins.includes("fork")) {
-    return `Ao chegar na bifurcação, siga em frente por ${dist} até o ponto ${dms}.`;
-  }
-  if (ins.includes("cruzamento")) {
-    return `Ao chegar no cruzamento, vire à esquerda e siga em frente por ${dist} até o ponto ${dms}.`;
-  }
-  if (ins.includes("esquerda")) {
-    return `Vire à esquerda e siga em frente por ${dist} até o ponto ${dms}.`;
-  }
-  if (ins.includes("direita")) {
-    return `Vire à direita e siga em frente por ${dist} até o ponto ${dms}.`;
-  }
-  if (ins.includes("rotatória") || ins.includes("rotatoria")) {
-    return `Na rotatória, siga pela ${road} por ${dist} até o ponto ${dms}.`;
-  }
-  return `Siga em frente pela ${road} por ${dist} até o ponto ${dms}.`;
+  const suffix = landmark.introSuffix || `no município de ${municipioNome} – MT`;
+  return { text: `Inicia-se o croqui ${suffix}, no ponto ${startDms}.`, usouVia: false };
 }
 
 export function buildCroquiNarrative(args: {
   municipioNome: string;
-  municipioIbge?: string | null;
   propertyName: string;
   landmark: CroquiLandmark;
   route: CroquiRoute;
-  startDms: string;
 }): string {
-  const { municipioNome, propertyName, landmark, route, startDms } = args;
-  const municipioIbge = args.municipioIbge || null;
-  const atpInQuerencia = municipioIbge === QUERENCIA_IBGE;
-  const mun = municipioNome.trim() || "MT";
+  const { landmark, route } = args;
+  const municipioNome = args.municipioNome.trim() || "Mato Grosso";
+  const waypoints = route.waypoints;
 
-  let intro: string;
-  if (atpInQuerencia) {
-    const suffix =
-      landmark.introSuffix ||
-      (landmark.label ? `na ${landmark.label}` : "em ponto de referência municipal");
-    intro = `Inicia-se o croqui no município de ${mun} – MT ${suffix}, no ponto ${startDms}.`;
-  } else if (
-    landmark.label.includes("Av. Norte") ||
-    landmark.introSuffix?.includes("Av. Norte")
-  ) {
-    intro = `Inicia-se o croqui na rotatória da MT-109 com a Av. Norte, no ponto ${startDms}.`;
+  if (!waypoints.length) {
+    return `Inicia-se o croqui no município de ${municipioNome} – MT. Onde se encontra a propriedade.`;
+  }
+
+  const intro = introPhrase({
+    municipioNome,
+    landmark,
+    primeiraVia: String(waypoints[0].roadName || "").trim(),
+    startDms: waypoints[0].dms,
+  });
+  const parts: string[] = [intro.text];
+
+  const legs: string[] = [];
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    if (waypoints[i].distanceToNextM <= 0) continue;
+    const isFirst = legs.length === 0;
+    legs.push(legPhrase(waypoints[i], waypoints[i + 1], isFirst, isFirst && intro.usouVia));
+  }
+
+  if (!legs.length) {
+    parts.push("Onde se encontra a propriedade.");
+    return parts.join(" ");
+  }
+
+  if (route.arrivalSide) {
+    parts.push(...legs, `O destino estará à ${route.arrivalSide}.`);
   } else {
-    const suffix = landmark.introSuffix || landmark.label;
-    intro = `Inicia-se o croqui ${suffix}, no ponto ${startDms}.`;
-  }
-
-  const parts: string[] = [intro];
-  const driving = route.waypoints.filter((w) => w.distanceFromPrevM > 0);
-
-  for (let i = 0; i < driving.length; i++) {
-    parts.push(
-      stepPhrase(driving[i], i, propertyName, atpInQuerencia, i === driving.length - 1),
+    legs[legs.length - 1] = legs[legs.length - 1].replace(
+      /\.$/,
+      ", onde se encontra a propriedade.",
     );
-  }
-
-  const joined = parts.join(" ");
-  if (!joined.includes("sede da propriedade")) {
-    parts.push("Onde se encontra a sede da propriedade.");
+    parts.push(...legs);
   }
 
   return parts.join(" ");
 }
 
-/** Parágrafos para DOCX no estilo dos modelos. */
-export function buildCroquiDocxParagraphs(narrative: string, atpInQuerencia = false): string[] {
+/** O DOCX modelo é um parágrafo único com o mesmo texto do PDF. */
+export function buildCroquiDocxParagraphs(narrative: string): string[] {
   const text = narrative.replace(/\s+/g, " ").trim();
-  if (!atpInQuerencia) return [text];
-  const introEnd = text.indexOf(". ");
-  if (introEnd < 0) return [text];
-  const intro = text.slice(0, introEnd + 1);
-  const body = text.slice(introEnd + 2).trim();
-  if (!body) return [intro];
-  return [intro, body];
+  return text ? [text] : [""];
 }

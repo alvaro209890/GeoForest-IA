@@ -291,6 +291,8 @@ export function saveUserBuffer(args: {
     | "containment/output"
     | "overlap/input"
     | "overlap/output"
+    | "croqui/input"
+    | "croqui/output"
     | "geometry-errors/input"
     | "geometry-errors/output"
     | "processar-projeto/input"

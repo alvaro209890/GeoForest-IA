@@ -2,6 +2,12 @@ import type { MultiPolygon, Polygon, Position } from "geojson";
 import { escapeXml, formatDmsKmlLabel } from "./coords";
 import type { CroquiRoute, RouteWaypoint } from "./routing";
 
+/**
+ * KML no mesmo formato dos croquis modelo, que foram salvos pelo Google Earth Pro:
+ * pasta "Meus lugares" com os trechos ("Medida do caminho") e os pontos DMS
+ * intercalados na ordem do percurso, e o polígono da ATP ao final.
+ */
+
 function ringToKmlCoords(ring: Position[]): string {
   return ring.map(([lon, lat]) => `${lon},${lat},0`).join(" ");
 }
@@ -19,41 +25,20 @@ function polygonToKml(polygon: Polygon | MultiPolygon): string {
     .join("");
 }
 
-function dist2(lon1: number, lat1: number, lon2: number, lat2: number): number {
-  const dx = lon1 - lon2;
-  const dy = lat1 - lat2;
-  return dx * dx + dy * dy;
-}
-
-function nearestIndex(coords: Position[], lon: number, lat: number, from = 0): number {
-  let best = from;
-  let bestD = Infinity;
-  for (let i = from; i < coords.length; i++) {
-    const d = dist2(coords[i][0], coords[i][1], lon, lat);
-    if (d < bestD) {
-      bestD = d;
-      best = i;
-    }
-  }
-  return best;
-}
-
-function routeSegmentsByWaypoints(coords: Position[], waypoints: RouteWaypoint[]): Position[][] {
+/** Fatia a geometria da rota nos trechos entre pontos consecutivos. */
+export function routeSegmentsByWaypoints(
+  coords: Position[],
+  waypoints: RouteWaypoint[],
+): Position[][] {
   if (coords.length < 2 || waypoints.length < 2) return [];
-  const indices: number[] = [];
-  let from = 0;
-  for (const w of waypoints) {
-    const idx = nearestIndex(coords, w.lon, w.lat, from);
-    indices.push(idx);
-    from = idx;
-  }
   const segments: Position[][] = [];
-  for (let i = 0; i < indices.length - 1; i++) {
-    const start = indices[i];
-    const end = indices[i + 1];
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const start = Math.max(0, Math.min(waypoints[i].coordIndex, coords.length - 1));
+    const end = Math.max(0, Math.min(waypoints[i + 1].coordIndex, coords.length - 1));
     if (end > start) segments.push(coords.slice(start, end + 1));
+    else segments.push([]);
   }
-  return segments.filter((s) => s.length >= 2);
+  return segments;
 }
 
 const GE_STYLES = `
@@ -120,45 +105,67 @@ const GE_STYLES = `
 		</IconStyle>
 	</Style>`;
 
+const FOLDER_LIST_STYLE = `
+		<Style>
+			<ListStyle>
+				<listItemType>check</listItemType>
+				<ItemIcon>
+					<state>open</state>
+					<href>:/mysavedplaces_open.png</href>
+				</ItemIcon>
+				<ItemIcon>
+					<state>closed</state>
+					<href>:/mysavedplaces_closed.png</href>
+				</ItemIcon>
+				<bgColor>00ffffff</bgColor>
+				<maxSnippetLines>2</maxSnippetLines>
+			</ListStyle>
+		</Style>`;
+
+function segmentPlacemark(segment: Position[]): string {
+  return `
+		<Placemark>
+			<name>Medida do caminho</name>
+			<styleUrl>#inline</styleUrl>
+			<LineString>
+				<tessellate>1</tessellate>
+				<coordinates>
+					${ringToKmlCoords(segment)}
+				</coordinates>
+			</LineString>
+		</Placemark>`;
+}
+
+function pointPlacemark(waypoint: RouteWaypoint, destaque: boolean): string {
+  return `
+		<Placemark>
+			<name>${formatDmsKmlLabel(waypoint.lon, waypoint.lat)}</name>
+			<styleUrl>${destaque ? "#m_ylw-pushpin" : "#msn_ylw-pushpin"}</styleUrl>
+			<Point>
+				<gx:drawOrder>1</gx:drawOrder>
+				<coordinates>${waypoint.lon},${waypoint.lat},0</coordinates>
+			</Point>
+		</Placemark>`;
+}
+
 export function buildCroquiKml(args: {
   title: string;
   propertyName: string;
   atpGeometry: Polygon | MultiPolygon;
   route: CroquiRoute;
+  /** Nome do arquivo .kml — os modelos usam ele como nome do Document. */
+  fileName?: string;
 }): string {
   const { title, propertyName, atpGeometry, route } = args;
-  const docName = escapeXml(title || propertyName || "croqui");
-  const routeSegments = routeSegmentsByWaypoints(route.coordinates, route.waypoints);
+  const docName = escapeXml(args.fileName || `${title || propertyName || "croqui"}.kml`);
+  const segments = routeSegmentsByWaypoints(route.coordinates, route.waypoints);
+  const lastIndex = route.waypoints.length - 1;
 
-  const segmentPlacemarks = routeSegments
-    .map(
-      (seg, i) => `
-		<Placemark>
-			<name>Medida do caminho</name>
-			<styleUrl>#${i % 2 === 0 ? "inline" : "inline"}</styleUrl>
-			<LineString>
-				<tessellate>1</tessellate>
-				<coordinates>
-					${ringToKmlCoords(seg)}
-				</coordinates>
-			</LineString>
-		</Placemark>`,
-    )
-    .join("");
-
-  const pointPlacemarks = route.waypoints
-    .map((p, i) => {
-      const label = formatDmsKmlLabel(p.lon, p.lat);
-      const style = i === 0 || i === route.waypoints.length - 1 ? "#m_ylw-pushpin" : "#msn_ylw-pushpin";
-      return `
-		<Placemark>
-			<name>${label}</name>
-			<styleUrl>${style}</styleUrl>
-			<Point>
-				<gx:drawOrder>1</gx:drawOrder>
-				<coordinates>${p.lon},${p.lat},0</coordinates>
-			</Point>
-		</Placemark>`;
+  const percurso = route.waypoints
+    .map((waypoint, i) => {
+      const ponto = pointPlacemark(waypoint, i === 0 || i === lastIndex);
+      const trecho = segments[i]?.length ? segmentPlacemark(segments[i]) : "";
+      return `${ponto}${trecho}`;
     })
     .join("");
 
@@ -166,17 +173,18 @@ export function buildCroquiKml(args: {
 <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
 <Document>
 	<name>${docName}</name>
+	<open>1</open>
+	<atom:link rel="app" href="https://www.google.com/earth/about/versions/#earth-pro" title="Google Earth Pro 7.3.6.10201"></atom:link>
 ${GE_STYLES}
 	<Folder>
 		<name>Meus lugares</name>
-		<open>1</open>
+		<open>1</open>${FOLDER_LIST_STYLE}
+${percurso}
 		<Placemark>
 			<name>${escapeXml(propertyName || "ATP")}</name>
 			<styleUrl>#falseColor0</styleUrl>
 			${polygonToKml(atpGeometry)}
 		</Placemark>
-${segmentPlacemarks}
-${pointPlacemarks}
 	</Folder>
 </Document>
 </kml>`;

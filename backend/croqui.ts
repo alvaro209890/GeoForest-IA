@@ -27,10 +27,14 @@ import {
 import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
 import { parseUserShapefile } from "./simcar-clip";
 import { detectarMunicipioMtComFallback, getMunicipioFeatureByIbge } from "./simcar-oraculo/municipio-mt";
-import { formatDmsPair, safeFileStem } from "./croqui/coords";
+import { safeFileStem } from "./croqui/coords";
 import { resolveLandmark } from "./croqui/landmarks";
 import { buildCroquiNarrative } from "./croqui/narrative";
-import { destinationOnPolygonBoundary, fetchDrivingRoute } from "./croqui/routing";
+import {
+  destinationOnPolygonBoundary,
+  fetchDrivingRoute,
+  trimRouteAtPolygon,
+} from "./croqui/routing";
 import { buildCroquiDocxBuffer } from "./croqui/render-docx";
 import { buildCroquiKml } from "./croqui/render-kml";
 import { buildCroquiPdfBuffer } from "./croqui/render-pdf";
@@ -124,33 +128,31 @@ export async function generateCroquiArtifacts(args: {
     fonte: "nao-detectado" as const,
   };
   const municipioNome = municipio.nome || "Mato Grosso";
-  const municipioIbge = municipio.ibge || null;
   const municipioFeature = getMunicipioFeatureByIbge(municipio.ibge);
   const landmark = resolveLandmark(municipio.nome, municipio.ibge, municipioFeature);
-  const dest = destinationOnPolygonBoundary(atpGeometry, landmark.lon, landmark.lat);
-  const route = await fetchDrivingRoute(landmark.lon, landmark.lat, dest.lon, dest.lat);
-  const startDms = formatDmsPair(landmark.lon, landmark.lat);
-  const atpInQuerencia = municipioIbge === "5107909";
-  const narrative = buildCroquiNarrative({
-    municipioNome,
-    municipioIbge,
-    propertyName,
-    landmark,
-    route,
-    startDms,
-  });
-  const coordinateLines = route.waypoints.map((w) => w.dms.replace(/^\(|\)$/g, ""));
+
+  // Roteia até o centroide e corta na divisa: o ponto de corte é o acesso real.
+  // Quando a rota não chega a entrar no imóvel, cai para o ponto de divisa mais próximo.
+  const toCentroid = await fetchDrivingRoute(landmark.lon, landmark.lat, centLon, centLat);
+  const cut = trimRouteAtPolygon(toCentroid, atpGeometry);
+  let route = cut.route;
+  if (!cut.trimmed) {
+    const dest = destinationOnPolygonBoundary(atpGeometry, landmark.lon, landmark.lat);
+    route = await fetchDrivingRoute(landmark.lon, landmark.lat, dest.lon, dest.lat);
+  }
+
+  const narrative = buildCroquiNarrative({ municipioNome, propertyName, landmark, route });
   const fileStem = safeFileStem(title);
 
-  const kml = buildCroquiKml({ title, propertyName, atpGeometry, route });
-  const docx = await buildCroquiDocxBuffer(narrative, atpInQuerencia);
-  const pdf = await buildCroquiPdfBuffer({
+  const kml = buildCroquiKml({
     title,
-    narrative,
-    coordinateLines,
+    propertyName,
     atpGeometry,
     route,
+    fileName: `${fileStem}.kml`,
   });
+  const docx = await buildCroquiDocxBuffer(narrative);
+  const pdf = await buildCroquiPdfBuffer({ title, narrative, atpGeometry, route });
 
   const pdfName = `${fileStem}.pdf`;
   const docxName = `${fileStem}.docx`;
@@ -178,7 +180,7 @@ async function runCroquiJob(args: {
   try {
     if (isCancelRequested(jobId)) {
       progress(uid, jobId, { status: "cancelled", percent: 100, message: "Cancelado." });
-      finishJob(jobId, "cancelled");
+      finishJob({ jobId, status: "cancelled" });
       return;
     }
 
@@ -199,7 +201,7 @@ async function runCroquiJob(args: {
 
     if (isCancelRequested(jobId)) {
       progress(uid, jobId, { status: "cancelled", percent: 100, message: "Cancelado." });
-      finishJob(jobId, "cancelled");
+      finishJob({ jobId, status: "cancelled" });
       return;
     }
 
@@ -230,7 +232,7 @@ async function runCroquiJob(args: {
       outputBytes: zipBuffer.length,
       completedAt: new Date().toISOString(),
     });
-    finishJob(jobId, "completed");
+    finishJob({ jobId, status: "completed" });
   } catch (error: any) {
     const message = String(error?.message || error || "Falha ao gerar croqui.");
     progress(uid, jobId, {
@@ -240,7 +242,7 @@ async function runCroquiJob(args: {
       message,
       completedAt: new Date().toISOString(),
     });
-    finishJob(jobId, "failed", message);
+    finishJob({ jobId, status: "failed", error: message });
   } finally {
     closeSubscribers(jobId);
   }

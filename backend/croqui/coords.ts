@@ -16,17 +16,17 @@ export function formatDmsPair(lon: number, lat: number): string {
   return `(${decimalToDms(lat, "lat")}, ${decimalToDms(lon, "lon")})`;
 }
 
-/** Rótulo de ponto no KML (com entidades XML e espaço duplo após vírgula). */
+/** Rótulo de ponto como aparece no mapa: espaço duplo depois da vírgula. */
+export function formatDmsLabel(lon: number, lat: number): string {
+  return `${decimalToDms(lat, "lat")},  ${decimalToDms(lon, "lon")}`;
+}
+
+/**
+ * Mesmo rótulo para o KML. Só `'` e `"` viram entidade — o grau fica literal,
+ * como nos croquis modelo (`&deg;` não é entidade XML e apareceria como texto).
+ */
 export function formatDmsKmlLabel(lon: number, lat: number): string {
-  const latTxt = decimalToDms(lat, "lat")
-    .replace(/°/g, "&deg;")
-    .replace(/'/g, "&apos;")
-    .replace(/"/g, "&quot;");
-  const lonTxt = decimalToDms(lon, "lon")
-    .replace(/°/g, "&deg;")
-    .replace(/'/g, "&apos;")
-    .replace(/"/g, "&quot;");
-  return `${latTxt},  ${lonTxt}`;
+  return formatDmsLabel(lon, lat).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
 }
 
 export function formatDistance(meters: number): string {

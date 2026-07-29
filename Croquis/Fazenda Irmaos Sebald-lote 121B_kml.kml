@@ -1,0 +1,293 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+<Document>
+	<name>Fazenda Irmaos Sebald-lote 121B_kml.kml</name>
+	<StyleMap id="inline">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#inline4</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#inline6</styleUrl>
+		</Pair>
+	</StyleMap>
+	<Style id="inline0">
+		<LineStyle>
+			<color>ff0055ff</color>
+			<width>3</width>
+		</LineStyle>
+		<PolyStyle>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<StyleMap id="inline2">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#inline5</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#inline0</styleUrl>
+		</Pair>
+	</StyleMap>
+	<Style id="inline4">
+		<LineStyle>
+			<color>ff0055ff</color>
+			<width>3</width>
+		</LineStyle>
+		<PolyStyle>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<Style id="inline5">
+		<LineStyle>
+			<color>ff0055ff</color>
+			<width>3</width>
+		</LineStyle>
+		<PolyStyle>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<Style id="inline6">
+		<LineStyle>
+			<color>ff0055ff</color>
+			<width>3</width>
+		</LineStyle>
+		<PolyStyle>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<StyleMap id="m_ylw-pushpin">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#s_ylw-pushpin0</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#s_ylw-pushpin_hl</styleUrl>
+		</Pair>
+	</StyleMap>
+	<StyleMap id="m_ylw-pushpin0">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#s_ylw-pushpin0</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#s_ylw-pushpin_hl</styleUrl>
+		</Pair>
+	</StyleMap>
+	<StyleMap id="m_ylw-pushpin1">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#s_ylw-pushpin</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#s_ylw-pushpin_hl0</styleUrl>
+		</Pair>
+	</StyleMap>
+	<Style id="s_ylw-pushpin">
+		<IconStyle>
+			<scale>1.1</scale>
+			<Icon>
+				<href>http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href>
+			</Icon>
+			<hotSpot x="20" y="2" xunits="pixels" yunits="pixels"/>
+		</IconStyle>
+	</Style>
+	<Style id="s_ylw-pushpin0">
+		<IconStyle>
+			<scale>1.1</scale>
+			<Icon>
+				<href>http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href>
+			</Icon>
+			<hotSpot x="20" y="2" xunits="pixels" yunits="pixels"/>
+		</IconStyle>
+	</Style>
+	<Style id="s_ylw-pushpin_hl">
+		<IconStyle>
+			<scale>1.3</scale>
+			<Icon>
+				<href>http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href>
+			</Icon>
+			<hotSpot x="20" y="2" xunits="pixels" yunits="pixels"/>
+		</IconStyle>
+	</Style>
+	<Style id="s_ylw-pushpin_hl0">
+		<IconStyle>
+			<scale>1.3</scale>
+			<Icon>
+				<href>http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png</href>
+			</Icon>
+			<hotSpot x="20" y="2" xunits="pixels" yunits="pixels"/>
+		</IconStyle>
+	</Style>
+	<Folder>
+		<name>Meus lugares</name>
+		<open>1</open>
+		<Style>
+			<ListStyle>
+				<listItemType>check</listItemType>
+				<ItemIcon>
+					<state>open</state>
+					<href>:/mysavedplaces_open.png</href>
+				</ItemIcon>
+				<ItemIcon>
+					<state>closed</state>
+					<href>:/mysavedplaces_closed.png</href>
+				</ItemIcon>
+				<bgColor>00ffffff</bgColor>
+				<maxSnippetLines>2</maxSnippetLines>
+			</ListStyle>
+		</Style>
+		<Document>
+			<name>ee716f65-bc47-4753-8f7f-48401ba5cb75_parcela.shp</name>
+			<Schema name="ee716f65-bc47-4753-8f7f-48401ba5cb75_parcela" id="S_ee716f65_bc47_4753_8f7f_48401ba5cb75_parcela_SS">
+				<SimpleField type="string" name="qrcode"><displayName>&lt;b&gt;qrcode&lt;/b&gt;</displayName>
+</SimpleField>
+				<SimpleField type="string" name="nome"><displayName>&lt;b&gt;nome&lt;/b&gt;</displayName>
+</SimpleField>
+			</Schema>
+			<Style id="falseColor">
+				<BalloonStyle>
+					<text><![CDATA[<table border="0">
+  <tr><td><b>qrcode</b></td><td>$[ee716f65-bc47-4753-8f7f-48401ba5cb75_parcela/qrcode]</td></tr>
+  <tr><td><b>nome</b></td><td>$[ee716f65-bc47-4753-8f7f-48401ba5cb75_parcela/nome]</td></tr>
+</table>
+]]></text>
+				</BalloonStyle>
+				<LineStyle>
+					<color>ff0000ff</color>
+					<width>3</width>
+				</LineStyle>
+				<PolyStyle>
+					<colorMode>random</colorMode>
+					<fill>0</fill>
+				</PolyStyle>
+			</Style>
+			<Style id="falseColor0">
+				<BalloonStyle>
+					<text><![CDATA[<table border="0">
+  <tr><td><b>qrcode</b></td><td>$[ee716f65-bc47-4753-8f7f-48401ba5cb75_parcela/qrcode]</td></tr>
+  <tr><td><b>nome</b></td><td>$[ee716f65-bc47-4753-8f7f-48401ba5cb75_parcela/nome]</td></tr>
+</table>
+]]></text>
+				</BalloonStyle>
+				<LineStyle>
+					<color>ff0000ff</color>
+					<width>3</width>
+				</LineStyle>
+				<PolyStyle>
+					<colorMode>random</colorMode>
+					<fill>0</fill>
+				</PolyStyle>
+			</Style>
+			<StyleMap id="falseColor1">
+				<Pair>
+					<key>normal</key>
+					<styleUrl>#falseColor0</styleUrl>
+				</Pair>
+				<Pair>
+					<key>highlight</key>
+					<styleUrl>#falseColor</styleUrl>
+				</Pair>
+			</StyleMap>
+			<Folder id="layer 0">
+				<name>ee716f65-bc47-4753-8f7f-48401ba5cb75_parcela</name>
+				<Placemark>
+					<styleUrl>#falseColor1</styleUrl>
+					<ExtendedData>
+						<SchemaData schemaUrl="#S_ee716f65_bc47_4753_8f7f_48401ba5cb75_parcela_SS">
+							<SimpleData name="qrcode">ee716f65-bc47-4753-8f7f-48401ba5cb75</SimpleData>
+							<SimpleData name="nome">Parte 1</SimpleData>
+						</SchemaData>
+					</ExtendedData>
+					<Polygon>
+						<outerBoundaryIs>
+							<LinearRing>
+								<coordinates>
+									-52.25595032545645,-12.63014522043443,0 -52.24805660887767,-12.64097461463993,0 -52.2469149647171,-12.63914526432158,0 -52.25018295027336,-12.63417720594245,0 -52.25439637094831,-12.62773578249778,0 -52.25595032545645,-12.63014522043443,0 
+								</coordinates>
+							</LinearRing>
+						</outerBoundaryIs>
+					</Polygon>
+				</Placemark>
+			</Folder>
+		</Document>
+		<Placemark>
+			<name>12°36&apos;31.72&quot;S,  52°13&apos;10.41&quot;O</name>
+			<LookAt>
+				<longitude>-52.21973891349003</longitude>
+				<latitude>-12.60874470365887</latitude>
+				<altitude>0</altitude>
+				<heading>-94.68549962017541</heading>
+				<tilt>30.00035859544279</tilt>
+				<range>77.35409637803112</range>
+				<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+			</LookAt>
+			<styleUrl>#m_ylw-pushpin0</styleUrl>
+			<Point>
+				<gx:drawOrder>1</gx:drawOrder>
+				<coordinates>-52.21955833333332,-12.60881111111111,0</coordinates>
+			</Point>
+		</Placemark>
+		<Placemark>
+			<name>Medida do caminho</name>
+			<styleUrl>#inline</styleUrl>
+			<LineString>
+				<tessellate>1</tessellate>
+				<coordinates>
+					-52.21958580649767,-12.59903075147555,0 -52.21958346284545,-12.6003428117097,0 -52.21958403028892,-12.60240107294814,0 -52.21957397555988,-12.60418332345951,0 -52.21957718120854,-12.60600701814159,0 -52.21956695487075,-12.60750355630207,0 -52.21955776952404,-12.60881273204186,0 
+				</coordinates>
+			</LineString>
+		</Placemark>
+		<Placemark>
+			<name>Medida do caminho</name>
+			<styleUrl>#inline2</styleUrl>
+			<LineString>
+				<tessellate>1</tessellate>
+				<coordinates>
+					-52.21955817918239,-12.60881143075844,0 -52.21974671809757,-12.60883123725207,0 -52.21991281265755,-12.60884236432743,0 -52.22058512319865,-12.60885672543896,0 -52.22199937757926,-12.60885022514313,0 -52.22470976714704,-12.608844599552,0 -52.22757280315837,-12.60885264956091,0 -52.23031220703237,-12.60890188572865,0 -52.23427741451522,-12.60888682611391,0 -52.23661184196391,-12.6088707404852,0 -52.23906672720224,-12.60889353615436,0 -52.2415833399994,-12.60894304726768,0 -52.24216150621248,-12.60914759457959,0 -52.24262601843225,-12.60940538493084,0 -52.24317773355155,-12.60991646746634,0 -52.24355985388501,-12.61048030434565,0 -52.24405007556548,-12.61126562280278,0 -52.24607298064162,-12.61443400896457,0 -52.24799382865186,-12.61738505838024,0 -52.25132239097951,-12.62262741818023,0 -52.25441785143479,-12.62751805178558,0 -52.25522801765103,-12.62881089900652,0 
+				</coordinates>
+			</LineString>
+		</Placemark>
+		<Placemark>
+			<name>12°35&apos;56.51&quot;S,  52°13&apos;10.50&quot;O</name>
+			<LookAt>
+				<longitude>-52.21970295563641</longitude>
+				<latitude>-12.59940269171474</latitude>
+				<altitude>0</altitude>
+				<heading>-179.3008529309764</heading>
+				<tilt>39.10082677403572</tilt>
+				<range>260.5475357603568</range>
+				<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+			</LookAt>
+			<styleUrl>#m_ylw-pushpin</styleUrl>
+			<Point>
+				<gx:drawOrder>1</gx:drawOrder>
+				<coordinates>-52.21958333333333,-12.59903055555556,0</coordinates>
+			</Point>
+		</Placemark>
+		<Placemark>
+			<name> 12°37&apos;43.69&quot;S,  52°15&apos;18.81&quot;O</name>
+			<LookAt>
+				<longitude>-52.2552000486173</longitude>
+				<latitude>-12.62822466772926</latitude>
+				<altitude>0</altitude>
+				<heading>-130.6177240010995</heading>
+				<tilt>22.30135559169882</tilt>
+				<range>216.5490374125657</range>
+				<gx:altitudeMode>relativeToSeaFloor</gx:altitudeMode>
+			</LookAt>
+			<styleUrl>#m_ylw-pushpin1</styleUrl>
+			<Point>
+				<gx:drawOrder>1</gx:drawOrder>
+				<coordinates>-52.255225,-12.62880277777778,0</coordinates>
+			</Point>
+		</Placemark>
+		<atom:link rel="app" href="https://www.google.com/earth/about/versions/#earth-pro" title="Google Earth Pro 7.3.6.10201"></atom:link>
+	</Folder>
+</Document>
+</kml>

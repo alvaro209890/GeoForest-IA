@@ -1,0 +1,1284 @@
+{
+  "edition": "2026-07-29",
+  "source": "OpenStreetMap/Nominatim, validado contra a malha municipal IBGE 2024",
+  "items": [
+    {
+      "ibge": "5100102",
+      "nome": "Acorizal",
+      "lon": -56.3668953,
+      "lat": -15.2001544,
+      "lonVia": -56.36728,
+      "latVia": -15.200008,
+      "snapM": 44
+    },
+    {
+      "ibge": "5100201",
+      "nome": "Água Boa",
+      "lon": -52.1617625,
+      "lat": -14.0522968,
+      "lonVia": -52.161739,
+      "latVia": -14.052585,
+      "snapM": 32
+    },
+    {
+      "ibge": "5100250",
+      "nome": "Alta Floresta",
+      "lon": -56.0834993,
+      "lat": -9.8698547,
+      "lonVia": -56.083641,
+      "latVia": -9.870293,
+      "snapM": 51
+    },
+    {
+      "ibge": "5100300",
+      "nome": "Alto Araguaia",
+      "lon": -53.2159501,
+      "lat": -17.3148507,
+      "lonVia": -53.215828,
+      "latVia": -17.314739,
+      "snapM": 18
+    },
+    {
+      "ibge": "5100359",
+      "nome": "Alto Boa Vista",
+      "lon": -51.3744431,
+      "lat": -11.6723985,
+      "lonVia": -51.374974,
+      "latVia": -11.672399,
+      "snapM": 58
+    },
+    {
+      "ibge": "5100409",
+      "nome": "Alto Garças",
+      "lon": -53.5296148,
+      "lat": -16.9465116,
+      "lonVia": -53.529356,
+      "latVia": -16.9464,
+      "snapM": 30
+    },
+    {
+      "ibge": "5100508",
+      "nome": "Alto Paraguai",
+      "lon": -56.4936374,
+      "lat": -14.513712,
+      "lonVia": -56.493739,
+      "latVia": -14.512851,
+      "snapM": 96
+    },
+    {
+      "ibge": "5100607",
+      "nome": "Alto Taquari",
+      "lon": -53.2832123,
+      "lat": -17.8269508,
+      "lonVia": -53.283497,
+      "latVia": -17.826962,
+      "snapM": 30
+    },
+    {
+      "ibge": "5100805",
+      "nome": "Apiacás",
+      "lon": -57.394852,
+      "lat": -9.5678422,
+      "lonVia": -57.395292,
+      "latVia": -9.567701,
+      "snapM": 51
+    },
+    {
+      "ibge": "5101001",
+      "nome": "Araguaiana",
+      "lon": -51.834112,
+      "lat": -15.729144,
+      "lonVia": -51.833837,
+      "latVia": -15.729128,
+      "snapM": 30
+    },
+    {
+      "ibge": "5101209",
+      "nome": "Araguainha",
+      "lon": -53.0336777,
+      "lat": -16.8564076,
+      "lonVia": -53.033639,
+      "latVia": -16.856569,
+      "snapM": 18
+    },
+    {
+      "ibge": "5101258",
+      "nome": "Araputanga",
+      "lon": -58.346796,
+      "lat": -15.4710868,
+      "lonVia": -58.347076,
+      "latVia": -15.471049,
+      "snapM": 30
+    },
+    {
+      "ibge": "5101308",
+      "nome": "Arenápolis",
+      "lon": -56.8436668,
+      "lat": -14.460185,
+      "lonVia": -56.843633,
+      "latVia": -14.459732,
+      "snapM": 50
+    },
+    {
+      "ibge": "5101407",
+      "nome": "Aripuanã",
+      "lon": -59.4439663,
+      "lat": -10.175806,
+      "lonVia": -59.443921,
+      "latVia": -10.176101,
+      "snapM": 33
+    },
+    {
+      "ibge": "5101605",
+      "nome": "Barão de Melgaço",
+      "lon": -55.9668317,
+      "lat": -16.1956788,
+      "lonVia": -55.966874,
+      "latVia": -16.195737,
+      "snapM": 8
+    },
+    {
+      "ibge": "5101704",
+      "nome": "Barra do Bugres",
+      "lon": -57.1853688,
+      "lat": -15.0683712,
+      "lonVia": -57.186073,
+      "latVia": -15.068307,
+      "snapM": 76
+    },
+    {
+      "ibge": "5101803",
+      "nome": "Barra do Garças",
+      "lon": -52.2618392,
+      "lat": -15.8915907,
+      "lonVia": -52.261801,
+      "latVia": -15.891398,
+      "snapM": 22
+    },
+    {
+      "ibge": "5101837",
+      "nome": "Boa Esperança do Norte",
+      "lon": -55.1526024,
+      "lat": -13.508104,
+      "lonVia": -55.152641,
+      "latVia": -13.508151,
+      "snapM": 7
+    },
+    {
+      "ibge": "5101852",
+      "nome": "Bom Jesus do Araguaia",
+      "lon": -51.5074425,
+      "lat": -12.1725897,
+      "lonVia": -51.507359,
+      "latVia": -12.173011,
+      "snapM": 47
+    },
+    {
+      "ibge": "5101902",
+      "nome": "Brasnorte",
+      "lon": -58.0042714,
+      "lat": -12.1218837,
+      "lonVia": -58.004441,
+      "latVia": -12.122246,
+      "snapM": 44
+    },
+    {
+      "ibge": "5102504",
+      "nome": "Cáceres",
+      "lon": -57.6878972,
+      "lat": -16.0644068,
+      "lonVia": -57.687832,
+      "latVia": -16.064223,
+      "snapM": 22
+    },
+    {
+      "ibge": "5102603",
+      "nome": "Campinápolis",
+      "lon": -52.7970626,
+      "lat": -14.5403731,
+      "lonVia": -52.797124,
+      "latVia": -14.540575,
+      "snapM": 23
+    },
+    {
+      "ibge": "5102637",
+      "nome": "Campo Novo do Parecis",
+      "lon": -57.890723,
+      "lat": -13.658735,
+      "lonVia": -57.890701,
+      "latVia": -13.658816,
+      "snapM": 9
+    },
+    {
+      "ibge": "5102678",
+      "nome": "Campo Verde",
+      "lon": -55.1590511,
+      "lat": -15.5430787,
+      "lonVia": -55.160276,
+      "latVia": -15.544131,
+      "snapM": 176
+    },
+    {
+      "ibge": "5102686",
+      "nome": "Campos de Júlio",
+      "lon": -59.2645296,
+      "lat": -13.7223646,
+      "lonVia": -59.264739,
+      "latVia": -13.722342,
+      "snapM": 23
+    },
+    {
+      "ibge": "5102694",
+      "nome": "Canabrava do Norte",
+      "lon": -51.8301897,
+      "lat": -11.0516481,
+      "lonVia": -51.83029,
+      "latVia": -11.051678,
+      "snapM": 11
+    },
+    {
+      "ibge": "5102702",
+      "nome": "Canarana",
+      "lon": -52.2691167,
+      "lat": -13.5564602,
+      "lonVia": -52.268969,
+      "latVia": -13.556423,
+      "snapM": 17
+    },
+    {
+      "ibge": "5102793",
+      "nome": "Carlinda",
+      "lon": -55.8200191,
+      "lat": -9.9690671,
+      "lonVia": -55.819664,
+      "latVia": -9.968953,
+      "snapM": 41
+    },
+    {
+      "ibge": "5102850",
+      "nome": "Castanheira",
+      "lon": -58.6088547,
+      "lat": -11.1391946,
+      "lonVia": -58.608737,
+      "latVia": -11.139077,
+      "snapM": 18
+    },
+    {
+      "ibge": "5103007",
+      "nome": "Chapada dos Guimarães",
+      "lon": -55.749857,
+      "lat": -15.464343,
+      "lonVia": -55.749945,
+      "latVia": -15.46432,
+      "snapM": 10
+    },
+    {
+      "ibge": "5103056",
+      "nome": "Cláudia",
+      "lon": -54.8763166,
+      "lat": -11.5057202,
+      "lonVia": -54.876691,
+      "latVia": -11.505698,
+      "snapM": 41
+    },
+    {
+      "ibge": "5103106",
+      "nome": "Cocalinho",
+      "lon": -51.00015,
+      "lat": -14.390339,
+      "lonVia": -50.999992,
+      "latVia": -14.39076,
+      "snapM": 50
+    },
+    {
+      "ibge": "5103205",
+      "nome": "Colíder",
+      "lon": -55.4540386,
+      "lat": -10.8094999,
+      "lonVia": -55.454025,
+      "latVia": -10.809492,
+      "snapM": 2
+    },
+    {
+      "ibge": "5103254",
+      "nome": "Colniza",
+      "lon": -59.2197132,
+      "lat": -9.4560637,
+      "lonVia": -59.219858,
+      "latVia": -9.455944,
+      "snapM": 21
+    },
+    {
+      "ibge": "5103304",
+      "nome": "Comodoro",
+      "lon": -59.786883,
+      "lat": -13.6581107,
+      "lonVia": -59.786885,
+      "latVia": -13.658101,
+      "snapM": 1
+    },
+    {
+      "ibge": "5103353",
+      "nome": "Confresa",
+      "lon": -51.569873,
+      "lat": -10.643695,
+      "lonVia": -51.569853,
+      "latVia": -10.643695,
+      "snapM": 2
+    },
+    {
+      "ibge": "5103361",
+      "nome": "Conquista D'Oeste",
+      "lon": -59.5443775,
+      "lat": -14.5381171,
+      "lonVia": -59.544459,
+      "latVia": -14.537901,
+      "snapM": 25
+    },
+    {
+      "ibge": "5103379",
+      "nome": "Cotriguaçu",
+      "lon": -58.5658915,
+      "lat": -9.9034364,
+      "lonVia": -58.565892,
+      "latVia": -9.903806,
+      "snapM": 41
+    },
+    {
+      "ibge": "5103403",
+      "nome": "Cuiabá",
+      "lon": -56.0991301,
+      "lat": -15.5986686,
+      "lonVia": -56.098992,
+      "latVia": -15.598783,
+      "snapM": 19
+    },
+    {
+      "ibge": "5103437",
+      "nome": "Curvelândia",
+      "lon": -57.9188924,
+      "lat": -15.6108629,
+      "lonVia": -57.919146,
+      "latVia": -15.610576,
+      "snapM": 42
+    },
+    {
+      "ibge": "5103452",
+      "nome": "Denise",
+      "lon": -57.0482981,
+      "lat": -14.7292165,
+      "lonVia": -57.048231,
+      "latVia": -14.729051,
+      "snapM": 20
+    },
+    {
+      "ibge": "5103502",
+      "nome": "Diamantino",
+      "lon": -56.4364488,
+      "lat": -14.4036262,
+      "lonVia": -56.436709,
+      "latVia": -14.403108,
+      "snapM": 64
+    },
+    {
+      "ibge": "5103601",
+      "nome": "Dom Aquino",
+      "lon": -54.922298,
+      "lat": -15.809899,
+      "lonVia": -54.92235,
+      "latVia": -15.80989,
+      "snapM": 6
+    },
+    {
+      "ibge": "5103700",
+      "nome": "Feliz Natal",
+      "lon": -54.9389793,
+      "lat": -12.3802463,
+      "lonVia": -54.939374,
+      "latVia": -12.38033,
+      "snapM": 44
+    },
+    {
+      "ibge": "5103809",
+      "nome": "Figueirópolis D'Oeste",
+      "lon": -58.739149,
+      "lat": -15.443918,
+      "lonVia": -58.738352,
+      "latVia": -15.443825,
+      "snapM": 86
+    },
+    {
+      "ibge": "5103858",
+      "nome": "Gaúcha do Norte",
+      "lon": -53.2543946,
+      "lat": -13.18136,
+      "lonVia": -53.254759,
+      "latVia": -13.181143,
+      "snapM": 46
+    },
+    {
+      "ibge": "5103908",
+      "nome": "General Carneiro",
+      "lon": -52.7606044,
+      "lat": -15.7070922,
+      "lonVia": -52.760553,
+      "latVia": -15.706916,
+      "snapM": 20
+    },
+    {
+      "ibge": "5103957",
+      "nome": "Glória D'Oeste",
+      "lon": -58.3107593,
+      "lat": -15.7680093,
+      "lonVia": -58.311091,
+      "latVia": -15.767974,
+      "snapM": 36
+    },
+    {
+      "ibge": "5104104",
+      "nome": "Guarantã do Norte",
+      "lon": -54.9098178,
+      "lat": -9.9517992,
+      "lonVia": -54.909834,
+      "latVia": -9.952015,
+      "snapM": 24
+    },
+    {
+      "ibge": "5104203",
+      "nome": "Guiratinga",
+      "lon": -53.7595097,
+      "lat": -16.3457422,
+      "lonVia": -53.759757,
+      "latVia": -16.346051,
+      "snapM": 43
+    },
+    {
+      "ibge": "5104500",
+      "nome": "Indiavaí",
+      "lon": -58.5765917,
+      "lat": -15.4941405,
+      "lonVia": -58.57659,
+      "latVia": -15.494157,
+      "snapM": 2
+    },
+    {
+      "ibge": "5104526",
+      "nome": "Ipiranga do Norte",
+      "lon": -56.1531011,
+      "lat": -12.2408004,
+      "lonVia": -56.153071,
+      "latVia": -12.240794,
+      "snapM": 3
+    },
+    {
+      "ibge": "5104542",
+      "nome": "Itanhangá",
+      "lon": -56.6418251,
+      "lat": -12.2323038,
+      "lonVia": -56.642628,
+      "latVia": -12.232424,
+      "snapM": 88
+    },
+    {
+      "ibge": "5104559",
+      "nome": "Itaúba",
+      "lon": -55.2480739,
+      "lat": -11.0084948,
+      "lonVia": -55.248088,
+      "latVia": -11.008551,
+      "snapM": 6
+    },
+    {
+      "ibge": "5104609",
+      "nome": "Itiquira",
+      "lon": -54.1495237,
+      "lat": -17.2086854,
+      "lonVia": -54.149736,
+      "latVia": -17.208816,
+      "snapM": 27
+    },
+    {
+      "ibge": "5104807",
+      "nome": "Jaciara",
+      "lon": -54.9762106,
+      "lat": -15.9520115,
+      "lonVia": -54.976308,
+      "latVia": -15.951768,
+      "snapM": 29
+    },
+    {
+      "ibge": "5104906",
+      "nome": "Jangada",
+      "lon": -56.4902844,
+      "lat": -15.2369949,
+      "lonVia": -56.490435,
+      "latVia": -15.236898,
+      "snapM": 19
+    },
+    {
+      "ibge": "5105002",
+      "nome": "Jauru",
+      "lon": -58.8683137,
+      "lat": -15.3407762,
+      "lonVia": -58.868317,
+      "latVia": -15.340784,
+      "snapM": 1
+    },
+    {
+      "ibge": "5105101",
+      "nome": "Juara",
+      "lon": -57.5080072,
+      "lat": -11.2535587,
+      "lonVia": -57.507833,
+      "latVia": -11.254227,
+      "snapM": 76
+    },
+    {
+      "ibge": "5105150",
+      "nome": "Juína",
+      "lon": -58.7570212,
+      "lat": -11.4230908,
+      "lonVia": -58.757301,
+      "latVia": -11.422927,
+      "snapM": 36
+    },
+    {
+      "ibge": "5105176",
+      "nome": "Juruena",
+      "lon": -58.4968918,
+      "lat": -10.3282716,
+      "lonVia": -58.496689,
+      "latVia": -10.328131,
+      "snapM": 27
+    },
+    {
+      "ibge": "5105200",
+      "nome": "Juscimeira",
+      "lon": -54.8893514,
+      "lat": -16.0517819,
+      "lonVia": -54.889085,
+      "latVia": -16.052366,
+      "snapM": 71
+    },
+    {
+      "ibge": "5105234",
+      "nome": "Lambari D'Oeste",
+      "lon": -58.0046244,
+      "lat": -15.3188455,
+      "lonVia": -58.004779,
+      "latVia": -15.318668,
+      "snapM": 26
+    },
+    {
+      "ibge": "5105259",
+      "nome": "Lucas do Rio Verde",
+      "lon": -55.9196711,
+      "lat": -13.0664609,
+      "lonVia": -55.919703,
+      "latVia": -13.066493,
+      "snapM": 5
+    },
+    {
+      "ibge": "5105309",
+      "nome": "Luciara",
+      "lon": -50.6680221,
+      "lat": -11.2234472,
+      "lonVia": -50.668348,
+      "latVia": -11.223416,
+      "snapM": 36
+    },
+    {
+      "ibge": "5105507",
+      "nome": "Vila Bela da Santíssima Trindade",
+      "lon": -59.961115,
+      "lat": -15.009904,
+      "lonVia": -59.959449,
+      "latVia": -15.010867,
+      "snapM": 208
+    },
+    {
+      "ibge": "5105580",
+      "nome": "Marcelândia",
+      "lon": -54.5202451,
+      "lat": -11.0794264,
+      "lonVia": -54.520549,
+      "latVia": -11.079728,
+      "snapM": 47
+    },
+    {
+      "ibge": "5105606",
+      "nome": "Matupá",
+      "lon": -54.9346194,
+      "lat": -10.1683242,
+      "lonVia": -54.935035,
+      "latVia": -10.168161,
+      "snapM": 49
+    },
+    {
+      "ibge": "5105622",
+      "nome": "Mirassol d'Oeste",
+      "lon": -58.0951397,
+      "lat": -15.675947,
+      "lonVia": -58.09555,
+      "latVia": -15.676102,
+      "snapM": 47
+    },
+    {
+      "ibge": "5105903",
+      "nome": "Nobres",
+      "lon": -56.3351314,
+      "lat": -14.7196233,
+      "lonVia": -56.335654,
+      "latVia": -14.719463,
+      "snapM": 59
+    },
+    {
+      "ibge": "5106000",
+      "nome": "Nortelândia",
+      "lon": -56.8043752,
+      "lat": -14.4518972,
+      "lonVia": -56.804332,
+      "latVia": -14.451375,
+      "snapM": 58
+    },
+    {
+      "ibge": "5106109",
+      "nome": "Nossa Senhora do Livramento",
+      "lon": -56.3435003,
+      "lat": -15.7724354,
+      "lonVia": -56.343637,
+      "latVia": -15.772141,
+      "snapM": 36
+    },
+    {
+      "ibge": "5106158",
+      "nome": "Nova Bandeirantes",
+      "lon": -57.8139698,
+      "lat": -9.8494172,
+      "lonVia": -57.814347,
+      "latVia": -9.849208,
+      "snapM": 47
+    },
+    {
+      "ibge": "5106174",
+      "nome": "Nova Nazaré",
+      "lon": -51.7998937,
+      "lat": -13.9897745,
+      "lonVia": -51.799903,
+      "latVia": -13.9898,
+      "snapM": 3
+    },
+    {
+      "ibge": "5106182",
+      "nome": "Nova Lacerda",
+      "lon": -59.5881498,
+      "lat": -14.4753855,
+      "lonVia": -59.588339,
+      "latVia": -14.475377,
+      "snapM": 20
+    },
+    {
+      "ibge": "5106190",
+      "nome": "Nova Santa Helena",
+      "lon": -55.1780435,
+      "lat": -10.8495357,
+      "lonVia": -55.177507,
+      "latVia": -10.849411,
+      "snapM": 60
+    },
+    {
+      "ibge": "5106208",
+      "nome": "Nova Brasilândia",
+      "lon": -54.973665,
+      "lat": -14.9298622,
+      "lonVia": -54.973605,
+      "latVia": -14.929871,
+      "snapM": 7
+    },
+    {
+      "ibge": "5106216",
+      "nome": "Nova Canaã do Norte",
+      "lon": -55.709177,
+      "lat": -10.6367877,
+      "lonVia": -55.709048,
+      "latVia": -10.636978,
+      "snapM": 25
+    },
+    {
+      "ibge": "5106224",
+      "nome": "Nova Mutum",
+      "lon": -56.0849262,
+      "lat": -13.8255015,
+      "lonVia": -56.085069,
+      "latVia": -13.825849,
+      "snapM": 41
+    },
+    {
+      "ibge": "5106232",
+      "nome": "Nova Olímpia",
+      "lon": -57.281316,
+      "lat": -14.7764648,
+      "lonVia": -57.281616,
+      "latVia": -14.776252,
+      "snapM": 40
+    },
+    {
+      "ibge": "5106240",
+      "nome": "Nova Ubiratã",
+      "lon": -55.2539048,
+      "lat": -13.03484,
+      "lonVia": -55.253971,
+      "latVia": -13.034909,
+      "snapM": 10
+    },
+    {
+      "ibge": "5106257",
+      "nome": "Nova Xavantina",
+      "lon": -52.351994,
+      "lat": -14.6794165,
+      "lonVia": -52.351857,
+      "latVia": -14.679533,
+      "snapM": 20
+    },
+    {
+      "ibge": "5106265",
+      "nome": "Novo Mundo",
+      "lon": -55.1779717,
+      "lat": -9.9752901,
+      "lonVia": -55.17777,
+      "latVia": -9.975279,
+      "snapM": 22
+    },
+    {
+      "ibge": "5106273",
+      "nome": "Novo Horizonte do Norte",
+      "lon": -57.3159067,
+      "lat": -11.3904019,
+      "lonVia": -57.315977,
+      "latVia": -11.390465,
+      "snapM": 10
+    },
+    {
+      "ibge": "5106281",
+      "nome": "Novo São Joaquim",
+      "lon": -53.01775,
+      "lat": -14.9108231,
+      "lonVia": -53.01802,
+      "latVia": -14.910599,
+      "snapM": 38
+    },
+    {
+      "ibge": "5106299",
+      "nome": "Paranaíta",
+      "lon": -56.4758122,
+      "lat": -9.6655602,
+      "lonVia": -56.475398,
+      "latVia": -9.665642,
+      "snapM": 46
+    },
+    {
+      "ibge": "5106307",
+      "nome": "Paranatinga",
+      "lon": -54.0503432,
+      "lat": -14.4297856,
+      "lonVia": -54.050783,
+      "latVia": -14.43005,
+      "snapM": 56
+    },
+    {
+      "ibge": "5106315",
+      "nome": "Novo Santo Antônio",
+      "lon": -50.96757,
+      "lat": -12.2924074,
+      "lonVia": -50.967658,
+      "latVia": -12.292349,
+      "snapM": 12
+    },
+    {
+      "ibge": "5106372",
+      "nome": "Pedra Preta",
+      "lon": -54.4761228,
+      "lat": -16.6230015,
+      "lonVia": -54.476376,
+      "latVia": -16.623328,
+      "snapM": 45
+    },
+    {
+      "ibge": "5106422",
+      "nome": "Peixoto de Azevedo",
+      "lon": -54.9919857,
+      "lat": -10.2429203,
+      "lonVia": -54.992069,
+      "latVia": -10.242857,
+      "snapM": 11
+    },
+    {
+      "ibge": "5106455",
+      "nome": "Planalto da Serra",
+      "lon": -54.7756232,
+      "lat": -14.6627994,
+      "lonVia": -54.774985,
+      "latVia": -14.662939,
+      "snapM": 70
+    },
+    {
+      "ibge": "5106505",
+      "nome": "Poconé",
+      "lon": -56.633926,
+      "lat": -16.2578606,
+      "lonVia": -56.634023,
+      "latVia": -16.258307,
+      "snapM": 50
+    },
+    {
+      "ibge": "5106653",
+      "nome": "Pontal do Araguaia",
+      "lon": -52.2569821,
+      "lat": -15.9044632,
+      "lonVia": -52.257155,
+      "latVia": -15.904342,
+      "snapM": 23
+    },
+    {
+      "ibge": "5106703",
+      "nome": "Ponte Branca",
+      "lon": -52.8348899,
+      "lat": -16.7680276,
+      "lonVia": -52.834911,
+      "latVia": -16.767816,
+      "snapM": 24
+    },
+    {
+      "ibge": "5106752",
+      "nome": "Pontes e Lacerda",
+      "lon": -59.3349512,
+      "lat": -15.2315171,
+      "lonVia": -59.335106,
+      "latVia": -15.231737,
+      "snapM": 29
+    },
+    {
+      "ibge": "5106778",
+      "nome": "Porto Alegre do Norte",
+      "lon": -51.6391975,
+      "lat": -10.8792851,
+      "lonVia": -51.639059,
+      "latVia": -10.878856,
+      "snapM": 50
+    },
+    {
+      "ibge": "5106802",
+      "nome": "Porto dos Gaúchos",
+      "lon": -57.413233,
+      "lat": -11.532999,
+      "lonVia": -57.413112,
+      "latVia": -11.532998,
+      "snapM": 13
+    },
+    {
+      "ibge": "5106828",
+      "nome": "Porto Esperidião",
+      "lon": -58.4693093,
+      "lat": -15.8521665,
+      "lonVia": -58.469602,
+      "latVia": -15.852283,
+      "snapM": 34
+    },
+    {
+      "ibge": "5106851",
+      "nome": "Porto Estrela",
+      "lon": -57.2080992,
+      "lat": -15.3331148,
+      "lonVia": -57.208185,
+      "latVia": -15.331754,
+      "snapM": 151
+    },
+    {
+      "ibge": "5107008",
+      "nome": "Poxoréu",
+      "lon": -54.3886912,
+      "lat": -15.8363634,
+      "lonVia": -54.388531,
+      "latVia": -15.836573,
+      "snapM": 29
+    },
+    {
+      "ibge": "5107040",
+      "nome": "Primavera do Leste",
+      "lon": -54.2993946,
+      "lat": -15.5614127,
+      "lonVia": -54.29947,
+      "latVia": -15.561012,
+      "snapM": 45
+    },
+    {
+      "ibge": "5107065",
+      "nome": "Querência",
+      "lon": -52.2088505,
+      "lat": -12.5944625,
+      "lonVia": -52.208851,
+      "latVia": -12.594548,
+      "snapM": 9
+    },
+    {
+      "ibge": "5107107",
+      "nome": "São José dos Quatro Marcos",
+      "lon": -58.177217,
+      "lat": -15.627584,
+      "lonVia": -58.177196,
+      "latVia": -15.62767,
+      "snapM": 10
+    },
+    {
+      "ibge": "5107156",
+      "nome": "Reserva do Cabaçal",
+      "lon": -58.3836183,
+      "lat": -15.1211207,
+      "lonVia": -58.383785,
+      "latVia": -15.121298,
+      "snapM": 27
+    },
+    {
+      "ibge": "5107180",
+      "nome": "Ribeirão Cascalheira",
+      "lon": -51.8246356,
+      "lat": -12.9367641,
+      "lonVia": -51.824578,
+      "latVia": -12.936782,
+      "snapM": 7
+    },
+    {
+      "ibge": "5107198",
+      "nome": "Ribeirãozinho",
+      "lon": -52.6939241,
+      "lat": -16.4899211,
+      "lonVia": -52.694109,
+      "latVia": -16.489822,
+      "snapM": 23
+    },
+    {
+      "ibge": "5107206",
+      "nome": "Rio Branco",
+      "lon": -58.1160774,
+      "lat": -15.2398109,
+      "lonVia": -58.116123,
+      "latVia": -15.240217,
+      "snapM": 45
+    },
+    {
+      "ibge": "5107248",
+      "nome": "Santa Carmem",
+      "lon": -55.2787894,
+      "lat": -11.9745987,
+      "lonVia": -55.278616,
+      "latVia": -11.975263,
+      "snapM": 76
+    },
+    {
+      "ibge": "5107263",
+      "nome": "Santo Afonso",
+      "lon": -57.0045096,
+      "lat": -14.4960696,
+      "lonVia": -57.004342,
+      "latVia": -14.496353,
+      "snapM": 36
+    },
+    {
+      "ibge": "5107297",
+      "nome": "São José do Povo",
+      "lon": -54.2539044,
+      "lat": -16.4647805,
+      "lonVia": -54.253617,
+      "latVia": -16.464725,
+      "snapM": 31
+    },
+    {
+      "ibge": "5107305",
+      "nome": "São José do Rio Claro",
+      "lon": -56.7214365,
+      "lat": -13.4467103,
+      "lonVia": -56.721761,
+      "latVia": -13.44651,
+      "snapM": 41
+    },
+    {
+      "ibge": "5107354",
+      "nome": "São José do Xingu",
+      "lon": -52.7357819,
+      "lat": -10.803888,
+      "lonVia": -52.735711,
+      "latVia": -10.803583,
+      "snapM": 35
+    },
+    {
+      "ibge": "5107404",
+      "nome": "São Pedro da Cipa",
+      "lon": -54.9212312,
+      "lat": -16.0030443,
+      "lonVia": -54.92118,
+      "latVia": -16.00324,
+      "snapM": 22
+    },
+    {
+      "ibge": "5107578",
+      "nome": "Rondolândia",
+      "lon": -61.4596962,
+      "lat": -10.8428772,
+      "lonVia": -61.459492,
+      "latVia": -10.842845,
+      "snapM": 23
+    },
+    {
+      "ibge": "5107602",
+      "nome": "Rondonópolis",
+      "lon": -54.6397099,
+      "lat": -16.4603533,
+      "lonVia": -54.640068,
+      "latVia": -16.46068,
+      "snapM": 53
+    },
+    {
+      "ibge": "5107701",
+      "nome": "Rosário Oeste",
+      "lon": -56.42357,
+      "lat": -14.825938,
+      "lonVia": -56.423617,
+      "latVia": -14.825888,
+      "snapM": 7
+    },
+    {
+      "ibge": "5107743",
+      "nome": "Santa Cruz do Xingu",
+      "lon": -52.392016,
+      "lat": -10.1533447,
+      "lonVia": -52.392022,
+      "latVia": -10.153922,
+      "snapM": 64
+    },
+    {
+      "ibge": "5107750",
+      "nome": "Salto do Céu",
+      "lon": -58.1298908,
+      "lat": -15.1295662,
+      "lonVia": -58.130136,
+      "latVia": -15.129611,
+      "snapM": 27
+    },
+    {
+      "ibge": "5107768",
+      "nome": "Santa Rita do Trivelato",
+      "lon": -55.2721092,
+      "lat": -13.8139517,
+      "lonVia": -55.272824,
+      "latVia": -13.814114,
+      "snapM": 79
+    },
+    {
+      "ibge": "5107776",
+      "nome": "Santa Terezinha",
+      "lon": -50.513986,
+      "lat": -10.470375,
+      "lonVia": -50.513642,
+      "latVia": -10.470574,
+      "snapM": 44
+    },
+    {
+      "ibge": "5107792",
+      "nome": "Santo Antônio do Leste",
+      "lon": -53.6095671,
+      "lat": -14.8037659,
+      "lonVia": -53.609753,
+      "latVia": -14.80345,
+      "snapM": 40
+    },
+    {
+      "ibge": "5107800",
+      "nome": "Santo Antônio de Leverger",
+      "lon": -56.0765226,
+      "lat": -15.8644521,
+      "lonVia": -56.076478,
+      "latVia": -15.864057,
+      "snapM": 44
+    },
+    {
+      "ibge": "5107859",
+      "nome": "São Félix do Araguaia",
+      "lon": -50.6667246,
+      "lat": -11.6170646,
+      "lonVia": -50.666834,
+      "latVia": -11.617366,
+      "snapM": 35
+    },
+    {
+      "ibge": "5107875",
+      "nome": "Sapezal",
+      "lon": -58.8146235,
+      "lat": -13.547958,
+      "lonVia": -58.81461,
+      "latVia": -13.548108,
+      "snapM": 17
+    },
+    {
+      "ibge": "5107883",
+      "nome": "Serra Nova Dourada",
+      "lon": -51.4005672,
+      "lat": -12.0890348,
+      "lonVia": -51.400509,
+      "latVia": -12.088805,
+      "snapM": 26
+    },
+    {
+      "ibge": "5107909",
+      "nome": "Sinop",
+      "lon": -55.4967824,
+      "lat": -11.857701,
+      "lonVia": -55.49686,
+      "latVia": -11.857438,
+      "snapM": 30
+    },
+    {
+      "ibge": "5107925",
+      "nome": "Sorriso",
+      "lon": -55.7233972,
+      "lat": -12.5444887,
+      "lonVia": -55.723645,
+      "latVia": -12.544295,
+      "snapM": 34
+    },
+    {
+      "ibge": "5107941",
+      "nome": "Tabaporã",
+      "lon": -56.8212723,
+      "lat": -11.3085286,
+      "lonVia": -56.821068,
+      "latVia": -11.308634,
+      "snapM": 25
+    },
+    {
+      "ibge": "5107958",
+      "nome": "Tangará da Serra",
+      "lon": -57.4907268,
+      "lat": -14.6213903,
+      "lonVia": -57.490895,
+      "latVia": -14.621189,
+      "snapM": 29
+    },
+    {
+      "ibge": "5108006",
+      "nome": "Tapurah",
+      "lon": -56.512037,
+      "lat": -12.742385,
+      "lonVia": -56.512287,
+      "latVia": -12.74254,
+      "snapM": 32
+    },
+    {
+      "ibge": "5108055",
+      "nome": "Terra Nova do Norte",
+      "lon": -55.1167029,
+      "lat": -10.5995196,
+      "lonVia": -55.116849,
+      "latVia": -10.599401,
+      "snapM": 21
+    },
+    {
+      "ibge": "5108105",
+      "nome": "Tesouro",
+      "lon": -53.5518249,
+      "lat": -16.0789268,
+      "lonVia": -53.551738,
+      "latVia": -16.07879,
+      "snapM": 18
+    },
+    {
+      "ibge": "5108204",
+      "nome": "Torixoréu",
+      "lon": -52.5549083,
+      "lat": -16.2003901,
+      "lonVia": -52.554686,
+      "latVia": -16.200211,
+      "snapM": 31
+    },
+    {
+      "ibge": "5108303",
+      "nome": "União do Sul",
+      "lon": -54.3695643,
+      "lat": -11.5308712,
+      "lonVia": -54.369609,
+      "latVia": -11.531346,
+      "snapM": 53
+    },
+    {
+      "ibge": "5108352",
+      "nome": "Vale de São Domingos",
+      "lon": -59.065637,
+      "lat": -15.2966987,
+      "lonVia": -59.065701,
+      "latVia": -15.296775,
+      "snapM": 11
+    },
+    {
+      "ibge": "5108402",
+      "nome": "Várzea Grande",
+      "lon": -56.132218,
+      "lat": -15.645816,
+      "lonVia": -56.132229,
+      "latVia": -15.645884,
+      "snapM": 8
+    },
+    {
+      "ibge": "5108501",
+      "nome": "Vera",
+      "lon": -55.2973537,
+      "lat": -12.2862098,
+      "lonVia": -55.297336,
+      "latVia": -12.286191,
+      "snapM": 3
+    },
+    {
+      "ibge": "5108600",
+      "nome": "Vila Rica",
+      "lon": -51.118599,
+      "lat": -10.013666,
+      "lonVia": -51.11855,
+      "latVia": -10.013852,
+      "snapM": 21
+    },
+    {
+      "ibge": "5108808",
+      "nome": "Nova Guarita",
+      "lon": -55.4042689,
+      "lat": -10.3102031,
+      "lonVia": -55.404056,
+      "latVia": -10.309964,
+      "snapM": 35
+    },
+    {
+      "ibge": "5108857",
+      "nome": "Nova Marilândia",
+      "lon": -56.9709009,
+      "lat": -14.3653436,
+      "lonVia": -56.971086,
+      "latVia": -14.36534,
+      "snapM": 20
+    },
+    {
+      "ibge": "5108907",
+      "nome": "Nova Maringá",
+      "lon": -57.0922657,
+      "lat": -13.0314433,
+      "lonVia": -57.091959,
+      "latVia": -13.031442,
+      "snapM": 33
+    },
+    {
+      "ibge": "5108956",
+      "nome": "Nova Monte Verde",
+      "lon": -57.467331,
+      "lat": -9.9796694,
+      "lonVia": -57.466834,
+      "latVia": -9.979351,
+      "snapM": 65
+    }
+  ]
+}

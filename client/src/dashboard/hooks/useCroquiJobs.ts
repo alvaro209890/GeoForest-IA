@@ -260,7 +260,7 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
 
   const downloadCroquiZip = useCallback(
     (item?: CroquiHistoryItem | null) => {
-      const url = croquiDownloadUrl(item || { jobId: croquiJobId || '', downloadUrl: croquiDownload || undefined } as CroquiHistoryItem);
+      const url = croquiDownloadUrl(item || { jobId: croquiJobId || '', downloadUrl: croquiDownload || undefined });
       if (!url) return;
       const filename = croquiZipFilename(item || { title: croquiTitle, propertyName: croquiPropertyName, jobId: croquiJobId || undefined });
       void downloadZip(url, filename);
