@@ -53,7 +53,40 @@ Calibrado contra `Croquis/` (`chacara_02`, `Fazenda Irmaos Sebald-lote 121B`,
 
 A4 paisagem, mapa com margem de 8 pt, caixa branca do título + roteiro no topo-esquerdo com altura
 calculada pelo texto, caixa "Legenda" no topo-direito, pushpins amarelos com o DMS ao lado
-(com desvio de sobreposição), seta N e barra de escala no canto inferior direito.
+(com desvio de sobreposição), seta N e barra de escala no canto inferior direito. O enquadramento
+reserva a faixa das caixas para nenhum ponto da rota nascer escondido atrás delas.
+
+### Decisão: base de imagem
+
+`Croquis/Layers ArcGIS/` traz seis `.lyr`. Cinco apontam para
+`http://mt0.google.com/vt/lyrs=s,h&x={col}&y={row}&z={level}` — o servidor de tiles **interno** do
+Google, sem chave e sem billing. **Não é usado**: está fora dos termos do Maps Platform e pode ser
+bloqueado a qualquer momento, o que derrubaria a geração em produção. O sexto (`World_Imagery.lyr`)
+é o serviço do Esri já implementado.
+
+O caminho licenciado para ter a imagem e os rótulos do Google é a **Maps Static API com chave**,
+que está implementada e entra sozinha assim que `GOOGLE_STATIC_MAPS_KEY` for configurada. Enquanto
+não for, o fallback é o Esri e o gerador desenha por conta própria o nome da cidade
+(de `config/sedes-mt.json`) e a sigla das rodovias do percurso (do `ref` do OSRM).
+
+### Estado após esta rodada
+
+- `tsc --noEmit`: **0 erros** (eram 8, todos pré-existentes).
+- `vitest run --root . backend`: **226 passando, 1 falhando**. A falha é
+  `backend/dashboard-history-cards.test.ts` (`processarHistory.map(`), pré-existente e sem relação
+  com croqui — na árvore limpa do main eram 18 falhas.
+- Deployado: backend em `/media/server/HD Backup/Servidores_NAO_MEXA/GeoForest-IA` no
+  **server-desktop** (`geoforest-backend.service` reiniciado, health 200 via
+  `geoforest-api.cursar.space`), front em `ia-florestal.web.app` e `geoforest-admin.web.app`.
+  `index.html` volta `cache-control: no-cache` e os bundles com hash voltam `immutable`, então
+  não é preciso Ctrl+F5.
+- O KML gerado no servidor tem o mesmo MD5 do gerado localmente.
+
+### Pendente
+
+- **`GOOGLE_STATIC_MAPS_KEY`** em `~/.config/geoforest/backend.env` no server-desktop. Sem ela o
+  croqui sai sem os rótulos de cidade e escudos de rodovia que os modelos têm. Nenhuma mudança de
+  código é necessária, só reiniciar o serviço.
 
 ---
 

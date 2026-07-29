@@ -50,6 +50,8 @@ npx firebase deploy --only hosting
 | `backend/auas-analysis.ts` | AUAS land use classification |
 | `backend/auas-sccon.ts` | AUAS × SCCON: data ABERTURA via alertas de desmate + pontos sem alerta (ver `docs/AUAS_SCCON.md`) |
 | `backend/processing-jobs.ts` | In-memory job tracking with persistence |
+| `backend/croqui.ts` + `backend/croqui/*` | Croqui de acesso: ATP → PDF/DOCX/KML no padrão SEMA (ver `docs/CROQUI_ACESSO.md`) |
+| `config/sedes-mt.json` | Sedes dos 142 municípios de MT (ponto de partida do croqui) |
 | `client/src/lib/localFirestore.ts` | Client-side Firestore replacement |
 
 ## Environment Variables
@@ -63,6 +65,11 @@ WMS/WFS (already configured):
 - `SEMA_WMS_BASE_URL`, `SEMA_WMS_AUTHKEY` - SEMA-MT Geoserver
 - `PRODES_WFS_URL` - Terrabrasilis/INPE deforestation data
 - `SFB_WFS_URL`, `SFB_WFS_AUTHKEY` - river hydrography
+
+Croqui de acesso:
+- `GOOGLE_STATIC_MAPS_KEY` - Maps Static API. **Não configurada**: o croqui cai no Esri World
+  Imagery, que não traz rótulo de cidade nem escudo de rodovia. Ver `docs/CROQUI_ACESSO.md`.
+- `CROQUI_OSRM_BASE_URL`, `CROQUI_OSRM_RETRIES`, `CROQUI_MIN_STEP_M`
 
 ## Important Notes
 
