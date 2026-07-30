@@ -6,6 +6,7 @@ croquis aprovados que estão em `Croquis/`. Aba **Croqui** do dashboard (`/dashb
 - [Os modelos](#os-modelos)
 - [Fluxo](#fluxo)
 - [Uso no dashboard](#uso-no-dashboard)
+  - [ATP guardados (reuso de uploads)](#atp-guardados-reuso-de-uploads)
 - [Ponto de partida](#ponto-de-partida)
 - [Escolha do caminho](#escolha-do-caminho)
 - [Roteiro](#roteiro)
@@ -37,7 +38,7 @@ Ribeirão Cascalheira, SIRGAS 2000 / UTM 22S) usada para validar o gerador ponta
 
 O que foi medido nos modelos e virou especificação:
 
-- Página **A4 paisagem, 842×595 pt**, mapa ocupando a página inteira com margem de ~8 pt.
+- Página **A4 paisagem, 842×595 pt**, mapa ocupando a página inteira com margem de 8 pt.
 - Caixa branca no topo-esquerdo com **título em negrito (~15 pt)** e o roteiro (~9 pt).
 - Caixa **"Legenda"** no topo-direito, com "Caminho" e "Coordenadas" (presente em 2 dos 3 modelos).
 - Polígono do imóvel em **vermelho** sem preenchimento; caminho em **laranja**.
@@ -58,6 +59,7 @@ O que foi medido nos modelos e virou especificação:
 6. **Artefatos** — PDF, DOCX e KML, empacotados num ZIP.
 
 O job roda de forma assíncrona com progresso por SSE e histórico em `users/{uid}/croqui_jobs`.
+Uploads de ATP ficam salvos por 24h e podem ser reutilizados sem reenvio.
 
 ## Uso no dashboard
 
@@ -110,27 +112,29 @@ oeste (29,4 km), mas o acesso que se usa em campo desce, corta para o leste e so
 leste (33,4 km) — os dois chegam ao mesmo ponto de divisa `(12°23'43.44"S, 52°8'54.79"O)`.
 Quem sabe qual é o certo é o técnico, então o croqui pergunta antes de gerar.
 
-`backend/croqui/route-options.ts` descobre os corredores assim:
+`backend/croqui/route-options.ts` (`discoverRouteOptions`) descobre os corredores assim:
 
 1. **Rota principal** — OSRM até o centroide, cortada na divisa (o comportamento antigo).
-2. **Alternativas nativas** — `alternatives=3` no OSRM. O servidor público quase sempre devolve
-   uma rota só; quando há um OSRM próprio com o recurso ligado, elas entram de graça.
+2. **Alternativas nativas** — `alternatives=3` no OSRM dentro de `fetchDrivingRoutes`. O servidor
+   público quase sempre devolve uma rota só; quando há um OSRM próprio com o recurso ligado, elas
+   entram de graça.
 3. **Desvios forçados** — pontos de passagem jogados perpendicularmente à rota principal
-   (frações 0,3/0,5/0,7 do percurso × ±8 km e ±20 km), cada um encaixado na via mais próxima
-   pelo `/nearest` (descarta encaixe > 6 km) e roteado como `partida → passagem → imóvel`.
+   (frações 0,3/0,5/0,7 do percurso × ±8 km e ±20 km de afastamento), cada um encaixado na via
+   mais próxima pelo `/nearest` (descarta encaixe > 6 km, `MAX_SNAP_M`) e roteado como
+   `partida → passagem → imóvel`.
 4. **Limpeza do vai-e-volta** — o desvio forçado costuma produzir um trecho que sai e retorna pelo
-   mesmo lugar. `stripOutAndBackSpurs` o remove (o trecho sai e volta ao mesmo nó, então o que
-   sobra continua percorrível) e a rota é **refeita** mirando o ponto que identifica o corredor
-   descoberto. Se ainda vier suja, o candidato é descartado.
-5. **Deduplicação** — traçados são comparados por células de 400 m; ≥ 65 % de células em comum é a
-   mesma rota e a mais longa cai fora.
-6. **Poda e rótulo** — rota acima de 3,5× a mais curta é descartada; as demais são ordenadas por
-   distância e nomeadas pelo lado do desvio (`Caminho pelo sudeste — 33,4 km`), com ordinal quando
-   duas saem para o mesmo lado.
+   mesmo lugar. `stripOutAndBackSpurs` o remove e a rota é **refeita** mirando o ponto que
+   identifica o corredor descoberto. Se ainda vier suja, o candidato é descartado.
+5. **Deduplicação** — traçados são comparados por células de 400 m; ≥ 65% de células em comum é a
+   mesma rota e a mais longa cai fora (`OVERLAP_LIMIT = 0.65`).
+6. **Poda e rótulo** — rota acima de 3,5× a mais curta é descartada (`MAX_DETOUR_RATIO`); as
+   demais são ordenadas por distância e nomeadas pelo lado do desvio (`Caminho pelo sudeste —
+   33,4 km`), com ordinal quando duas saem para o mesmo lado.
 
-O teto é de 4 opções e ~70 s de busca (a requisição atravessa o túnel Cloudflare e não pode
-estourar). As rotas ficam num JSON em `croqui/routes`, e a geração usa **exatamente** o traçado
-que o usuário viu — recalcular arriscaria devolver outro.
+O teto é de 4 opções (`MAX_OPTIONS`, configurável via `CROQUI_MAX_ROUTE_OPTIONS`) e ~70 s de busca
+(`BUDGET_MS`, configurável via `CROQUI_ROUTE_OPTIONS_BUDGET_MS` — a requisição atravessa o túnel
+Cloudflare e não pode estourar). As rotas ficam num JSON em `croqui/routes`, e a geração usa
+**exatamente** o traçado que o usuário viu — recalcular arriscaria devolver outro.
 
 No front, `RoutePicker.tsx` desenha os traçados sobre o contorno da ATP num SVG próprio
 (`routePreview.ts`, Web Mercator em radianos nos dois eixos). Não há biblioteca de mapa envolvida.
@@ -185,7 +189,7 @@ A barra de escala não é decorativa: `pickScaleBar` escolhe um valor redondo (1
 
 ## Layout do PDF
 
-Área de mapa `(8, 8, 826, 579)` numa página `842×595`.
+`backend/croqui/render-pdf.ts` — Área de mapa `(8, 8, 826, 579)` numa página `842×595`.
 
 | Elemento | Posição |
 |----------|---------|
@@ -193,7 +197,7 @@ A barra de escala não é decorativa: `pickScaleBar` escolhe um valor redondo (1
 | Caixa "Legenda" | topo-direito, 118×56 pt |
 | Polígono do imóvel | contorno `#FF0000`, 2 pt, sem preenchimento |
 | Caminho | `#FF5500`, 3 pt |
-| Pushpins | ícone oficial `ylw-pushpin.png` do Google Earth (24 pt no mapa, 14 pt na legenda), hotspot na ponta da agulha (`x=20`, `y=2` a partir da base, igual ao KML), com o DMS ao lado |
+| Pushpins | ícone oficial `ylw-pushpin.png` do Google Earth (64×64 px, 24 pt no mapa, 14 pt na legenda), ancorado na ponta da agulha (`hotspot x=20, y=2` a partir da base — mesma âncora do `render-kml.ts`), com o DMS ao lado |
 | Seta N | canto inferior direito |
 | Barra de escala | canto inferior direito, abaixo da seta |
 | Atribuição | canto inferior esquerdo (só no fallback Esri) |
@@ -202,9 +206,12 @@ O enquadramento **reserva a faixa do topo** ocupada pelas caixas (`topInsetPt`),
 da rota nascer escondido atrás delas. Os rótulos DMS desviam das caixas e uns dos outros; têm
 prioridade sobre os rótulos de contexto (cidade e rodovia), que só são desenhados se sobrar espaço.
 
+O PNG do pushpin é embutido no bundle esbuild via `ylw-pushpin-data.ts` (base64), com fallback em
+disco para desenvolvimento.
+
 ## KML e DOCX
 
-**KML** — mesmo envelope dos modelos, que saíram do Google Earth Pro:
+**KML** (`render-kml.ts`) — mesmo envelope dos modelos, que saíram do Google Earth Pro:
 
 - `<name>` do Document = nome do arquivo `.kml`, com `<open>1</open>` e o `<atom:link>` do GE Pro.
 - Pasta "Meus lugares" com o bloco `<Style><ListStyle>`.
@@ -213,50 +220,69 @@ prioridade sobre os rótulos de contexto (cidade e rodovia), que só são desenh
 - Primeiro e último ponto com pushpin destacado (`m_ylw-pushpin`); os do meio com `msn_ylw-pushpin`.
 - Rótulo do ponto: grau **literal**, com `'` e `"` como entidade — `12°35&apos;56.51&quot;S,  52°13&apos;10.50&quot;O`.
 
-**DOCX** — só o roteiro, em parágrafo único, Calibri 11 (`sz 22`), margens de 2 cm. Sem título e
-sem imagem, exatamente como os modelos.
+**DOCX** (`render-docx.ts`) — só o roteiro, em parágrafo único, Calibri 11 (`size: 22` em meios-pontos,
+`font: "Calibri"`), espaçamento `after: 120, line: 276`, margens de 2 cm
+(`top/bottom/left/right: 1134` twips). Sem título e sem imagem, exatamente como os modelos.
 
-Os três arquivos saem nomeados pelo título do croqui (`LOTE 04.pdf`, `LOTE 04.docx`, `LOTE 04.kml`).
+Os três arquivos saem nomeados pelo título do croqui via `safeFileStem(title)` — caracteres
+especiais viram `_` e o nome é truncado em 120 chars (`LOTE 04.pdf`, `LOTE 04.docx`, `LOTE 04.kml`).
 
 ## API
 
-Todas as rotas estão atrás do `requireAuth`.
+Todas as rotas estão atrás do `requireAuth`. O `uid` do Firebase chega via `(req as any).authUid`.
 
 | Método | Rota | Corpo / retorno |
 |--------|------|-----------------|
 | POST | `/api/croqui/upload` | `{ zipBase64, filename }` → `{ uploadId, polygonCount }` |
-| POST | `/api/croqui/route-options` | `{ uploadId }` → `{ municipioNome, options[], atp, start }` (síncrono, ~15–40 s) |
+| GET | `/api/croqui/uploads` | → `{ uploads: [{ uploadId, filename, polygonCount, municipioNome, createdAt }] }` |
+| POST | `/api/croqui/route-options` | `{ uploadId }` → `{ municipioNome, options[], atp, start }` (síncrono, ~15–70 s) |
 | POST | `/api/croqui/process` | `{ uploadId, title, propertyName, routeOptionId? }` → `202 { jobId }` |
 | GET | `/api/croqui/jobs/:id/status` | `{ job }` |
 | GET | `/api/croqui/jobs/:id/events` | SSE: `snapshot`, `progress`, `heartbeat` |
 | GET | `/api/croqui/download/:id` | ZIP com os 3 arquivos |
 | DELETE | `/api/croqui/jobs/:id` | cancela o job e apaga os artefatos |
 
-Cada opção traz `{ id, label, side, totalDistanceM, roads[], recommended, coordinates[] }` — a
-geometria vem reduzida a ≤ 160 pontos, só para o mapinha. Sem `routeOptionId`, o `/process` calcula
-a rota sozinho, como antes; com ele, usa o traçado gravado.
+Cada opção de rota traz `{ id, label, side, totalDistanceM, roads[], recommended, coordinates[] }`
+— a geometria vem reduzida a ≤ 120 pontos (`decimateCoordinates`), só para o mapinha. Sem
+`routeOptionId`, o `/process` calcula a rota sozinho; com ele, usa o traçado gravado.
 
-Histórico persistido em `users/{uid}/croqui_jobs`; entrada, caminhos e saída em `croqui/input`,
-`croqui/routes` e `croqui/output` do storage local.
+Histórico persistido em `users/{uid}/croqui_jobs` no storage local (json no disco). Entrada,
+rotas e saída em `croqui/input`, `croqui/routes` e `croqui/output`.
+
+### Uploads
+
+`GET /api/croqui/uploads` lista uploads do usuário com `type: "upload"` e `status: "uploaded"`
+não expirados (`expiresAtMs > now`, TTL de 24h definido por `CACHE_TTL_MS`). Ordenado por
+`updatedAtMs` desc. O `municipioNome` aparece se as rotas já foram calculadas para aquele upload.
 
 ## Variáveis de ambiente
 
 ```env
+# --- Base do mapa ---
 GOOGLE_STATIC_MAPS_KEY=          # Maps Static API — base com rótulos, igual aos modelos
+
+# --- OSRM ---
 CROQUI_OSRM_BASE_URL=https://router.project-osrm.org
-CROQUI_OSRM_RETRIES=3
-CROQUI_MIN_STEP_M=300            # trechos menores viram parte do anterior
+CROQUI_OSRM_RETRIES=3           # tentativas em caso de falha de rede
+CROQUI_MIN_STEP_M=300           # trechos menores viram parte do anterior
+
+# --- Escolha do caminho ---
 CROQUI_MAX_ROUTE_OPTIONS=4       # teto de caminhos oferecidos ao usuário
 CROQUI_ROUTE_OPTIONS_BUDGET_MS=70000  # teto de tempo da busca por caminhos
+
+# --- Dados dos municípios ---
 SEDES_MT_JSON=                   # opcional, sobrescreve config/sedes-mt.json
 MUNICIPIOS_MT_GEOJSON=           # opcional, sobrescreve config/municipios-mt.geojson
+
+# --- Storage ---
+PUBLIC_API_BASE_URL=             # base pública p/ URLs de download (default: https://geoforest-api.cursar.space)
 ```
 
 ## Arquivos
 
 | Arquivo | Papel |
 |---------|-------|
-| `backend/croqui.ts` | Rotas, job assíncrono, SSE, empacotamento do ZIP |
+| `backend/croqui.ts` | Rotas Express, job assíncrono, SSE, empacotamento do ZIP |
 | `backend/croqui/basemap.ts` | Web Mercator, zoom, provedores de imagem, barra de escala |
 | `backend/croqui/routing.ts` | OSRM (rota, alternativas, `/nearest`), nomes de via, simplificação, corte na divisa |
 | `backend/croqui/route-options.ts` | Descoberta, limpeza, deduplicação e rótulo dos caminhos |
@@ -269,19 +295,23 @@ MUNICIPIOS_MT_GEOJSON=           # opcional, sobrescreve config/municipios-mt.ge
 | `backend/croqui/render-kml.ts` | KML no formato do Google Earth Pro |
 | `backend/croqui/render-docx.ts` | DOCX |
 | `client/src/dashboard/panels/CroquiPanel.tsx` | Tela da aba |
+| `client/src/dashboard/hooks/useCroquiJobs.ts` | Upload, caminhos, SSE, histórico, download, ATP guardados |
+| `client/src/dashboard/croqui/types.ts` | Tipos: `CroquiHistoryItem`, `CroquiRouteOption`, `CroquiUploadSummary`, etc. |
+| `client/src/dashboard/croqui/mapDoc.ts` | Mapeia doc do backend → `CroquiHistoryItem` do frontend |
+| `client/src/dashboard/croqui/filenames.ts` | URL de download e nome do ZIP |
 | `client/src/dashboard/croqui/RoutePicker.tsx` | Mapinha e cartões de escolha do caminho |
-| `client/src/dashboard/croqui/routePreview.ts` | Projeção e cores do mapinha |
-| `client/src/dashboard/hooks/useCroquiJobs.ts` | Upload, caminhos, SSE, histórico, download |
+| `client/src/dashboard/croqui/routePreview.ts` | Projeção Web Mercator e render do mapinha |
 | `config/sedes-mt.json` | Sedes dos 142 municípios |
 | `tools/gerar-sedes-mt.mjs` | Gera `sedes-mt.json` |
 | `tools/croqui-preview.ts` | Gera os 3 arquivos localmente para conferência |
 | `tools/croqui-pin-preview.ts` | Preview do pushpin (sem rede) |
+| `vitest.workspace.ts` | Config do workspace Vitest (client + backend) |
 
 ## Testes e conferência visual
 
 ```bash
-npm test                                   # front + backend (vitest.workspace.ts)
-npx vitest run --root . backend/croqui     # só o croqui, sem rede
+npx vitest run                           # client + backend (vitest.workspace.ts)
+npx vitest run --root . backend/croqui   # só o croqui, sem rede
 npx tsc --noEmit
 ```
 
@@ -294,7 +324,7 @@ npx tsc --noEmit
 | `render-kml.test.ts` | Envelope GE Pro, cores, ordem intercalada, rótulo DMS |
 | `render-pdf.test.ts` | PNG oficial embutido no PDF; PDFKit aceita o ícone com alpha |
 | `coords.test.ts` | DMS e formatação de distância |
-| `client/src/dashboard/croqui/routePreview.test.ts` | Enquadramento do mapinha: norte em cima, leste à direita, proporção preservada |
+| `routePreview.test.ts` | Enquadramento do mapinha: norte em cima, leste à direita, proporção preservada (radianos nos dois eixos) |
 
 Conferência visual ponta a ponta:
 
@@ -327,12 +357,16 @@ melhor faltar uma sede do que gravar uma sede errada. Leva ~4 minutos.
 
 ## Armadilhas
 
+### Google Static Maps e enquadramento
+
 - **O `export` do ArcGIS expande a bbox pedida** para casar com o aspect do `size`: pedindo
   `-52.3..-52.1` ele devolve `-52.907..-51.492`. Foi a causa do desalinhamento entre imagem e
   vetores. Por isso o enquadramento é centro + zoom, e não bbox.
+
+### OSRM
+
 - **`step.distance` do OSRM é a distância a partir da manobra**, não até ela. A frase do trecho
   tem que citar o DMS do waypoint seguinte.
-- **`&deg;` não é entidade XML.** No KML o grau vai literal; só `'` e `"` viram entidade.
 - **`router.project-osrm.org` é servidor de demonstração**: tem limite de uso e não tem SLA. Para
   volume, hospedar OSRM próprio e apontar `CROQUI_OSRM_BASE_URL`.
 - **`alternatives=3` no OSRM público devolve uma rota só.** Foi verificado no Lote 89-A: `3`,
@@ -341,13 +375,49 @@ melhor faltar uma sede do que gravar uma sede errada. Leva ~4 minutos.
 - **Ponto de passagem fora de rota gera vai-e-volta.** O OSRM vai até ele e volta pelo mesmo
   caminho. Entregar esse traçado ao usuário seria mostrar um desvio que ninguém faz — daí o
   `stripOutAndBackSpurs` + reroteamento pelo ponto que identifica o corredor.
+
+### KML
+
+- **`&deg;` não é entidade XML.** No KML o grau vai literal; só `'` e `"` viram entidade.
+
+### Mapinha de escolha
+
 - **Web Mercator mistura unidade com facilidade.** No mapinha de escolha, `x` em grau e `y` em
   radiano achatava o traçado ~57× na vertical. Os dois eixos têm que estar em radiano
   (`routePreview.test.ts` cobre isso).
+
+### Shapefile e upload
+
 - **O ZIP precisa conter exatamente um polígono.** ATP com múltiplas partes é rejeitada.
+- **Uploads expiram em 24h** (`CACHE_TTL_MS = 24 * 60 * 60 * 1000`). O `GET /api/croqui/uploads`
+  filtra os expirados (`expiresAtMs > now`). Se precisar reter por mais tempo, aumente a constante.
+- **O upload doc (`type: "upload"`) é diferente do job doc (`type: "process"`)** — ambos vivem na
+  mesma coleção `croqui_jobs`. O histórico (`hydrateFromDocs`) filtra `status: "uploaded"` para
+  fora, mostrando só os jobs de processamento.
+
+### Job e SSE
+
 - **`finishJob` recebe um objeto**, não argumentos posicionais — chamá-lo errado faz o job nunca
   ser finalizado no registro em memória, sem erro visível.
+- **O heartbeat do SSE é de 15s** (`setInterval` de 15000 ms). Se o túnel Cloudflare tiver
+  timeout menor, a conexão cai e o front não sabe que o job terminou.
+
+### Pushpin
+
 - **Não redesenhe o pushpin em vetor.** Os croquis modelo saíram do Google Earth Pro com o
   ícone `ylw-pushpin.png` rasterizado na exportação. O PDF precisa embutir o mesmo PNG
-  (`backend/croqui/assets/ylw-pushpin.png`, hotspot na ponta) — um círculo amarelo com haste
-  fica diferente do thumbtack 3D e falha na conferência visual contra o modelo.
+  (`backend/croqui/assets/ylw-pushpin.png`, hotspot na ponta `x=20, y=2`) — um círculo amarelo
+  com haste fica diferente do thumbtack 3D e falha na conferência visual contra o modelo.
+
+### Storage
+
+- **`listCollectionBySegments` precisa estar no import de `local-storage`** — esquecer de
+  importar ao usar em novos endpoints gera erro em produção.
+- **Os arquivos em disco (`croqui/input/`, `croqui/routes/`, `croqui/output/`) são apagados
+  pelo `DELETE` junto com o doc**, mas não têm garbage collection automática. Se o job for
+  cancelado por timeout e o `DELETE` nunca for chamado, os arquivos ficam órfãos no disco.
+
+### DOCX
+
+- **O `size: 22` do `docx` é em meios-pontos** (half-points), não em pontos — 22 half-pt = 11 pt.
+  O `spacing.line: 276` é em 240avos de linha — 276/240 = 1,15× line-height.
