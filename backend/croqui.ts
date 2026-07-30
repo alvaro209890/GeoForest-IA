@@ -19,6 +19,7 @@ import { centroid } from "@turf/turf";
 import type { Polygon, MultiPolygon } from "geojson";
 import {
   getAbsoluteStoragePath,
+  listCollectionBySegments,
   readDocBySegments,
   removeStoragePath,
   saveUserBuffer,
@@ -576,6 +577,34 @@ export function registerCroquiRoutes(app: Express): void {
       res.download(absolute, `${stem}_croqui.zip`);
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Falha ao baixar ZIP." });
+    }
+  });
+
+  app.get("/api/croqui/uploads", async (req: Request, res: Response) => {
+    try {
+      const uid = String((req as any).authUid || "").trim();
+      if (!uid) {
+        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      const docs = listCollectionBySegments(
+        ["users", uid, "croqui_jobs"],
+        { orderBy: "updatedAtMs", direction: "desc" },
+      );
+      const now = Date.now();
+      const uploads = docs
+        .filter((d) => d.data.type === "upload" && d.data.status === "uploaded")
+        .filter((d) => !d.data.expiresAtMs || Number(d.data.expiresAtMs) > now)
+        .map((d) => ({
+          uploadId: d.id,
+          filename: String(d.data.filename || ""),
+          polygonCount: Number(d.data.polygonCount || 0),
+          municipioNome: d.data.municipioNome ? String(d.data.municipioNome) : null,
+          createdAt: String(d.data.createdAt || ""),
+        }));
+      res.json({ ok: true, uploads });
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || "Falha ao listar uploads." });
     }
   });
 

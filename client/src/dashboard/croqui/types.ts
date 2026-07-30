@@ -45,3 +45,12 @@ export type CroquiHistoryItem = {
   /** Nome do caminho escolhido, quando o croqui não usou o traçado padrão. */
   routeLabel?: string;
 };
+
+/** Resumo de um upload de ATP salvo, disponível para reuso na aba de croqui. */
+export type CroquiUploadSummary = {
+  uploadId: string;
+  filename: string;
+  polygonCount: number;
+  municipioNome: string | null;
+  createdAt: string;
+};

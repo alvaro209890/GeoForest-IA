@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Clock,
   Download,
+  FolderOpen,
   Loader2,
   Map,
   RefreshCw,
@@ -10,6 +14,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import RoutePicker from '../croqui/RoutePicker';
+import type { CroquiUploadSummary } from '../croqui/types';
 import type { UseCroquiJobsReturn } from '../hooks/useCroquiJobs';
 
 export type CroquiPanelProps = {
@@ -39,6 +44,7 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
     croquiDownload,
     croquiFiles,
     croquiMunicipio,
+    croquiFilename,
     croquiRoutes,
     croquiRouteId,
     setCroquiRouteId,
@@ -49,12 +55,18 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
     downloadCroquiZip,
     resetCroquiDraft,
     fileInputRef,
+    availableUploads,
+    availableUploadsLoading,
+    loadAvailableUploads,
+    selectExistingUpload,
   } = croqui;
 
   const [dragActive, setDragActive] = useState(false);
+  const [uploadsOpen, setUploadsOpen] = useState(false);
   const busy = croquiProcessing || croquiUploading || croquiLoadingRoutes;
   const dropDisabled = busy;
   const hasChoice = !!croquiRoutes && croquiRoutes.options.length > 1;
+  const hasRemoteFile = !croquiFile && !!croquiUploadId;
 
   const acceptZip = (file: File | null | undefined) => {
     if (!file || dropDisabled) return;
@@ -63,6 +75,29 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
       return;
     }
     applyZipFile(file);
+  };
+
+  const toggleUploads = () => {
+    const opening = !uploadsOpen;
+    setUploadsOpen(opening);
+    if (opening && availableUploads.length === 0) {
+      void loadAvailableUploads();
+    }
+  };
+
+  const handleSelectUpload = (summary: CroquiUploadSummary) => {
+    selectExistingUpload(summary);
+    setUploadsOpen(false);
+  };
+
+  const formatDate = (iso: string): string => {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return iso;
+    }
   };
 
   return (
@@ -123,6 +158,73 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
             </label>
           </div>
 
+          {/* ATP guardados — reuso de uploads anteriores */}
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={toggleUploads}
+              disabled={busy}
+              className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm text-slate-300 hover:bg-white/5 hover:border-amber-400/30 disabled:opacity-50 transition-colors"
+            >
+              <FolderOpen size={16} className={uploadsOpen ? 'text-amber-300' : 'text-slate-400'} />
+              ATP guardados
+              {availableUploads.length > 0 && (
+                <span className="ml-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-200">
+                  {availableUploads.length}
+                </span>
+              )}
+              {uploadsOpen ? <ChevronUp size={14} className="text-slate-500" /> : <ChevronDown size={14} className="text-slate-500" />}
+            </button>
+
+            {uploadsOpen && (
+              <div className="rounded-xl border border-white/10 bg-[#0a1210] p-3 space-y-2 max-h-64 overflow-y-auto custom-scrollbar">
+                {availableUploadsLoading ? (
+                  <div className="flex items-center gap-2 py-4 justify-center text-sm text-slate-400">
+                    <Loader2 size={16} className="animate-spin" />
+                    Carregando ATPs salvos...
+                  </div>
+                ) : availableUploads.length === 0 ? (
+                  <p className="py-3 text-center text-sm text-slate-500">
+                    Nenhum ATP salvo. Arraste um ZIP para começar.
+                  </p>
+                ) : (
+                  availableUploads.map((u) => (
+                    <button
+                      key={u.uploadId}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => handleSelectUpload(u)}
+                      className={`w-full flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${
+                        croquiUploadId === u.uploadId
+                          ? 'bg-amber-500/10 border border-amber-400/20'
+                          : 'bg-white/[0.02] border border-transparent hover:bg-white/[0.05] hover:border-amber-400/15'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-slate-200 truncate">{u.filename}</p>
+                        <div className="flex items-center gap-3 mt-0.5">
+                          <span className="flex items-center gap-1 text-[11px] text-slate-500">
+                            <Clock size={11} />
+                            {formatDate(u.createdAt)}
+                          </span>
+                          {u.municipioNome && (
+                            <span className="text-[11px] text-amber-300/70">{u.municipioNome}</span>
+                          )}
+                          <span className="text-[11px] text-slate-600">{u.polygonCount} pol.</span>
+                        </div>
+                      </div>
+                      {croquiUploadId === u.uploadId && (
+                        <span className="shrink-0 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
+                          Em uso
+                        </span>
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
           <div
             role="button"
             tabIndex={0}
@@ -165,7 +267,7 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
                 ? 'cursor-not-allowed border-white/10 bg-white/[0.01] opacity-60'
                 : dragActive
                   ? 'cursor-pointer border-amber-400/50 bg-amber-500/10'
-                  : croquiFile
+                  : croquiFile || hasRemoteFile
                     ? 'cursor-pointer border-amber-500/35 bg-amber-500/5'
                     : 'cursor-pointer border-white/15 bg-white/[0.02] hover:border-amber-400/30 hover:bg-white/[0.03]'
             }`}
@@ -185,29 +287,33 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
               <div className="flex items-start gap-3 min-w-0">
                 <div
                   className={`mt-0.5 rounded-xl p-2.5 ${
-                    croquiFile ? 'bg-amber-500/15 text-amber-200' : 'bg-white/5 text-slate-400'
+                    croquiFile || hasRemoteFile ? 'bg-amber-500/15 text-amber-200' : 'bg-white/5 text-slate-400'
                   }`}
                 >
-                  <Upload size={18} />
+                  {hasRemoteFile ? <FolderOpen size={18} /> : <Upload size={18} />}
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-slate-200 truncate">
                     {croquiFile
                       ? croquiFile.name
-                      : dragActive
-                        ? 'Solte o ZIP aqui'
-                        : 'Arraste o ZIP da ATP aqui'}
+                      : hasRemoteFile
+                        ? croquiFilename
+                        : dragActive
+                          ? 'Solte o ZIP aqui'
+                          : 'Arraste o ZIP da ATP aqui'}
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
                     {croquiFile
                       ? `${(croquiFile.size / 1024).toFixed(0)} KB${croquiUploadId ? ' — importado' : ''}`
-                      : 'Ou clique para selecionar · .shp, .shx, .dbf e .prj'}
+                      : hasRemoteFile
+                        ? `ATP salvo${croquiMunicipio ? ` — ${croquiMunicipio}` : ''}`
+                        : 'Ou clique para selecionar · .shp, .shx, .dbf e .prj'}
                   </p>
                 </div>
               </div>
               <span className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-200">
-                <Upload size={16} />
-                Selecionar ZIP
+                {hasRemoteFile ? <FolderOpen size={16} /> : <Upload size={16} />}
+                {hasRemoteFile ? 'Substituir ZIP' : 'Selecionar ZIP'}
               </span>
             </div>
           </div>
@@ -215,7 +321,7 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              disabled={busy || !croquiFile}
+              disabled={busy || (!croquiFile && !hasRemoteFile)}
               onClick={() => void startCroquiProcessing()}
               className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
             >

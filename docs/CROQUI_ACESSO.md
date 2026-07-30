@@ -75,6 +75,22 @@ Aba **Croqui** (`/dashboard/croqui`):
 Durante o upload/processamento a área de drop fica desabilitada. Soltar um arquivo que não seja ZIP
 mostra erro e não troca a seleção atual. Trocar o ZIP descarta os caminhos já calculados.
 
+### ATP guardados (reuso de uploads)
+
+O shapefile ATP enviado fica salvo por 24h e pode ser reutilizado sem subir o ZIP de novo:
+
+1. Clique em **ATP guardados** — o botão fica entre os campos de título/nome e a área de drop.
+2. A lista mostra todos os uploads anteriores (não expirados) com data, município detectado e
+   contagem de polígonos.
+3. Clique num ATP para selecioná-lo. A área de drop reflete o arquivo remoto (ícone de pasta,
+   nome do arquivo, município).
+4. Preencha título e nome da propriedade, clique **Gerar croqui** — o sistema recalcula as rotas
+   a partir do upload salvo e gera o PDF/DOCX/KML normalmente.
+5. Para trocar o ATP remoto, arraste um ZIP novo na área de drop ou selecione outro da lista.
+
+O endpoint `GET /api/croqui/uploads` retorna a lista; `selectExistingUpload` no frontend
+preenche o `uploadId` e o `filename` sem precisar fazer upload de novo.
+
 ## Ponto de partida
 
 `resolveLandmark` consulta, nesta ordem:

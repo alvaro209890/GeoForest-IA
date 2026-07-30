@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { readApiError } from '@/lib/api';
 import { croquiDownloadUrl, croquiZipFilename } from '../croqui/filenames';
 import { mapCroquiDocToHistoryItem } from '../croqui/mapDoc';
-import type { CroquiHistoryItem, CroquiRouteOptionsResponse } from '../croqui/types';
+import type { CroquiHistoryItem, CroquiRouteOptionsResponse, CroquiUploadSummary } from '../croqui/types';
 
 export type UseCroquiJobsDeps = {
   apiFetch: (input: string, init?: RequestInit) => Promise<Response>;
@@ -33,6 +33,9 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
   const [croquiRoutes, setCroquiRoutes] = useState<CroquiRouteOptionsResponse | null>(null);
   const [croquiRouteId, setCroquiRouteId] = useState<string | null>(null);
   const [croquiLoadingRoutes, setCroquiLoadingRoutes] = useState(false);
+
+  const [availableUploads, setAvailableUploads] = useState<CroquiUploadSummary[]>([]);
+  const [availableUploadsLoading, setAvailableUploadsLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const eventsAbortRef = useRef<AbortController | null>(null);
@@ -203,6 +206,48 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
       setCroquiUploading(false);
     }
   }, [apiFetch, croquiFile, fileToBase64Payload]);
+
+  const loadAvailableUploads = useCallback(async () => {
+    setAvailableUploadsLoading(true);
+    try {
+      const response = await apiFetch('/api/croqui/uploads');
+      if (!response.ok) {
+        const err = await readApiError(response);
+        throw new Error(err?.error || 'Falha ao listar uploads salvos.');
+      }
+      const data = await response.json();
+      setAvailableUploads(Array.isArray(data?.uploads) ? data.uploads : []);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Falha ao listar uploads salvos.';
+      toast.error(message);
+    } finally {
+      setAvailableUploadsLoading(false);
+    }
+  }, [apiFetch]);
+
+  const selectExistingUpload = useCallback(
+    (summary: CroquiUploadSummary) => {
+      eventsAbortRef.current?.abort();
+      eventsAbortRef.current = null;
+      setCroquiUploadId(summary.uploadId);
+      setCroquiFile(null);
+      setCroquiFilename(summary.filename);
+      setCroquiTitle('');
+      setCroquiPropertyName('');
+      setCroquiMunicipio(summary.municipioNome || '');
+      setCroquiRoutes(null);
+      setCroquiRouteId(null);
+      setCroquiError(null);
+      setCroquiProcessing(false);
+      setCroquiProgress(0);
+      setCroquiMessage('');
+      setCroquiDownload(null);
+      setCroquiFiles([]);
+      setCroquiJobId(null);
+      toast.success(`ATP "${summary.filename}" selecionado.`);
+    },
+    [],
+  );
 
   const loadCroquiRouteOptions = useCallback(
     async (uploadId: string): Promise<CroquiRouteOptionsResponse | null> => {
@@ -384,5 +429,9 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     selectCroquiHistoryEntry,
     hydrateFromDocs,
     deleteCroquiJob,
+    availableUploads,
+    availableUploadsLoading,
+    loadAvailableUploads,
+    selectExistingUpload,
   };
 }
