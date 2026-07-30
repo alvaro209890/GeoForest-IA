@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import TermsOfUseDialog from '@/components/TermsOfUseDialog';
 import { toast } from 'sonner';
-import { bootstrapAccount, handleSignUp, handleLogin, handleGoogleSignIn } from '@/lib/auth';
+import { bootstrapAccount, handleSignUp, handleLogin, handleGoogleSignIn, handleGoogleRedirectResult } from '@/lib/auth';
 import { useLocation } from 'wouter';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
@@ -40,10 +40,20 @@ export default function Auth() {
     };
   }, []);
 
-  // Auth state listener
+  // Auth state listener + redirect result handler (para login Google mobile)
   useEffect(() => {
+    // Processa redirect result (volta do Google OAuth via redirect)
+    // Isso precisa ser chamado no mount para capturar o resultado do redirect
+    handleGoogleRedirectResult().then((user) => {
+      if (user) {
+        toast.success('Login com Google realizado com sucesso!');
+        setLocation('/dashboard/simcar');
+      }
+    });
+
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) return;
+      // Se já veio do redirect result acima, ignora duplicação
       try {
         await bootstrapAccount(currentUser.displayName || '');
         setLocation('/dashboard/simcar');

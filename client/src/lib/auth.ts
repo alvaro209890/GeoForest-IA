@@ -1,8 +1,10 @@
 import {
   createUserWithEmailAndPassword,
+  getRedirectResult,
   GoogleAuthProvider,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   User,
 } from 'firebase/auth';
@@ -79,7 +81,42 @@ export async function handleGoogleSignIn(): Promise<User> {
     await bootstrapAccount(result.user.displayName || '');
     return result.user;
   } catch (error: any) {
+    // Fallback para redirect quando popup é bloqueado (mobile)
+    if (error.code === 'auth/popup-blocked' || error.code === 'auth/popup-closed-by-user') {
+      const provider = new GoogleAuthProvider();
+      await signInWithRedirect(auth, provider);
+      // Não chega aqui — o redirect sai da página
+      throw new Error('Redirecionando para autenticação...');
+    }
     throw new Error(error.message || 'Erro ao entrar com Google');
+  }
+}
+
+/**
+ * Tenta processar resultado de redirect Google (volta do provedor OAuth).
+ * Deve ser chamado no mount da página de auth.
+ * Retorna o usuário se o login veio de um redirect bem-sucedido, ou null.
+ * Erro auth/missing-initial-state é esperado quando não há redirect pendente.
+ */
+export async function handleGoogleRedirectResult(): Promise<User | null> {
+  try {
+    const result = await getRedirectResult(auth);
+    if (result?.user) {
+      await bootstrapAccount(result.user.displayName || '');
+      return result.user;
+    }
+    return null;
+  } catch (error: any) {
+    if (error.code === 'auth/missing-initial-state') {
+      // Nenhum redirect pendente — silencioso
+      return null;
+    }
+    if (error.code === 'auth/credential-already-in-use') {
+      console.warn('[auth-redirect] credencial já vinculada a outra conta, ignorando');
+      return null;
+    }
+    console.error('[auth-redirect] erro inesperado', error.code, error.message);
+    return null;
   }
 }
 
