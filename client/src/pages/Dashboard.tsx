@@ -6623,7 +6623,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </span>
                     </div>
                     <p className="mt-0.5 truncate text-[10px] text-slate-500">
-                      {entry.municipioNome || 'Croqui'} • PDF + DOCX + KML
+                      {entry.municipioNome || 'Croqui'} • {entry.routeLabel || 'PDF + DOCX + KML'}
                     </p>
                   </div>
                   <button

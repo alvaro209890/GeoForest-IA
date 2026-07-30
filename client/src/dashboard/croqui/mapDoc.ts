@@ -41,6 +41,7 @@ export function mapCroquiDocToHistoryItem(docId: string, data: Record<string, un
     message: data?.message ? String(data.message) : undefined,
     error: data?.error ? String(data.error) : undefined,
     files: Array.isArray(data?.files) ? data.files.map((f) => String(f)) : undefined,
+    routeLabel: data?.routeLabel ? String(data.routeLabel) : undefined,
     downloadUrl: data?.downloadUrl ? resolveBackendUrl(String(data.downloadUrl)) : undefined,
     outputUrl: data?.outputUrl ? resolveBackendUrl(String(data.outputUrl)) : undefined,
   };

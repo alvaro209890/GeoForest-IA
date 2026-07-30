@@ -7,6 +7,7 @@ croquis aprovados que estão em `Croquis/`. Aba **Croqui** do dashboard (`/dashb
 - [Fluxo](#fluxo)
 - [Uso no dashboard](#uso-no-dashboard)
 - [Ponto de partida](#ponto-de-partida)
+- [Escolha do caminho](#escolha-do-caminho)
 - [Roteiro](#roteiro)
 - [Base do mapa](#base-do-mapa)
 - [Layout do PDF](#layout-do-pdf)
@@ -51,7 +52,8 @@ O que foi medido nos modelos e virou especificação:
 1. **Parse do ATP** — `parseUserShapefile` reprojeta SIRGAS 2000, SAD69 e Córrego Alegre.
 2. **Município** — malha IBGE local, com fallback no WFS da SEMA.
 3. **Ponto de partida** — landmark curado → sede do município → centroide da malha.
-4. **Rota** — OSRM até o centroide do imóvel, cortada onde cruza a divisa.
+4. **Caminhos de acesso** — descobre os corredores viários distintos até o imóvel, cada um
+   cortado onde cruza a divisa. Havendo mais de um, **o usuário escolhe**.
 5. **Simplificação** — trechos na mesma via são fundidos e os curtos absorvidos.
 6. **Artefatos** — PDF, DOCX e KML, empacotados num ZIP.
 
@@ -64,11 +66,14 @@ Aba **Croqui** (`/dashboard/croqui`):
 1. Informe **título** e **nome da propriedade**.
 2. Envie o shapefile ATP em `.zip` — **arraste o arquivo para a área tracejada** ou clique em
    **Selecionar ZIP**. Só `.zip` é aceito (extensão ou `application/zip`).
-3. Clique em **Gerar croqui** e acompanhe o progresso.
+3. Clique em **Gerar croqui**. O sistema procura os caminhos de acesso (alguns segundos):
+   - **um caminho só** → segue direto para a geração;
+   - **mais de um** → mostra o mapinha com os traçados e para. Escolha o caminho certo e clique
+     em **Gerar croqui com este caminho**. **Recalcular caminhos** refaz a busca.
 4. Baixe o ZIP com PDF, DOCX e KML.
 
 Durante o upload/processamento a área de drop fica desabilitada. Soltar um arquivo que não seja ZIP
-mostra erro e não troca a seleção atual.
+mostra erro e não troca a seleção atual. Trocar o ZIP descarta os caminhos já calculados.
 
 ## Ponto de partida
 
@@ -81,6 +86,38 @@ mostra erro e não troca a seleção atual.
 3. **Centroide da malha** — último recurso; cai com frequência longe de qualquer estrada.
 
 Use um landmark curado quando a sede não for o ponto de partida certo para aquele município.
+
+## Escolha do caminho
+
+**O caminho mais curto não é sempre o certo.** No Lote 89-A do P.C. Querência III o OSRM sobe pelo
+oeste (29,4 km), mas o acesso que se usa em campo desce, corta para o leste e sobe pelo corredor
+leste (33,4 km) — os dois chegam ao mesmo ponto de divisa `(12°23'43.44"S, 52°8'54.79"O)`.
+Quem sabe qual é o certo é o técnico, então o croqui pergunta antes de gerar.
+
+`backend/croqui/route-options.ts` descobre os corredores assim:
+
+1. **Rota principal** — OSRM até o centroide, cortada na divisa (o comportamento antigo).
+2. **Alternativas nativas** — `alternatives=3` no OSRM. O servidor público quase sempre devolve
+   uma rota só; quando há um OSRM próprio com o recurso ligado, elas entram de graça.
+3. **Desvios forçados** — pontos de passagem jogados perpendicularmente à rota principal
+   (frações 0,3/0,5/0,7 do percurso × ±8 km e ±20 km), cada um encaixado na via mais próxima
+   pelo `/nearest` (descarta encaixe > 6 km) e roteado como `partida → passagem → imóvel`.
+4. **Limpeza do vai-e-volta** — o desvio forçado costuma produzir um trecho que sai e retorna pelo
+   mesmo lugar. `stripOutAndBackSpurs` o remove (o trecho sai e volta ao mesmo nó, então o que
+   sobra continua percorrível) e a rota é **refeita** mirando o ponto que identifica o corredor
+   descoberto. Se ainda vier suja, o candidato é descartado.
+5. **Deduplicação** — traçados são comparados por células de 400 m; ≥ 65 % de células em comum é a
+   mesma rota e a mais longa cai fora.
+6. **Poda e rótulo** — rota acima de 3,5× a mais curta é descartada; as demais são ordenadas por
+   distância e nomeadas pelo lado do desvio (`Caminho pelo sudeste — 33,4 km`), com ordinal quando
+   duas saem para o mesmo lado.
+
+O teto é de 4 opções e ~70 s de busca (a requisição atravessa o túnel Cloudflare e não pode
+estourar). As rotas ficam num JSON em `croqui/routes`, e a geração usa **exatamente** o traçado
+que o usuário viu — recalcular arriscaria devolver outro.
+
+No front, `RoutePicker.tsx` desenha os traçados sobre o contorno da ATP num SVG próprio
+(`routePreview.ts`, Web Mercator em radianos nos dois eixos). Não há biblioteca de mapa envolvida.
 
 ## Roteiro
 
@@ -172,14 +209,19 @@ Todas as rotas estão atrás do `requireAuth`.
 | Método | Rota | Corpo / retorno |
 |--------|------|-----------------|
 | POST | `/api/croqui/upload` | `{ zipBase64, filename }` → `{ uploadId, polygonCount }` |
-| POST | `/api/croqui/process` | `{ uploadId, title, propertyName }` → `202 { jobId }` |
+| POST | `/api/croqui/route-options` | `{ uploadId }` → `{ municipioNome, options[], atp, start }` (síncrono, ~15–40 s) |
+| POST | `/api/croqui/process` | `{ uploadId, title, propertyName, routeOptionId? }` → `202 { jobId }` |
 | GET | `/api/croqui/jobs/:id/status` | `{ job }` |
 | GET | `/api/croqui/jobs/:id/events` | SSE: `snapshot`, `progress`, `heartbeat` |
 | GET | `/api/croqui/download/:id` | ZIP com os 3 arquivos |
 | DELETE | `/api/croqui/jobs/:id` | cancela o job e apaga os artefatos |
 
-Histórico persistido em `users/{uid}/croqui_jobs`; entrada e saída em `croqui/input` e
-`croqui/output` do storage local.
+Cada opção traz `{ id, label, side, totalDistanceM, roads[], recommended, coordinates[] }` — a
+geometria vem reduzida a ≤ 160 pontos, só para o mapinha. Sem `routeOptionId`, o `/process` calcula
+a rota sozinho, como antes; com ele, usa o traçado gravado.
+
+Histórico persistido em `users/{uid}/croqui_jobs`; entrada, caminhos e saída em `croqui/input`,
+`croqui/routes` e `croqui/output` do storage local.
 
 ## Variáveis de ambiente
 
@@ -188,6 +230,8 @@ GOOGLE_STATIC_MAPS_KEY=          # Maps Static API — base com rótulos, igual 
 CROQUI_OSRM_BASE_URL=https://router.project-osrm.org
 CROQUI_OSRM_RETRIES=3
 CROQUI_MIN_STEP_M=300            # trechos menores viram parte do anterior
+CROQUI_MAX_ROUTE_OPTIONS=4       # teto de caminhos oferecidos ao usuário
+CROQUI_ROUTE_OPTIONS_BUDGET_MS=70000  # teto de tempo da busca por caminhos
 SEDES_MT_JSON=                   # opcional, sobrescreve config/sedes-mt.json
 MUNICIPIOS_MT_GEOJSON=           # opcional, sobrescreve config/municipios-mt.geojson
 ```
@@ -198,7 +242,8 @@ MUNICIPIOS_MT_GEOJSON=           # opcional, sobrescreve config/municipios-mt.ge
 |---------|-------|
 | `backend/croqui.ts` | Rotas, job assíncrono, SSE, empacotamento do ZIP |
 | `backend/croqui/basemap.ts` | Web Mercator, zoom, provedores de imagem, barra de escala |
-| `backend/croqui/routing.ts` | OSRM, nomes de via, simplificação de trechos, corte na divisa |
+| `backend/croqui/routing.ts` | OSRM (rota, alternativas, `/nearest`), nomes de via, simplificação, corte na divisa |
+| `backend/croqui/route-options.ts` | Descoberta, limpeza, deduplicação e rótulo dos caminhos |
 | `backend/croqui/landmarks.ts` | Ponto de partida e rótulos de cidade dentro do quadro |
 | `backend/croqui/narrative.ts` | Texto do roteiro |
 | `backend/croqui/coords.ts` | DMS, distâncias, escape XML, nome de arquivo |
@@ -208,7 +253,9 @@ MUNICIPIOS_MT_GEOJSON=           # opcional, sobrescreve config/municipios-mt.ge
 | `backend/croqui/render-kml.ts` | KML no formato do Google Earth Pro |
 | `backend/croqui/render-docx.ts` | DOCX |
 | `client/src/dashboard/panels/CroquiPanel.tsx` | Tela da aba |
-| `client/src/dashboard/hooks/useCroquiJobs.ts` | Upload, SSE, histórico, download |
+| `client/src/dashboard/croqui/RoutePicker.tsx` | Mapinha e cartões de escolha do caminho |
+| `client/src/dashboard/croqui/routePreview.ts` | Projeção e cores do mapinha |
+| `client/src/dashboard/hooks/useCroquiJobs.ts` | Upload, caminhos, SSE, histórico, download |
 | `config/sedes-mt.json` | Sedes dos 142 municípios |
 | `tools/gerar-sedes-mt.mjs` | Gera `sedes-mt.json` |
 | `tools/croqui-preview.ts` | Gera os 3 arquivos localmente para conferência |
@@ -217,7 +264,8 @@ MUNICIPIOS_MT_GEOJSON=           # opcional, sobrescreve config/municipios-mt.ge
 ## Testes e conferência visual
 
 ```bash
-npx vitest run --root . backend/croqui     # 35 testes, sem rede
+npm test                                   # front + backend (vitest.workspace.ts)
+npx vitest run --root . backend/croqui     # só o croqui, sem rede
 npx tsc --noEmit
 ```
 
@@ -226,9 +274,11 @@ npx tsc --noEmit
 | `basemap.test.ts` | Projeção ida-e-volta, conteúdo dentro do quadro, aspect da bbox, escala, URLs |
 | `narrative.test.ts` | Reproduz o croqui Sebald; pareamento distância ↔ ponto seguinte; fechos |
 | `routing.test.ts` | `ref` das vias, classificação de manobra, simplificação, corte na divisa |
+| `route-options.test.ts` | Sobreposição de traçados, remoção de vai-e-volta, pontos de passagem, lado do desvio, rótulos |
 | `render-kml.test.ts` | Envelope GE Pro, cores, ordem intercalada, rótulo DMS |
 | `render-pdf.test.ts` | PNG oficial embutido no PDF; PDFKit aceita o ícone com alpha |
 | `coords.test.ts` | DMS e formatação de distância |
+| `client/src/dashboard/croqui/routePreview.test.ts` | Enquadramento do mapinha: norte em cima, leste à direita, proporção preservada |
 
 Conferência visual ponta a ponta:
 
@@ -269,6 +319,15 @@ melhor faltar uma sede do que gravar uma sede errada. Leva ~4 minutos.
 - **`&deg;` não é entidade XML.** No KML o grau vai literal; só `'` e `"` viram entidade.
 - **`router.project-osrm.org` é servidor de demonstração**: tem limite de uso e não tem SLA. Para
   volume, hospedar OSRM próprio e apontar `CROQUI_OSRM_BASE_URL`.
+- **`alternatives=3` no OSRM público devolve uma rota só.** Foi verificado no Lote 89-A: `3`,
+  `true` e `false` retornam os mesmos 29,7 km. É por isso que os corredores alternativos são
+  descobertos por ponto de passagem, e não pedidos ao roteador.
+- **Ponto de passagem fora de rota gera vai-e-volta.** O OSRM vai até ele e volta pelo mesmo
+  caminho. Entregar esse traçado ao usuário seria mostrar um desvio que ninguém faz — daí o
+  `stripOutAndBackSpurs` + reroteamento pelo ponto que identifica o corredor.
+- **Web Mercator mistura unidade com facilidade.** No mapinha de escolha, `x` em grau e `y` em
+  radiano achatava o traçado ~57× na vertical. Os dois eixos têm que estar em radiano
+  (`routePreview.test.ts` cobre isso).
 - **O ZIP precisa conter exatamente um polígono.** ATP com múltiplas partes é rejeitada.
 - **`finishJob` recebe um objeto**, não argumentos posicionais — chamá-lo errado faz o job nunca
   ser finalizado no registro em memória, sem erro visível.

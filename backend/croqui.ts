@@ -3,6 +3,7 @@
  *
  * Endpoints:
  *   POST /api/croqui/upload
+ *   POST /api/croqui/route-options
  *   POST /api/croqui/process
  *   GET  /api/croqui/jobs/:id/status
  *   GET  /api/croqui/jobs/:id/events
@@ -34,7 +35,14 @@ import {
   destinationOnPolygonBoundary,
   fetchDrivingRoute,
   trimRouteAtPolygon,
+  type CroquiRoute,
 } from "./croqui/routing";
+import {
+  decimateCoordinates,
+  discoverRouteOptions,
+  type RouteOption,
+  type RouteOptionSummary,
+} from "./croqui/route-options";
 import { buildCroquiDocxBuffer } from "./croqui/render-docx";
 import { buildCroquiKml } from "./croqui/render-kml";
 import { buildCroquiPdfBuffer } from "./croqui/render-pdf";
@@ -109,37 +117,110 @@ async function buildOutputZip(files: Array<{ name: string; buffer: Buffer }>): P
   });
 }
 
+type CroquiContext = {
+  municipioNome: string;
+  landmark: ReturnType<typeof resolveLandmark>;
+  centLon: number;
+  centLat: number;
+};
+
+/** Município, ponto de partida e centroide — o que toda rota do croqui precisa. */
+async function resolveCroquiContext(atpGeometry: Polygon | MultiPolygon): Promise<CroquiContext> {
+  const c = centroid({ type: "Feature", properties: {}, geometry: atpGeometry });
+  const [centLon, centLat] = c.geometry.coordinates;
+  const municipio = (await detectarMunicipioMtComFallback([centLon, centLat])) || {
+    nome: null,
+    ibge: null,
+    fonte: "nao-detectado" as const,
+  };
+  return {
+    municipioNome: municipio.nome || "Mato Grosso",
+    landmark: resolveLandmark(
+      municipio.nome,
+      municipio.ibge,
+      getMunicipioFeatureByIbge(municipio.ibge),
+    ),
+    centLon,
+    centLat,
+  };
+}
+
+/**
+ * Caminhos de acesso possíveis, para o usuário escolher antes de gerar. O mais
+ * curto vem marcado como recomendado, mas nem sempre é o que se usa em campo.
+ */
+export async function buildCroquiRouteOptions(args: {
+  atpGeometry: Polygon | MultiPolygon;
+  onProgress?: (message: string) => void;
+}): Promise<{ municipioNome: string; options: RouteOption[] }> {
+  const context = await resolveCroquiContext(args.atpGeometry);
+  const options = await discoverRouteOptions({
+    startLon: context.landmark.lon,
+    startLat: context.landmark.lat,
+    destLon: context.centLon,
+    destLat: context.centLat,
+    atpGeometry: args.atpGeometry,
+    onProgress: args.onProgress,
+  });
+  return { municipioNome: context.municipioNome, options };
+}
+
+/** Anéis externos do imóvel, leves, para o mapinha de escolha. */
+export function outlineRings(geometry: Polygon | MultiPolygon): number[][][] {
+  const rings =
+    geometry.type === "Polygon"
+      ? [geometry.coordinates[0]]
+      : geometry.coordinates.map((poly) => poly[0]);
+  return rings.map((ring) => decimateCoordinates(ring, 120) as number[][]);
+}
+
+/** Só o que o front precisa para desenhar o mapinha e listar as opções. */
+export function toRouteOptionPayload(
+  option: RouteOption,
+): RouteOptionSummary & { coordinates: number[][] } {
+  return {
+    id: option.id,
+    label: option.label,
+    side: option.side,
+    totalDistanceM: option.totalDistanceM,
+    roads: option.roads,
+    recommended: option.recommended,
+    coordinates: decimateCoordinates(option.route.coordinates) as number[][],
+  };
+}
+
+/**
+ * Roteia até o centroide e corta na divisa: o ponto de corte é o acesso real.
+ * Quando a rota não chega a entrar no imóvel, cai para o ponto de divisa mais
+ * próximo.
+ */
+async function routeToBoundary(
+  atpGeometry: Polygon | MultiPolygon,
+  landmark: CroquiContext["landmark"],
+  centLon: number,
+  centLat: number,
+): Promise<CroquiRoute> {
+  const toCentroid = await fetchDrivingRoute(landmark.lon, landmark.lat, centLon, centLat);
+  const cut = trimRouteAtPolygon(toCentroid, atpGeometry);
+  if (cut.trimmed) return cut.route;
+  const dest = destinationOnPolygonBoundary(atpGeometry, landmark.lon, landmark.lat);
+  return fetchDrivingRoute(landmark.lon, landmark.lat, dest.lon, dest.lat);
+}
+
 export async function generateCroquiArtifacts(args: {
   atpGeometry: Polygon | MultiPolygon;
   title: string;
   propertyName: string;
+  /** Caminho escolhido pelo usuário; sem ele o croqui usa o mais curto. */
+  route?: CroquiRoute | null;
 }): Promise<{
   narrative: string;
   municipioNome: string;
   files: Array<{ name: string; buffer: Buffer }>;
 }> {
   const { atpGeometry, title, propertyName } = args;
-  const c = centroid({ type: "Feature", properties: {}, geometry: atpGeometry });
-  const [centLon, centLat] = c.geometry.coordinates;
-
-  const municipio = (await detectarMunicipioMtComFallback([centLon, centLat])) || {
-    nome: null,
-    ibge: null,
-    fonte: "nao-detectado" as const,
-  };
-  const municipioNome = municipio.nome || "Mato Grosso";
-  const municipioFeature = getMunicipioFeatureByIbge(municipio.ibge);
-  const landmark = resolveLandmark(municipio.nome, municipio.ibge, municipioFeature);
-
-  // Roteia até o centroide e corta na divisa: o ponto de corte é o acesso real.
-  // Quando a rota não chega a entrar no imóvel, cai para o ponto de divisa mais próximo.
-  const toCentroid = await fetchDrivingRoute(landmark.lon, landmark.lat, centLon, centLat);
-  const cut = trimRouteAtPolygon(toCentroid, atpGeometry);
-  let route = cut.route;
-  if (!cut.trimmed) {
-    const dest = destinationOnPolygonBoundary(atpGeometry, landmark.lon, landmark.lat);
-    route = await fetchDrivingRoute(landmark.lon, landmark.lat, dest.lon, dest.lat);
-  }
+  const { municipioNome, landmark, centLon, centLat } = await resolveCroquiContext(atpGeometry);
+  const route = args.route || (await routeToBoundary(atpGeometry, landmark, centLon, centLat));
 
   const narrative = buildCroquiNarrative({ municipioNome, propertyName, landmark, route });
   const fileStem = safeFileStem(title);
@@ -169,12 +250,39 @@ export async function generateCroquiArtifacts(args: {
   };
 }
 
+/**
+ * As opções ficam num JSON ao lado do upload: a geração precisa da rota exata
+ * que o usuário viu na tela, e recalcular arriscaria devolver outro traçado.
+ */
+function saveRouteOptions(uid: string, uploadId: string, options: RouteOption[]): string {
+  const stored = saveUserBuffer({
+    uid,
+    area: "croqui/routes",
+    filename: `${uploadId}_rotas.json`,
+    buffer: Buffer.from(JSON.stringify({ uploadId, options }), "utf8"),
+  });
+  return stored.relativePath;
+}
+
+function readRouteOption(relativePath: string, optionId: string): CroquiRoute | null {
+  try {
+    const raw = fs.readFileSync(getAbsoluteStoragePath(relativePath), "utf8");
+    const parsed = JSON.parse(raw) as { options?: RouteOption[] };
+    const found = (parsed.options || []).find((option) => option.id === optionId);
+    return found?.route || null;
+  } catch {
+    return null;
+  }
+}
+
 async function runCroquiJob(args: {
   uid: string;
   jobId: string;
   upload: Record<string, unknown>;
   title: string;
   propertyName: string;
+  route?: CroquiRoute | null;
+  routeLabel?: string;
 }): Promise<void> {
   const { uid, jobId, upload, title, propertyName } = args;
   try {
@@ -192,11 +300,18 @@ async function runCroquiJob(args: {
       throw new Error("O ZIP deve conter exatamente um polígono ATP.");
     }
 
-    progress(uid, jobId, { stage: "route", percent: 35, message: "Calculando rota de acesso..." });
+    progress(uid, jobId, {
+      stage: "route",
+      percent: 35,
+      message: args.route
+        ? `Usando o caminho escolhido${args.routeLabel ? ` (${args.routeLabel})` : ""}...`
+        : "Calculando rota de acesso...",
+    });
     const result = await generateCroquiArtifacts({
       atpGeometry: parsed.geometry,
       title,
       propertyName,
+      route: args.route,
     });
 
     if (isCancelRequested(jobId)) {
@@ -225,6 +340,7 @@ async function runCroquiJob(args: {
       municipioNome: result.municipioNome,
       title,
       propertyName,
+      routeLabel: args.routeLabel || null,
       files: fileNames,
       outputRelativePath: stored.relativePath,
       outputUrl: downloadUrl,
@@ -288,6 +404,56 @@ export function registerCroquiRoutes(app: Express): void {
     }
   });
 
+  app.post("/api/croqui/route-options", async (req: Request, res: Response) => {
+    try {
+      const uid = String((req as any).authUid || "").trim();
+      if (!uid) {
+        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      const uploadId = String((req.body as any)?.uploadId || "").trim();
+      if (!uploadId) {
+        res.status(400).json({ error: "uploadId é obrigatório." });
+        return;
+      }
+      const upload = readDocBySegments(["users", uid, "croqui_jobs", uploadId]);
+      if (!upload || upload.status !== "uploaded") {
+        res.status(404).json({ error: "Upload não encontrado." });
+        return;
+      }
+
+      const inputZipBuffer = fs.readFileSync(
+        getAbsoluteStoragePath(String(upload.inputRelativePath || "")),
+      );
+      const parsed = parseUserShapefile(inputZipBuffer);
+      if (parsed.polygons.length !== 1) {
+        throw new Error("O ZIP deve conter exatamente um polígono ATP.");
+      }
+
+      const { municipioNome, options } = await buildCroquiRouteOptions({
+        atpGeometry: parsed.geometry,
+      });
+      const routesRelativePath = saveRouteOptions(uid, uploadId, options);
+      const payload = options.map(toRouteOptionPayload);
+      persistJob(uid, uploadId, {
+        municipioNome,
+        routesRelativePath,
+        routeOptions: payload.map(({ coordinates, ...rest }) => rest),
+      });
+      res.json({
+        ok: true,
+        municipioNome,
+        options: payload,
+        // Contorno do imóvel e ponto de partida: sem eles o mapinha de escolha
+        // seria um punhado de linhas sem destino visível.
+        atp: outlineRings(parsed.geometry),
+        start: options[0]?.route.coordinates[0] || null,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || "Falha ao calcular os caminhos de acesso." });
+    }
+  });
+
   app.post("/api/croqui/process", async (req: Request, res: Response) => {
     try {
       const uid = String((req as any).authUid || "").trim();
@@ -315,10 +481,24 @@ export function registerCroquiRoutes(app: Express): void {
         res.status(404).json({ error: "Upload não encontrado." });
         return;
       }
+
+      const routeOptionId = String((req.body as any)?.routeOptionId || "").trim();
+      let route: CroquiRoute | null = null;
+      let routeLabel = "";
+      if (routeOptionId) {
+        route = readRouteOption(String(upload.routesRelativePath || ""), routeOptionId);
+        if (!route) {
+          res.status(404).json({ error: "Caminho escolhido não encontrado. Recalcule os caminhos." });
+          return;
+        }
+        const summaries = (upload.routeOptions || []) as RouteOptionSummary[];
+        routeLabel = summaries.find((option) => option.id === routeOptionId)?.label || routeOptionId;
+      }
+
       const job = startJob({
         uid,
         endpoint: "/api/croqui/process",
-        metadata: { uploadId, title, propertyName, filename: upload.filename },
+        metadata: { uploadId, title, propertyName, filename: upload.filename, routeOptionId },
       });
       persistJob(uid, job.jobId, {
         type: "process",
@@ -326,6 +506,8 @@ export function registerCroquiRoutes(app: Express): void {
         filename: upload.filename,
         title,
         propertyName,
+        routeOptionId: routeOptionId || null,
+        routeLabel: routeLabel || null,
         status: "processing",
         stage: "queued",
         percent: 1,
@@ -333,7 +515,7 @@ export function registerCroquiRoutes(app: Express): void {
         createdAt: new Date().toISOString(),
       });
       res.status(202).json({ ok: true, jobId: job.jobId });
-      void runCroquiJob({ uid, jobId: job.jobId, upload, title, propertyName });
+      void runCroquiJob({ uid, jobId: job.jobId, upload, title, propertyName, route, routeLabel });
     } catch (error: any) {
       res.status(400).json({ error: error?.message || "Falha ao iniciar croqui." });
     }
@@ -408,6 +590,7 @@ export function registerCroquiRoutes(app: Express): void {
     requestCancel(jobId, uid);
     removeStoragePath(String(data.outputRelativePath || ""));
     removeStoragePath(String(data.inputRelativePath || ""));
+    removeStoragePath(String(data.routesRelativePath || ""));
     persistJob(uid, jobId, { status: "deleted", deletedAt: new Date().toISOString() });
     res.json({ ok: true });
   });

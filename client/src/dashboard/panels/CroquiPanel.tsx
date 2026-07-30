@@ -4,9 +4,12 @@ import {
   Download,
   Loader2,
   Map,
+  RefreshCw,
+  Route,
   Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import RoutePicker from '../croqui/RoutePicker';
 import type { UseCroquiJobsReturn } from '../hooks/useCroquiJobs';
 
 export type CroquiPanelProps = {
@@ -36,6 +39,11 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
     croquiDownload,
     croquiFiles,
     croquiMunicipio,
+    croquiRoutes,
+    croquiRouteId,
+    setCroquiRouteId,
+    croquiLoadingRoutes,
+    loadCroquiRouteOptions,
     applyZipFile,
     startCroquiProcessing,
     downloadCroquiZip,
@@ -44,7 +52,9 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
   } = croqui;
 
   const [dragActive, setDragActive] = useState(false);
-  const dropDisabled = croquiProcessing || croquiUploading;
+  const busy = croquiProcessing || croquiUploading || croquiLoadingRoutes;
+  const dropDisabled = busy;
+  const hasChoice = !!croquiRoutes && croquiRoutes.options.length > 1;
 
   const acceptZip = (file: File | null | undefined) => {
     if (!file || dropDisabled) return;
@@ -70,13 +80,14 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
               </h2>
               <p className="max-w-3xl text-sm text-slate-400">
                 Arraste o ZIP da ATP (ou selecione o arquivo), informe título e nome da propriedade.
-                O sistema detecta o município, calcula o roteiro de acesso e gera PDF, Word e KML no padrão SEMA.
+                O sistema detecta o município e procura os caminhos de acesso; havendo mais de um,
+                você escolhe por onde o croqui segue antes de gerar o PDF, o Word e o KML.
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2 text-center shrink-0">
               {[
                 { label: 'Entrada', value: 'ZIP ATP' },
-                { label: 'Rota', value: 'Automática' },
+                { label: 'Rota', value: 'Você escolhe' },
                 { label: 'Saída', value: 'PDF + DOCX + KML' },
               ].map((item) => (
                 <div key={item.label} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
@@ -204,13 +215,28 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              disabled={croquiProcessing || croquiUploading || !croquiFile}
+              disabled={busy || !croquiFile}
               onClick={() => void startCroquiProcessing()}
               className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
             >
-              {croquiProcessing || croquiUploading ? <Loader2 size={16} className="animate-spin" /> : <Map size={16} />}
-              Gerar croqui
+              {busy ? <Loader2 size={16} className="animate-spin" /> : <Map size={16} />}
+              {croquiLoadingRoutes
+                ? 'Procurando caminhos...'
+                : hasChoice
+                  ? 'Gerar croqui com este caminho'
+                  : 'Gerar croqui'}
             </button>
+            {hasChoice && (
+              <button
+                type="button"
+                disabled={busy || !croquiUploadId}
+                onClick={() => void loadCroquiRouteOptions(croquiUploadId as string)}
+                className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5 disabled:opacity-50"
+              >
+                <RefreshCw size={15} />
+                Recalcular caminhos
+              </button>
+            )}
             <button
               type="button"
               onClick={resetCroquiDraft}
@@ -219,6 +245,36 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
               Limpar
             </button>
           </div>
+
+          {croquiLoadingRoutes && (
+            <p className="flex items-center gap-2 text-xs text-slate-400">
+              <Loader2 size={13} className="animate-spin" />
+              Procurando os caminhos de acesso possíveis — isso leva alguns segundos.
+            </p>
+          )}
+
+          {croquiRoutes && hasChoice && !croquiProcessing && (
+            <div className="space-y-3 rounded-xl border border-white/10 bg-white/[0.02] p-4">
+              <div className="flex items-start gap-2">
+                <Route size={16} className="mt-0.5 shrink-0 text-amber-300" />
+                <div>
+                  <p className="text-sm font-semibold text-white">
+                    {croquiRoutes.options.length} caminhos de acesso encontrados
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    O mais curto nem sempre é o que se usa em campo. Escolha o traçado correto
+                    antes de gerar — ele vai para o PDF, o Word e o KML.
+                  </p>
+                </div>
+              </div>
+              <RoutePicker
+                data={croquiRoutes}
+                selectedId={croquiRouteId}
+                onSelect={setCroquiRouteId}
+                disabled={busy}
+              />
+            </div>
+          )}
 
           {(croquiProcessing || croquiProgress > 0) && (
             <div className="space-y-2">

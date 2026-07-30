@@ -204,30 +204,48 @@ export function simplifyRouteSteps(
   return out;
 }
 
-export async function fetchDrivingRoute(
-  startLon: number,
-  startLat: number,
-  endLon: number,
-  endLat: number,
-): Promise<CroquiRoute> {
-  const coordPath = `${startLon},${startLat};${endLon},${endLat}`;
-  const url =
+/**
+ * Junta os passos de todas as pernas numa sequência só. Cada ponto de passagem
+ * intermediário cria um par `arrive`/`depart` artificial: o `arrive` some e o
+ * `depart` vira um seguimento normal, senão o roteiro anunciaria uma chegada no
+ * meio do caminho.
+ */
+export function flattenLegSteps(legs: Array<{ steps?: OsrmStep[] }>): OsrmStep[] {
+  const out: OsrmStep[] = [];
+  legs.forEach((leg, legIndex) => {
+    const steps = leg.steps || [];
+    steps.forEach((step, stepIndex) => {
+      const type = String(step.maneuver?.type || "").toLowerCase();
+      const isLastLeg = legIndex === legs.length - 1;
+      if (type === "arrive" && !isLastLeg) return;
+      if (type === "depart" && legIndex > 0 && stepIndex === 0) {
+        out.push({ ...step, maneuver: { ...step.maneuver, type: "continue" } });
+        return;
+      }
+      out.push(step);
+    });
+  });
+  return out;
+}
+
+type OsrmRouteJson = {
+  distance?: number;
+  geometry?: { coordinates?: Position[] };
+  legs?: Array<{ steps?: OsrmStep[] }>;
+};
+
+function osrmUrl(points: Position[], alternatives: number): string {
+  const coordPath = points.map(([lon, lat]) => `${lon},${lat}`).join(";");
+  const alt = alternatives > 0 ? String(alternatives) : "false";
+  return (
     `${OSRM_BASE}/route/v1/driving/${coordPath}` +
-    "?overview=full&steps=true&geometries=geojson&annotations=false";
-  const data = (await fetchOsrmJson(url)) as {
-    code?: string;
-    routes?: Array<{
-      distance?: number;
-      geometry?: { coordinates?: Position[] };
-      legs?: Array<{ steps?: OsrmStep[] }>;
-    }>;
-  };
-  if (data.code !== "Ok" || !data.routes?.[0]) {
-    throw new Error("Não foi possível calcular a rota viária até a propriedade.");
-  }
-  const route = data.routes[0];
+    `?overview=full&steps=true&geometries=geojson&annotations=false&alternatives=${alt}`
+  );
+}
+
+function buildRoute(route: OsrmRouteJson): CroquiRoute {
   const coords = route.geometry?.coordinates || [];
-  const steps = route.legs?.[0]?.steps || [];
+  const steps = flattenLegSteps(route.legs || []);
 
   const raw: RouteWaypoint[] = [];
   let searchFrom = 0;
@@ -291,6 +309,61 @@ export async function fetchDrivingRoute(
       geometry: { type: "LineString", coordinates: coords },
     },
   };
+}
+
+/**
+ * Rota viária passando pelos pontos na ordem dada. Com `alternatives > 0` o OSRM
+ * pode devolver mais de um traçado — o público costuma devolver só um, e é por
+ * isso que `route-options` também procura corredores por pontos de passagem.
+ */
+export async function fetchDrivingRoutes(
+  points: Position[],
+  options: { alternatives?: number } = {},
+): Promise<CroquiRoute[]> {
+  if (points.length < 2) throw new Error("Rota precisa de origem e destino.");
+  const data = (await fetchOsrmJson(osrmUrl(points, options.alternatives ?? 0))) as {
+    code?: string;
+    routes?: OsrmRouteJson[];
+  };
+  if (data.code !== "Ok" || !data.routes?.length) {
+    throw new Error("Não foi possível calcular a rota viária até a propriedade.");
+  }
+  return data.routes.map(buildRoute);
+}
+
+export async function fetchDrivingRoute(
+  startLon: number,
+  startLat: number,
+  endLon: number,
+  endLat: number,
+): Promise<CroquiRoute> {
+  const routes = await fetchDrivingRoutes([
+    [startLon, startLat],
+    [endLon, endLat],
+  ]);
+  return routes[0];
+}
+
+/**
+ * Encaixa um ponto na via mais próxima. Pontos de passagem soltos no meio da
+ * lavoura fariam o OSRM inventar um desvio até o asfalto e voltar.
+ */
+export async function fetchNearestOnRoad(
+  lon: number,
+  lat: number,
+): Promise<{ lon: number; lat: number; distanceM: number } | null> {
+  try {
+    const data = (await fetchOsrmJson(`${OSRM_BASE}/nearest/v1/driving/${lon},${lat}?number=1`)) as {
+      code?: string;
+      waypoints?: Array<{ location?: [number, number]; distance?: number }>;
+    };
+    const waypoint = data.waypoints?.[0];
+    const location = waypoint?.location;
+    if (data.code !== "Ok" || !location || location.length < 2) return null;
+    return { lon: location[0], lat: location[1], distanceM: Number(waypoint?.distance || 0) };
+  } catch {
+    return null;
+  }
 }
 
 function polygonBoundaryLines(geometry: Polygon | MultiPolygon): Feature<LineString>[] {

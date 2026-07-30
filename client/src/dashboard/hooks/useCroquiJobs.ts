@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { readApiError } from '@/lib/api';
 import { croquiDownloadUrl, croquiZipFilename } from '../croqui/filenames';
 import { mapCroquiDocToHistoryItem } from '../croqui/mapDoc';
-import type { CroquiHistoryItem } from '../croqui/types';
+import type { CroquiHistoryItem, CroquiRouteOptionsResponse } from '../croqui/types';
 
 export type UseCroquiJobsDeps = {
   apiFetch: (input: string, init?: RequestInit) => Promise<Response>;
@@ -30,6 +30,9 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
   const [croquiMunicipio, setCroquiMunicipio] = useState('');
   const [croquiFile, setCroquiFile] = useState<File | null>(null);
   const [croquiUploading, setCroquiUploading] = useState(false);
+  const [croquiRoutes, setCroquiRoutes] = useState<CroquiRouteOptionsResponse | null>(null);
+  const [croquiRouteId, setCroquiRouteId] = useState<string | null>(null);
+  const [croquiLoadingRoutes, setCroquiLoadingRoutes] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const eventsAbortRef = useRef<AbortController | null>(null);
@@ -49,6 +52,9 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     setCroquiFilename('');
     setCroquiMunicipio('');
     setCroquiFile(null);
+    setCroquiRoutes(null);
+    setCroquiRouteId(null);
+    setCroquiLoadingRoutes(false);
   }, []);
 
   const applyCroquiJobPatch = useCallback((job: CroquiHistoryItem) => {
@@ -160,6 +166,9 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     setCroquiFile(file);
     setCroquiUploadId(null);
     setCroquiError(null);
+    // Os caminhos são do ATP anterior; trocar o ZIP invalida a escolha.
+    setCroquiRoutes(null);
+    setCroquiRouteId(null);
     if (file) setCroquiFilename(file.name);
   }, []);
 
@@ -195,7 +204,52 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     }
   }, [apiFetch, croquiFile, fileToBase64Payload]);
 
-  const startCroquiProcessing = useCallback(async () => {
+  const loadCroquiRouteOptions = useCallback(
+    async (uploadId: string): Promise<CroquiRouteOptionsResponse | null> => {
+      setCroquiLoadingRoutes(true);
+      setCroquiError(null);
+      try {
+        const response = await apiFetch('/api/croqui/route-options', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uploadId }),
+        });
+        if (!response.ok) {
+          const err = await readApiError(response);
+          throw new Error(err?.error || 'Falha ao calcular os caminhos de acesso.');
+        }
+        const data = await response.json();
+        const parsed: CroquiRouteOptionsResponse = {
+          municipioNome: String(data?.municipioNome || ''),
+          options: Array.isArray(data?.options) ? data.options : [],
+          atp: Array.isArray(data?.atp) ? data.atp : [],
+          start: Array.isArray(data?.start) ? data.start : null,
+        };
+        if (parsed.municipioNome) setCroquiMunicipio(parsed.municipioNome);
+        setCroquiRoutes(parsed);
+        setCroquiRouteId(
+          parsed.options.find((option) => option.recommended)?.id || parsed.options[0]?.id || null,
+        );
+        return parsed;
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : 'Falha ao calcular os caminhos de acesso.';
+        setCroquiError(message);
+        toast.error(message);
+        return null;
+      } finally {
+        setCroquiLoadingRoutes(false);
+      }
+    },
+    [apiFetch],
+  );
+
+  /**
+   * Sem caminho escolhido, primeiro descobre as opções. Com mais de uma, pára e
+   * devolve a escolha ao usuário — é ele quem sabe por onde se entra na
+   * propriedade. Com uma só, segue direto usando esse traçado já calculado.
+   */
+  const startCroquiProcessing = useCallback(async (chosenRouteId?: string | null) => {
     const title = croquiTitle.trim();
     const propertyName = croquiPropertyName.trim();
     if (!title) {
@@ -211,6 +265,18 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
       uploadId = await uploadCroquiZip();
       if (!uploadId) return;
     }
+
+    let routeOptionId = chosenRouteId ?? croquiRouteId;
+    if (!routeOptionId) {
+      const found = croquiRoutes || (await loadCroquiRouteOptions(uploadId));
+      if (!found) return;
+      if (found.options.length > 1) {
+        toast.info('Escolha por qual caminho o croqui deve seguir.');
+        return;
+      }
+      routeOptionId = found.options[0]?.id || null;
+    }
+
     setCroquiProcessing(true);
     setCroquiError(null);
     setCroquiProgress(1);
@@ -219,7 +285,7 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
       const response = await apiFetch('/api/croqui/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uploadId, title, propertyName }),
+        body: JSON.stringify({ uploadId, title, propertyName, routeOptionId }),
       });
       if (!response.ok) {
         const err = await readApiError(response);
@@ -253,8 +319,11 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     applyCroquiJobPatch,
     connectCroquiEvents,
     croquiPropertyName,
+    croquiRouteId,
+    croquiRoutes,
     croquiTitle,
     croquiUploadId,
+    loadCroquiRouteOptions,
     uploadCroquiZip,
   ]);
 
@@ -301,6 +370,11 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     croquiMunicipio,
     croquiFile,
     croquiUploading,
+    croquiRoutes,
+    croquiRouteId,
+    setCroquiRouteId,
+    croquiLoadingRoutes,
+    loadCroquiRouteOptions,
     fileInputRef,
     resetCroquiDraft,
     applyZipFile,

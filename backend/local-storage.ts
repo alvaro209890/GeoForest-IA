@@ -292,6 +292,7 @@ export function saveUserBuffer(args: {
     | "overlap/input"
     | "overlap/output"
     | "croqui/input"
+    | "croqui/routes"
     | "croqui/output"
     | "geometry-errors/input"
     | "geometry-errors/output"

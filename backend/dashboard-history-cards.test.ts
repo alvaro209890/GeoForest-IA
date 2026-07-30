@@ -16,13 +16,17 @@ describe("Dashboard history cards visibility", () => {
   const src = fs.readFileSync(dashboardPath, "utf8");
 
   it("mantém render de cards por aba com dados de histórico", () => {
+    // "Processar projeto" saiu do dashboard em 2026-07-21; croqui e
+    // sobreposições entraram depois. A lista acompanha as abas de hoje.
     for (const needle of [
       "simcarClipHistory.map(",
       "cbersHistory.map(",
       "landsatHistory.map(",
       "verticesHistory.map(",
       "geometryHistory.map(",
-      "processarHistory.map(",
+      "overlapHistory.map(",
+      "croquiHistory.map(",
+      "containmentHistory.map(",
       "receiptHistory.map(",
     ]) {
       expect(src.includes(needle), needle).toBe(true);
