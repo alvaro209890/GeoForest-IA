@@ -1,5 +1,6 @@
 import PDFDocument from "pdfkit";
 import type { MultiPolygon, Polygon, Position } from "geojson";
+import { ylwPushpinPng } from "./assets/ylw-pushpin-data";
 import { bboxOfPositions, fetchBasemapImage, pickScaleBar, resolveMapFrame } from "./basemap";
 import type { MapFrame } from "./basemap";
 import { formatDmsLabel } from "./coords";
@@ -28,10 +29,27 @@ const LEGEND_H = 56;
 
 const ROUTE_COLOR = "#ff5500";
 const POLYGON_COLOR = "#ff0000";
-const PIN_COLOR = "#ffe200";
+
+/** Ícone oficial `ylw-pushpin.png` do Google Earth (64×64). */
+const PIN_ICON_PX = 64;
+/** Hotspot KML: x=20, y=2 a partir da base — mesma âncora do `render-kml.ts`. */
+const PIN_HOTSPOT_X_PX = 20;
+const PIN_HOTSPOT_Y_FROM_BOTTOM_PX = 2;
+/** Tamanho do pin no mapa (pt). Casado visualmente com os croquis exportados do GE Pro. */
+const PIN_SIZE_PT = 24;
+const PIN_LEGEND_SIZE_PT = 14;
 
 type Doc = InstanceType<typeof PDFDocument>;
 type Rect = { x: number; y: number; w: number; h: number };
+
+let pushpinBuffer: Buffer | null = null;
+
+/** Preferência: bytes embutidos (bundle esbuild). Fallback: PNG em disco. */
+function loadPushpinPng(): Buffer {
+  if (pushpinBuffer) return pushpinBuffer;
+  pushpinBuffer = ylwPushpinPng();
+  return pushpinBuffer;
+}
 
 function polygonRings(geometry: Polygon | MultiPolygon): Position[][] {
   if (geometry.type === "Polygon") return geometry.coordinates;
@@ -68,15 +86,16 @@ function haloText(doc: Doc, text: string, x: number, y: number): void {
   doc.restore();
 }
 
-/** Pushpin amarelo no estilo `ylw-pushpin` do Google Earth, ancorado na ponta. */
-function drawPushpin(doc: Doc, x: number, y: number): void {
+/**
+ * Pushpin amarelo oficial do Google Earth (`ylw-pushpin.png`), ancorado na
+ * ponta da agulha — o mesmo ícone e hotspot do KML.
+ */
+function drawPushpin(doc: Doc, x: number, y: number, sizePt = PIN_SIZE_PT): void {
+  const scale = sizePt / PIN_ICON_PX;
+  const drawX = x - PIN_HOTSPOT_X_PX * scale;
+  const drawY = y - (PIN_ICON_PX - PIN_HOTSPOT_Y_FROM_BOTTOM_PX) * scale;
   doc.save();
-  doc.lineWidth(0.9).strokeColor("#3d3d3d");
-  doc.moveTo(x, y).lineTo(x + 3.4, y - 12).stroke();
-  doc.fillColor(PIN_COLOR).strokeColor("#7a6a00").lineWidth(0.7);
-  doc.circle(x + 4.6, y - 14.4, 4.4).fillAndStroke();
-  doc.fillColor("#fff8b0");
-  doc.circle(x + 3.4, y - 15.6, 1.5).fill();
+  doc.image(loadPushpinPng(), drawX, drawY, { width: sizePt, height: sizePt });
   doc.restore();
 }
 
@@ -111,10 +130,7 @@ function drawLegend(doc: Doc, rect: Rect): void {
   doc.text("Caminho", rect.x + 28, pathY - 3.5, { lineBreak: false });
 
   const pinY = rect.y + 46;
-  doc.save();
-  doc.scale(0.62, 0.62, { origin: [iconX, pinY] });
-  drawPushpin(doc, iconX, pinY + 5);
-  doc.restore();
+  drawPushpin(doc, iconX, pinY + 2, PIN_LEGEND_SIZE_PT);
   doc.font("Helvetica").fontSize(9).fillColor("#000000");
   doc.text("Coordenadas", rect.x + 28, pinY - 3.5, { lineBreak: false });
   doc.restore();

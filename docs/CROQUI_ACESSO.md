@@ -41,6 +41,8 @@ O que foi medido nos modelos e virou especificação:
 - Caixa **"Legenda"** no topo-direito, com "Caminho" e "Coordenadas" (presente em 2 dos 3 modelos).
 - Polígono do imóvel em **vermelho** sem preenchimento; caminho em **laranja**.
 - Pushpins amarelos com o **DMS escrito ao lado** de cada ponto.
+  O PDF usa o ícone oficial `ylw-pushpin.png` do Google Earth (o mesmo URL do KML),
+  ancorado na ponta da agulha — não um círculo vetorial inventado.
 - Seta N e barra de escala no canto inferior direito; atribuição da imagem no inferior-esquerdo.
 - No roteiro, a distância de cada trecho vem seguida do DMS do **ponto de chegada** daquele trecho.
 
@@ -138,7 +140,7 @@ A barra de escala não é decorativa: `pickScaleBar` escolhe um valor redondo (1
 | Caixa "Legenda" | topo-direito, 118×56 pt |
 | Polígono do imóvel | contorno `#FF0000`, 2 pt, sem preenchimento |
 | Caminho | `#FF5500`, 3 pt |
-| Pushpins | amarelos, ancorados na ponta, com o DMS ao lado |
+| Pushpins | ícone oficial `ylw-pushpin.png` do Google Earth (24 pt no mapa, 14 pt na legenda), hotspot na ponta da agulha (`x=20`, `y=2` a partir da base, igual ao KML), com o DMS ao lado |
 | Seta N | canto inferior direito |
 | Barra de escala | canto inferior direito, abaixo da seta |
 | Atribuição | canto inferior esquerdo (só no fallback Esri) |
@@ -201,6 +203,8 @@ MUNICIPIOS_MT_GEOJSON=           # opcional, sobrescreve config/municipios-mt.ge
 | `backend/croqui/narrative.ts` | Texto do roteiro |
 | `backend/croqui/coords.ts` | DMS, distâncias, escape XML, nome de arquivo |
 | `backend/croqui/render-pdf.ts` | Layout do PDF |
+| `backend/croqui/assets/ylw-pushpin.png` | Ícone oficial do Google Earth (fonte) |
+| `backend/croqui/assets/ylw-pushpin-data.ts` | Mesmo PNG em base64, embutido no bundle esbuild |
 | `backend/croqui/render-kml.ts` | KML no formato do Google Earth Pro |
 | `backend/croqui/render-docx.ts` | DOCX |
 | `client/src/dashboard/panels/CroquiPanel.tsx` | Tela da aba |
@@ -208,11 +212,12 @@ MUNICIPIOS_MT_GEOJSON=           # opcional, sobrescreve config/municipios-mt.ge
 | `config/sedes-mt.json` | Sedes dos 142 municípios |
 | `tools/gerar-sedes-mt.mjs` | Gera `sedes-mt.json` |
 | `tools/croqui-preview.ts` | Gera os 3 arquivos localmente para conferência |
+| `tools/croqui-pin-preview.ts` | Preview do pushpin (sem rede) |
 
 ## Testes e conferência visual
 
 ```bash
-npx vitest run --root . backend/croqui     # 32 testes, sem rede
+npx vitest run --root . backend/croqui     # 35 testes, sem rede
 npx tsc --noEmit
 ```
 
@@ -222,6 +227,7 @@ npx tsc --noEmit
 | `narrative.test.ts` | Reproduz o croqui Sebald; pareamento distância ↔ ponto seguinte; fechos |
 | `routing.test.ts` | `ref` das vias, classificação de manobra, simplificação, corte na divisa |
 | `render-kml.test.ts` | Envelope GE Pro, cores, ordem intercalada, rótulo DMS |
+| `render-pdf.test.ts` | PNG oficial embutido no PDF; PDFKit aceita o ícone com alpha |
 | `coords.test.ts` | DMS e formatação de distância |
 
 Conferência visual ponta a ponta:
@@ -229,11 +235,15 @@ Conferência visual ponta a ponta:
 ```bash
 npx tsx tools/croqui-preview.ts                    # Croquis/ATP → $TMPDIR/croqui-preview
 npx tsx tools/croqui-preview.ts <pasta> <saida>
+npx tsx tools/croqui-pin-preview.ts                # só o pushpin, sem rede
 ```
 
-Compare o PDF gerado com `Croquis/Fazenda Irmaos Sebald-lote 121B.pdf` e
-`Croquis/Croqui_Chacara_Lotes_41 e 42..docx.pdf`. **A prova de que o enquadramento está certo é a
-rota cair em cima das estradas da imagem de satélite.**
+Compare o PDF gerado com `Croquis/Fazenda Irmaos Sebald-lote 121B.pdf`,
+`Croquis/Croqui_Chacara_Lotes_41 e 42..docx.pdf` e o modelo externo
+`Croqui_Lote_04_P.A_Pingo D'água.pdf`. **A prova de que o enquadramento está certo é a
+rota cair em cima das estradas da imagem de satélite.** Os pinos devem ser o thumbtack
+3D amarelo do Google Earth (cabeça arredondada + agulha prateada inclinada), não um
+círculo com haste.
 
 `render-kml.test.ts` compara com o KML modelo quando `Croquis/` está presente e pula essas
 asserções quando não está.
@@ -262,3 +272,7 @@ melhor faltar uma sede do que gravar uma sede errada. Leva ~4 minutos.
 - **O ZIP precisa conter exatamente um polígono.** ATP com múltiplas partes é rejeitada.
 - **`finishJob` recebe um objeto**, não argumentos posicionais — chamá-lo errado faz o job nunca
   ser finalizado no registro em memória, sem erro visível.
+- **Não redesenhe o pushpin em vetor.** Os croquis modelo saíram do Google Earth Pro com o
+  ícone `ylw-pushpin.png` rasterizado na exportação. O PDF precisa embutir o mesmo PNG
+  (`backend/croqui/assets/ylw-pushpin.png`, hotspot na ponta) — um círculo amarelo com haste
+  fica diferente do thumbtack 3D e falha na conferência visual contra o modelo.
