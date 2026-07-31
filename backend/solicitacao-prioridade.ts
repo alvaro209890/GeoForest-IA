@@ -11,6 +11,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { extractZipEntries } from "./geo-utils";
 import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
 import { requireAuth } from "./auth";
@@ -31,6 +32,8 @@ const PYTHON_EXE =
   process.platform === "win32"
     ? "C:\\Users\\Usuario\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
     : "python3";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const FILL_SCRIPT = path.resolve(__dirname, "solicitacao", "fill_templates.py");
 
