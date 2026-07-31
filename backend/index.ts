@@ -1,4 +1,6 @@
 ﻿import express from "express";
+import dns from "node:dns";
+dns.setDefaultResultOrder("ipv4first");
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
