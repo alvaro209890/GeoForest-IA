@@ -12,6 +12,7 @@ export type DashboardView =
   | 'auas-sccon'
   | 'sobreposicoes'
   | 'croqui'
+  | 'solicitacao-prioridade'
   | 'features'
   | 'settings';
 
@@ -23,7 +24,8 @@ export type DashboardTabId =
   | 'vertices-proximas'
   | 'auas-sccon'
   | 'sobreposicoes'
-  | 'croqui';
+  | 'croqui'
+  | 'solicitacao-prioridade';
 
 export const DASHBOARD_VIEW_LABELS: Record<DashboardView, string> = {
   'simcar-clip': 'Recorte SIMCAR',
@@ -34,6 +36,7 @@ export const DASHBOARD_VIEW_LABELS: Record<DashboardView, string> = {
   'auas-sccon': 'AUAS × SCCON',
   sobreposicoes: 'Sobreposições',
   croqui: 'Croqui',
+  'solicitacao-prioridade': 'Solicitação Prioridade',
   features: 'Funcionalidades',
   settings: 'Configurações',
 };

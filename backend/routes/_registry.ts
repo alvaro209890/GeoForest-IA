@@ -25,6 +25,7 @@ import { registerModelsRoutes } from "./models";
 import { registerBillingRoutes } from "./billing";
 import { registerMapRoutes } from "./map";
 import { registerGeometryRoutes } from "./geometry";
+import { registerSolicitacaoPrioridadeRoutes } from "../solicitacao-prioridade";
 
 export function registerAllRoutes(app: Express) {
   registerAccountRoutes(app);
@@ -51,4 +52,6 @@ export function registerAllRoutes(app: Express) {
   registerBillingRoutes(app);
   registerMapRoutes(app);
   registerGeometryRoutes(app);
+
+  registerSolicitacaoPrioridadeRoutes(app);
 }

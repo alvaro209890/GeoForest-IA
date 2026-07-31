@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   CalendarClock,
   Combine,
+  FileText,
   Layers,
   Map,
   Network,
@@ -77,6 +78,13 @@ export const DASHBOARD_TABS: DashboardTabDef[] = [
     Icon: Map,
     activeGradient: 'linear-gradient(135deg, #d97706, #f59e0b)',
     iconGlowClass: 'drop-shadow-[0_0_6px_rgba(245,158,11,0.5)]',
+  },
+  {
+    id: 'solicitacao-prioridade',
+    label: 'Solicitação',
+    Icon: FileText,
+    activeGradient: 'linear-gradient(135deg, #0891b2, #06b6d4)',
+    iconGlowClass: 'drop-shadow-[0_0_6px_rgba(6,182,212,0.5)]',
   },
 ];
 

@@ -13,6 +13,7 @@ export const DASHBOARD_PATH_TO_VIEW: Record<string, DashboardView> = {
   '/dashboard/auas': 'auas-sccon',
   '/dashboard/sobreposicoes': 'sobreposicoes',
   '/dashboard/croqui': 'croqui',
+  '/dashboard/solicitacao': 'solicitacao-prioridade',
   '/dashboard/manual': 'features',
   '/dashboard/configuracoes': 'settings',
   '/dashboard/chat': 'simcar-clip',
@@ -27,6 +28,7 @@ export const DASHBOARD_VIEW_TO_PATH: Record<DashboardView, string> = {
   'auas-sccon': '/dashboard/auas',
   sobreposicoes: '/dashboard/sobreposicoes',
   croqui: '/dashboard/croqui',
+  'solicitacao-prioridade': '/dashboard/solicitacao',
   features: '/dashboard/manual',
   settings: '/dashboard/configuracoes',
 };

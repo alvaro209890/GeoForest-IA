@@ -121,6 +121,7 @@ const CbersPanel = lazy(() => import('@/dashboard/panels/CbersPanel'));
 const LandsatPanel = lazy(() => import('@/dashboard/panels/LandsatPanel'));
 const SobreposicoesPanel = lazy(() => import('@/dashboard/panels/SobreposicoesPanel'));
 const CroquiPanel = lazy(() => import('@/dashboard/panels/CroquiPanel'));
+const SolicitacaoPrioridadePanel = lazy(() => import('@/components/SolicitacaoPrioridadePanel'));
 
 type DocumentReference = ReturnType<typeof doc>;
 
@@ -8897,6 +8898,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             </div>
           }>
             <CroquiPanel croqui={croqui} />
+          </Suspense>
+        ) : activeView === 'solicitacao-prioridade' ? (
+          <Suspense fallback={
+            <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+              <div className="max-w-6xl mx-auto">
+                <div className="rounded-2xl border border-white/10 bg-[#0e1612]/70 p-6 text-sm text-slate-300">Carregando Solicitação...</div>
+              </div>
+            </div>
+          }>
+            <SolicitacaoPrioridadePanel />
           </Suspense>
         ) : activeView === 'vertices-proximas' ? (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">

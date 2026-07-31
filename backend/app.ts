@@ -99,6 +99,8 @@ const AUTH_REQUIRED_PATHS: (string | RegExp)[] = [
   "/api/billing/me",
   "/api/billing/topups/manual",
   "/api/billing/ledger",
+  "/api/solicitacao-prioridade/process",
+  /^\/api\/solicitacao-prioridade\/download\/[^/]+$/,
 ];
 
 export function createApp(logBackend: Logger): Express {
