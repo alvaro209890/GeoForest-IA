@@ -46,7 +46,7 @@ npx firebase deploy --only hosting
 | `backend/local-storage.ts` | Local JSON database (replaces Firestore) |
 | `backend/billing.ts` | Billing disabled (all costs return 0 BRL) |
 | `backend/auth.ts` | requireAuth middleware (Firebase token verification) |
-| `backend/simcar-clip.ts` | SIMCAR Clip module (shapefile, WFS, Gemini analysis) |
+| `backend/simcar-clip.ts` | SIMCAR Clip module (shapefile, WFS, análise de imagens via Groq Vision) |
 | `backend/auas-analysis.ts` | AUAS land use classification |
 | `backend/auas-sccon.ts` | AUAS × SCCON: data ABERTURA via alertas de desmate + pontos sem alerta (ver `docs/AUAS_SCCON.md`) |
 | `backend/processing-jobs.ts` | In-memory job tracking with persistence |
@@ -57,8 +57,7 @@ npx firebase deploy --only hosting
 ## Environment Variables
 
 Critical:
-- `GROQ_API_KEY` - LLM inference (chat endpoints)
-- `GEMINI_API_KEY` - image analysis, report synthesis
+- `GROQ_API_KEY` - único provedor de IA: chat, visão (análise de imagens) e síntese de laudos
 - `FIREBASE_SERVICE_ACCOUNT_PATH` - path to service account JSON
 
 WMS/WFS (already configured):

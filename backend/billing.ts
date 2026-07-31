@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-export type BillingProvider = "groq" | "gemini" | "cloudinary";
+export type BillingProvider = "groq" | "cloudinary";
 
 export type UsageRecordInput = {
   provider?: BillingProvider;
@@ -66,14 +66,12 @@ function normalizeModelName(model: string): string {
   return String(model || "")
     .trim()
     .toLowerCase()
-    .replace(/^models\//i, "")
-    .replace(/:generatecontent$/i, "");
+    .replace(/^models\//i, "");
 }
 
 function inferProviderFromModel(model: string): BillingProvider {
   const normalized = normalizeModelName(model);
   if (normalized.includes("cloudinary")) return "cloudinary";
-  if (normalized.includes("gemini") || normalized.includes("banana")) return "gemini";
   return "groq";
 }
 
@@ -301,17 +299,6 @@ export function buildUsageFromGroq(model: string, usage: any, endpoint: string):
     outputTokens: Number(usage?.completion_tokens || 0),
     endpoint,
     estimated: !usage,
-  };
-}
-
-export function buildUsageFromGemini(model: string, usageMetadata: any, endpoint: string): UsageRecordInput {
-  return {
-    provider: "gemini",
-    model,
-    inputTokens: Number(usageMetadata?.promptTokenCount || 0),
-    outputTokens: Number(usageMetadata?.candidatesTokenCount || 0),
-    endpoint,
-    estimated: !usageMetadata,
   };
 }
 

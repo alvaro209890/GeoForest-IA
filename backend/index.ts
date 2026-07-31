@@ -38,7 +38,7 @@ import {
   reprojectBbox,
 } from "./geo-utils";
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
-import { getSimcarGeminiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
+import { getSimcarAiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerSimcarReceiptRoutes } from "./simcar-receipts";
 import { registerApfReceiptRoutes } from "./apf-receipts";
 import { registerCbersWpmRoutes } from "./cbers-wpm";
@@ -2705,7 +2705,7 @@ async function startServer() {
   });
 
   app.get("/api/runtime/version", (_req, res) => {
-    const geminiRuntime = getSimcarGeminiRuntimeConfig();
+    const aiRuntime = getSimcarAiRuntimeConfig();
     res.json({
       ok: true,
       ts: Date.now(),
@@ -2717,13 +2717,11 @@ async function startServer() {
       hasMapCapabilities: true,
       hasKnowledgeHealth: true,
       hasSimcarContextRehydrate: true,
-      hasGeminiKey: geminiRuntime.hasGeminiApiKey,
-      requireGemini: geminiRuntime.requireGemini,
-      geminiApiBase: geminiRuntime.geminiApiBase,
-      geminiImageShare: geminiRuntime.geminiImageShare,
-      geminiVisionModels: geminiRuntime.geminiVisionModels,
-      geminiTextSynthesisModels: geminiRuntime.geminiTextSynthesisModels,
-      hasGroqKey: Boolean(process.env.GROQ_API_KEY),
+      analysisMode: aiRuntime.analysisMode,
+      visionModels: aiRuntime.visionModels,
+      textModels: aiRuntime.textModels,
+      synthesisTextModels: aiRuntime.synthesisTextModels,
+      hasGroqKey: aiRuntime.hasGroqApiKey,
       hasCloudinaryKey: Boolean(process.env.CLOUDINARY_API_KEY),
       hasCloudinarySecret: Boolean(process.env.CLOUDINARY_API_SECRET),
     });

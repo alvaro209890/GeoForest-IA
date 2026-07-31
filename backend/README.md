@@ -19,13 +19,11 @@ https://geoforest-api.cursar.space → Cloudflare Tunnel → localhost:3001
 - `CLOUDINARY_FOLDER` — Pasta de destino no Cloudinary (default: geoforest)
 - `SEMA_WMS_BASE_URL` — URL base do WMS SEMA-MT
 - `SEMA_WMS_AUTHKEY` — Auth key do WMS SEMA
-- `GEMINI_API_KEY` — Chave Gemini (obrigatória se `SIMCAR_REQUIRE_GEMINI=true`)
-- `SIMCAR_REQUIRE_GEMINI` — Se `true`, análise de recorte falha sem Gemini
 - `SIMCAR_LOCAL_SHAPES_ROOT` — Pasta com shapes locais SIMCAR
-- `GEMINI_API_BASE` — Endpoint base Gemini API
-- `GEMINI_VISION_MODELS` — Modelos de visão (separados por `,`, `;` ou quebra de linha)
-- `GEMINI_TEXT_SYNTHESIS_MODELS` — Modelos para síntese textual
-- `GEMINI_IMAGE_SHARE` — Proporção de imagens no prompt combinado (0.55–0.95)
+- `SIMCAR_ANALYSIS_MODE` — `efficient` (default) ou `detailed`
+- `SIMCAR_SYNTHESIS_TEXT_MODELS` — Cadeia de modelos Groq para síntese textual (separados por `,`, `;` ou quebra de linha)
+- `SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL` — Modelo Groq preferido na síntese
+- `SIMCAR_FINAL_UNIFIED_TEXT_MODEL` — Modelo Groq da síntese unificada final
 
 ## Endpoints
 
@@ -51,7 +49,6 @@ https://geoforest-api.cursar.space → Cloudflare Tunnel → localhost:3001
 - `POST /api/simcar/clip/analyze` — Análise IA do recorte (SSE)
 - `POST /api/simcar/clip/analyze-auas` — Análise AUAS (SSE)
 - `POST /api/simcar/clip/import-vectorized` — Importa ZIP pré-vetorizado
-- `GET /api/simcar/gemini/config` — Config Gemini (+ `?probe=1`)
 
 ### SIMCAR Recibos
 - `POST /api/simcar/receipts/search` - Busca requerimentos por CPF, numero estadual do CAR ou recibo federal

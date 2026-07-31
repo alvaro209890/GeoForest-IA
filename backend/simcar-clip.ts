@@ -6,7 +6,6 @@
  *   POST /api/simcar/clip          — SSE stream (progress + result)
  *   GET  /api/simcar/clip/download/:jobId — Download final ZIP
  *   POST /api/simcar/clip/analyze   — SSE stream (AI analysis of clips)
- *   GET  /api/simcar/gemini/config  — Runtime Gemini config (+ optional probe)
  */
 import type { Express, Request, Response } from "express";
 import path from "path";
@@ -73,7 +72,6 @@ import {
 import {
     BillingError,
     applyCancelFloorDebit,
-    buildUsageFromGemini,
     buildUsageFromGroq,
     createRequestId,
     estimateCloudinaryStorageReserve,
@@ -2985,36 +2983,22 @@ const GROQ_TEXT_MODELS = [
     "meta-llama/llama-3.3-70b-versatile",
     "qwen/qwen3-32b",
 ];
-const GEMINI_API_BASE = process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta";
-const GEMINI_VISION_FALLBACK_MODELS = [
-    "gemini-3-pro",
-    "gemini-2.5-flash",
-    "gemini-3-flash",
-    "nano-banana-pro",
-];
-const GEMINI_TEXT_FALLBACK_MODELS = [
-    "gemini-3-pro",
-    "gemini-3-flash",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-];
-
-function normalizeGeminiModelName(raw: string): string {
+/** Normaliza nome de modelo vindo de env (aspas, espaços, prefixos). */
+function normalizeTextModelName(raw: string): string {
     return String(raw || "")
         .trim()
         .replace(/^['"`]+|['"`]+$/g, "")
-        .replace(/^models\//i, "")
-        .replace(/:generateContent$/i, "")
         .trim();
 }
 
-function buildGeminiModelChain(configValue: string | undefined, backupModels: string[]): string[] {
+/** Monta a cadeia de modelos de texto a partir de env + backups, sem duplicatas. */
+function buildTextModelChain(configValue: string | undefined, backupModels: string[]): string[] {
     const configured = String(configValue || "")
         .split(/[,\n;]+/)
-        .map((x) => normalizeGeminiModelName(x))
+        .map((x) => normalizeTextModelName(x))
         .filter(Boolean);
     const normalizedBackup = backupModels
-        .map((x) => normalizeGeminiModelName(x))
+        .map((x) => normalizeTextModelName(x))
         .filter(Boolean);
     const seen = new Set<string>();
     const merged: string[] = [];
@@ -3027,37 +3011,23 @@ function buildGeminiModelChain(configValue: string | undefined, backupModels: st
     return merged;
 }
 
-const GEMINI_VISION_MODELS = buildGeminiModelChain(
-    process.env.GEMINI_VISION_MODELS || process.env.GEMINI_MODELS,
-    GEMINI_VISION_FALLBACK_MODELS,
-);
-const GEMINI_TEXT_SYNTHESIS_MODELS = buildGeminiModelChain(
-    process.env.GEMINI_TEXT_SYNTHESIS_MODELS || process.env.GEMINI_MODELS,
-    GEMINI_TEXT_FALLBACK_MODELS,
-);
-const GEMINI_IMAGE_SHARE_INPUT = String(process.env.GEMINI_IMAGE_SHARE || "1.0").replace(",", ".");
-const GEMINI_IMAGE_SHARE_RAW = Number(GEMINI_IMAGE_SHARE_INPUT);
-const GEMINI_IMAGE_SHARE = Number.isFinite(GEMINI_IMAGE_SHARE_RAW)
-    ? Math.min(1.0, Math.max(0.55, GEMINI_IMAGE_SHARE_RAW))
-    : 1.0;
-const SIMCAR_REQUIRE_GEMINI = String(process.env.SIMCAR_REQUIRE_GEMINI || "true").toLowerCase() !== "false";
 const SIMCAR_ANALYSIS_MODE = String(process.env.SIMCAR_ANALYSIS_MODE || "efficient").trim().toLowerCase();
 const SIMCAR_CHAT_MAX_MESSAGES = Number(process.env.SIMCAR_CHAT_MAX_MESSAGES || 10);
 const SIMCAR_CHAT_MAX_CHARS_PER_MESSAGE = Number(process.env.SIMCAR_CHAT_MAX_CHARS_PER_MESSAGE || 1400);
 const SIMCAR_CHAT_MAX_TOTAL_CHARS = Number(process.env.SIMCAR_CHAT_MAX_TOTAL_CHARS || 8500);
 const SIMCAR_SYNTHESIS_MAX_CHARS_PER_SAT = Number(process.env.SIMCAR_SYNTHESIS_MAX_CHARS_PER_SAT || 1800);
-const SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL = normalizeGeminiModelName(
-    process.env.SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL || "gemini-2.5-pro",
+const SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL = normalizeTextModelName(
+    process.env.SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL || GROQ_TEXT_MODELS[0],
 );
-const SIMCAR_FINAL_UNIFIED_TEXT_MODEL = normalizeGeminiModelName(
-    process.env.SIMCAR_FINAL_UNIFIED_TEXT_MODEL || "gemini-3-pro",
+const SIMCAR_FINAL_UNIFIED_TEXT_MODEL = normalizeTextModelName(
+    process.env.SIMCAR_FINAL_UNIFIED_TEXT_MODEL || GROQ_TEXT_MODELS[0],
 );
 const SIMCAR_SYNTHESIS_TEXT_MODELS = (() => {
-    const explicit = buildGeminiModelChain(process.env.SIMCAR_SYNTHESIS_TEXT_MODELS, []);
+    const explicit = buildTextModelChain(process.env.SIMCAR_SYNTHESIS_TEXT_MODELS, []);
     const seen = new Set<string>();
     const ordered: string[] = [];
     const push = (raw: string) => {
-        const model = normalizeGeminiModelName(raw);
+        const model = normalizeTextModelName(raw);
         if (!model) return;
         const key = model.toLowerCase();
         if (seen.has(key)) return;
@@ -3066,14 +3036,14 @@ const SIMCAR_SYNTHESIS_TEXT_MODELS = (() => {
     };
     for (const model of explicit) push(model);
     push(SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL);
-    for (const model of GEMINI_TEXT_SYNTHESIS_MODELS) push(model);
+    for (const model of GROQ_TEXT_MODELS) push(model);
     return ordered;
 })();
 const SIMCAR_FINAL_UNIFIED_TEXT_MODELS = (() => {
     const seen = new Set<string>();
     const ordered: string[] = [];
     const push = (raw: string) => {
-        const model = normalizeGeminiModelName(raw);
+        const model = normalizeTextModelName(raw);
         if (!model) return;
         const key = model.toLowerCase();
         if (seen.has(key)) return;
@@ -3184,18 +3154,16 @@ class GroqRateLimitError extends Error {
     }
 }
 
-export function getSimcarGeminiRuntimeConfig() {
+export function getSimcarAiRuntimeConfig() {
     return {
-        hasGeminiApiKey: Boolean(process.env.GEMINI_API_KEY),
-        requireGemini: SIMCAR_REQUIRE_GEMINI,
+        hasGroqApiKey: Boolean(process.env.GROQ_API_KEY),
         analysisMode: SIMCAR_ANALYSIS_MODE,
-        geminiApiBase: GEMINI_API_BASE,
-        geminiVisionModels: GEMINI_VISION_MODELS,
-        geminiTextSynthesisModels: GEMINI_TEXT_SYNTHESIS_MODELS,
+        visionModels: ANALYSIS_VISION_MODELS,
+        textModels: GROQ_TEXT_MODELS,
         synthesisPrimaryTextModel: SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL,
+        synthesisTextModels: SIMCAR_SYNTHESIS_TEXT_MODELS,
         finalUnifiedTextModel: SIMCAR_FINAL_UNIFIED_TEXT_MODEL,
         finalUnifiedTextModels: SIMCAR_FINAL_UNIFIED_TEXT_MODELS,
-        geminiImageShare: GEMINI_IMAGE_SHARE,
     };
 }
 
@@ -3485,21 +3453,6 @@ function getCloudinaryAiUrl(url: string): string {
     return url;
 }
 
-/**
- * Returns a Cloudinary URL optimized for Gemini vision analysis.
- * Uses a higher resolution (max 1280×960) and better JPEG quality (88) than the
- * Groq path, taking advantage of Gemini's larger context window and superior image
- * understanding to produce more precise land-use / vegetation analyses.
- * The increased resolution preserves texture details critical for distinguishing
- * native vegetation (Cerrado/Forest) from degraded pasture.
- */
-function getCloudinaryGeminiUrl(url: string): string {
-    if (url.startsWith("/")) {
-        return `${PUBLIC_API_BASE_URL}${url}`;
-    }
-    return url;
-}
-
 async function deleteFromCloudinary(secureUrl: string, resourceType: "image" | "raw" = "image"): Promise<void> {
     void resourceType;
     removeStoragePath(secureUrl);
@@ -3534,8 +3487,6 @@ async function uploadBufferToCloudinary(buffer: Buffer, filename: string, uid = 
 type AiImage = {
     /** URL for Groq vision (compressed 800×600 JPEG). */
     url?: string;
-    /** Higher-quality URL for Gemini vision (1024×768 JPEG). Falls back to `url` if absent. */
-    geminiUrl?: string;
     /** Base64 data URL used when Cloudinary is unavailable. */
     dataUrl?: string;
     caption: string;
@@ -3571,62 +3522,13 @@ function reduceImageSet(
     return images.filter((img) => img.caption.includes("Visão Geral"));
 }
 
-/** Split images by provider weight, giving Gemini priority (all images by default). */
-function splitImagesByProviderWeight(images: AiImage[]): { groqImages: AiImage[]; geminiImages: AiImage[] } {
-    const groqImages: AiImage[] = [];
-    const geminiImages: AiImage[] = [];
-
-    // When share is 1.0, send ALL images to Gemini (legacy split config).
-    if (GEMINI_IMAGE_SHARE >= 1.0) {
-        return { groqImages: [], geminiImages: images.slice() };
-    }
-
-    if (images.length <= 1) {
-        // Single image always goes to Gemini (priority provider).
-        return { groqImages: [], geminiImages: images.slice() };
-    }
-
-    const total = images.length;
-    let targetGemini = Math.round(total * GEMINI_IMAGE_SHARE);
-    targetGemini = Math.min(total, Math.max(1, targetGemini));
-
-    images.forEach((img, idx) => {
-        // Proportional distribution along the sequence to avoid clustering.
-        const desiredGeminiByNow = Math.round((idx + 1) * (targetGemini / total));
-        if (geminiImages.length < desiredGeminiByNow) {
-            geminiImages.push(img);
-        } else {
-            groqImages.push(img);
-        }
-    });
-
-    // Safety rebalance.
-    while (geminiImages.length < targetGemini && groqImages.length > 1) {
-        const moved = groqImages.shift();
-        if (moved) geminiImages.push(moved);
-    }
-
-    return { groqImages, geminiImages };
-}
-
-function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
-    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (!match) {
-        throw new Error("Formato de data URL inválido para Gemini.");
-    }
-    return { mimeType: match[1], base64: match[2] };
-}
-
 function estimateBytesFromDataUrl(dataUrl: string): number {
-    try {
-        const { base64 } = parseDataUrl(dataUrl);
-        const payload = String(base64 || "").replace(/\s/g, "");
-        if (!payload) return 0;
-        const padding = payload.match(/=+$/)?.[0]?.length || 0;
-        return Math.max(0, Math.floor((payload.length * 3) / 4) - padding);
-    } catch {
-        return 0;
-    }
+    const match = String(dataUrl || "").match(/^data:[^;]+;base64,(.+)$/);
+    if (!match) return 0;
+    const payload = match[1].replace(/\s/g, "");
+    if (!payload) return 0;
+    const padding = payload.match(/=+$/)?.[0]?.length || 0;
+    return Math.max(0, Math.floor((payload.length * 3) / 4) - padding);
 }
 
 function isTruncationFinishReason(reason: unknown): boolean {
@@ -3673,7 +3575,9 @@ async function continueTruncatedAnalysisText(
             { role: "assistant" as const, content: trimForContinuation(currentText) || currentText },
             { role: "user" as const, content: CONTINUATION_INSTRUCTION },
         ];
-        const continuation = await callTextFollowUpGroqFirst(continuationMessages, `continuation-${providerLabel}`);
+        const continuation = await callTextFollowUp(continuationMessages, {
+            contextLabel: `continuation-${providerLabel}`,
+        });
         const merged = mergeContinuationText(currentText, continuation).trim();
         console.log(
             `[SIMCAR ANALYSIS] ${providerLabel} continuation merged (chars=${merged.length})`,
@@ -3685,227 +3589,6 @@ async function continueTruncatedAnalysisText(
         );
         return currentText;
     }
-}
-
-function toGeminiContents(
-    messages: Array<{ role: string; content: any }>,
-): Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> {
-    const contents: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> = [];
-    for (const msg of messages) {
-        const text = normalizeAssistantContent(msg?.content).trim();
-        if (!text) continue;
-        const role = msg?.role === "assistant" ? "model" : "user";
-        contents.push({ role, parts: [{ text }] });
-    }
-    return contents;
-}
-
-async function callGeminiTextOnce(
-    model: string,
-    messages: Array<{ role: string; content: any }>,
-    maxOutputTokens = 8192,
-): Promise<{ content: string; finishReason: string }> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY não configurada.");
-
-    const contents = toGeminiContents(messages);
-    if (contents.length === 0) {
-        throw new Error("Sem conteúdo textual para síntese Gemini.");
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 90_000);
-    try {
-        const response = await fetch(
-            `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    contents,
-                    generationConfig: {
-                        temperature: 0.1,
-                        maxOutputTokens: maxOutputTokens,
-                    },
-                }),
-                signal: controller.signal,
-            },
-        );
-
-        if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`${model}: ${response.status} - ${text.slice(0, 320)}`);
-        }
-
-        const data = await response.json() as any;
-        const candidate = data?.candidates?.[0];
-        const content = (candidate?.content?.parts || [])
-            .map((p: any) => (typeof p?.text === "string" ? p.text : ""))
-            .filter(Boolean)
-            .join("\n")
-            .trim();
-        if (!content) {
-            const finish = String(candidate?.finishReason || "");
-            const blockReason = String(data?.promptFeedback?.blockReason || "");
-            throw new Error(`${model}: empty response${finish ? ` (finish=${finish})` : ""}${blockReason ? ` (block=${blockReason})` : ""}`);
-        }
-        const usage = buildUsageFromGemini(model, data?.usageMetadata, "/api/simcar/clip/analyze/chat");
-        if (usage.estimated) {
-            usage.inputTokens = Math.max(
-                Number(usage.inputTokens || 0),
-                estimateTokensFromMessages(messages),
-            );
-            usage.outputTokens = Math.max(
-                Number(usage.outputTokens || 0),
-                estimateTokensFromText(content),
-            );
-        }
-        recordModelUsage({
-            provider: "gemini",
-            model,
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
-            estimated: usage.estimated,
-        });
-
-        return {
-            content,
-            finishReason: String(candidate?.finishReason || "STOP"),
-        };
-    } finally {
-        clearTimeout(timeout);
-    }
-}
-
-async function callGeminiTextSynthesis(
-    messages: Array<{ role: string; content: any }>,
-    contextLabel: string,
-    options?: { modelChain?: string[]; maxOutputTokens?: number },
-): Promise<string> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-        throw new Error("GEMINI_API_KEY não configurada para síntese.");
-    }
-
-    const MAX_CONTINUATIONS = 2;
-    const modelChain = Array.isArray(options?.modelChain) && options?.modelChain?.length
-        ? options.modelChain
-        : GEMINI_TEXT_SYNTHESIS_MODELS;
-    const maxOutputTokens = Number.isFinite(options?.maxOutputTokens)
-        ? Number(options?.maxOutputTokens)
-        : 8192;
-    let lastError = "";
-
-    for (const model of modelChain) {
-        try {
-            const first = await callGeminiTextOnce(model, messages, maxOutputTokens);
-            let merged = first.content.trim();
-            let finishReason = first.finishReason;
-            let continuationsUsed = 0;
-            console.log(
-                `[SIMCAR ANALYSIS] Gemini synthesis ${contextLabel}: model=${model} finish=${finishReason} chars=${merged.length}`,
-            );
-
-            while (isTruncationFinishReason(finishReason) && continuationsUsed < MAX_CONTINUATIONS) {
-                continuationsUsed += 1;
-                const continuationMessages = [
-                    ...messages,
-                    { role: "assistant" as const, content: trimForContinuation(merged) || merged },
-                    { role: "user" as const, content: CONTINUATION_INSTRUCTION },
-                ];
-                const cont = await callGeminiTextOnce(model, continuationMessages, maxOutputTokens);
-                merged = mergeContinuationText(merged, cont.content).trim();
-                finishReason = cont.finishReason;
-                console.log(
-                    `[SIMCAR ANALYSIS] Gemini synthesis continuation ${continuationsUsed}: model=${model} finish=${finishReason} chars=${merged.length}`,
-                );
-            }
-
-            if (merged) return merged;
-            lastError = `${model}: empty response`;
-        } catch (err: any) {
-            const isTimeout = err?.name === "AbortError";
-            lastError = `${model}: ${isTimeout ? "timeout (90s)" : (err?.message || String(err))}`;
-            console.warn(`[SIMCAR ANALYSIS] Gemini synthesis model failed (${model}): ${lastError}`);
-        }
-    }
-
-    throw new Error(`Gemini synthesis falhou para ${contextLabel}. Último erro: ${lastError}`);
-}
-
-async function probeGeminiModel(model: string): Promise<{ ok: boolean; error?: string }> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-        return { ok: false, error: "GEMINI_API_KEY ausente" };
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20_000);
-    try {
-        const response = await fetch(
-            `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    contents: [{ role: "user", parts: [{ text: "Responda somente OK." }] }],
-                    generationConfig: {
-                        temperature: 0,
-                        maxOutputTokens: 16,
-                    },
-                }),
-                signal: controller.signal,
-            },
-        );
-
-        if (!response.ok) {
-            const text = await response.text();
-            return { ok: false, error: `${response.status}: ${text.slice(0, 180)}` };
-        }
-
-        const data = await response.json() as any;
-        const candidate = data?.candidates?.[0];
-        const content = (candidate?.content?.parts || [])
-            .map((p: any) => (typeof p?.text === "string" ? p.text : ""))
-            .filter(Boolean)
-            .join("\n")
-            .trim();
-
-        if (!content) {
-            const finish = candidate?.finishReason ? ` finish=${candidate.finishReason}` : "";
-            const block = data?.promptFeedback?.blockReason ? ` block=${data.promptFeedback.blockReason}` : "";
-            return { ok: false, error: `empty_response${finish}${block}` };
-        }
-
-        return { ok: true };
-    } catch (err: any) {
-        const isAbort = err?.name === "AbortError";
-        return { ok: false, error: isAbort ? "timeout (20s)" : (err?.message || String(err)) };
-    } finally {
-        clearTimeout(timeout);
-    }
-}
-
-async function resolveImageDataUrlForGemini(image: AiImage): Promise<string> {
-    if (image.dataUrl) return image.dataUrl;
-    // Prefer the Gemini-optimised URL (higher res) over the Groq-compressed one.
-    const fetchUrl = image.geminiUrl ?? image.url;
-    if (!fetchUrl) throw new Error(`Imagem sem URL/dataUrl: ${image.caption}`);
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    const response = await fetch(fetchUrl, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Falha ao baixar imagem para Gemini (${response.status}): ${text.slice(0, 180)}`);
-    }
-
-    const contentType = response.headers.get("content-type") || "image/png";
-    const arr = await response.arrayBuffer();
-    const b64 = Buffer.from(arr).toString("base64");
-    return `data:${contentType};base64,${b64}`;
 }
 
 /** Call Groq vision model with images. Multi-model fallback + reduced-image retry. */
@@ -4033,31 +3716,6 @@ async function callVisionAnalysis(
     throw new Error(`Todos os modelos Groq falharam. Último erro: ${lastError}`);
 }
 
-function buildDualModelMergePrompt(
-    contextLabel: string,
-    groqAnalysis: string,
-    geminiAnalysis: string,
-): string {
-    return [
-        "Você é a GeoForest IA e deve consolidar duas análises técnicas da MESMA área e do MESMO período.",
-        `Contexto do recorte: ${contextLabel}`,
-        "",
-        "## Análise Groq",
-        groqAnalysis,
-        "",
-        "## Análise Gemini",
-        geminiAnalysis,
-        "",
-        "## Tarefa",
-        "Produza um texto único e técnico em português com:",
-        "1) Consensos principais entre os dois modelos.",
-        "2) Divergências relevantes e a hipótese mais provável.",
-        "3) Conclusão consolidada para este período.",
-        "",
-        "Seja objetivo e não repita integralmente os textos de origem.",
-    ].join("\n");
-}
-
 function splitThinkProgress(raw: string) {
     let visible = "";
     const thinkParts: string[] = [];
@@ -4086,119 +3744,12 @@ function splitThinkProgress(raw: string) {
     };
 }
 
-async function callGeminiVisionAnalysis(
-    images: AiImage[],
-    prompt: string,
-): Promise<string> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY não configurada.");
-
-    const VISION_TIMEOUT_MS = 120_000;
-    const imageSets = [images];
-    if (images.length > 3) {
-        imageSets.push(reduceImageSet(images));
-    }
-
-    let lastError = "";
-    for (let attempt = 0; attempt < imageSets.length; attempt++) {
-        const currentImages = imageSets[attempt];
-        const parts: any[] = [{ text: prompt }];
-        for (const img of currentImages) {
-            const dataUrl = await resolveImageDataUrlForGemini(img);
-            const parsed = parseDataUrl(dataUrl);
-            parts.push({
-                inline_data: {
-                    mime_type: parsed.mimeType,
-                    data: parsed.base64,
-                },
-            });
-            parts.push({ text: `[Legenda: ${img.caption}]` });
-        }
-
-        for (const model of GEMINI_VISION_MODELS) {
-            try {
-                console.log(`[SIMCAR ANALYSIS] Trying Gemini model: ${model} (${currentImages.length} images, attempt ${attempt + 1})`);
-                const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), VISION_TIMEOUT_MS);
-
-                const response = await fetch(
-                    `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
-                    {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            contents: [{ role: "user", parts }],
-                            generationConfig: {
-                                temperature: 0.1,
-                                // Gemini 2.5 suporta saídas longas (até 65k tokens).
-                                // 8192 permite laudos detalhados sem corte artificial.
-                                maxOutputTokens: 8192,
-                            },
-                        }),
-                        signal: controller.signal,
-                    },
-                );
-                clearTimeout(timeout);
-
-                if (!response.ok) {
-                    const text = await response.text();
-                    lastError = `${model}: ${response.status} - ${text.slice(0, 280)}`;
-                    console.warn(`[SIMCAR ANALYSIS] Gemini model ${model} failed:`, lastError);
-                    continue;
-                }
-
-                const data = await response.json() as any;
-                const candidate = data?.candidates?.[0];
-                const content = (candidate?.content?.parts || [])
-                    .map((p: any) => (typeof p?.text === "string" ? p.text : ""))
-                    .filter(Boolean)
-                    .join("\n")
-                    .trim();
-
-                if (content) {
-                    const usage = buildUsageFromGemini(model, data?.usageMetadata, "/api/simcar/clip/analyze");
-                    if (usage.estimated) {
-                        // Use tile-based formula for Gemini (1024x768 = 2 tiles wide, 1 tile tall = 2*258=516 tokens/image)
-                        const geminiImageTokensPerImg = estimateImageTokens(1024, 768);
-                        usage.inputTokens = Math.max(
-                            Number(usage.inputTokens || 0),
-                            estimateTokensFromText(prompt) + currentImages.length * geminiImageTokensPerImg,
-                        );
-                        usage.outputTokens = Math.max(
-                            Number(usage.outputTokens || 0),
-                            estimateTokensFromText(content),
-                        );
-                    }
-                    recordModelUsage({
-                        provider: "gemini",
-                        model,
-                        inputTokens: usage.inputTokens,
-                        outputTokens: usage.outputTokens,
-                        estimated: usage.estimated,
-                    });
-                    const finalized = await continueTruncatedAnalysisText(
-                        content,
-                        prompt,
-                        `Gemini/${model}`,
-                        candidate?.finishReason,
-                    );
-                    console.log(`[SIMCAR ANALYSIS] Success with Gemini model: ${model} (attempt ${attempt + 1})`);
-                    return finalized;
-                }
-                const blockReason = data?.promptFeedback?.blockReason;
-                lastError = `${model}: empty response${blockReason ? ` (${blockReason})` : ""}`;
-            } catch (err: any) {
-                const isTimeout = err.name === "AbortError";
-                lastError = `${model}: ${isTimeout ? "timeout (120s)" : err.message}`;
-                console.warn(`[SIMCAR ANALYSIS] Gemini model ${model} ${isTimeout ? "timed out" : "exception"}:`, lastError);
-            }
-        }
-    }
-
-    throw new Error(`Gemini falhou. Último erro: ${lastError}`);
-}
-
-async function analyzeWithGroqAndGemini(
+/**
+ * Análise de imagens do recorte SIMCAR.
+ * Groq é o único provedor de visão: tenta todos os modelos de `ANALYSIS_VISION_MODELS`
+ * e, se todos estiverem em cooldown de rate limit, falha com o tempo de espera.
+ */
+async function analyzeImagesWithVision(
     images: AiImage[],
     prompt: string,
     contextLabel: string,
@@ -4206,84 +3757,31 @@ async function analyzeWithGroqAndGemini(
     if (images.length === 0) {
         throw new Error(`Sem imagens para análise (${contextLabel}).`);
     }
-
-    const hasGemini = Boolean(process.env.GEMINI_API_KEY);
-    const hasGroq = Boolean(process.env.GROQ_API_KEY);
-
-    if (!hasGemini && !hasGroq) {
-        throw new Error("Nenhuma API key configurada (GEMINI_API_KEY / GROQ_API_KEY).");
+    if (!process.env.GROQ_API_KEY) {
+        throw new Error("GROQ_API_KEY não configurada para análise de imagens.");
     }
 
-    // -- Groq-first approach: always try Groq first (free tier), only fall back to Gemini --
-    // This avoids wasting Groq tokens by sending ALL images to a single provider.
-
-    const groqAvailable = hasGroq && hasAvailableGroqModels(ANALYSIS_VISION_MODELS);
-
-    if (groqAvailable) {
-        console.log(
-            `[SIMCAR ANALYSIS] ${contextLabel}: Groq-first — sending all ${images.length} images to Groq`,
-        );
-
-        try {
-            return await callVisionAnalysis(images, prompt);
-        } catch (err: any) {
-            const isRateLimit = err instanceof GroqRateLimitError;
-            const errMsg = String(err?.message || err);
-            console.warn(
-                `[SIMCAR ANALYSIS] Groq primary failed for ${contextLabel}${isRateLimit ? " (RATE LIMITED)" : ""}: ${errMsg}`,
-            );
-
-            // If Groq failed but NOT rate-limited and no Gemini, throw
-            if (!hasGemini) {
-                throw new Error(`Groq falhou para ${contextLabel} e GEMINI_API_KEY ausente. Erro: ${errMsg}`);
-            }
-
-            // Fall through to Gemini fallback
-            console.log(
-                `[SIMCAR ANALYSIS] ${contextLabel}: Groq failed${isRateLimit ? " (rate limit)" : ""}, falling back to Gemini`,
-            );
-        }
-    } else if (hasGroq) {
+    if (!hasAvailableGroqModels(ANALYSIS_VISION_MODELS)) {
         const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(ANALYSIS_VISION_MODELS) / 1000));
-        console.log(
-            `[SIMCAR ANALYSIS] ${contextLabel}: modelos Groq de visão em cooldown (~${waitSecs}s), pulando direto para Gemini`,
+        throw new GroqRateLimitError(
+            `Modelos de visão Groq em cooldown para ${contextLabel}. Aguarde ~${waitSecs}s e tente novamente.`,
         );
     }
 
-    // -- Gemini fallback: Groq failed or is rate-limited --
-    if (hasGemini) {
-        try {
-            return await callGeminiVisionAnalysis(images, prompt);
-        } catch (gemErr: any) {
-            const gemErrMsg = String(gemErr?.message || gemErr);
-            console.warn(`[SIMCAR ANALYSIS] Gemini fallback also failed for ${contextLabel}: ${gemErrMsg}`);
-
-            // Last resort: if Groq was rate-limited but cooldown may have passed, retry Groq
-            if (hasGroq && !groqAvailable && hasAvailableGroqModels(ANALYSIS_VISION_MODELS)) {
-                console.log(`[SIMCAR ANALYSIS] ${contextLabel}: Groq cooldown expired, retrying Groq as last resort`);
-                try {
-                    return await callVisionAnalysis(images, prompt);
-                } catch (retryErr: any) {
-                    throw new Error(
-                        `Groq e Gemini falharam para ${contextLabel}. Groq=${retryErr?.message || retryErr} | Gemini=${gemErrMsg}`,
-                    );
-                }
-            }
-
-            throw new Error(`Gemini falhou para ${contextLabel}. Erro: ${gemErrMsg}`);
-        }
-    }
-
-    // Only Groq available (no Gemini key) and Groq is rate-limited
-    if (!hasGemini && hasGroq) {
-        const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(ANALYSIS_VISION_MODELS) / 1000));
-        throw new Error(
-            `Groq rate-limited e GEMINI_API_KEY ausente para ${contextLabel}. ` +
-            `Aguarde ~${waitSecs}s e tente novamente.`,
+    console.log(
+        `[SIMCAR ANALYSIS] ${contextLabel}: enviando ${images.length} imagens para a visão Groq`,
+    );
+    try {
+        return await callVisionAnalysis(images, prompt);
+    } catch (err: any) {
+        const isRateLimit = err instanceof GroqRateLimitError;
+        const errMsg = String(err?.message || err);
+        console.warn(
+            `[SIMCAR ANALYSIS] Visão Groq falhou para ${contextLabel}${isRateLimit ? " (RATE LIMITED)" : ""}: ${errMsg}`,
         );
+        if (isRateLimit) throw err;
+        throw new Error(`Análise de imagens falhou para ${contextLabel}. Erro: ${errMsg}`);
     }
-
-    throw new Error(`Nenhum provedor disponível para ${contextLabel}.`);
 }
 
 /** Call Groq with text-only follow-up message. Multi-model fallback. */
@@ -4450,113 +3948,58 @@ async function callGroqTextOnce(
     }
 }
 
-/** Groq-first text call: tries Groq text models, falls back to Gemini synthesis if rate-limited. */
-async function callTextFollowUpGroqFirst(
-    messages: Array<{ role: string; content: any }>,
-    contextLabel = "text-followup",
-): Promise<string> {
-    const hasGroq = Boolean(process.env.GROQ_API_KEY);
-    const hasGemini = Boolean(process.env.GEMINI_API_KEY);
-    const groqAvailable = hasGroq && hasAvailableGroqModels(GROQ_TEXT_MODELS);
-
-    if (groqAvailable) {
-        try {
-            return await callTextFollowUp(messages);
-        } catch (err: any) {
-            const isRateLimit = err instanceof GroqRateLimitError;
-            console.warn(`[SIMCAR ANALYSIS] Groq text failed for ${contextLabel}${isRateLimit ? " (RATE LIMITED)" : ""}: ${err?.message || err}`);
-            if (!hasGemini) throw err;
-            // Fall through to Gemini
-        }
-    }
-
-    if (hasGemini) {
-        try {
-            return await callGeminiTextSynthesis(messages, contextLabel);
-        } catch (gemErr: any) {
-            console.warn(`[SIMCAR ANALYSIS] Gemini text fallback failed for ${contextLabel}: ${gemErr?.message || gemErr}`);
-            // Last resort: if Groq cooldown expired, retry
-            if (hasGroq && !groqAvailable && hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
-                return callTextFollowUp(messages);
-            }
-            throw gemErr;
-        }
-    }
-
-    return callTextFollowUp(messages); // Groq-only path (no Gemini key)
-}
+type GroqTextCallOptions = {
+    /** Rótulo usado apenas em logs. */
+    contextLabel?: string;
+    /** Cadeia de modelos a tentar; por padrão `GROQ_TEXT_MODELS`. */
+    modelChain?: string[];
+    /** Teto de tokens de saída por chamada. */
+    maxTokens?: number;
+};
 
 /**
- * Best-quality synthesis path:
- * 1) Prefer Gemini with an explicit best-text chain.
- * 2) Fallback to Groq text models only if Gemini fails/unavailable.
+ * Síntese de melhor qualidade: mesma cadeia Groq, porém com orçamento de saída
+ * maior e a ordem definida por `SIMCAR_SYNTHESIS_TEXT_MODELS`.
  */
 async function callBestTextSynthesis(
     messages: Array<{ role: string; content: any }>,
     contextLabel = "text-synthesis",
     options?: { modelChain?: string[]; maxOutputTokens?: number },
 ): Promise<string> {
-    const hasGemini = Boolean(process.env.GEMINI_API_KEY);
-    const hasGroq = Boolean(process.env.GROQ_API_KEY);
+    if (!process.env.GROQ_API_KEY) {
+        throw new Error("GROQ_API_KEY não configurada para síntese.");
+    }
     const modelChain = Array.isArray(options?.modelChain) && options.modelChain.length > 0
         ? options.modelChain
         : SIMCAR_SYNTHESIS_TEXT_MODELS;
-    const maxOutputTokens = Number.isFinite(options?.maxOutputTokens)
+    const maxTokens = Number.isFinite(options?.maxOutputTokens)
         ? Number(options?.maxOutputTokens)
         : 8192;
-    let geminiError = "";
 
-    if (hasGemini) {
-        try {
-            console.log(
-                `[SIMCAR ANALYSIS] ${contextLabel}: best-text synthesis via Gemini chain: ${modelChain.join(", ")}`,
-            );
-            return await callGeminiTextSynthesis(messages, contextLabel, {
-                modelChain,
-                maxOutputTokens,
-            });
-        } catch (err: any) {
-            geminiError = err?.message || String(err);
-            console.warn(`[SIMCAR ANALYSIS] Best-text Gemini failed for ${contextLabel}: ${geminiError}`);
-        }
-    }
-
-    if (hasGroq) {
-        try {
-            if (!hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
-                const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(GROQ_TEXT_MODELS) / 1000));
-                console.warn(
-                    `[SIMCAR ANALYSIS] ${contextLabel}: Groq in cooldown (~${waitSecs}s), tentando fallback mesmo assim.`,
-                );
-            }
-            return await callTextFollowUp(messages);
-        } catch (groqErr: any) {
-            const groqError = groqErr?.message || String(groqErr);
-            if (geminiError) {
-                throw new Error(`Síntese falhou. Gemini=${geminiError} | Groq=${groqError}`);
-            }
-            throw groqErr;
-        }
-    }
-
-    if (geminiError) {
-        throw new Error(`Síntese falhou com Gemini: ${geminiError}`);
-    }
-    throw new Error("Nenhum provedor de texto configurado para síntese.");
+    console.log(
+        `[SIMCAR ANALYSIS] ${contextLabel}: síntese via cadeia Groq: ${modelChain.join(", ")}`,
+    );
+    return callTextFollowUp(messages, { contextLabel, modelChain, maxTokens });
 }
 
+/** Chamada de texto no Groq, com fallback entre modelos e continuação por truncamento. */
 async function callTextFollowUp(
     messages: Array<{ role: string; content: any }>,
+    options?: GroqTextCallOptions,
 ): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
 
-    const MAX_TOKENS = 2200;
+    const contextLabel = options?.contextLabel || "text-followup";
+    const modelChain = Array.isArray(options?.modelChain) && options.modelChain.length > 0
+        ? options.modelChain
+        : GROQ_TEXT_MODELS;
+    const MAX_TOKENS = Number.isFinite(options?.maxTokens) ? Number(options?.maxTokens) : 2200;
     const MAX_CONTINUATIONS = 2;
 
     let lastError = "";
     let sawRateLimit = false;
-    for (const model of GROQ_TEXT_MODELS) {
+    for (const model of modelChain) {
         if (isGroqModelRateLimited(model)) {
             const waitSecs = Math.max(1, Math.ceil(getGroqModelRateLimitRemainingMs(model) / 1000));
             sawRateLimit = true;
@@ -4567,7 +4010,7 @@ async function callTextFollowUp(
         try {
             const first = await callGroqTextOnce(apiKey, model, messages, MAX_TOKENS);
             console.log(
-                `[SIMCAR ANALYSIS] Text model ${model} ok (finish=${first.finishReason}, chars=${first.content.length})`,
+                `[SIMCAR ANALYSIS] ${contextLabel}: text model ${model} ok (finish=${first.finishReason}, chars=${first.content.length})`,
             );
 
             let activeModel = model;
@@ -4585,7 +4028,7 @@ async function callTextFollowUp(
                 ];
 
                 let continuationObtained = false;
-                const continuationCandidates = [activeModel, ...GROQ_TEXT_MODELS.filter((m) => m !== activeModel)];
+                const continuationCandidates = [activeModel, ...modelChain.filter((m) => m !== activeModel)];
                 for (const candidate of continuationCandidates) {
                     if (isGroqModelRateLimited(candidate)) {
                         const waitSecs = Math.max(1, Math.ceil(getGroqModelRateLimitRemainingMs(candidate) / 1000));
@@ -4630,14 +4073,14 @@ async function callTextFollowUp(
             }
             const isTimeout = err.name === "AbortError";
             lastError = `${model}: ${isTimeout ? "timeout (60s)" : err.message}`;
-            console.warn(`[SIMCAR ANALYSIS] Text model ${model} failed: ${lastError}`);
+            console.warn(`[SIMCAR ANALYSIS] ${contextLabel}: text model ${model} failed: ${lastError}`);
         }
     }
-    if (sawRateLimit && !hasAvailableGroqModels(GROQ_TEXT_MODELS)) {
-        const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(GROQ_TEXT_MODELS) / 1000));
+    if (sawRateLimit && !hasAvailableGroqModels(modelChain)) {
+        const waitSecs = Math.max(1, Math.ceil(getGroqRateLimitRemainingMs(modelChain) / 1000));
         throw new GroqRateLimitError(`Todos os modelos de texto Groq estão em cooldown (~${waitSecs}s).`);
     }
-    throw new Error(`Falha nos modelos de texto Groq. Último erro: ${lastError}`);
+    throw new Error(`Falha nos modelos de texto Groq (${contextLabel}). Último erro: ${lastError}`);
 }
 
 async function streamTextFollowUp(
@@ -7033,7 +6476,6 @@ async function processAuasAnalysis(
         for (const cu of cloudinaryUrls) {
             aiImages.push({
                 url: getCloudinaryAiUrl(cu.url),
-                geminiUrl: getCloudinaryGeminiUrl(cu.url),
                 caption: cu.caption,
             });
         }
@@ -7099,7 +6541,7 @@ async function processAuasAnalysis(
                 cloudBySatellite.get(sat.label),
                 { hasAuasLayer, baselineReferenceLabel },
             );
-            const result = await analyzeWithGroqAndGemini(
+            const result = await analyzeImagesWithVision(
                 imagesForModel,
                 prompt,
                 `${hasAuasLayer ? "AUAS" : "AUAS inferida"} ${sat.label} (${sat.year})`,
@@ -7740,11 +7182,10 @@ export async function runAcAvnSatelliteAnalysis(
         for (const cu of cloudinaryUrls) {
             aiImages.push({
                 url: getCloudinaryAiUrl(cu.url),
-                geminiUrl: getCloudinaryGeminiUrl(cu.url),
                 caption: cu.caption,
             });
         }
-        console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs (Groq: 800x600 q65 / Gemini: 1024x768 q82) for vision API`);
+        console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs (800x600 q65) for vision API`);
     } else {
         console.log(`[SIMCAR ANALYSIS] Cloudinary partial/failed, compressing ${imagesToAnalyze!.length} images for vision API`);
         for (const img of imagesToAnalyze!) {
@@ -7792,7 +7233,7 @@ export async function runAcAvnSatelliteAnalysis(
 
             try {
                 const prompt = buildSingleSatellitePrompt(areaHa, layerSummaries!, key, cloudBySatellite.get(sat.label), acAvnAuasContext);
-                const result = await analyzeWithGroqAndGemini(satImages, prompt, `${sat.label} (${sat.year})`);
+                const result = await analyzeImagesWithVision(satImages, prompt, `${sat.label} (${sat.year})`);
                 const split = splitThinkProgress(result);
                 if (split.thinkingText) sendSSE(res, { type: "model_thinking", source: `${sat.label} (${sat.year})`, thinkingText: split.thinkingText });
                 perSatelliteResults.push({ satelliteLabel: sat.label, year: sat.year, analysis: result });
@@ -7810,7 +7251,7 @@ export async function runAcAvnSatelliteAnalysis(
             sendSSE(res, { type: "progress", step: "analyzing", percent: 85, message: "Tentando analise unificada como fallback..." });
             try {
                 const prompt = buildAnalysisPrompt(areaHa, layerSummaries!, selectedLayers, { acAvnAuasContext });
-                analysisText = await analyzeWithGroqAndGemini(aiImages, prompt, "Analise unificada multitemporal");
+                analysisText = await analyzeImagesWithVision(aiImages, prompt, "Analise unificada multitemporal");
             } catch (err: any) {
                 console.error("[SIMCAR ANALYSIS] Legacy fallback also failed:", err.message);
                 sendSSE(res, { type: "error", message: `Erro na analise IA: ${err.message}` });
@@ -7841,7 +7282,7 @@ export async function runAcAvnSatelliteAnalysis(
             throwIfClientDisconnected(res);
             const prompt = buildAnalysisPrompt(areaHa, layerSummaries!, selectedLayers, { acAvnAuasContext });
             const singleContext = validKeys.map((k) => `${SATELLITE_LAYERS[k]?.label || k} (${SATELLITE_LAYERS[k]?.year || "?"})`).join(" / ");
-            analysisText = await analyzeWithGroqAndGemini(aiImages, prompt, singleContext || "Analise de um unico satelite");
+            analysisText = await analyzeImagesWithVision(aiImages, prompt, singleContext || "Analise de um unico satelite");
             const split = splitThinkProgress(analysisText);
             if (split.thinkingText) sendSSE(res, { type: "model_thinking", source: singleContext || "Analise unica", thinkingText: split.thinkingText });
         } catch (err: any) {
@@ -7915,7 +7356,7 @@ async function processAnalysis(
 function buildEstimatedUsageForFallback(args: {
     endpoint: string;
     model?: string;
-    provider: "groq" | "gemini";
+    provider: "groq";
     inputTokens: number;
     outputTokens: number;
 }) {
@@ -8761,51 +8202,11 @@ export function registerSimcarClipRoutes(app: Express) {
     const simcarBillingModels = Array.from(
         new Set([
             ...ANALYSIS_VISION_MODELS,
-            ...GEMINI_VISION_MODELS,
             ...GROQ_TEXT_MODELS,
             ...SIMCAR_SYNTHESIS_TEXT_MODELS,
             ...SIMCAR_FINAL_UNIFIED_TEXT_MODELS,
         ]),
     );
-
-    app.get("/api/simcar/gemini/config", async (req: Request, res: Response) => {
-        const probe = String((req.query as any)?.probe || "").toLowerCase() === "1";
-        const runtime = getSimcarGeminiRuntimeConfig();
-
-        if (!probe) {
-            res.json({
-                ok: true,
-                ...runtime,
-                note: "Use ?probe=1 para testar chamada real em cada modelo Gemini configurado.",
-            });
-            return;
-        }
-
-        const modelsToProbe = Array.from(
-            new Set([...runtime.geminiVisionModels, ...runtime.geminiTextSynthesisModels]),
-        );
-        const modelChecks: Array<{ model: string; ok: boolean; error?: string }> = [];
-        for (const model of modelsToProbe) {
-            const check = await probeGeminiModel(model);
-            modelChecks.push({
-                model,
-                ok: check.ok,
-                error: check.error,
-            });
-        }
-        const okModels = modelChecks.filter((m) => m.ok).length;
-
-        res.json({
-            ok: okModels > 0,
-            ...runtime,
-            probe: true,
-            checkedAt: new Date().toISOString(),
-            totalModels: modelChecks.length,
-            okModels,
-            failedModels: modelChecks.length - okModels,
-            models: modelChecks,
-        });
-    });
 
     // SSE endpoint for clip processing
     app.post("/api/simcar/clip", attachOptionalAuth, async (req: Request, res: Response) => {
@@ -9558,8 +8959,8 @@ export function registerSimcarClipRoutes(app: Express) {
                     : [
                         buildEstimatedUsageForFallback({
                             endpoint: "/api/simcar/clip/analyze-auas",
-                            provider: "gemini",
-                            model: SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL || "gemini-2.5-pro",
+                            provider: "groq",
+                            model: SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL || GROQ_TEXT_MODELS[0],
                             inputTokens: 120_000,
                             outputTokens: 5200,
                         }),
@@ -9771,7 +9172,7 @@ export function registerSimcarClipRoutes(app: Express) {
 
             if (aiAnalysis) {
                 const satelliteFactor = Math.max(1, layers.length + 1);
-                // More accurate reserve: account for 3 images/satellite at Gemini resolution (1024x768)
+                // More accurate reserve: account for 3 images/satellite (1024x768)
                 // plus prompt text tokens and output tokens
                 const imagesPerSat = 3;
                 const totalImages = layers.length * imagesPerSat;
@@ -9864,8 +9265,8 @@ export function registerSimcarClipRoutes(app: Express) {
                         : [
                             buildEstimatedUsageForFallback({
                                 endpoint: "/api/simcar/clip/analyze",
-                                provider: "gemini",
-                                model: SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL || "gemini-2.5-pro",
+                                provider: "groq",
+                                model: SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL || GROQ_TEXT_MODELS[0],
                                 inputTokens: 90_000 + Math.max(1, layers.length) * 26_000,
                                 outputTokens: 4200,
                             }),
@@ -10176,7 +9577,7 @@ export function registerSimcarClipRoutes(app: Express) {
             }
 
             const reply = await runWithBillingUsageSession(async () =>
-                callTextFollowUpGroqFirst(optimizedMessages, "chat"),
+                callTextFollowUp(optimizedMessages, { contextLabel: "chat" }),
             );
             const usageInputs = getBillingUsageSessionRecords();
             const usageForSettle = usageInputs.length > 0

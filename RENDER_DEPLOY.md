@@ -50,12 +50,6 @@ FIREBASE_SERVICE_ACCOUNT_BASE64=<base64 do JSON>
 ### ALTAMENTE RECOMENDADAS
 
 ```
-GEMINI_API_KEY=AIza...
-```
-Chave da [Google AI Studio](https://aistudio.google.com/app/apikey).
-**Obrigatória se `SIMCAR_REQUIRE_GEMINI=true`** (que é o padrão). Sem ela a análise SIMCAR falha.
-
-```
 KEEP_ALIVE_URL=https://geoforest-ia.onrender.com/api/health
 ```
 Faz o backend pingar a si mesmo a cada 5 min para não dormir no plano gratuito.
@@ -76,12 +70,9 @@ KEEP_ALIVE_INTERVAL_MS=300000
 SEMA_WMS_BASE_URL=https://geo.sema.mt.gov.br/geoserver/ows
 SEMA_WMS_AUTHKEY=541085de-9a2e-454e-bdba-eb3d57a2f492
 
-# Gemini — configuração dos modelos (defaults já definidos no código)
-GEMINI_API_BASE=https://generativelanguage.googleapis.com/v1beta
-GEMINI_VISION_MODELS=gemini-2.5-flash,gemini-3-flash,gemini-3-pro
-GEMINI_TEXT_SYNTHESIS_MODELS=gemini-3-pro,gemini-3-flash,gemini-2.5-pro
-GEMINI_IMAGE_SHARE=0.75
-SIMCAR_REQUIRE_GEMINI=true
+# Análise SIMCAR — modelos de texto (defaults já definidos no código)
+SIMCAR_ANALYSIS_MODE=efficient
+SIMCAR_SYNTHESIS_TEXT_MODELS=openai/gpt-oss-120b,meta-llama/llama-3.3-70b-versatile,qwen/qwen3-32b
 
 # WFS — timeouts e paginação (defaults seguros)
 WFS_TIMEOUT_MS=25000
@@ -120,11 +111,10 @@ SFB_WFS_AUTHKEY=541085de-9a2e-454e-bdba-eb3d57a2f492
 - [ ] Adicionar variável `GROQ_API_KEY`
 - [ ] Adicionar variáveis `CLOUDINARY_API_KEY` e `CLOUDINARY_API_SECRET`
 - [ ] Adicionar variável `FIREBASE_SERVICE_ACCOUNT_JSON` (ou BASE64)
-- [ ] Adicionar variável `GEMINI_API_KEY`
 - [ ] Após o primeiro deploy, pegar a URL gerada (ex: `https://geoforest-ia.onrender.com`)
 - [ ] Adicionar `KEEP_ALIVE_URL=https://<sua-url>.onrender.com/api/health`
 - [ ] Verificar `/api/health` retorna `200 OK`
-- [ ] Verificar `/api/simcar/gemini/config?probe=1` para confirmar que o Gemini está respondendo
+- [ ] Verificar `/api/runtime/version` para confirmar `hasGroqKey: true` e os modelos de visão/texto ativos
 
 ---
 

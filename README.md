@@ -51,7 +51,7 @@ Sistema de apoio à Engenharia Florestal com inteligência artificial, voltado p
         ┌────────────────────┼────────────────────┐
         ▼                    ▼                    ▼
 ┌───────────────┐   ┌───────────────┐   ┌──────────────────┐
-│  Groq AI      │   │  Gemini       │   │  WMS SEMA-MT     │
+│  Groq AI      │   │  Groq Vision  │   │  WMS SEMA-MT     │
 │  (LLM chat)   │   │  (visão IA)   │   │  geo.sema.mt.gov │
 └───────────────┘   └───────────────┘   └────────┬─────────┘
                                                   │
@@ -91,7 +91,7 @@ O backend roda **exclusivamente em servidor local**, exposto via Cloudflare Tunn
 - **Runtime:** TypeScript com tsx (execução direta, sem build step)
 - **Servidor:** Express 4.x + HTTP Server nativo (`createServer`)
 - **LLM Chat:** Groq AI (Llama, Qwen, GPT-OSS, Kimi K2, fallbacks)
-- **Visão Computacional:** Google Gemini (análise de imagens de satélite)
+- **Visão Computacional:** Groq Vision — Llama 4 Maverick/Scout (análise de imagens de satélite)
 - **Geoespacial:** Turf.js, Proj4, GDAL
 - **Armazenamento:** Local JSON (estilo Firestore) + Cloudinary (imagens) + Firebase Admin SDK
 - **Autenticação:** Firebase Auth (middleware opcional + obrigatório)
@@ -165,7 +165,7 @@ Roteador central que monta todos os endpoints:
 1. **Recorte WFS:** Busca feições via WFS SEMA-MT usando CQL `INTERSECTS`
 2. **Shapefile local:** Fallback para shapes na pasta `SIMCAR_LOCAL_SHAPES_ROOT`
 3. **Geração de shapefiles:** .shp/.shx/.dbf no template "Arquivo Modelo.zip"
-4. **Análise Gemini:** Visão computacional do recorte SIMCAR
+4. **Análise de imagens:** Visão computacional (Groq) do recorte SIMCAR
 5. **Análise AUAS:** Áreas de Uso Alternativo do Solo
 6. **Relatórios:** XLSX quantitativo + PDF
 
@@ -483,7 +483,6 @@ Sistema **RAG** próprio: carrega apenas documentos relevantes para otimizar tok
 | POST | `/api/simcar/clip/analyze` | Análise IA (SSE) |
 | POST | `/api/simcar/clip/analyze-auas` | Análise AUAS (SSE) |
 | POST | `/api/simcar/clip/import-vectorized` | Import ZIP pré-vetorizado |
-| GET | `/api/simcar/gemini/config` | Config Gemini (+ probe) |
 
 ### Vértices Próximas
 | Método | Rota | Descrição |
@@ -675,7 +674,6 @@ Esse script faz: `git pull` → `npm run build` → `firebase deploy` → `syste
 ### Opcionais (com defaults)
 | Variável | Default | Descrição |
 |----------|---------|-----------|
-| `GEMINI_API_KEY` | — | Gemini para análise SIMCAR |
 | `GEOSERVER_USER` | `admin` | GeoServer REST |
 | `GEOSERVER_PASSWORD` | `geoserver` | GeoServer REST |
 | `GEOSERVER_WORKSPACE` | `cbers` | Workspace GeoServer |
