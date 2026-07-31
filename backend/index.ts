@@ -40,6 +40,8 @@ import {
   reprojectBbox,
 } from "./geo-utils";
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
+import { PORT, IS_DEVELOPMENT, RENDER_INFO, KEEP_ALIVE_URL, KEEP_ALIVE_INTERVAL_MS } from "./config";
+import { createCorsMiddleware } from "./middleware/cors";
 import { getSimcarAiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerSimcarReceiptRoutes } from "./simcar-receipts";
 import { registerApfReceiptRoutes } from "./apf-receipts";
@@ -334,13 +336,7 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
   const bootId = crypto.randomUUID();
-  const renderInfo = {
-    provider: process.env.RENDER ? "render" : "local",
-    service: process.env.RENDER_SERVICE_NAME || null,
-    instance: process.env.RENDER_INSTANCE_ID || null,
-    region: process.env.RENDER_REGION || null,
-    commit: process.env.RENDER_GIT_COMMIT || null,
-  };
+  const renderInfo = RENDER_INFO;
   const logBackend = (
     event: string,
     payload: Record<string, unknown>,
@@ -391,79 +387,10 @@ async function startServer() {
   }
   app.use(express.json({ limit: "25mb" }));
 
-  const isDevelopment = process.env.NODE_ENV !== "production";
-  const normalizeOrigin = (value: string) => value.trim().replace(/\/+$/, "").toLowerCase();
-  const defaultCorsOrigins = [
-    "http://localhost:5173",
-    "http://localhost:4173",
-    "http://localhost:3000",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:4173",
-    "http://127.0.0.1:3000",
-    "https://ia-florestal.web.app",
-    "http://ia-florestal.web.app",
-    "https://ia-florestal.firebaseapp.com",
-    "http://ia-florestal.firebaseapp.com",
-    "https://geoforest-admin.web.app",
-    "http://geoforest-admin.web.app",
-    "https://geoforest-admin.firebaseapp.com",
-    "http://geoforest-admin.firebaseapp.com",
-  ].map(normalizeOrigin);
-  const corsOrigins = new Set(defaultCorsOrigins);
-  const corsOriginRegex = [
-    /^https?:\/\/localhost(?::\d+)?$/i,
-    /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
-    /^https?:\/\/ia-florestal\.web\.app$/i,
-    /^https?:\/\/ia-florestal\.firebaseapp\.com$/i,
-    /^https?:\/\/geoforest-admin\.web\.app$/i,
-    /^https?:\/\/geoforest-admin\.firebaseapp\.com$/i,
-  ];
-  const corsEnv = process.env.CORS_ORIGINS;
-  if (corsEnv) {
-    corsEnv
-      .split(",")
-      .map((origin) => origin.trim())
-      .filter(Boolean)
-      .forEach((origin) => corsOrigins.add(normalizeOrigin(origin)));
-  }
-  const isOriginAllowed = (origin: string) => {
-    if (!origin) return false;
-    const normalized = normalizeOrigin(origin);
-    if (corsOrigins.has(normalized)) return true;
-    return corsOriginRegex.some((re) => re.test(normalized));
-  };
+  // CORS
+  app.use(createCorsMiddleware());
 
-  // CORS for browser clients
-  app.use((req, res, next) => {
-    const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
-    const originAllowed = isDevelopment || isOriginAllowed(origin);
-    const requestedHeaders =
-      typeof req.headers["access-control-request-headers"] === "string"
-        ? req.headers["access-control-request-headers"]
-        : "";
-
-    if (isDevelopment) {
-      res.setHeader("Access-Control-Allow-Origin", "*");
-    } else if (originAllowed) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Vary", "Origin");
-    }
-
-    if (originAllowed) {
-      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-      res.setHeader(
-        "Access-Control-Allow-Headers",
-        requestedHeaders || "Content-Type, Authorization, Accept, Origin",
-      );
-      res.setHeader("Access-Control-Max-Age", "86400");
-    }
-
-    if (req.method === "OPTIONS") {
-      res.status(originAllowed ? 204 : 403).end();
-      return;
-    }
-    next();
-  });
+  // HTTP request logger
   app.use((req, res, next) => {
     if (!req.path.startsWith("/api")) {
       next();
@@ -2899,8 +2826,7 @@ async function startServer() {
     res.sendFile(path.join(staticPath, "index.html"));
   });
 
-  const port =
-    process.env.PORT || (process.env.NODE_ENV === "production" ? 3000 : 3001);
+  const port = PORT;
 
   server.listen(port, () => {
     logBackend("server_started", {
