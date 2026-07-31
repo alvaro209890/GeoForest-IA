@@ -122,6 +122,25 @@ export {
 } from "./air-atp-generator";
 export type { DirectCopyLayerResult } from "./air-atp-generator";
 
+// ── Validation ──
+export {
+    validateShapefileOutput,
+    buildLayerSummary,
+    validateAreaConsistency,
+} from "./validation";
+
+// ── Clip Pipeline (SSE, job cache, utilities) ──
+export {
+    jobCache,
+    pruneJobCache,
+    ClientAbortError,
+    isSseConnectionClosed,
+    throwIfClientDisconnected,
+    sendSSE,
+    startSseHeartbeat,
+    sleepMs,
+} from "./clip-pipeline";
+
 // ── Funções principais (ainda em ../simcar-clip — migração gradual) ──
 export {
     parseUserShapefile,

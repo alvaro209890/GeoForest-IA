@@ -105,6 +105,16 @@ import {
 } from "./analise-pos-recorte";
 import { createFileCheckpointStore } from "./analise-pos-recorte/checkpoint-store";
 import { buildDirectCopyLayerRecords } from "./simcar/air-atp-generator";
+import {
+    ClientAbortError,
+    isSseConnectionClosed,
+    jobCache,
+    pruneJobCache,
+    sendSSE,
+    sleepMs,
+    startSseHeartbeat,
+    throwIfClientDisconnected,
+} from "./simcar/clip-pipeline";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -121,6 +131,7 @@ const WFS_MAX_FEATURES = 50000;
 const CACHE_TTL_MS = 15 * 60 * 1000;    // 15 minutes
 const CACHE_MAX_JOBS = 10;
 const CACHE_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const SIMCAR_OPERATION_BILLING_MODEL = "openai/gpt-oss-20b";
 
 /* ——— Dynamic Image Resolution ———————————————————————— */
 
@@ -711,76 +722,6 @@ export type CachedJob = {
     warnings?: string[];
     propertySourceLayer?: "ATP" | "AIR";
 };
-const jobCache = new Map<string, CachedJob>();
-
-const SIMCAR_OPERATION_BILLING_MODEL = "openai/gpt-oss-20b";
-
-function pruneJobCache() {
-    const now = Date.now();
-    for (const [key, entry] of jobCache.entries()) {
-        if (entry.expiresAt <= now) jobCache.delete(key);
-    }
-    while (jobCache.size > CACHE_MAX_JOBS) {
-        const oldest = jobCache.keys().next().value as string | undefined;
-        if (!oldest) break;
-        jobCache.delete(oldest);
-    }
-}
-
-setInterval(pruneJobCache, CACHE_CLEANUP_INTERVAL).unref();
-
-/* ─── SSE Helpers ────────────────────────────────────────────── */
-
-function sendSSE(res: Response, data: Record<string, unknown>) {
-    if (isSseConnectionClosed(res)) return;
-    try {
-        res.write(`data: ${JSON.stringify(data)}\n\n`);
-    } catch {
-        return;
-    }
-    // Flush if available (for proxied/streamed connections)
-    if (typeof (res as any).flush === "function") (res as any).flush();
-}
-
-function startSseHeartbeat(res: Response, intervalMs = 15_000): ReturnType<typeof setInterval> {
-    return setInterval(() => {
-        if (isSseConnectionClosed(res)) return;
-        try {
-            res.write(": heartbeat\n\n");
-            if (typeof (res as any).flush === "function") (res as any).flush();
-        } catch {
-            // The route finally block will close the interval.
-        }
-    }, intervalMs);
-}
-
-class ClientAbortError extends Error {
-    constructor(message = "Cliente desconectou durante a análise.") {
-        super(message);
-        this.name = "ClientAbortError";
-    }
-}
-
-function isSseConnectionClosed(res: Response): boolean {
-    const anyRes = res as any;
-    return Boolean(
-        res.writableEnded ||
-        res.destroyed ||
-        anyRes?.writableAborted ||
-        anyRes?.socket?.destroyed,
-    );
-}
-
-function throwIfClientDisconnected(res: Response): void {
-    const jobId = String((res as any).__processingJobId || "").trim();
-    if (jobId && isCancelRequested(jobId)) {
-        throw new ClientAbortError("Cancelamento solicitado pelo usuário.");
-    }
-    if (isSseConnectionClosed(res)) {
-        throw new ClientAbortError("Cliente desconectou durante o processamento.");
-    }
-}
-
 /* ─── Shapefile Parsing ──────────────────────────────────────── */
 
 /**
@@ -3234,10 +3175,6 @@ async function fetchWmsImageBufferOnce(
     }
 
     return buf;
-}
-
-function sleepMs(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isRetryableWmsError(error: unknown): boolean {
