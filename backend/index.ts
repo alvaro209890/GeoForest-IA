@@ -73,7 +73,7 @@ import type {
   MapSnapshotPayload,
 } from "./lib/map-utils";
 import { MODEL_CATALOG, MODEL_IDS, IMAGE_ANALYSIS_MODEL, IMAGE_ANALYSIS_FALLBACKS } from "./lib/models-config";
-import { getSimcarAiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
+import { getSimcarAiRuntimeConfig, registerSimcarClipRoutes } from "./simcar";
 import { createLogger } from "./lib/logger";
 import { createApp } from "./app";
 import { registerSimcarReceiptRoutes } from "./simcar-receipts";

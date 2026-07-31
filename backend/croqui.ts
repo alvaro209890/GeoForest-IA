@@ -27,7 +27,7 @@ import {
   writeDocBySegments,
 } from "./local-storage";
 import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
-import { parseUserShapefile } from "./simcar-clip";
+import { parseUserShapefile } from "./simcar";
 import { detectarMunicipioMtComFallback, getMunicipioFeatureByIbge } from "./simcar-oraculo/municipio-mt";
 import { safeFileStem } from "./croqui/coords";
 import { resolveLandmark } from "./croqui/landmarks";

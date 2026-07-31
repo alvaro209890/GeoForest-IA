@@ -12,7 +12,7 @@ import {
   intersect as turfIntersect,
 } from "@turf/turf";
 import type { Feature, Geometry, MultiPolygon, Polygon } from "geojson";
-import { fetchCarBoundaryByNumber, parseUserShapefile } from "./simcar-clip";
+import { fetchCarBoundaryByNumber, parseUserShapefile } from "./simcar";
 import {
   deleteDocBySegments,
   readDocBySegments,

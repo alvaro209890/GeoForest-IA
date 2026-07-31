@@ -39,7 +39,7 @@ import {
   writeDocBySegments,
 } from "./local-storage";
 import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
-import { parseUserShapefile } from "./simcar-clip";
+import { parseUserShapefile } from "./simcar";
 import { fetchParcelByCode } from "./sigef-client";
 import {
   buildWfsUrl,
