@@ -12,7 +12,7 @@ import { inflateRawSync } from "zlib";
 import { fileURLToPath } from "url";
 import { registerWfsIntersectionRoutes } from "./wfs-intersection";
 import { createKnowledgeBase } from "./knowledge-base";
-import { requireAuth } from "./auth";
+import { requireAuth, attachOptionalAuth } from "./auth";
 import {
   BillingError,
   applyCancelFloorDebit,
@@ -42,6 +42,7 @@ import {
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { PORT, IS_DEVELOPMENT, RENDER_INFO, KEEP_ALIVE_URL, KEEP_ALIVE_INTERVAL_MS } from "./config";
 import { createCorsMiddleware } from "./middleware/cors";
+import { createRequestLogger } from "./middleware/request-logger";
 import { getSimcarAiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerSimcarReceiptRoutes } from "./simcar-receipts";
 import { registerApfReceiptRoutes } from "./apf-receipts";
@@ -87,27 +88,6 @@ function estimateBytesFromDataUrl(dataUrl: string): number {
   if (!base64Payload) return 0;
   const padding = (base64Payload.match(/=+$/)?.[0]?.length || 0);
   return Math.max(0, Math.floor((base64Payload.length * 3) / 4) - padding);
-}
-
-async function attachOptionalAuth(req: any, _res: any, next: any) {
-  try {
-    const header = String(req?.headers?.authorization || "").trim();
-    const match = header.match(/^Bearer\s+(.+)$/i);
-    const token = match?.[1]?.trim();
-    if (!token) {
-      next();
-      return;
-    }
-    const decoded = await adminAuth.verifyIdToken(token);
-    req.authUid = decoded.uid;
-  } catch (error) {
-    if (isFirebaseConfigError(error)) {
-      console.warn("[AUTH] Firebase não configurado para auth opcional.");
-    } else {
-      console.warn("[AUTH] Token opcional inválido, seguindo sem auth.");
-    }
-  }
-  next();
 }
 
 function normalizeStorePath(raw: unknown): string[] {
@@ -391,38 +371,7 @@ async function startServer() {
   app.use(createCorsMiddleware());
 
   // HTTP request logger
-  app.use((req, res, next) => {
-    if (!req.path.startsWith("/api")) {
-      next();
-      return;
-    }
-    const startedAt = Date.now();
-    const requestId = crypto.randomUUID();
-    res.setHeader("x-request-id", requestId);
-    res.on("finish", () => {
-      const durationMs = Date.now() - startedAt;
-      const level =
-        res.statusCode >= 500 ? "error" : res.statusCode >= 400 ? "warn" : "info";
-      logBackend(
-        "http_request",
-        {
-          requestId,
-          method: req.method,
-          path: req.path,
-          status: res.statusCode,
-          durationMs,
-          ip:
-            String(req.headers["x-forwarded-for"] || "")
-              .split(",")[0]
-              .trim() || req.socket.remoteAddress || "",
-          userAgent: String(req.headers["user-agent"] || ""),
-          referer: String(req.headers.referer || ""),
-        },
-        level,
-      );
-    });
-    next();
-  });
+  app.use(createRequestLogger(logBackend));
 
   app.use(
     [

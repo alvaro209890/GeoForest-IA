@@ -41,3 +41,23 @@ export function getAuthUid(req: Request): string {
   }
   return uid;
 }
+
+/** Middleware opcional: popula req.authUid se token válido, mas não bloqueia. */
+export async function attachOptionalAuth(req: Request, _res: Response, next: NextFunction) {
+  try {
+    const token = extractBearerToken(req);
+    if (!token) {
+      next();
+      return;
+    }
+    const decoded = await adminAuth.verifyIdToken(token);
+    req.authUid = decoded.uid;
+  } catch (error) {
+    if (isFirebaseConfigError(error)) {
+      console.warn("[AUTH] Firebase não configurado para auth opcional.");
+    } else {
+      console.warn("[AUTH] Token opcional inválido, seguindo sem auth.");
+    }
+  }
+  next();
+}
