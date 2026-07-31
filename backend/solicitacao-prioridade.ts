@@ -110,17 +110,43 @@ async function handleProcess(req: Request, res: Response): Promise<void> {
     });
 
     const pythonArgs = [FILL_SCRIPT, tmpDir, outputDir];
-    const outputZipPath = execFileSync(PYTHON_EXE, pythonArgs, {
-      encoding: "utf-8",
-      timeout: 120_000,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
+    let stdout = "";
+    let stderr = "";
+    try {
+      const result = execFileSync(PYTHON_EXE, pythonArgs, {
+        encoding: "utf-8",
+        timeout: 120_000,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      stdout = (result && typeof result === "string" ? result : "").trim();
+      // stderr is captured separately below — execFileSync returns stdout only
+    } catch (pyErr: any) {
+      stdout = pyErr.stdout?.trim() || "";
+      stderr = pyErr.stderr?.trim() || "";
+      const errMsg = stdout.startsWith("ERRO:") ? stdout.replace("ERRO: ", "") : (stderr || pyErr.message);
+      throw new Error(errMsg || "Erro no script Python.");
+    }
+
+    // Parse stderr lines for progress
+    if (stderr) {
+      for (const line of stderr.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed) writeSse(res, { type: "progress", stage: "diagnostico", message: trimmed });
+      }
+    }
 
     if (isCancelRequested(jobId)) throw new Error("cancel_requested");
 
-    if (!outputZipPath || !fs.existsSync(outputZipPath)) {
+    // Check for error in stdout
+    if (stdout.startsWith("ERRO:")) {
+      throw new Error(stdout.replace("ERRO: ", ""));
+    }
+
+    if (!stdout || !fs.existsSync(stdout)) {
       throw new Error("Script Python não gerou o ZIP de saída. Verifique os PDFs enviados.");
     }
+
+    const outputZipPath = stdout;
 
     const resultBuffer = fs.readFileSync(outputZipPath);
     const storageDir = path.join(
