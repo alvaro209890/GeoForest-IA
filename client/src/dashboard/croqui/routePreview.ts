@@ -106,3 +106,55 @@ export function toPolylinePoints(coords: LonLat[], projection: PreviewProjection
 export function formatKm(meters: number): string {
   return `${(meters / 1000).toFixed(1).replace('.', ',')} km`;
 }
+
+// ── Projeção Web Mercator completa (mesma do backend basemap.ts) ──
+
+const TILE_SIZE = 256;
+
+function worldSizeAt(zoom: number): number {
+  return TILE_SIZE * Math.pow(2, zoom);
+}
+
+function lonToWorldX(lon: number, worldSize: number): number {
+  return ((lon + 180) / 360) * worldSize;
+}
+
+function latToWorldY(lat: number, worldSize: number): number {
+  const sin = Math.sin((lat * Math.PI) / 180);
+  const clamped = Math.min(Math.max(sin, -0.9999), 0.9999);
+  return (0.5 - Math.log((1 + clamped) / (1 - clamped)) / (4 * Math.PI)) * worldSize;
+}
+
+export type FrameParams = {
+  centerLon: number;
+  centerLat: number;
+  zoom: number;
+  imageWidthPx: number;
+  imageHeightPx: number;
+  widthPt: number;
+  heightPt: number;
+};
+
+/**
+ * Projeção alinhada à imagem de satélite: mesma fórmula Web Mercator do
+ * backend, mesmos parâmetros (centro, zoom, dimensões da imagem).
+ * Garante que vetor e basemap casem pixel a pixel.
+ */
+export function buildProjectionFromFrame(
+  frame: FrameParams,
+): PreviewProjection | null {
+  const worldSize = worldSizeAt(frame.zoom);
+  const centerX = lonToWorldX(frame.centerLon, worldSize);
+  const centerY = latToWorldY(frame.centerLat, worldSize);
+  const ptPerPxX = frame.widthPt / frame.imageWidthPx;
+  const ptPerPxY = frame.heightPt / frame.imageHeightPx;
+
+  return {
+    width: frame.widthPt,
+    height: frame.heightPt,
+    project: (lon: number, lat: number): [number, number] => [
+      (lonToWorldX(lon, worldSize) - centerX + frame.imageWidthPx / 2) * ptPerPxX,
+      (latToWorldY(lat, worldSize) - centerY + frame.imageHeightPx / 2) * ptPerPxY,
+    ],
+  };
+}

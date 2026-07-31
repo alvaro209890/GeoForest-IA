@@ -22,6 +22,16 @@ export type CroquiRouteOptionsResponse = {
   options: CroquiRouteOption[];
   atp: [number, number][][];
   start: [number, number] | null;
+  basemap: {
+    dataUrl: string;
+    provider: string;
+    bboxLonLat: [number, number, number, number];
+    imageWidthPx: number;
+    imageHeightPx: number;
+    centerLon: number;
+    centerLat: number;
+    zoom: number;
+  } | null;
 };
 
 export type CroquiHistoryItem = {

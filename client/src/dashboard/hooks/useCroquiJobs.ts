@@ -269,6 +269,7 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
           options: Array.isArray(data?.options) ? data.options : [],
           atp: Array.isArray(data?.atp) ? data.atp : [],
           start: Array.isArray(data?.start) ? data.start : null,
+          basemap: data?.basemap && typeof data.basemap === 'object' ? data.basemap : null,
         };
         if (parsed.municipioNome) setCroquiMunicipio(parsed.municipioNome);
         setCroquiRoutes(parsed);

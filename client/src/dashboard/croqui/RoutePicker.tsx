@@ -3,6 +3,7 @@ import { CheckCircle2, MapPin, Route } from 'lucide-react';
 import type { CroquiRouteOptionsResponse } from './types';
 import {
   buildProjection,
+  buildProjectionFromFrame,
   formatKm,
   routeColor,
   toPolylinePoints,
@@ -25,14 +26,27 @@ const MAP_H = 420;
  * para o usuário reconhecer o de sempre antes de gerar o croqui.
  */
 export default function RoutePicker({ data, selectedId, onSelect, disabled }: RoutePickerProps) {
+  const hasBasemap = !!data.basemap;
+
   const projection = useMemo(() => {
+    if (hasBasemap && data.basemap) {
+      return buildProjectionFromFrame({
+        centerLon: data.basemap.centerLon,
+        centerLat: data.basemap.centerLat,
+        zoom: data.basemap.zoom,
+        imageWidthPx: data.basemap.imageWidthPx,
+        imageHeightPx: data.basemap.imageHeightPx,
+        widthPt: MAP_W,
+        heightPt: MAP_H,
+      });
+    }
     const groups: LonLat[][] = [
       ...data.options.map((option) => option.coordinates),
       ...data.atp,
       ...(data.start ? [[data.start]] : []),
     ];
     return buildProjection(groups, MAP_W, MAP_H);
-  }, [data]);
+  }, [data, hasBasemap]);
 
   const startPoint = useMemo(() => {
     if (!projection || !data.start) return null;
@@ -49,7 +63,18 @@ export default function RoutePicker({ data, selectedId, onSelect, disabled }: Ro
             role="img"
             aria-label="Caminhos de acesso encontrados"
           >
-            <rect x={0} y={0} width={MAP_W} height={MAP_H} fill="#07110f" rx={10} />
+            {hasBasemap && data.basemap ? (
+              <image
+                href={data.basemap.dataUrl}
+                x={0}
+                y={0}
+                width={MAP_W}
+                height={MAP_H}
+                preserveAspectRatio="none"
+              />
+            ) : (
+              <rect x={0} y={0} width={MAP_W} height={MAP_H} fill="#07110f" rx={10} />
+            )}
 
             {data.atp.map((ring, index) => (
               <polygon

@@ -16,7 +16,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { centroid } from "@turf/turf";
-import type { Polygon, MultiPolygon } from "geojson";
+import type { Polygon, MultiPolygon, Position } from "geojson";
 import {
   getAbsoluteStoragePath,
   listCollectionBySegments,
@@ -44,6 +44,7 @@ import {
   type RouteOption,
   type RouteOptionSummary,
 } from "./croqui/route-options";
+import { bboxOfPositions, fetchBasemapImage, resolveMapFrame } from "./croqui/basemap";
 import { buildCroquiDocxBuffer } from "./croqui/render-docx";
 import { buildCroquiKml } from "./croqui/render-kml";
 import { buildCroquiPdfBuffer } from "./croqui/render-pdf";
@@ -436,6 +437,36 @@ export function registerCroquiRoutes(app: Express): void {
       });
       const routesRelativePath = saveRouteOptions(uid, uploadId, options);
       const payload = options.map(toRouteOptionPayload);
+
+      // Basemap: imagem de satélite para o mapinha de escolha no frontend.
+      // Usa o mesmo pipeline do PDF (resolveMapFrame + fetchBasemapImage),
+      // mas em dimensão menor (640 px CSS) para caber em JSON base64.
+      const allCoords: Position[] = [];
+      for (const opt of options) allCoords.push(...opt.route.coordinates);
+      const atpRings = outlineRings(parsed.geometry);
+      for (const ring of atpRings) {
+        for (const [lon, lat] of ring) allCoords.push([lon, lat]);
+      }
+      const frame = resolveMapFrame({
+        contentBbox: bboxOfPositions(allCoords),
+        widthPt: 560,
+        heightPt: 420,
+        paddingRatio: 0.04,
+      });
+      const basemapImage = await fetchBasemapImage(frame).catch(() => null);
+      const basemap = basemapImage
+        ? {
+            dataUrl: `data:image/${basemapImage.provider === "google" ? "png" : "jpeg"};base64,${basemapImage.buffer.toString("base64")}`,
+            provider: basemapImage.provider,
+            bboxLonLat: frame.bboxLonLat,
+            imageWidthPx: frame.imageWidthPx,
+            imageHeightPx: frame.imageHeightPx,
+            centerLon: frame.centerLon,
+            centerLat: frame.centerLat,
+            zoom: frame.zoom,
+          }
+        : null;
+
       persistJob(uid, uploadId, {
         municipioNome,
         routesRelativePath,
@@ -447,8 +478,9 @@ export function registerCroquiRoutes(app: Express): void {
         options: payload,
         // Contorno do imóvel e ponto de partida: sem eles o mapinha de escolha
         // seria um punhado de linhas sem destino visível.
-        atp: outlineRings(parsed.geometry),
+        atp: atpRings,
         start: options[0]?.route.coordinates[0] || null,
+        basemap,
       });
     } catch (error: any) {
       res.status(400).json({ error: error?.message || "Falha ao calcular os caminhos de acesso." });
