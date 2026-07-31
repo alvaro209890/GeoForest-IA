@@ -43,6 +43,12 @@ import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { PORT, IS_DEVELOPMENT, RENDER_INFO, KEEP_ALIVE_URL, KEEP_ALIVE_INTERVAL_MS } from "./config";
 import { createCorsMiddleware } from "./middleware/cors";
 import { createRequestLogger } from "./middleware/request-logger";
+import { registerStoreRoutes } from "./routes/store";
+import { registerAccountRoutes } from "./routes/account";
+import { registerBillingRoutes } from "./routes/billing";
+import { registerProcessRoutes } from "./routes/process";
+import { registerModelsRoutes } from "./routes/models";
+import { MODEL_CATALOG, MODEL_IDS, IMAGE_ANALYSIS_MODEL, IMAGE_ANALYSIS_FALLBACKS } from "./lib/models-config";
 import { getSimcarAiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerSimcarReceiptRoutes } from "./simcar-receipts";
 import { registerApfReceiptRoutes } from "./apf-receipts";
@@ -88,26 +94,6 @@ function estimateBytesFromDataUrl(dataUrl: string): number {
   if (!base64Payload) return 0;
   const padding = (base64Payload.match(/=+$/)?.[0]?.length || 0);
   return Math.max(0, Math.floor((base64Payload.length * 3) / 4) - padding);
-}
-
-function normalizeStorePath(raw: unknown): string[] {
-  return String(raw || "")
-    .split("/")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function materializeServerTimestamps(value: any): any {
-  if (Array.isArray(value)) return value.map((item) => materializeServerTimestamps(item));
-  if (value && typeof value === "object") {
-    if ((value as any).__serverTimestamp === true) {
-      return new Date().toISOString();
-    }
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, materializeServerTimestamps(item)]),
-    );
-  }
-  return value;
 }
 
 type ServerStorageMetric = {
@@ -481,132 +467,9 @@ async function startServer() {
   app.use("/api/storage", express.static(STORAGE_ROOT));
   app.use("/api/raster", express.static(CBERS_ARCHIVE_ROOT));
 
-  app.post("/api/account/bootstrap", async (req, res) => {
-    const uid = String(req.authUid || "").trim();
-    if (!uid) {
-      res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
-      return;
-    }
-    try {
-      const token = await adminAuth.verifyIdToken(String(req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
-      const profile = upsertUserProfile({
-        uid,
-        email: String((req.body as any)?.email || token.email || "").trim(),
-        fullName:
-          String((req.body as any)?.fullName || token.name || "").trim() ||
-          String(token.email || "").split("@")[0],
-      });
-      res.json({ ok: true, profile });
-    } catch (error: any) {
-      res.status(500).json({ error: error?.message || "Falha ao provisionar conta." });
-    }
-  });
-
-  app.get("/api/me", async (req, res) => {
-    const uid = String(req.authUid || "").trim();
-    const token = await adminAuth.verifyIdToken(String(req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
-    const profile = upsertUserProfile({
-      uid,
-      email: String(token.email || "").trim(),
-      fullName: String(token.name || "").trim() || String(token.email || "").split("@")[0],
-    });
-    res.json(profile);
-  });
-
-  app.patch("/api/me", async (req, res) => {
-    const uid = String(req.authUid || "").trim();
-    const current = readDocBySegments(["users", uid]) || {};
-    const next = writeDocBySegments(
-      ["users", uid],
-      stripUndefinedDeep({
-        ...current,
-        ...materializeServerTimestamps((req.body as any) || {}),
-        uid,
-      }),
-      { merge: true },
-    );
-    res.json(next);
-  });
-
-  app.get("/api/store/doc", async (req, res) => {
-    const pathSegments = normalizeStorePath(req.query.path);
-    const uid = String(req.authUid || "").trim();
-    if (pathSegments[0] !== "users" || pathSegments[1] !== uid) {
-      res.status(403).json({ error: "Acesso negado." });
-      return;
-    }
-    const docData = readDocBySegments(pathSegments);
-    res.json({ exists: Boolean(docData), data: docData, id: pathSegments[pathSegments.length - 1] || null });
-  });
-
-  app.put("/api/store/doc", async (req, res) => {
-    const pathSegments = normalizeStorePath(req.query.path);
-    const uid = String(req.authUid || "").trim();
-    if (pathSegments[0] !== "users" || pathSegments[1] !== uid) {
-      res.status(403).json({ error: "Acesso negado." });
-      return;
-    }
-    if (pathSegments[2] === "simcar_oraculo_jobs") {
-      res.status(403).json({ error: "Jobs do oráculo são gerenciados somente pelo backend." });
-      return;
-    }
-    const data = materializeServerTimestamps((req.body as any)?.data || {});
-    const merge = Boolean((req.body as any)?.merge);
-    const saved = writeDocBySegments(pathSegments, data, { merge });
-    res.json({ ok: true, data: saved });
-  });
-
-  app.delete("/api/store/doc", async (req, res) => {
-    const pathSegments = normalizeStorePath(req.query.path);
-    const uid = String(req.authUid || "").trim();
-    if (pathSegments[0] !== "users" || pathSegments[1] !== uid) {
-      res.status(403).json({ error: "Acesso negado." });
-      return;
-    }
-    if (pathSegments[2] === "simcar_oraculo_jobs") {
-      res.status(403).json({ error: "Jobs do oráculo são gerenciados somente pelo backend." });
-      return;
-    }
-    deleteDocBySegments(pathSegments);
-    res.json({ ok: true });
-  });
-
-  app.get("/api/store/collection", async (req, res) => {
-    const pathSegments = normalizeStorePath(req.query.path);
-    const uid = String(req.authUid || "").trim();
-    if (pathSegments[0] !== "users" || pathSegments[1] !== uid) {
-      res.status(403).json({ error: "Acesso negado." });
-      return;
-    }
-    const docs = listCollectionBySegments(pathSegments, {
-      orderBy: String(req.query.orderBy || "updatedAtMs"),
-      direction: String(req.query.direction || "desc").toLowerCase() === "asc" ? "asc" : "desc",
-    });
-    res.json({ docs });
-  });
-
-  app.post("/api/process/cancel", async (req, res) => {
-    const uid = String(req.authUid || "");
-    if (!uid) {
-      res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
-      return;
-    }
-    const jobId = String((req.body as any)?.jobId || "").trim();
-    if (!jobId) {
-      res.status(400).json({ error: "jobId é obrigatório.", code: "INVALID_JOB_ID" });
-      return;
-    }
-    const result = requestCancel(jobId, uid);
-    if (!result.ok) {
-      if (result.status === "forbidden") {
-        res.status(403).json({ error: "Sem permissão para cancelar este processamento.", code: "FORBIDDEN" });
-        return;
-      }
-      res.status(404).json({ error: "jobId não encontrado.", code: "JOB_NOT_FOUND" });
-      return;
-    }
-    res.status(202).json({ ok: true, status: "cancel_requested" });
-  });
+  registerAccountRoutes(app);
+  registerStoreRoutes(app);
+  registerProcessRoutes(app);
 
   registerWfsIntersectionRoutes(app);
   registerSimcarClipRoutes(app);
@@ -624,59 +487,6 @@ async function startServer() {
   registerAuasScconRoutes(app);
   registerCbersArchiveAdminRoutes(app);
 
-  const MODEL_CATALOG = [
-    {
-      id: "meta-llama/llama-3.3-70b-versatile",
-      label: "Llama 3.3 70B",
-      capabilities: ["text"],
-    },
-    {
-      id: "meta-llama/llama-4-maverick-17b-128e-instruct",
-      label: "Llama 4 Maverick",
-      capabilities: ["text", "vision"],
-    },
-    {
-      id: "meta-llama/llama-4-scout-17b-16e-instruct",
-      label: "Llama 4 Scout",
-      capabilities: ["text", "vision"],
-    },
-    {
-      id: "meta-llama/llama-guard-4-12b",
-      label: "Llama Guard 4 12B",
-      capabilities: ["text", "vision"],
-    },
-    {
-      id: "qwen/qwen3-32b",
-      label: "Qwen 3 32B",
-      capabilities: ["text"],
-    },
-    {
-      id: "moonshotai/kimi-k2-instruct-0905",
-      label: "Kimi K2 Instruct (0905)",
-      capabilities: ["text"],
-    },
-    {
-      id: "openai/gpt-oss-20b",
-      label: "GPT-OSS 20B",
-      capabilities: ["text"],
-    },
-    {
-      id: "openai/gpt-oss-120b",
-      label: "GPT-OSS 120B",
-      capabilities: ["text"],
-    },
-  ] as const;
-
-  const MODEL_IDS = new Set<string>(MODEL_CATALOG.map((model) => model.id));
-  const IMAGE_ANALYSIS_MODEL =
-    process.env.IMAGE_ANALYSIS_MODEL || "openai/gpt-oss-120b";
-  const IMAGE_ANALYSIS_FALLBACKS = (
-    process.env.IMAGE_ANALYSIS_FALLBACKS ||
-    "qwen/qwen3-32b,meta-llama/llama-4-maverick-17b-128e-instruct"
-  )
-    .split(",")
-    .map((m) => m.trim())
-    .filter(Boolean);
   const knowledgeBase = createKnowledgeBase({
     dbRoot: path.resolve(__dirname, "..", "banco_de_dados"),
     zipPath: path.resolve(__dirname, "..", "banco_de_dados", "banco_de_dados_melhorado.zip"),
@@ -1283,127 +1093,8 @@ async function startServer() {
 
 
 
-  app.get("/api/models", (_req, res) => {
-    const defaultModel = process.env.GROQ_MODEL || "meta-llama/llama-3.3-70b-versatile";
-    res.json({ models: MODEL_CATALOG, defaultModel });
-  });
-
-  app.get("/api/billing/pricing", async (_req, res) => {
-    try {
-      const pricing = await getBillingPricingSnapshot();
-      res.json(pricing);
-    } catch (error: any) {
-      if (isFirebaseConfigError(error)) {
-        res.status(500).json({
-          error: "Firebase Admin não configurado no backend.",
-          code: "FIREBASE_CONFIG_ERROR",
-        });
-        return;
-      }
-      console.error("Erro no /api/billing/pricing:", error);
-      res.status(500).json({ error: error?.message || "Erro ao carregar pricing." });
-    }
-  });
-
-  app.get("/api/billing/me", async (req, res) => {
-    try {
-      const uid = String(req.authUid || "");
-      if (!uid) {
-        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
-        return;
-      }
-      const payload = await getBillingMe(uid);
-      res.json(payload);
-    } catch (error: any) {
-      if (isFirebaseConfigError(error)) {
-        res.status(500).json({
-          error: "Firebase Admin não configurado no backend.",
-          code: "FIREBASE_CONFIG_ERROR",
-        });
-        return;
-      }
-      console.error("Erro no /api/billing/me:", error);
-      res.status(500).json({ error: error?.message || "Erro ao carregar carteira." });
-    }
-  });
-
-  app.post("/api/billing/topups/manual", async (req, res) => {
-    try {
-      const uid = String(req.authUid || "");
-      if (!uid) {
-        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
-        return;
-      }
-      const amountBrl = Number(req.body?.amountBrl);
-      const idempotencyKey = String(req.body?.idempotencyKey || "");
-      const topup = await createManualTopup({ uid, amountBrl, idempotencyKey });
-      let wallet: Awaited<ReturnType<typeof getBillingMe>> | null = null;
-      try {
-        wallet = await getBillingMe(uid);
-      } catch (walletErr: any) {
-        const msg = String(walletErr?.message || walletErr || "");
-        // Não bloquear recarga por falha secundária de leitura de analytics/usage.
-        if (/FAILED_PRECONDITION/i.test(msg) && /requires an index/i.test(msg)) {
-          console.warn(
-            "[BILLING] getBillingMe falhou por índice após top-up; retornando carteira mínima.",
-            walletErr,
-          );
-        } else if (isFirebaseConfigError(walletErr)) {
-          console.warn("[BILLING] getBillingMe falhou por config Firebase após top-up.", walletErr);
-        } else {
-          throw walletErr;
-        }
-      }
-      res.json({
-        ok: true,
-        topup,
-        wallet: wallet?.wallet || {
-          balanceBrl: Number(topup.balanceAfterBrl || 0),
-          totalTopupBrl: null,
-          totalSpentBrl: null,
-          updatedAt: null,
-          version: null,
-        },
-      });
-    } catch (error: any) {
-      if (error instanceof BillingError) {
-        res.status(error.statusCode).json({ error: error.message, code: error.code });
-        return;
-      }
-      if (isFirebaseConfigError(error)) {
-        res.status(500).json({
-          error: "Firebase Admin não configurado no backend.",
-          code: "FIREBASE_CONFIG_ERROR",
-        });
-        return;
-      }
-      console.error("Erro no /api/billing/topups/manual:", error);
-      res.status(500).json({ error: error?.message || "Erro ao adicionar créditos." });
-    }
-  });
-
-  app.get("/api/billing/ledger", async (req, res) => {
-    try {
-      const uid = String(req.authUid || "");
-      if (!uid) {
-        res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
-        return;
-      }
-      const limit = Number(req.query?.limit || 50);
-      const entries = await getBillingLedger(uid, limit);
-      res.json({ entries });
-    } catch (error: any) {
-      if (isFirebaseConfigError(error)) {
-        res.status(500).json({
-          error: "Firebase Admin não configurado no backend.",
-          code: "FIREBASE_CONFIG_ERROR",
-        });
-        return;
-      }
-      console.error("Erro no /api/billing/ledger:", error);
-      res.status(500).json({ error: error?.message || "Erro ao carregar extrato." });
-    }
-  });
+  registerModelsRoutes(app);
+  registerBillingRoutes(app);
 
   app.get("/api/map/capabilities", async (_req, res) => {
     try {
