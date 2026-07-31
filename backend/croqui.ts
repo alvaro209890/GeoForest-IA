@@ -483,6 +483,7 @@ export function registerCroquiRoutes(app: Express): void {
         basemap,
       });
     } catch (error: any) {
+      console.error("[CROQUI] route-options failed:", error?.message || error);
       res.status(400).json({ error: error?.message || "Falha ao calcular os caminhos de acesso." });
     }
   });
