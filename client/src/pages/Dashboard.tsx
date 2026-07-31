@@ -109,6 +109,7 @@ import { nanoid } from 'nanoid';
 import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog';
 import type { ContainmentRow, ContainmentSummary } from '@/components/ContainmentAnalysis';
 import type { GeometryErrorRow, GeometrySummary } from '@/components/GeometryErrorsAnalysis';
+import { SimcarAuasPre2008PanelV2, type SimcarAuasMetaV2 } from '@/components/AuasPre2008Summary';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
 const ReceiptsHub = lazy(() => import('@/components/ReceiptsHub'));
@@ -329,7 +330,8 @@ type SimcarAcAvnAnalysisMeta = {
   };
 };
 
-type SimcarAuasMeta = {
+type SimcarAuasMetaV1 = {
+  schemaVersion?: undefined;
   yearVerdicts?: Array<{
     satelliteLabel: string;
     year: number;
@@ -354,6 +356,8 @@ type SimcarAuasMeta = {
   hasAuasVectorizedLayer?: boolean;
   inferredAuasNotVectorized?: boolean;
 };
+
+type SimcarAuasMeta = SimcarAuasMetaV1 | SimcarAuasMetaV2;
 
 type SimcarConversationEntry = {
   role: 'ai' | 'user';
@@ -956,7 +960,7 @@ const buildIntegratedVectorizedReport = (acAvnText: string, auasText: string): s
     .trim();
 };
 
-const formatSimcarAuasStatus = (status?: SimcarAuasMeta['finalStatus']) => {
+const formatSimcarAuasStatus = (status?: SimcarAuasMetaV1['finalStatus']) => {
   if (status === 'AUAS_VALIDA') return { label: 'AUAS válida', className: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200' };
   if (status === 'AUAS_INVALIDA') return { label: 'AUAS inválida', className: 'border-red-500/25 bg-red-500/10 text-red-200' };
   if (status === 'AUAS_PARCIAL') return { label: 'Revisão parcial', className: 'border-amber-500/25 bg-amber-500/10 text-amber-200' };
@@ -976,14 +980,14 @@ const formatSimcarAcAvnConfidence = (confidence?: 'ALTA' | 'MEDIA' | 'BAIXA' | '
   return { label: 'Inconclusiva', className: 'border-slate-500/20 bg-slate-500/10 text-slate-300' };
 };
 
-const formatSimcarAuasVerdict = (verdict: NonNullable<SimcarAuasMeta['yearVerdicts']>[number]['verdict']) => {
+const formatSimcarAuasVerdict = (verdict: NonNullable<SimcarAuasMetaV1['yearVerdicts']>[number]['verdict']) => {
   if (verdict === 'CONSOLIDADO') return 'Consolidado';
   if (verdict === 'VEGETACAO_NATIVA_PRESENTE') return 'Vegetação nativa';
   if (verdict === 'DESMATAMENTO_RECENTE') return 'Supressão pós-2008';
   return 'Inconclusivo';
 };
 
-const simcarAuasVerdictClass = (verdict: NonNullable<SimcarAuasMeta['yearVerdicts']>[number]['verdict']) => {
+const simcarAuasVerdictClass = (verdict: NonNullable<SimcarAuasMetaV1['yearVerdicts']>[number]['verdict']) => {
   if (verdict === 'CONSOLIDADO') return 'border-blue-500/20 bg-blue-500/10 text-blue-200';
   if (verdict === 'VEGETACAO_NATIVA_PRESENTE') return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200';
   if (verdict === 'DESMATAMENTO_RECENTE') return 'border-red-500/20 bg-red-500/10 text-red-200';
@@ -8588,6 +8592,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         {(() => {
                           const meta = activeSimcarClip?.jobId === simcarClipJobId ? activeSimcarClip.auasMeta : undefined;
                           if (!meta) return null;
+                          if (meta.schemaVersion === 2) {
+                            return <SimcarAuasPre2008PanelV2 meta={meta} />;
+                          }
                           const status = formatSimcarAuasStatus(meta.finalStatus);
                           const yearVerdicts = Array.isArray(meta.yearVerdicts) ? meta.yearVerdicts : [];
                           const recentVerdicts = [...yearVerdicts]

@@ -95,6 +95,15 @@ import {
     markDisconnected,
     startJob,
 } from "./processing-jobs";
+import {
+    getAuasV2Config,
+    runAuasPre2008Analysis,
+    AuasCancelledError,
+    AuasTooManyPolygonsError,
+    type AuasPre2008AnalysisV2,
+    type AuasV2Progress,
+} from "./analise-pos-recorte";
+import { createFileCheckpointStore } from "./analise-pos-recorte/checkpoint-store";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -6746,6 +6755,282 @@ async function processAuasAnalysis(
 }
 
 /**
+ * V2 do analista pós-recorte AUAS (pré-2008, Landsat 5 2003-2007 + SPOT 2008).
+ * Analisa cada polígono AUAS individualmente via backend/analise-pos-recorte.
+ * Atrás do feature flag SIMCAR_AUAS_V2_ENABLED — backend/simcar-clip.ts continua
+ * sendo o adaptador de SSE/persistência/billing/PDF para este fluxo, conforme
+ * Analise_pos_recorte/README.md.
+ */
+async function processAuasAnalysisV2(
+    res: Response,
+    jobId: string,
+    contextUrl?: string,
+    outputZipUrl?: string,
+    acAvnMeta?: any,
+): Promise<{ auasMeta: AuasPre2008AnalysisV2; layerSummaries: LayerSummary[] } | null> {
+    throwIfClientDisconnected(res);
+    const job = await hydrateCachedJob(jobId, contextUrl, outputZipUrl);
+    if (!job || !job.layerSummaries) {
+        sendSSE(res, {
+            type: "error",
+            message: "Job não encontrado. O servidor não localizou contexto ou ZIP persistido para reidratar o recorte.",
+        });
+        return null;
+    }
+
+    const acAvnContext =
+        acAvnMeta && typeof acAvnMeta === "object"
+            ? { source: "provided", summary: JSON.stringify(acAvnMeta).slice(0, 2000) }
+            : undefined;
+
+    try {
+        const analysis = await runAuasPre2008Analysis(jobId, job.clippedGeometries, {
+            checkpointStore: createFileCheckpointStore(jobId),
+            acAvnContext,
+            onProgress: (progress: AuasV2Progress) => {
+                throwIfClientDisconnected(res);
+                sendSSE(res, { type: "progress", ...progress });
+            },
+        });
+        return { auasMeta: analysis, layerSummaries: job.layerSummaries };
+    } catch (err) {
+        if (err instanceof AuasTooManyPolygonsError) {
+            sendSSE(res, { type: "error", message: err.message, code: "TOO_MANY_POLYGONS" });
+            return null;
+        }
+        if (err instanceof AuasCancelledError) {
+            throw new ClientAbortError(err.message);
+        }
+        throw err;
+    }
+}
+
+/**
+ * Handler completo da rota /api/simcar/clip/analyze-auas quando
+ * SIMCAR_AUAS_V2_ENABLED=true: billing (no-op local), SSE, persistência e PDF,
+ * chamando processAuasAnalysisV2 em vez do fluxo legado 2008–2024.
+ */
+async function handleAuasAnalyzeV2Route(
+    req: Request,
+    res: Response,
+    sendSseHeaders: (res: Response) => void,
+): Promise<void> {
+    let billingUid = "";
+    let billingRequestId = "";
+    let billingReserved = 0;
+    let chargedBrl = 0;
+    let processingJobId = "";
+    let sseHeartbeat: ReturnType<typeof setInterval> | null = null;
+    try {
+        const uid = String(req.authUid || "");
+        if (!uid) {
+            res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+            return;
+        }
+        billingUid = uid;
+
+        const { jobId, acAvnMeta, contextUrl, outputZipUrl } = req.body as {
+            jobId?: string;
+            acAvnMeta?: any;
+            contextUrl?: string;
+            outputZipUrl?: string;
+        };
+        if (!jobId) {
+            res.status(400).json({ error: "jobId é obrigatório." });
+            return;
+        }
+
+        billingRequestId = createRequestId("simcar_auas_v2");
+        const cfg = getAuasV2Config();
+        billingReserved = await estimateReserveForModels({
+            models: [cfg.visionModel, cfg.textModel],
+            estimatedInputTokens: 6_000,
+            estimatedOutputTokens: 4_000,
+            safetyMultiplier: 1.3,
+            endpoint: "/api/simcar/clip/analyze-auas",
+        });
+        await reserveCredits({
+            uid,
+            amountBrl: billingReserved,
+            requestId: billingRequestId,
+            endpoint: "/api/simcar/clip/analyze-auas",
+        });
+
+        sendSseHeaders(res);
+        sseHeartbeat = startSseHeartbeat(res);
+        const processingJob = startJob({
+            uid,
+            endpoint: "/api/simcar/clip/analyze-auas",
+            metadata: { clipJobId: jobId, schemaVersion: 2 },
+        });
+        processingJobId = processingJob.jobId;
+        (res as any).__processingJobId = processingJobId;
+        req.on("close", () => markDisconnected(processingJobId));
+        sendSSE(res, { type: "job_started", jobId: processingJobId });
+
+        let usageInputs: Array<any> = [];
+        const result = await runWithBillingUsageSession(async () => {
+            const outcome = await processAuasAnalysisV2(res, jobId, contextUrl, outputZipUrl, acAvnMeta);
+            if (outcome) {
+                usageInputs = outcome.auasMeta.windows
+                    .filter((w) => w.status === "COMPLETED")
+                    .map((w) => ({
+                        provider: "groq" as const,
+                        model: w.model,
+                        inputTokens: w.inputTokens || 0,
+                        outputTokens: w.outputTokens || 0,
+                        endpoint: "/api/simcar/clip/analyze-auas",
+                    }));
+                if (outcome.auasMeta.report.model === "deepseek-v4-pro") {
+                    usageInputs.push({
+                        provider: "groq" as const,
+                        model: "deepseek-v4-pro",
+                        inputTokens: 0,
+                        outputTokens: 0,
+                        endpoint: "/api/simcar/clip/analyze-auas",
+                        estimated: true,
+                    });
+                }
+            }
+            return outcome;
+        });
+
+        if (!result) {
+            if (billingReserved > 0) {
+                await refundReserve({
+                    uid,
+                    requestId: billingRequestId,
+                    amountBrl: billingReserved,
+                    endpoint: "/api/simcar/clip/analyze-auas",
+                    reason: "analysis_failed_before_usage",
+                });
+                billingReserved = 0;
+            }
+            finishJob({ jobId: processingJobId, status: "failed", error: "auas_v2_analysis_failed" });
+            return;
+        }
+
+        const billing = await settleReservedCredits({
+            uid,
+            requestId: billingRequestId,
+            endpoint: "/api/simcar/clip/analyze-auas",
+            reservedBrl: billingReserved,
+            usageInputs,
+        });
+        billingReserved = 0;
+        chargedBrl = Number(billing.chargedBrl || 0);
+        sendSSE(res, { type: "billing", billing });
+
+        await persistSimcarClipArtifacts({
+            uid,
+            jobId,
+            patch: {
+                auasAnalysisImages: [],
+                auasAnalysisMessages: [{ role: "ai", text: result.auasMeta.report.markdown, images: [] }],
+                auasMeta: result.auasMeta,
+            },
+        });
+
+        let reportArtifact: SimcarReportArtifact | undefined;
+        try {
+            sendSSE(res, { type: "progress", step: "generating_report", percent: 99, message: "Gerando PDF técnico da análise..." });
+            reportArtifact = await generateAndPersistSimcarReport({
+                uid,
+                jobId,
+                contextUrl,
+                outputZipUrl,
+                auasText: result.auasMeta.report.markdown,
+                auasImages: [],
+                auasMeta: result.auasMeta,
+            });
+        } catch (reportErr: any) {
+            console.warn("[SIMCAR REPORT] AUAS V2 report generation failed:", reportErr?.message || reportErr);
+            sendSSE(res, { type: "report_error", message: reportErr?.message || "Falha ao gerar PDF técnico." });
+        }
+
+        finishJob({
+            jobId: processingJobId,
+            status: "completed",
+            billingSummary: { chargedBrl: Number(chargedBrl.toFixed(4)) },
+        });
+
+        sendSSE(res, {
+            type: "complete",
+            percent: 100,
+            analysis: result.auasMeta.report.markdown,
+            images: [],
+            layerSummaries: result.layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
+            auasAreaHa: result.auasMeta.summary.totalAuasAreaHa,
+            auasMeta: result.auasMeta,
+            ...(reportArtifact || {}),
+        });
+    } catch (err: any) {
+        if (err instanceof ClientAbortError) {
+            if (billingUid && billingReserved > 0 && billingRequestId) {
+                try {
+                    await refundReserve({
+                        uid: billingUid,
+                        requestId: billingRequestId,
+                        amountBrl: billingReserved,
+                        endpoint: "/api/simcar/clip/analyze-auas",
+                        reason: "client_abort_without_usage",
+                    });
+                    billingReserved = 0;
+                    const cancelFloor = await applyCancelFloorDebit({
+                        uid: billingUid,
+                        requestId: billingRequestId,
+                        endpoint: "/api/simcar/clip/analyze-auas",
+                        chargedBrl,
+                    });
+                    chargedBrl = cancelFloor.finalChargedBrl;
+                } catch (billingErr) {
+                    console.error("[AUAS V2 ANALYSIS] client-abort billing error:", billingErr);
+                }
+            }
+            finishJob({
+                jobId: processingJobId,
+                status: "cancelled",
+                billingSummary: { chargedBrl: Number(chargedBrl.toFixed(4)) },
+                error: "cancel_requested",
+            });
+            return;
+        }
+        if (billingUid && billingReserved > 0 && billingRequestId) {
+            try {
+                await refundReserve({
+                    uid: billingUid,
+                    requestId: billingRequestId,
+                    amountBrl: billingReserved,
+                    endpoint: "/api/simcar/clip/analyze-auas",
+                    reason: "exception",
+                });
+            } catch (refundErr) {
+                console.error("[AUAS V2 ANALYSIS] refund error:", refundErr);
+            }
+        }
+        if (err instanceof BillingError) {
+            finishJob({ jobId: processingJobId, status: "failed", error: err.message });
+            if (!res.headersSent) {
+                res.status(err.statusCode).json({ error: err.message, code: err.code });
+            } else {
+                sendSSE(res, { type: "error", message: err.message, code: err.code });
+            }
+            return;
+        }
+        console.error("[AUAS V2 ANALYSIS] Unexpected error:", err);
+        finishJob({ jobId: processingJobId, status: "failed", error: err?.message || "unexpected_error" });
+        if (res.headersSent) {
+            sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
+        } else {
+            res.status(500).json({ error: err.message || "Erro interno inesperado." });
+        }
+    } finally {
+        if (sseHeartbeat) clearInterval(sseHeartbeat);
+        if (!res.writableEnded) res.end();
+    }
+}
+
+/**
  * Generate composited satellite images for given layers.
  * Returns array of { dataUrl, caption } for each satellite x 3 views.
  */
@@ -7696,6 +7981,26 @@ function reportStatusLabel(value: unknown): string {
     return labels[clean] || (clean ? clean : "Não informado");
 }
 
+const AUAS_PRE2008_STATUS_LABEL: Record<string, string> = {
+    ALERTA_PRE_2008: "Alerta pré-2008",
+    SEM_EVIDENCIA_PRE_2008: "Sem evidência pré-2008",
+    INCONCLUSIVO: "Inconclusivo",
+};
+
+/**
+ * Resumo executivo da seção AUAS no PDF. V2 (schemaVersion 2) usa
+ * pre2008Status/pre2008Alert e nunca o texto "passivo pós-2008" do V1.
+ */
+function formatAuasExecutiveSummaryLine(auasMeta: any): string {
+    if (auasMeta?.schemaVersion === 2) {
+        const statusLabel = AUAS_PRE2008_STATUS_LABEL[String(auasMeta.status || "")] || "Não informado";
+        const alertLabel = auasMeta.pre2008Alert === true ? "Sim" : auasMeta.pre2008Alert === false ? "Não" : "Não informado";
+        const polygonCount = Number(auasMeta.summary?.polygonCount || 0);
+        return `Síntese de AUAS (pré-2008, análise por polígono): ${statusLabel}. Alerta de antropização anterior a 2008: ${alertLabel}. Polígonos AUAS analisados individualmente: ${polygonCount}. O nível de confiança atribuído é ${reportStatusLabel(auasMeta.confidence)}.`;
+    }
+    return `Síntese de AUAS: ${reportStatusLabel(auasMeta.finalStatus)}. Identificação de passivo ambiental: ${auasMeta.passivoAmbiental === true ? "Sim" : auasMeta.passivoAmbiental === false ? "Não" : "Não informado"}. O nível de confiança atribuído a esta análise é ${reportStatusLabel(auasMeta.confidence)}.`;
+}
+
 function selectPrincipalReportImages(acImages: SimcarReportImage[], auasImages: SimcarReportImage[]): SimcarReportImage[] {
     const scoreImage = (img: SimcarReportImage) => {
         const cap = img.caption.toLowerCase();
@@ -7896,7 +8201,7 @@ async function buildSimcarReportPdfBuffer(args: {
         `A análise técnica SIMCAR foi processada com sucesso para o identificador de serviço ${args.jobId}.`,
         `Durante o processamento, foram avaliadas ${totalLayers} camadas ambientais. Identificou-se a presença de dados sobrepostos à propriedade em ${layersWithData} camada(s), resultando no recorte e extração de ${totalFeatures} feição(ões) vetorial(is).`,
         args.analysisText ? `Indicadores de Área Consolidada (AC): ${reportStatusLabel(acMeta.acForaShape)} para áreas fora da poligonal declarada. Indicadores de Vegetação Nativa (AVN): ${reportStatusLabel(acMeta.avnDentroShapeAntropizado)} para antropização dentro da poligonal. O nível de confiança atribuído a esta análise é ${reportStatusLabel(acMeta.confidence)}.` : "",
-        args.auasText ? `Síntese de AUAS: ${reportStatusLabel(auasMeta.finalStatus)}. Identificação de passivo ambiental: ${auasMeta.passivoAmbiental === true ? "Sim" : auasMeta.passivoAmbiental === false ? "Não" : "Não informado"}. O nível de confiança atribuído a esta análise é ${reportStatusLabel(auasMeta.confidence)}.` : "",
+        args.auasText ? formatAuasExecutiveSummaryLine(auasMeta) : "",
     ].filter(Boolean).join("\n\n");
     bodyText(executive, 2200);
 
@@ -8851,6 +9156,10 @@ export function registerSimcarClipRoutes(app: Express) {
 
     // AUAS analysis endpoint (SSE stream)
     app.post("/api/simcar/clip/analyze-auas", async (req: Request, res: Response) => {
+        if (getAuasV2Config().enabled) {
+            await handleAuasAnalyzeV2Route(req, res, sendSseHeaders);
+            return;
+        }
         let billingUid = "";
         let billingRequestId = "";
         let billingReserved = 0;
