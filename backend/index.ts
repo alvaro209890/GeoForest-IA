@@ -12,7 +12,6 @@ import { inflateRawSync } from "zlib";
 import { fileURLToPath } from "url";
 import { registerWfsIntersectionRoutes } from "./wfs-intersection";
 import { createKnowledgeBase } from "./knowledge-base";
-import { requireAuth, attachOptionalAuth } from "./auth";
 import {
   BillingError,
   applyCancelFloorDebit,
@@ -41,8 +40,6 @@ import {
 } from "./geo-utils";
 import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { PORT, IS_DEVELOPMENT, RENDER_INFO, KEEP_ALIVE_URL, KEEP_ALIVE_INTERVAL_MS } from "./config";
-import { createCorsMiddleware } from "./middleware/cors";
-import { createRequestLogger } from "./middleware/request-logger";
 import {
   SEMA_WMS_BASE,
   SEMA_WMS_AUTHKEY,
@@ -76,13 +73,13 @@ import type {
   MapSnapshotPayload,
 } from "./lib/map-utils";
 import { MODEL_CATALOG, MODEL_IDS, IMAGE_ANALYSIS_MODEL, IMAGE_ANALYSIS_FALLBACKS } from "./lib/models-config";
-import { registerAllRoutes } from "./routes/_registry";
 import { getSimcarAiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
+import { createLogger } from "./lib/logger";
+import { createApp } from "./app";
 import { registerSimcarReceiptRoutes } from "./simcar-receipts";
 import { registerApfReceiptRoutes } from "./apf-receipts";
 import { registerCbersWpmRoutes } from "./cbers-wpm";
 import { registerLandsatRoutes } from "./landsat";
-import { CBERS_ARCHIVE_ROOT, registerCbersArchiveAdminRoutes } from "./cbers-archive";
 import { registerVerticesRoutes } from "./vertices-proximas";
 import { registerContainmentRoutes } from "./containment-analysis";
 import { registerOverlapRoutes } from "./overlap-analysis";
@@ -327,33 +324,12 @@ function parseProcesses(): {
 }
 
 async function startServer() {
-  const app = express();
-  const server = createServer(app);
   const bootId = crypto.randomUUID();
   const renderInfo = RENDER_INFO;
-  const logBackend = (
-    event: string,
-    payload: Record<string, unknown>,
-    level: "info" | "warn" | "error" = "info",
-  ) => {
-    const line = JSON.stringify({
-      ts: new Date().toISOString(),
-      level,
-      event,
-      bootId,
-      ...renderInfo,
-      ...payload,
-    });
-    if (level === "error") {
-      console.error(line);
-      return;
-    }
-    if (level === "warn") {
-      console.warn(line);
-      return;
-    }
-    console.log(line);
-  };
+  const logBackend = createLogger(bootId, renderInfo);
+  const app = createApp(logBackend);
+  const server = createServer(app);
+
   process.on("unhandledRejection", (reason: unknown) => {
     logBackend(
       "process_unhandled_rejection",
@@ -379,123 +355,6 @@ async function startServer() {
   if (interruptedJobs > 0) {
     logBackend("processing_jobs_interrupted_on_boot", { count: interruptedJobs }, "warn");
   }
-  app.use(express.json({ limit: "25mb" }));
-
-  // CORS
-  app.use(createCorsMiddleware());
-
-  // HTTP request logger
-  app.use(createRequestLogger(logBackend));
-
-  app.use(
-    [
-      "/api/chat",
-      "/api/chat-stream",
-      "/api/simcar/clip/import-vectorized",
-      "/api/simcar/clip/analyze",
-      "/api/simcar/clip/analyze-auas",
-      "/api/simcar/clip/analyze/chat",
-      "/api/simcar/clip/report",
-      "/api/simcar/receipts/search",
-      /^\/api\/simcar\/receipts\/download\/[^/]+$/,
-      "/api/cbers-wpm/search",
-      "/api/cbers-wpm/estimate",
-      "/api/cbers-wpm/jobs",
-      /^\/api\/cbers-wpm\/jobs\/[^/]+\/status$/,
-      /^\/api\/cbers-wpm\/jobs\/[^/]+\/events$/,
-      /^\/api\/cbers-wpm\/jobs\/[^/]+$/,
-      "/api/landsat/search",
-      "/api/landsat/estimate",
-      "/api/landsat/jobs",
-      /^\/api\/landsat\/jobs\/[^/]+\/status$/,
-      /^\/api\/landsat\/jobs\/[^/]+\/events$/,
-      /^\/api\/landsat\/jobs\/[^/]+$/,
-      "/api/vertices/upload",
-      "/api/vertices/process",
-      /^\/api\/vertices\/jobs\/[^/]+\/status$/,
-      /^\/api\/vertices\/jobs\/[^/]+\/events$/,
-      /^\/api\/vertices\/jobs\/[^/]+$/,
-      /^\/api\/vertices\/download\/[^/]+$/,
-      "/api/containment/upload",
-      "/api/containment/process",
-      /^\/api\/containment\/jobs\/[^/]+\/status$/,
-      /^\/api\/containment\/jobs\/[^/]+\/events$/,
-      /^\/api\/containment\/download\/[^/]+$/,
-      /^\/api\/containment\/jobs\/[^/]+$/,
-      "/api/overlap/upload",
-      "/api/overlap/process",
-      "/api/overlap/sources/health",
-      /^\/api\/overlap\/jobs\/[^/]+\/status$/,
-      /^\/api\/overlap\/jobs\/[^/]+\/events$/,
-      /^\/api\/overlap\/download\/[^/]+$/,
-      /^\/api\/overlap\/jobs\/[^/]+$/,
-      "/api/croqui/upload",
-      "/api/croqui/route-options",
-      "/api/croqui/process",
-      /^\/api\/croqui\/jobs\/[^/]+\/status$/,
-      /^\/api\/croqui\/jobs\/[^/]+\/events$/,
-      /^\/api\/croqui\/download\/[^/]+$/,
-      /^\/api\/croqui\/jobs\/[^/]+$/,
-      "/api/croqui/uploads",
-      "/api/geometry-errors/upload",
-      "/api/geometry-errors/process",
-      /^\/api\/geometry-errors\/jobs\/[^/]+\/status$/,
-      /^\/api\/geometry-errors\/jobs\/[^/]+\/events$/,
-      /^\/api\/geometry-errors\/download\/[^/]+$/,
-      /^\/api\/geometry-errors\/jobs\/[^/]+$/,
-      "/api/processar-projeto/upload",
-      "/api/processar-projeto/importar",
-      "/api/processar-projeto/processar",
-      /^\/api\/processar-projeto\/import\/[^/]+\/pdf$/,
-      /^\/api\/processar-projeto\/jobs\/[^/]+\/status$/,
-      /^\/api\/processar-projeto\/jobs\/[^/]+\/events$/,
-      /^\/api\/processar-projeto\/download\/[^/]+$/,
-      /^\/api\/processar-projeto\/jobs\/[^/]+$/,
-      "/api/simcar-oraculo/health",
-      "/api/simcar-oraculo/test-project",
-      "/api/simcar-oraculo/municipios",
-      "/api/simcar-oraculo/pipeline",
-      "/api/simcar-oraculo/importar",
-      "/api/simcar-oraculo/processar",
-      "/api/simcar-oraculo/shape-preview",
-      /^\/api\/simcar-oraculo\/jobs\/[^/]+$/,
-      /^\/api\/simcar-oraculo\/jobs\/[^/]+\/events$/,
-      /^\/api\/simcar-oraculo\/jobs\/[^/]+\/artifact\/[^/]+$/,
-      /^\/api\/simcar-oraculo\/jobs\/[^/]+\/autofix$/,
-      /^\/api\/simcar-oraculo\/jobs\/[^/]+\/pdf-import$/,
-      /^\/api\/simcar-oraculo\/jobs\/[^/]+\/pdf-process$/,
-      /^\/api\/simcar-oraculo\/jobs\/[^/]+\/erros-zip$/,
-      "/api/croqui/upload",
-      "/api/croqui/route-options",
-      "/api/croqui/process",
-      /^\/api\/croqui\/jobs\/[^/]+\/status$/,
-      /^\/api\/croqui\/jobs\/[^/]+\/events$/,
-      /^\/api\/croqui\/download\/[^/]+\$/,
-      /^\/api\/croqui\/jobs\/[^/]+\$/,
-      "/api/croqui/uploads",
-      "/api/auas-sccon/process",
-      /^\/api\/auas-sccon\/download\/[^/]+$/,
-      "/api/process/cancel",
-      "/api/account/bootstrap",
-      "/api/me",
-      "/api/store/doc",
-      "/api/store/collection",
-      "/api/billing/me",
-      "/api/billing/topups/manual",
-      "/api/billing/ledger",
-    ],
-    requireAuth,
-  );
-  app.use(["/api/upload-image", "/api/upload-file"], attachOptionalAuth);
-  // Artefatos do oráculo exigem ownership via /jobs/:id/artifact/:key; nunca ficam expostos
-  // pelo servidor estático genérico, mesmo que alguém descubra o path relativo no disco.
-  app.use("/api/storage/users/:uid/simcar-oraculo", (_req, res) => {
-    res.status(404).json({ error: "Arquivo não encontrado." });
-  });
-  app.use("/api/storage", express.static(STORAGE_ROOT));
-  app.use("/api/raster", express.static(CBERS_ARCHIVE_ROOT));
-
-  registerAllRoutes(app);
 
   const knowledgeBase = createKnowledgeBase({
     dbRoot: path.resolve(__dirname, "..", "banco_de_dados"),
