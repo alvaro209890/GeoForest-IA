@@ -9,7 +9,7 @@ interface SseEvent {
   downloadUrl?: string;
 }
 
-export function SolicitacaoPrioridadePanel() {
+export default function SolicitacaoPrioridadePanel() {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'done' | 'error'>('idle');
   const [message, setMessage] = useState('');
