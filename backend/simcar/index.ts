@@ -115,6 +115,13 @@ export {
     buildQuantitativeXlsx,
 } from "./area-calculator";
 
+// ── AIR/ATP Generator ──
+export {
+    applyAirIdentificacao,
+    buildDirectCopyLayerRecords,
+} from "./air-atp-generator";
+export type { DirectCopyLayerResult } from "./air-atp-generator";
+
 // ── Funções principais (ainda em ../simcar-clip — migração gradual) ──
 export {
     parseUserShapefile,

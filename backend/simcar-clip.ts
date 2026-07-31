@@ -104,6 +104,7 @@ import {
     type AuasV2Progress,
 } from "./analise-pos-recorte";
 import { createFileCheckpointStore } from "./analise-pos-recorte/checkpoint-store";
+import { buildDirectCopyLayerRecords } from "./simcar/air-atp-generator";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2490,9 +2491,7 @@ async function processClip(
         throwIfClientDisconnected(res);
         const layerName = layerNames[i];
         const current = i + 1;
-
         if (DIRECT_COPY_LAYERS.has(layerName)) {
-            // Category 1: Direct copy of property polygon
             sendSSE(res, {
                 type: "progress",
                 layer: layerName,
@@ -2501,52 +2500,39 @@ async function processClip(
                 status: "copying_property",
             });
 
-            const fieldDefs = templateSchemas.get(layerName) || [
+            const templateFieldDefs = templateSchemas.get(layerName) || [
                 { name: "ID", type: "N" as const, length: 10, decimals: 0 },
             ];
-            const attributes: Record<string, string | number | null> = {};
-            for (const f of fieldDefs) attributes[f.name] = null;
-            if (attributes["ID"] !== undefined) attributes["ID"] = 1;
 
-            // Fill AIR IDENTIFIC field with user-provided identification number
-            if (layerName === "AIR" && airIdentificacao) {
-                // Ensure IDENTIFIC field exists in schema
-                if (!fieldDefs.some((f) => f.name === "IDENTIFIC")) {
-                    fieldDefs.push({ name: "IDENTIFIC", type: "C" as const, length: 50, decimals: 0 });
-                }
-                attributes["IDENTIFIC"] = airIdentificacao;
-            }
+            const result = buildDirectCopyLayerRecords(
+                layerName,
+                userPolygons,
+                templateFieldDefs,
+                airIdentificacao,
+            );
 
-            // Gera um registro por lote do imóvel (sem unir), preservando os
-            // mesmos atributos em todos — inclusive o número da AIR (IDENTIFIC),
-            // que fica idêntico em cada polígono do shape de AIR.
-            const records: ShpRecord[] = [];
-            for (const poly of userPolygons) {
-                const polyGeometry = normalizePolygonGeometry(poly.geometry);
-                if (!polyGeometry) continue;
-                records.push(...geojsonToShpRecords(polyGeometry, attributes));
-            }
-            if (!records.length) {
+            if (!result) {
                 layerSummaries.push({
                     name: layerName,
                     source: "property",
                     features: 0,
-                    warning: "Geometria do imóvel não pôde ser convertida para shapefile.",
+                    warning: "Camada de cópia direta não reconhecida.",
                 });
                 continue;
             }
 
+            if (!result.records.length) {
+                layerSummaries.push(result.summary);
+                continue;
+            }
+
             clippedLayers.set(layerName, {
-                records,
-                fieldDefs,
+                records: result.records,
+                fieldDefs: result.fieldDefs,
             });
 
-            layerSummaries.push({
-                name: layerName,
-                source: "property",
-                features: records.length,
-            });
-            totalFeaturesClipped += records.length;
+            layerSummaries.push(result.summary);
+            totalFeaturesClipped += result.records.length;
             throwIfClientDisconnected(res);
             continue;
         }
