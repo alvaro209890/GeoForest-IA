@@ -5,7 +5,7 @@
  * migram de ../simcar-clip para os novos arquivos.
  */
 
-// ── Tipos (extraídos para simcar/types.ts) ──
+// ── Tipos ──
 export type {
     CachedJob,
     LayerSummary,
@@ -33,7 +33,7 @@ export type {
     SimcarReportImage,
 } from "./types";
 
-// ── Constantes (extraídas para simcar/constants.ts) ──
+// ── Constantes ──
 export {
     MODELO_ZIP_PATH,
     SIMCAR_LOCAL_SHAPES_ROOT,
@@ -74,7 +74,48 @@ export {
     SIMCAR_REPORT_VERSION,
 } from "./constants";
 
-// ── Funções (ainda em ../simcar-clip — migração gradual) ──
+// ── Shapefile I/O ──
+export {
+    extractZipEntriesByExtension,
+    readFullShapefile,
+    getDbfRecordCount,
+    readDbfRecord,
+    bboxIntersects,
+    featureBbox,
+    ringsToFeature,
+} from "./shapefile-io";
+
+// ── Polygon Operations ──
+export {
+    douglasPeucker,
+    perpendicularDistance,
+    simplifyGeometryForOverlay,
+    isPointOrMultiPoint,
+    pointInsidePolygon,
+    pointInsideAnyPolygon,
+    extractPointCoords,
+    unionPolygonFeatures,
+    unionPolygonGeometries,
+    computeAreaHa,
+} from "./polygon-ops";
+
+// ── Attribute Mapping ──
+export {
+    readTemplateSchemas,
+    mapAttributes,
+    setMappedAttribute,
+    applyLayerAttributeRules,
+} from "./attribute-mapper";
+
+// ── Area Calculation ──
+export {
+    dedupeWarnings,
+    appendLayerWarning,
+    inspectPropertyLayerConsistency,
+    buildQuantitativeXlsx,
+} from "./area-calculator";
+
+// ── Funções principais (ainda em ../simcar-clip — migração gradual) ──
 export {
     parseUserShapefile,
     CLIP_SNAP_TOLERANCE_METERS,
