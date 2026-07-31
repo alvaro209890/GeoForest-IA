@@ -43,13 +43,6 @@ import { adminAuth, isFirebaseConfigError } from "./firebase-admin";
 import { PORT, IS_DEVELOPMENT, RENDER_INFO, KEEP_ALIVE_URL, KEEP_ALIVE_INTERVAL_MS } from "./config";
 import { createCorsMiddleware } from "./middleware/cors";
 import { createRequestLogger } from "./middleware/request-logger";
-import { registerStoreRoutes } from "./routes/store";
-import { registerAccountRoutes } from "./routes/account";
-import { registerBillingRoutes } from "./routes/billing";
-import { registerProcessRoutes } from "./routes/process";
-import { registerModelsRoutes } from "./routes/models";
-import { registerMapRoutes } from "./routes/map";
-import { registerGeometryRoutes } from "./routes/geometry";
 import {
   SEMA_WMS_BASE,
   SEMA_WMS_AUTHKEY,
@@ -83,6 +76,7 @@ import type {
   MapSnapshotPayload,
 } from "./lib/map-utils";
 import { MODEL_CATALOG, MODEL_IDS, IMAGE_ANALYSIS_MODEL, IMAGE_ANALYSIS_FALLBACKS } from "./lib/models-config";
+import { registerAllRoutes } from "./routes/_registry";
 import { getSimcarAiRuntimeConfig, registerSimcarClipRoutes } from "./simcar-clip";
 import { registerSimcarReceiptRoutes } from "./simcar-receipts";
 import { registerApfReceiptRoutes } from "./apf-receipts";
@@ -501,25 +495,7 @@ async function startServer() {
   app.use("/api/storage", express.static(STORAGE_ROOT));
   app.use("/api/raster", express.static(CBERS_ARCHIVE_ROOT));
 
-  registerAccountRoutes(app);
-  registerStoreRoutes(app);
-  registerProcessRoutes(app);
-
-  registerWfsIntersectionRoutes(app);
-  registerSimcarClipRoutes(app);
-  registerSimcarReceiptRoutes(app);
-  registerApfReceiptRoutes(app);
-  registerCbersWpmRoutes(app);
-  registerLandsatRoutes(app);
-  registerVerticesRoutes(app);
-  registerContainmentRoutes(app);
-  registerOverlapRoutes(app);
-  registerCroquiRoutes(app);
-  registerGeometryErrorsRoutes(app);
-  registerProcessarProjetoRoutes(app);
-  registerSimcarOraculoRoutes(app);
-  registerAuasScconRoutes(app);
-  registerCbersArchiveAdminRoutes(app);
+  registerAllRoutes(app);
 
   const knowledgeBase = createKnowledgeBase({
     dbRoot: path.resolve(__dirname, "..", "banco_de_dados"),
@@ -528,56 +504,6 @@ async function startServer() {
     summaryMaxTokens: Number(process.env.DB_SUMMARY_MAX_TOKENS ?? "220"),
     summaryEnabled: String(process.env.DB_SUMMARY_ENABLED ?? "true") !== "false",
   });
-
-
-
-  const parseShapefileFirstPolygon = (shpBuffer: Buffer) => {
-    // Returns first polygon ring found (lon/lat), limited to avoid oversized payloads.
-    if (shpBuffer.length < 120) return null;
-    const pointsLimit = 6000;
-    let offset = 100; // skip .shp header
-    while (offset + 12 <= shpBuffer.length) {
-      const contentLengthWords = shpBuffer.readInt32BE(offset + 4);
-      const contentLengthBytes = contentLengthWords * 2;
-      const recStart = offset + 8;
-      const recEnd = recStart + contentLengthBytes;
-      if (recEnd > shpBuffer.length || contentLengthBytes < 4) break;
-
-      const shapeType = shpBuffer.readInt32LE(recStart);
-      if ((shapeType === 5 || shapeType === 15) && contentLengthBytes >= 44) {
-        const numParts = shpBuffer.readInt32LE(recStart + 36);
-        const numPoints = shpBuffer.readInt32LE(recStart + 40);
-        if (numParts > 0 && numPoints > 2) {
-          const partsOffset = recStart + 44;
-          const pointsOffset = partsOffset + numParts * 4;
-          if (pointsOffset + numPoints * 16 <= recEnd) {
-            const partStart = shpBuffer.readInt32LE(partsOffset);
-            const partEnd = numParts > 1 ? shpBuffer.readInt32LE(partsOffset + 4) : numPoints;
-            const end = Math.min(partEnd, numPoints, partStart + pointsLimit);
-            const ring: Array<[number, number]> = [];
-            for (let i = partStart; i < end; i += 1) {
-              const pOff = pointsOffset + i * 16;
-              const x = shpBuffer.readDoubleLE(pOff);
-              const y = shpBuffer.readDoubleLE(pOff + 8);
-              if (Number.isFinite(x) && Number.isFinite(y)) ring.push([x, y]);
-            }
-            if (ring.length >= 3) return ring;
-          }
-        }
-      }
-
-      offset = recEnd;
-    }
-    return null;
-  };
-
-
-
-  registerModelsRoutes(app);
-  registerBillingRoutes(app);
-
-  registerMapRoutes(app);
-  registerGeometryRoutes(app);
 
   const autoSelectModel = (messages: Array<{ role: string; content: any }>) => {
     let hasImage = false;
