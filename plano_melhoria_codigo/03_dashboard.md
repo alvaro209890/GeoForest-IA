@@ -1,8 +1,8 @@
 # Plano: Desmembramento de `client/src/pages/Dashboard.tsx`
 
-**Arquivo atual:** `client/src/pages/Dashboard.tsx` — 9,776 linhas
+**Arquivo atual:** `client/src/pages/Dashboard.tsx` — 9,776 → 8,997 linhas
 **Objetivo:** Separar layout, estado, navegação e sub-páginas em arquivos independentes
-**Status:** 🟡 Em preparação — anatomia mapeada 2026-08-01, extração ainda não iniciada
+**Status:** 🟢 Passos 1–4 concluídos (2026-08-01, commit `54f7f811`) — próximo: Passo 5 (useSimcarClipJobs)
 
 ---
 
