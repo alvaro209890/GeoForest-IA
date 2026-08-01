@@ -42,6 +42,11 @@ export {
   mapContainmentDocToHistoryItem,
   mapGeometryDocToHistoryItem,
 } from './lib/mappers';
+export {
+  normalizeSimcarClipSummary,
+  normalizeSimcarReportPatch,
+  inferSimcarStageFromEndpoint,
+} from './lib/normalizers-simcar';
 export { DashboardSidebarTabs, DASHBOARD_TABS } from './components/DashboardSidebarTabs';
 export {
   CbersMapPreview,
