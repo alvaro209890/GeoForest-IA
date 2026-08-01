@@ -78,6 +78,8 @@ import {
   useChat,
   useErrorsAnalysis,
   DEFAULT_ASSISTANT_MESSAGE,
+  HistoryStatusBadge,
+  HistoryEmptyState,
   toIsoDateFromUnknown,
   mapVerticesDocToHistoryItem,
   mapContainmentDocToHistoryItem,
@@ -5275,24 +5277,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <span className="text-[10px] uppercase tracking-wider font-semibold text-cyan-300">
                         {entry.percent}%
                       </span>
-                      <span
-                        className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
-                          ? 'text-amber-300'
-                          : entry.status === 'completed'
-                            ? 'text-emerald-300'
-                            : entry.status === 'cancelled'
-                              ? 'text-orange-300'
-                              : 'text-red-300'
-                          }`}
-                      >
-                        {entry.status === 'processing'
-                          ? 'Processando'
-                          : entry.status === 'completed'
-                            ? 'Concluído'
-                            : entry.status === 'cancelled'
-                              ? 'Cancelado'
-                              : 'Falhou'}
-                      </span>
+                      <HistoryStatusBadge status={entry.status} />
                     </div>
                   </div>
                   <button
@@ -5332,24 +5317,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <span className="text-[10px] uppercase tracking-wider font-semibold text-sky-300">
                         {entry.percent}%
                       </span>
-                      <span
-                        className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
-                          ? 'text-amber-300'
-                          : entry.status === 'completed'
-                            ? 'text-emerald-300'
-                            : entry.status === 'cancelled'
-                              ? 'text-orange-300'
-                              : 'text-red-300'
-                          }`}
-                      >
-                        {entry.status === 'processing'
-                          ? 'Processando'
-                          : entry.status === 'completed'
-                            ? 'Concluído'
-                            : entry.status === 'cancelled'
-                              ? 'Cancelado'
-                              : 'Falhou'}
-                      </span>
+                      <HistoryStatusBadge status={entry.status} />
                     </div>
                     <p className="mt-0.5 truncate text-[10px] text-slate-500">
                       {entry.scene?.date || entry.scene?.year || 'Landsat'} • {entry.scene?.compositionLabel || entry.composition || 'falsa-cor'}
@@ -5392,24 +5360,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <span className="text-[10px] uppercase tracking-wider font-semibold text-teal-300">
                         {entry.percent}%
                       </span>
-                      <span
-                        className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
-                          ? 'text-amber-300'
-                          : entry.status === 'completed'
-                            ? 'text-emerald-300'
-                            : entry.status === 'cancelled'
-                              ? 'text-orange-300'
-                              : 'text-red-300'
-                          }`}
-                      >
-                        {entry.status === 'processing'
-                          ? 'Processando'
-                          : entry.status === 'completed'
-                            ? 'Concluído'
-                            : entry.status === 'cancelled'
-                              ? 'Cancelado'
-                              : 'Falhou'}
-                      </span>
+                      <HistoryStatusBadge status={entry.status} />
                     </div>
                     <p className="mt-0.5 truncate text-[10px] text-slate-500">
                       {entry.targetCount ? `${entry.targetCount} imóvel(is)` : 'Sobreposições'} • {(entry.modes || []).length} modo(s)
@@ -5452,24 +5403,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <span className="text-[10px] uppercase tracking-wider font-semibold text-amber-300">
                         {entry.percent}%
                       </span>
-                      <span
-                        className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
-                          ? 'text-amber-300'
-                          : entry.status === 'completed'
-                            ? 'text-emerald-300'
-                            : entry.status === 'cancelled'
-                              ? 'text-orange-300'
-                              : 'text-red-300'
-                          }`}
-                      >
-                        {entry.status === 'processing'
-                          ? 'Processando'
-                          : entry.status === 'completed'
-                            ? 'Concluído'
-                            : entry.status === 'cancelled'
-                              ? 'Cancelado'
-                              : 'Falhou'}
-                      </span>
+                      <HistoryStatusBadge status={entry.status} />
                     </div>
                     <p className="mt-0.5 truncate text-[10px] text-slate-500">
                       {entry.municipioNome || 'Croqui'} • {entry.routeLabel || 'PDF + DOCX + KML'}
@@ -5516,24 +5450,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         <span className="text-[10px] uppercase tracking-wider font-semibold text-rose-300">
                           {entry.percent}%
                         </span>
-                        <span
-                          className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
-                            ? 'text-amber-300'
-                            : entry.status === 'completed'
-                              ? 'text-emerald-300'
-                              : entry.status === 'cancelled'
-                                ? 'text-orange-300'
-                                : 'text-red-300'
-                            }`}
-                        >
-                          {entry.status === 'processing'
-                            ? 'Processando'
-                            : entry.status === 'completed'
-                              ? 'Concluído'
-                              : entry.status === 'cancelled'
-                                ? 'Cancelado'
-                                : 'Falhou'}
-                        </span>
+                      <HistoryStatusBadge status={entry.status} />
                       </div>
                       <p className="text-[10px] text-slate-500 mt-0.5 truncate">
                         {(entry.resultRows?.length || 0)} áreas • {entry.containerCount ?? '?'} continentes
@@ -5580,24 +5497,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         <span className="text-[10px] uppercase tracking-wider font-semibold text-amber-300">
                           {entry.percent}%
                         </span>
-                        <span
-                          className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
-                            ? 'text-amber-300'
-                            : entry.status === 'completed'
-                              ? 'text-emerald-300'
-                              : entry.status === 'cancelled'
-                                ? 'text-orange-300'
-                                : 'text-red-300'
-                            }`}
-                        >
-                          {entry.status === 'processing'
-                            ? 'Processando'
-                            : entry.status === 'completed'
-                              ? 'Concluído'
-                              : entry.status === 'cancelled'
-                                ? 'Cancelado'
-                                : 'Falhou'}
-                        </span>
+                      <HistoryStatusBadge status={entry.status} />
                       </div>
                       <p className="text-[10px] text-slate-500 mt-0.5 truncate">
                         {entry.summary?.totalErrors ?? (entry.resultRows?.length || 0)} erros • {entry.summary?.analyzedLayers?.length ?? '?'} camadas
@@ -5641,24 +5541,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <span className="text-[10px] uppercase tracking-wider font-semibold text-violet-300">
                         {entry.percent}%
                       </span>
-                      <span
-                        className={`text-[10px] font-semibold uppercase tracking-wider ${entry.status === 'processing'
-                          ? 'text-amber-300'
-                          : entry.status === 'completed'
-                            ? 'text-emerald-300'
-                            : entry.status === 'cancelled'
-                              ? 'text-orange-300'
-                              : 'text-red-300'
-                          }`}
-                      >
-                        {entry.status === 'processing'
-                          ? 'Processando'
-                          : entry.status === 'completed'
-                            ? 'Concluído'
-                            : entry.status === 'cancelled'
-                              ? 'Cancelado'
-                              : 'Falhou'}
-                      </span>
+                      <HistoryStatusBadge status={entry.status} />
                     </div>
                     <p className="text-[10px] text-slate-500 mt-0.5 truncate">
                       {(entry.resultRows?.length || 0)} par(es) • {(entry.analyzedLayers?.length || 0)} camada(s)
@@ -5703,24 +5586,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       {clip.layersWithData}/{clip.totalLayers} camadas • {clip.totalFeatures} feições
                     </p>
 	                    {clip.status && (
-	                      <p
-                        className={`text-[10px] font-semibold uppercase tracking-wider mt-0.5 ${clip.status === 'processing'
-                          ? 'text-amber-300'
-                          : clip.status === 'completed'
-                            ? 'text-emerald-300'
-                            : clip.status === 'cancelled'
-                              ? 'text-orange-300'
-                              : 'text-red-300'
-                          }`}
-                      >
-	                        {clip.status === 'processing'
-	                          ? 'Processando'
-	                          : clip.status === 'completed'
-	                            ? 'Concluído'
-	                            : clip.status === 'cancelled'
-	                              ? 'Cancelado'
-	                              : 'Falhou'}
-	                      </p>
+                    <HistoryStatusBadge status={clip.status} />
 	                    )}
 	                    {clip.reportPdfStatus === 'ready' && (
 	                      <p className="text-[10px] text-cyan-300 mt-0.5 flex items-center gap-1">

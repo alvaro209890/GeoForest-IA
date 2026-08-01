@@ -54,6 +54,8 @@ export {
   downloadSimcarAnalysisImage,
 } from './lib/download-actions';
 export { DashboardSidebarTabs, DASHBOARD_TABS } from './components/DashboardSidebarTabs';
+export { HistoryStatusBadge } from './components/HistoryStatusBadge';
+export { HistoryEmptyState } from './components/HistoryEmptyState';
 export {
   CbersMapPreview,
   cbersGeometryCoordinates,
