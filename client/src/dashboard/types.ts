@@ -2,6 +2,30 @@
  * Tipos de navegação do Dashboard GeoForest.
  * Fonte única para views, rotas e labels.
  */
+export type {
+  ChatMessage,
+  Conversation,
+  BillingUsageItem,
+  BillingResult,
+  BillingMePayload,
+  SimcarAnalysisMessage,
+  SimcarAnalysisImage,
+  SimcarAcAvnAnalysisMeta,
+  SimcarAuasMetaV1,
+  SimcarAuasMeta,
+  SimcarConversationEntry,
+  SimcarLayerSummary,
+  SimcarClipSummary,
+  SimcarClipHistoryItem,
+  SimcarServerRuntimeState,
+  VerticesLayer,
+  VerticesResultRow,
+  VerticesProgress,
+  VerticesHistoryItem,
+  ContainmentHistoryItem,
+  GeometryHistoryItem,
+  ReceiptHistoryItem,
+} from './types/history';
 
 export type DashboardView =
   | 'simcar-clip'

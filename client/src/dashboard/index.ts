@@ -1,5 +1,29 @@
 export type { DashboardView, DashboardTabId } from './types';
-export { DASHBOARD_VIEW_LABELS } from './types';
+export {
+  DASHBOARD_VIEW_LABELS,
+  type ChatMessage,
+  type Conversation,
+  type BillingUsageItem,
+  type BillingResult,
+  type BillingMePayload,
+  type SimcarAnalysisMessage,
+  type SimcarAnalysisImage,
+  type SimcarAcAvnAnalysisMeta,
+  type SimcarAuasMetaV1,
+  type SimcarAuasMeta,
+  type SimcarConversationEntry,
+  type SimcarLayerSummary,
+  type SimcarClipSummary,
+  type SimcarClipHistoryItem,
+  type SimcarServerRuntimeState,
+  type VerticesLayer,
+  type VerticesResultRow,
+  type VerticesProgress,
+  type VerticesHistoryItem,
+  type ContainmentHistoryItem,
+  type GeometryHistoryItem,
+  type ReceiptHistoryItem,
+} from './types';
 export {
   DASHBOARD_PATH_TO_VIEW,
   DASHBOARD_VIEW_TO_PATH,

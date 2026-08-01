@@ -73,6 +73,28 @@ import {
   useCroquiJobs,
   useDashboardNavigation,
   type DashboardView,
+  type ChatMessage,
+  type Conversation,
+  type BillingUsageItem,
+  type BillingResult,
+  type BillingMePayload,
+  type SimcarAnalysisMessage,
+  type SimcarAnalysisImage,
+  type SimcarAcAvnAnalysisMeta,
+  type SimcarAuasMetaV1,
+  type SimcarAuasMeta,
+  type SimcarConversationEntry,
+  type SimcarLayerSummary,
+  type SimcarClipSummary,
+  type SimcarClipHistoryItem,
+  type SimcarServerRuntimeState,
+  type VerticesLayer,
+  type VerticesResultRow,
+  type VerticesProgress,
+  type VerticesHistoryItem,
+  type ContainmentHistoryItem,
+  type GeometryHistoryItem,
+  type ReceiptHistoryItem,
 } from '@/dashboard';
 import {
   DEFAULT_SETTINGS,
@@ -87,6 +109,28 @@ import {
   readApiError as readApiErrorShared,
   resolveBackendUrl,
 } from '@/lib/api';
+import {
+  sanitizeMessagesForFirestore,
+  isPlainObject,
+  stripUndefinedDeep,
+  toCloudinaryDownloadUrl,
+  toFileProxyUrl,
+  resolveBackendDownloadUrl,
+  renderInlineRichText,
+  renderRichText,
+  renderAnalysisRichText,
+  normalizeImageCaption,
+  normalizeBackendText,
+  removeRoboticAuasLines,
+  buildIntegratedVectorizedReport,
+} from '@/dashboard/lib/format';
+import {
+  formatSimcarAuasStatus,
+  formatSimcarAcAvnVerdict,
+  formatSimcarAcAvnConfidence,
+  formatSimcarAuasVerdict,
+  simcarAuasVerdictClass,
+} from '@/dashboard/lib/formatters-simcar';
 import { fetchSignInMethodsForEmail, onAuthStateChanged, sendPasswordResetEmail, signOut } from 'firebase/auth';
 import {
   collection,
@@ -124,36 +168,6 @@ const CroquiPanel = lazy(() => import('@/dashboard/panels/CroquiPanel'));
 const SolicitacaoPrioridadePanel = lazy(() => import('@/components/SolicitacaoPrioridadePanel'));
 
 type DocumentReference = ReturnType<typeof doc>;
-
-type ChatMessage = {
-  id: string;
-  role: 'ai' | 'user';
-  text: string;
-  time?: string;
-  meta?: {
-    model?: string;
-    imageUrl?: string;
-    fileUrl?: string;
-    fileDownloadUrl?: string;
-    fileName?: string;
-    uploadStatus?: 'uploading' | 'done' | 'error';
-    fileType?: 'image' | 'pdf';
-    thinkingText?: string;
-    billing?: {
-      chargedBrl: number;
-      balanceAfterBrl: number;
-      usage: Array<{
-        provider: string;
-        model: string;
-        inputTokens: number;
-        outputTokens: number;
-        costBrl: number;
-        estimated?: boolean;
-      }>;
-    };
-  };
-};
-
 
 const SIMCAR_MANDATORY_LAYERS = new Set(['AIR', 'ATP']);
 const SIMCAR_FIXED_AC_AVN_SATELLITES: Array<{ key: string; label: string; sensor: string; year: number }> = [
@@ -215,17 +229,6 @@ const REQUIRED_MODELS: Array<{ id: string; label: string; capabilities: string[]
   },
 ];
 
-type Conversation = {
-  id: string;
-  title: string;
-  updatedAt?: any;
-  lastMessagePreview?: string;
-  lastAttachmentType?: 'image' | 'pdf';
-  kind?: string;
-  simcarJobId?: string;
-  verticesJobId?: string;
-  auasJobId?: string;
-};
 
 const DEFAULT_ASSISTANT_MESSAGE: ChatMessage = {
   id: 'seed',
@@ -235,765 +238,6 @@ const DEFAULT_ASSISTANT_MESSAGE: ChatMessage = {
   meta: { model: 'auto' },
 };
 
-type BillingUsageItem = {
-  provider: string;
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  costBrl: number;
-  estimated?: boolean;
-};
-
-type BillingResult = {
-  chargedBrl: number;
-  balanceAfterBrl: number;
-  usage: BillingUsageItem[];
-};
-
-type BillingMePayload = {
-  wallet: {
-    balanceBrl: number;
-    totalTopupBrl: number;
-    totalSpentBrl: number;
-    updatedAt?: any;
-    version?: number;
-  };
-  usageToday: {
-    date: string;
-    totalCostBrl: number;
-    totalInputTokens: number;
-    totalOutputTokens: number;
-    totalRequests: number;
-    models?: Record<string, any>;
-  };
-  modelSnapshot: Array<{
-    model: string;
-    provider: string;
-    inputTokens: number;
-    outputTokens: number;
-    costBrl: number;
-    requests: number;
-  }>;
-};
-
-type SimcarAnalysisMessage = {
-  role: 'ai' | 'user';
-  text: string;
-  images?: string[];
-  thinkingText?: string;
-};
-
-type SimcarAnalysisImage = {
-  url: string;
-  caption: string;
-  sourceLabel?: string;
-};
-
-type SimcarAcAvnAnalysisMeta = {
-  globalVerdict?: {
-    acForaShape?: 'SIM' | 'NAO' | 'INCONCLUSIVO' | null;
-    avnDentroShapeAntropizado?: 'SIM' | 'NAO' | 'INCONCLUSIVO' | null;
-    avnParcialForaShapeMasEmAuas?: 'SIM' | 'NAO' | 'INCONCLUSIVO' | null;
-    confidence?: 'ALTA' | 'MEDIA' | 'BAIXA' | 'INCONCLUSIVO' | null;
-  };
-  satelliteVerdicts?: Array<{
-    key: string;
-    label: string;
-    year: number;
-    status: 'used' | 'missing';
-    acForaShape?: 'SIM' | 'NAO' | 'INCONCLUSIVO' | null;
-    avnDentroShapeAntropizado?: 'SIM' | 'NAO' | 'INCONCLUSIVO' | null;
-    confidence?: 'ALTA' | 'MEDIA' | 'BAIXA' | 'INCONCLUSIVO' | null;
-  }>;
-  coherence?: {
-    isCoherent?: boolean;
-    notes?: string[];
-  };
-  cloudWarnings?: Array<{ satellite: string; cloudScore: number }>;
-  novoCar?: {
-    classification?: {
-      propertyAreaHa?: number;
-      acAreaHa?: number;
-      auasAreaHa?: number;
-      avnAreaHa?: number;
-      riverBufferHa?: number;
-      acPct?: number;
-      auasPct?: number;
-      avnPct?: number;
-      riverBufferPct?: number;
-    };
-    opening?: {
-      year?: number;
-      date?: string;
-      source?: 'PRODES' | 'AI_FALLBACK';
-    };
-    flags?: string[];
-  };
-};
-
-type SimcarAuasMetaV1 = {
-  schemaVersion?: undefined;
-  yearVerdicts?: Array<{
-    satelliteLabel: string;
-    year: number;
-    verdict: 'CONSOLIDADO' | 'VEGETACAO_NATIVA_PRESENTE' | 'DESMATAMENTO_RECENTE' | 'INCONCLUSIVO';
-  }>;
-  firstDeforestationYear?: number | null;
-  finalStatus?: 'AUAS_VALIDA' | 'AUAS_INVALIDA' | 'AUAS_PARCIAL';
-  confidence?: 'ALTA' | 'MEDIA' | 'BAIXA' | 'INCONCLUSIVO';
-  passivoAmbiental?: boolean;
-  qualityFlags?: string[];
-  auasAvnCrossCheck?: {
-    auasAreaHa: number;
-    avnAreaHa: number;
-    overlapAreaHa: number;
-    overlapPctOfAuas: number;
-    overlapPctOfAvn: number;
-    hasAuasOverlapAvn: boolean;
-  } | null;
-  cloudWarnings?: Array<{ satellite: string; cloudScore: number }>;
-  satellitesUsed?: string[];
-  satellitesMissing?: string[];
-  hasAuasVectorizedLayer?: boolean;
-  inferredAuasNotVectorized?: boolean;
-};
-
-type SimcarAuasMeta = SimcarAuasMetaV1 | SimcarAuasMetaV2;
-
-type SimcarConversationEntry = {
-  role: 'ai' | 'user';
-  text: string;
-  meta?: Partial<NonNullable<ChatMessage['meta']>>;
-};
-
-type SimcarLayerSummary = {
-  name: string;
-  source: 'property' | 'wfs';
-  features: number;
-  areaHa?: number;
-  warning?: string;
-  partial?: boolean;
-};
-
-type SimcarClipSummary = {
-  propertyAreaHa: number;
-  crs: string;
-  layersProcessed: number;
-  layersWithData: number;
-  totalFeaturesClipped: number;
-  processingTimeMs: number;
-  layers: SimcarLayerSummary[];
-  warnings?: string[];
-};
-
-type SimcarClipHistoryItem = {
-  id: string;
-  timestamp: string;
-  filename: string;
-  downloadUrl: string;
-  totalFeatures: number;
-  propertyAreaHa: number;
-  layersWithData: number;
-  totalLayers: number;
-  jobId: string;
-  conversationId?: string;
-  inputZipUrl?: string;
-  outputZipUrl?: string;
-  contextUrl?: string;
-  sourceMode?: 'auto-clip' | 'vectorized-analysis';
-  processingStage?: 'importing' | 'acavn' | 'auas' | 'done' | 'error';
-  analysisImages?: Array<{ url: string; caption: string }>;
-  analysisMessages?: SimcarAnalysisMessage[];
-  analysisMeta?: SimcarAcAvnAnalysisMeta;
-  auasAnalysisImages?: Array<{ url: string; caption: string }>;
-  auasAnalysisMessages?: SimcarAnalysisMessage[];
-  auasMeta?: SimcarAuasMeta;
-  reportPdfUrl?: string;
-  reportPdfDownloadUrl?: string;
-  reportPdfFilename?: string;
-  reportPdfGeneratedAt?: string;
-  reportPdfVersion?: string;
-  reportPdfStatus?: 'generating' | 'ready' | 'failed';
-  reportPdfError?: string;
-  summary?: SimcarClipSummary;
-  status?: 'processing' | 'completed' | 'failed' | 'cancelled';
-  error?: string;
-};
-
-type SimcarServerRuntimeState = {
-  latestStatus: string;
-  latestEndpoint: string;
-  hasRunningJob: boolean;
-  hasCompletedImport: boolean;
-  hasCompletedAnalyze: boolean;
-  hasCompletedAuas: boolean;
-};
-
-type VerticesLayer = {
-  id: string;
-  name: string;
-  path?: string;
-  geometryType: string;
-  featureCount: number;
-  crsLabel: string;
-  missingCrs: boolean;
-  ignoredReason?: string;
-  analyze: boolean;
-  pointCount: number;
-  toleranceMm: string;
-  crsOverride: string;
-  status?: string;
-};
-
-type VerticesResultRow = {
-  camada: string;
-  ranking: number;
-  feicao: number;
-  parte: number;
-  anel: number;
-  vertice_a: number;
-  vertice_b: number;
-  dist_m: number;
-  dist_cm: number;
-  dist_mm: number;
-  x_medio: number;
-  y_medio: number;
-  [key: string]: any;
-};
-
-type VerticesProgress = {
-  stage: string;
-  percent: number;
-  message: string;
-  layer?: string;
-};
-
-type VerticesHistoryItem = {
-  id: string;
-  jobId: string;
-  filename: string;
-  timestamp: string;
-  status: 'processing' | 'completed' | 'failed' | 'cancelled' | 'uploaded' | 'deleted' | 'queued';
-  stage?: string;
-  percent: number;
-  message?: string;
-  error?: string;
-  downloadUrl?: string;
-  outputUrl?: string;
-  outputBytes?: number;
-  resultRows?: VerticesResultRow[];
-  warnings?: string[];
-  analyzedLayers?: Array<{ name: string; requested: number; found: number; crsLabel?: string; metricCrsLabel?: string }>;
-  conversationId?: string;
-};
-
-type ContainmentHistoryItem = {
-  id: string;
-  jobId: string;
-  filename: string;
-  timestamp: string;
-  status: 'processing' | 'completed' | 'failed' | 'cancelled' | 'uploaded' | 'deleted' | 'queued';
-  stage?: string;
-  percent: number;
-  message?: string;
-  error?: string;
-  downloadUrl?: string;
-  outputUrl?: string;
-  outputBytes?: number;
-  resultRows?: ContainmentRow[];
-  summary?: ContainmentSummary;
-  warnings?: string[];
-  targetLayerName?: string;
-  containerCount?: number;
-};
-
-type GeometryHistoryItem = {
-  id: string;
-  jobId: string;
-  filename: string;
-  timestamp: string;
-  status: 'processing' | 'completed' | 'failed' | 'cancelled' | 'uploaded' | 'deleted' | 'queued';
-  stage?: string;
-  percent: number;
-  message?: string;
-  error?: string;
-  downloadUrl?: string;
-  resultRows?: GeometryErrorRow[];
-  warnings?: string[];
-  summary?: GeometrySummary;
-};
-
-type ReceiptHistoryItem = {
-  id: string;
-  receiptId: string;
-  type: 'simcar' | 'apf';
-  filename: string;
-  timestamp: string;
-  status: 'completed' | 'failed';
-  downloadUrl?: string;
-  error?: string;
-  cpf?: string;
-  car?: string;
-  sizeBytes?: number;
-};
-
-const sanitizeMessagesForFirestore = (msgs: ChatMessage[]) =>
-  msgs.map((m) => {
-    const meta = m.meta
-      ? Object.fromEntries(Object.entries(m.meta).filter(([, v]) => v !== undefined))
-      : undefined;
-    const clean = {
-      ...m,
-      meta: meta && Object.keys(meta).length > 0 ? meta : undefined,
-    };
-    if (!clean.meta) delete (clean as any).meta;
-    return clean;
-  });
-
-const isPlainObject = (value: unknown): value is Record<string, any> => {
-  if (!value || typeof value !== 'object') return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-};
-
-const stripUndefinedDeep = <T,>(value: T): T => {
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => stripUndefinedDeep(item))
-      .filter((item) => item !== undefined) as T;
-  }
-  if (isPlainObject(value)) {
-    const out: Record<string, any> = {};
-    Object.entries(value).forEach(([key, item]) => {
-      const clean = stripUndefinedDeep(item);
-      if (clean !== undefined) out[key] = clean;
-    });
-    return out as T;
-  }
-  return (value === undefined ? undefined : value) as T;
-};
-
-const toCloudinaryDownloadUrl = (url?: string) => {
-  if (!url) return '';
-  if (url.includes('/upload/fl_attachment/')) return url;
-  if (url.includes('/upload/')) return url.replace('/upload/', '/upload/fl_attachment/');
-  return url;
-};
-
-const toFileProxyUrl = (url?: string, name?: string, mode: 'inline' | 'download' = 'inline') => {
-  if (!url) return '';
-  const safeName = (name || 'documento.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
-  return apiUrl(
-    `/api/file-proxy?mode=${mode}&url=${encodeURIComponent(url)}&name=${encodeURIComponent(safeName)}`
-  );
-};
-
-const resolveBackendDownloadUrl = (downloadUrl?: string, persistentUrl?: string) => {
-  const persistent = resolveBackendUrl(persistentUrl);
-  if (persistent) return persistent;
-  return resolveBackendUrl(downloadUrl);
-};
-
-
-
-
-
-const renderInlineRichText = (text: string) => {
-  const parts: React.ReactNode[] = [];
-  const tokenRegex = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g;
-  let cursor = 0;
-  let match: RegExpExecArray | null;
-  let idx = 0;
-
-  while ((match = tokenRegex.exec(text)) !== null) {
-    if (match.index > cursor) {
-      parts.push(<span key={`txt-${idx++}`}>{text.slice(cursor, match.index)}</span>);
-    }
-    const token = match[0];
-    if (token.startsWith('**') && token.endsWith('**')) {
-      parts.push(<strong key={`b-${idx++}`}>{token.slice(2, -2)}</strong>);
-    } else if (token.startsWith('`') && token.endsWith('`')) {
-      parts.push(<code key={`c-${idx++}`}>{token.slice(1, -1)}</code>);
-    } else if (token.startsWith('*') && token.endsWith('*')) {
-      parts.push(<em key={`i-${idx++}`}>{token.slice(1, -1)}</em>);
-    } else {
-      parts.push(<span key={`u-${idx++}`}>{token}</span>);
-    }
-    cursor = match.index + token.length;
-  }
-
-  if (cursor < text.length) {
-    parts.push(<span key={`txt-${idx++}`}>{text.slice(cursor)}</span>);
-  }
-
-  return parts;
-};
-
-const isMarkdownTableSeparator = (line: string) =>
-  /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line.trim());
-
-const splitMarkdownTableRow = (line: string) => {
-  const trimmed = String(line || '').trim();
-  if (!trimmed.includes('|')) return [];
-  const noEdgePipes = trimmed.replace(/^\|/, '').replace(/\|$/, '');
-  const parts = noEdgePipes.split('|').map((cell) => cell.trim());
-  return parts.filter((cell, idx) => cell.length > 0 || idx < parts.length - 1);
-};
-
-const renderRichText = (text: string) => {
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
-  const nodes: React.ReactNode[] = [];
-  let i = 0;
-  let key = 0;
-
-  while (i < lines.length) {
-    const rawLine = lines[i];
-    const trimmed = rawLine.trim();
-
-    if (!trimmed) {
-      nodes.push(<div key={`chat-gap-${key++}`} className="chat-gap" />);
-      i += 1;
-      continue;
-    }
-
-    const tableHeader = splitMarkdownTableRow(rawLine);
-    const nextLine = lines[i + 1] || '';
-    if (tableHeader.length >= 2 && isMarkdownTableSeparator(nextLine)) {
-      const bodyRows: string[][] = [];
-      let cursor = i + 2;
-      while (cursor < lines.length) {
-        const rowLine = lines[cursor];
-        const rowTrimmed = rowLine.trim();
-        if (!rowTrimmed || !rowTrimmed.includes('|')) break;
-        if (isMarkdownTableSeparator(rowLine)) {
-          cursor += 1;
-          continue;
-        }
-        const cells = splitMarkdownTableRow(rowLine);
-        if (cells.length < 2) break;
-        bodyRows.push(cells);
-        cursor += 1;
-      }
-      const cols = Math.max(tableHeader.length, ...bodyRows.map((r) => r.length));
-      const normalizedHeader = Array.from({ length: cols }, (_, idx) => tableHeader[idx] || '');
-      const normalizedBody = bodyRows.map((row) => Array.from({ length: cols }, (_, idx) => row[idx] || ''));
-      nodes.push(
-        <div key={`chat-table-wrap-${key++}`} className="chat-table-wrap">
-          <table className="chat-table">
-            <thead>
-              <tr>
-                {normalizedHeader.map((cell, idx) => (
-                  <th key={`chat-th-${idx}`}>{renderInlineRichText(cell)}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {normalizedBody.map((row, rowIdx) => (
-                <tr key={`chat-tr-${rowIdx}`}>
-                  {row.map((cell, cellIdx) => (
-                    <td key={`chat-td-${rowIdx}-${cellIdx}`}>{renderInlineRichText(cell)}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-      i = cursor;
-      continue;
-    }
-
-    const title = trimmed.match(/^(#{1,3})\s+(.+)$/);
-    if (title) {
-      nodes.push(
-        <p key={`chat-title-${key++}`} className="chat-p font-semibold text-slate-100">
-          {renderInlineRichText(title[2])}
-        </p>
-      );
-      i += 1;
-      continue;
-    }
-
-    const numbered = trimmed.match(/^(\d+)[.)]\s+(.+)$/);
-    if (numbered) {
-      nodes.push(
-        <div key={`chat-ol-${key++}`} className="pl-2">
-          <span className="mr-2 text-emerald-300">{numbered[1]}.</span>
-          {renderInlineRichText(numbered[2])}
-        </div>
-      );
-      i += 1;
-      continue;
-    }
-
-    const bulletMatch = trimmed.match(/^[-*•]\s+(.*)$/);
-    if (bulletMatch) {
-      nodes.push(
-        <div key={`chat-ul-${key++}`} className="pl-2">
-          <span className="mr-2 text-emerald-300">•</span>
-          {renderInlineRichText(bulletMatch[1])}
-        </div>
-      );
-      i += 1;
-      continue;
-    }
-
-    const quote = trimmed.match(/^>\s+(.+)$/);
-    if (quote) {
-      nodes.push(
-        <div key={`chat-quote-${key++}`} className="border-l-2 border-emerald-500/40 pl-3 text-slate-300/95">
-          {renderInlineRichText(quote[1])}
-        </div>
-      );
-      i += 1;
-      continue;
-    }
-
-    nodes.push(
-      <p key={`chat-p-${key++}`} className="chat-p">
-        {renderInlineRichText(rawLine)}
-      </p>
-    );
-    i += 1;
-  }
-
-  return nodes;
-};
-
-const renderAnalysisRichText = (text: string) => {
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
-  const nodes: React.ReactNode[] = [];
-  let i = 0;
-  let key = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
-    if (!trimmed) {
-      nodes.push(<div key={`analysis-gap-${key++}`} className="analysis-gap" />);
-      i += 1;
-      continue;
-    }
-
-    const tableHeader = splitMarkdownTableRow(line);
-    const nextLine = lines[i + 1] || '';
-    if (tableHeader.length >= 2 && isMarkdownTableSeparator(nextLine)) {
-      const bodyRows: string[][] = [];
-      let cursor = i + 2;
-      while (cursor < lines.length) {
-        const rowLine = lines[cursor];
-        const rowTrimmed = rowLine.trim();
-        if (!rowTrimmed || !rowTrimmed.includes('|')) break;
-        if (isMarkdownTableSeparator(rowLine)) {
-          cursor += 1;
-          continue;
-        }
-        const cells = splitMarkdownTableRow(rowLine);
-        if (cells.length < 2) break;
-        bodyRows.push(cells);
-        cursor += 1;
-      }
-      const cols = Math.max(tableHeader.length, ...bodyRows.map((r) => r.length));
-      const normalizedHeader = Array.from({ length: cols }, (_, idx) => tableHeader[idx] || '');
-      const normalizedBody = bodyRows.map((row) => Array.from({ length: cols }, (_, idx) => row[idx] || ''));
-      nodes.push(
-        <div key={`analysis-table-wrap-${key++}`} className="chat-table-wrap">
-          <table className="chat-table">
-            <thead>
-              <tr>
-                {normalizedHeader.map((cell, idx) => (
-                  <th key={`analysis-th-${idx}`}>{renderInlineRichText(cell)}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {normalizedBody.map((row, rowIdx) => (
-                <tr key={`analysis-tr-${rowIdx}`}>
-                  {row.map((cell, cellIdx) => (
-                    <td key={`analysis-td-${rowIdx}-${cellIdx}`}>{renderInlineRichText(cell)}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-      i = cursor;
-      continue;
-    }
-
-    const divider = trimmed.match(/^[-_*]{3,}$/);
-    if (divider) {
-      nodes.push(<div key={`analysis-divider-${key++}`} className="analysis-divider" />);
-      i += 1;
-      continue;
-    }
-
-    const title = trimmed.match(/^(#{1,3})\s+(.+)$/);
-    if (title) {
-      const level = title[1].length;
-      const klass = level === 1 ? 'analysis-h1' : level === 2 ? 'analysis-h2' : 'analysis-h3';
-      nodes.push(
-        <div key={`analysis-title-${key++}`} className={klass}>
-          {renderInlineRichText(title[2])}
-        </div>
-      );
-      i += 1;
-      continue;
-    }
-
-    const numbered = trimmed.match(/^(\d+)[.)]\s+(.+)$/);
-    if (numbered) {
-      nodes.push(
-        <div key={`analysis-ol-${key++}`} className="analysis-item">
-          <span className="analysis-marker">{numbered[1]}.</span>
-          <span className="analysis-content">{renderInlineRichText(numbered[2])}</span>
-        </div>
-      );
-      i += 1;
-      continue;
-    }
-
-    const bullet = trimmed.match(/^[-*•]\s+(.+)$/);
-    if (bullet) {
-      nodes.push(
-        <div key={`analysis-ul-${key++}`} className="analysis-item">
-          <span className="analysis-marker">•</span>
-          <span className="analysis-content">{renderInlineRichText(bullet[1])}</span>
-        </div>
-      );
-      i += 1;
-      continue;
-    }
-
-    const quote = trimmed.match(/^>\s+(.+)$/);
-    if (quote) {
-      nodes.push(
-        <div key={`analysis-quote-${key++}`} className="analysis-quote">
-          {renderInlineRichText(quote[1])}
-        </div>
-      );
-      i += 1;
-      continue;
-    }
-
-    nodes.push(
-      <p key={`analysis-p-${key++}`} className="analysis-p">
-        {renderInlineRichText(line)}
-      </p>
-    );
-    i += 1;
-  }
-
-  return nodes;
-};
-
-const normalizeImageCaption = (rawCaption: string): string => {
-  const input = String(rawCaption || '').trim();
-  if (!input) return 'Imagem';
-  const suspicious = /Ã|Â|â€”|â€“|â€˜|â€™|â€œ|â€|â€¦/.test(input);
-  if (!suspicious) return input;
-  try {
-    const bytes = Uint8Array.from(Array.from(input).map((ch) => ch.charCodeAt(0) & 0xff));
-    const decoded = new TextDecoder('utf-8').decode(bytes).trim();
-    if (decoded && !/Ã|Â|â€”|â€“|â€˜|â€™|â€œ|â€|â€¦/.test(decoded)) {
-      return decoded;
-    }
-  } catch {
-    // fallback below
-  }
-  return input
-    .replace(/â€”/g, '—')
-    .replace(/â€“/g, '–')
-    .replace(/â€˜/g, '‘')
-    .replace(/â€™/g, '’')
-    .replace(/â€œ/g, '“')
-    .replace(/â€/g, '”')
-    .replace(/â€¦/g, '…')
-    .replace(/Ã§/g, 'ç')
-    .replace(/Ã£/g, 'ã')
-    .replace(/Ã¡/g, 'á')
-    .replace(/Ã©/g, 'é')
-    .replace(/Ã­/g, 'í')
-    .replace(/Ã³/g, 'ó')
-    .replace(/Ãº/g, 'ú')
-    .replace(/Ã‰/g, 'É')
-    .replace(/Ã‡/g, 'Ç')
-    .replace(/\s+/g, ' ')
-    .trim();
-};
-
-const normalizeBackendText = (rawText: string): string => {
-  const normalized = normalizeImageCaption(String(rawText || ''));
-  return normalized || String(rawText || '');
-};
-
-const removeRoboticAuasLines = (rawText: string): string => {
-  const text = String(rawText || '');
-  return text
-    .split('\n')
-    .filter((line) => {
-      const l = line.trim();
-      if (!l) return true;
-      if (/^[-*•]?\s*STATUS_FINAL\s*=/i.test(l)) return false;
-      if (/^[-*•]?\s*ANO_PROVAVEL_INICIO_DESMATE\s*=/i.test(l)) return false;
-      return true;
-    })
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-};
-
-const buildIntegratedVectorizedReport = (acAvnText: string, auasText: string): string => {
-  const acText = String(acAvnText || '').trim();
-  const auasClean = removeRoboticAuasLines(auasText);
-  return [
-    '## Analise Integrada SIMCAR',
-    '',
-    '### Validacao AC e AVN',
-    acText || 'Sem dados consolidados de AC/AVN.',
-    '',
-    '### Validacao AUAS',
-    auasClean || 'Sem dados consolidados de AUAS.',
-  ]
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-};
-
-const formatSimcarAuasStatus = (status?: SimcarAuasMetaV1['finalStatus']) => {
-  if (status === 'AUAS_VALIDA') return { label: 'AUAS válida', className: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200' };
-  if (status === 'AUAS_INVALIDA') return { label: 'AUAS inválida', className: 'border-red-500/25 bg-red-500/10 text-red-200' };
-  if (status === 'AUAS_PARCIAL') return { label: 'Revisão parcial', className: 'border-amber-500/25 bg-amber-500/10 text-amber-200' };
-  return { label: 'Sem status', className: 'border-white/10 bg-white/5 text-slate-300' };
-};
-
-const formatSimcarAcAvnVerdict = (verdict?: 'SIM' | 'NAO' | 'INCONCLUSIVO' | null) => {
-  if (verdict === 'SIM') return { label: 'Sim', className: 'border-red-500/25 bg-red-500/10 text-red-200' };
-  if (verdict === 'NAO') return { label: 'Não', className: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' };
-  return { label: 'Inconclusivo', className: 'border-amber-500/25 bg-amber-500/10 text-amber-200' };
-};
-
-const formatSimcarAcAvnConfidence = (confidence?: 'ALTA' | 'MEDIA' | 'BAIXA' | 'INCONCLUSIVO' | null) => {
-  if (confidence === 'ALTA') return { label: 'Alta', className: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' };
-  if (confidence === 'MEDIA') return { label: 'Média', className: 'border-blue-500/20 bg-blue-500/10 text-blue-200' };
-  if (confidence === 'BAIXA') return { label: 'Baixa', className: 'border-amber-500/25 bg-amber-500/10 text-amber-200' };
-  return { label: 'Inconclusiva', className: 'border-slate-500/20 bg-slate-500/10 text-slate-300' };
-};
-
-const formatSimcarAuasVerdict = (verdict: NonNullable<SimcarAuasMetaV1['yearVerdicts']>[number]['verdict']) => {
-  if (verdict === 'CONSOLIDADO') return 'Consolidado';
-  if (verdict === 'VEGETACAO_NATIVA_PRESENTE') return 'Vegetação nativa';
-  if (verdict === 'DESMATAMENTO_RECENTE') return 'Supressão pós-2008';
-  return 'Inconclusivo';
-};
-
-const simcarAuasVerdictClass = (verdict: NonNullable<SimcarAuasMetaV1['yearVerdicts']>[number]['verdict']) => {
-  if (verdict === 'CONSOLIDADO') return 'border-blue-500/20 bg-blue-500/10 text-blue-200';
-  if (verdict === 'VEGETACAO_NATIVA_PRESENTE') return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200';
-  if (verdict === 'DESMATAMENTO_RECENTE') return 'border-red-500/20 bg-red-500/10 text-red-200';
-  return 'border-slate-500/20 bg-slate-500/10 text-slate-300';
-};
 
 interface DashboardProps {
   initialView?: DashboardView;
@@ -3913,28 +3157,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   };
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   const updateConversationMeta = async (updatedMessages: ChatMessage[], lastUserText: string) => {
     if (!activeConversationRef) return;
     const title =
@@ -6168,7 +5390,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       typingText,
     ]
   );
-
 
 
   // Custom components
