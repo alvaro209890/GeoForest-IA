@@ -15,9 +15,35 @@ import { fileURLToPath } from "node:url";
 import { extractZipEntries } from "./geo-utils";
 import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
 import { requireAuth } from "./auth";
+import { stripUndefinedDeep, writeDocBySegments } from "./local-storage";
 import type { Logger } from "./lib/logger";
 
 const subscribers = new Map<string, Set<Response>>();
+
+/** UID real vindo do requireAuth (req.authUid). Nunca usar req.user?.uid. */
+function getAuthUid(req: Request): string {
+  return String((req as any).authUid || "").trim() || "anonymous";
+}
+
+/** Persiste o job no "banco" (local-storage) igual ao recorte SIMCAR (simcar_clips). */
+function persistSolicitacaoJob(args: {
+  uid: string;
+  jobId: string;
+  patch: Record<string, unknown>;
+}): void {
+  const uid = String(args.uid || "").trim();
+  const jobId = String(args.jobId || "").trim();
+  if (!uid || !jobId || !args.patch || typeof args.patch !== "object") return;
+  try {
+    writeDocBySegments(
+      ["users", uid, "solicitacao_prioridade_jobs", jobId],
+      stripUndefinedDeep(args.patch),
+      { merge: true }
+    );
+  } catch (error) {
+    console.warn("[SOLICITACAO] falha ao persistir job:", error);
+  }
+}
 
 function writeSse(res: Response, data: Record<string, unknown>): void {
   if (res.writableEnded || res.destroyed) return;
@@ -47,9 +73,28 @@ function parseBase64Zip(raw: unknown): Buffer {
 }
 
 async function handleProcess(req: Request, res: Response): Promise<void> {
-  const uid = (req as any).user?.uid || "anonymous";
+  const uid = getAuthUid(req);
   const job = startJob({ uid, endpoint: "/api/solicitacao-prioridade/process" });
   const jobId = job.jobId;
+
+  // Persiste o job no banco assim que inicia (status: processing) — igual ao recorte SIMCAR.
+  persistSolicitacaoJob({
+    uid,
+    jobId,
+    patch: {
+      id: jobId,
+      jobId,
+      kind: "solicitacao_prioridade",
+      status: "processing",
+      title: "Solicitação de Prioridade",
+      filename: String((req.body as any)?.filename || "solicitacao.zip").trim(),
+      downloadUrl: null,
+      error: null,
+      pdfCount: 0,
+      timestamp: new Date().toISOString(),
+      updatedAtMs: Date.now(),
+    },
+  });
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -169,11 +214,36 @@ async function handleProcess(req: Request, res: Response): Promise<void> {
       message: "Documentos preenchidos com sucesso!",
     });
 
+    // Persiste o job como concluído — fica salvo no banco para listar depois.
+    persistSolicitacaoJob({
+      uid,
+      jobId,
+      patch: {
+        status: "completed",
+        downloadUrl: `/api/solicitacao-prioridade/download/${jobId}`,
+        pdfCount: pdfFiles.length,
+        error: null,
+        updatedAtMs: Date.now(),
+      },
+    });
+
     finishJob({ jobId, status: "completed" });
   } catch (err: any) {
     const message = err?.message || String(err);
     const cancelled = message === "cancel_requested";
     writeSse(res, { type: cancelled ? "cancelled" : "error", jobId, message });
+
+    // Persiste falha/cancelamento no banco.
+    persistSolicitacaoJob({
+      uid,
+      jobId,
+      patch: {
+        status: cancelled ? "cancelled" : "failed",
+        error: message,
+        updatedAtMs: Date.now(),
+      },
+    });
+
     finishJob({ jobId, status: cancelled ? "cancelled" : "failed", error: message });
   } finally {
     if (tmpDir) {
@@ -188,7 +258,7 @@ async function handleProcess(req: Request, res: Response): Promise<void> {
 
 async function handleDownload(req: Request, res: Response): Promise<void> {
   const { jobId } = req.params;
-  const uid = (req as any).user?.uid || "anonymous";
+  const uid = getAuthUid(req);
 
   const storageDir = path.join(
     process.env.STORAGE_ROOT || os.tmpdir(),
