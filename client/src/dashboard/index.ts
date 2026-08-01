@@ -33,6 +33,8 @@ export {
 export { useDashboardNavigation } from './hooks/useDashboardNavigation';
 export { useSimcarClipJobs } from './hooks/useSimcarClipJobs';
 export { useSimcarAnalysis } from './hooks/useSimcarAnalysis';
+export { useChat } from './hooks/useChat';
+export { DEFAULT_ASSISTANT_MESSAGE } from './lib/chatDefaults';
 export { DashboardSidebarTabs, DASHBOARD_TABS } from './components/DashboardSidebarTabs';
 export {
   CbersMapPreview,
