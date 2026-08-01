@@ -47,6 +47,11 @@ export {
   normalizeSimcarReportPatch,
   inferSimcarStageFromEndpoint,
 } from './lib/normalizers-simcar';
+export {
+  downloadSimcarZip,
+  openSimcarPdfInNewTab,
+  downloadSimcarAnalysisImage,
+} from './lib/download-actions';
 export { DashboardSidebarTabs, DASHBOARD_TABS } from './components/DashboardSidebarTabs';
 export {
   CbersMapPreview,
