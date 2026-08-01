@@ -33,6 +33,7 @@ export {
 export { useDashboardNavigation } from './hooks/useDashboardNavigation';
 export { useSimcarClipJobs } from './hooks/useSimcarClipJobs';
 export { useSimcarAnalysis } from './hooks/useSimcarAnalysis';
+export { useSimcarClipActions } from './hooks/useSimcarClipActions';
 export { useChat } from './hooks/useChat';
 export { useErrorsAnalysis } from './hooks/useErrorsAnalysis';
 export { DEFAULT_ASSISTANT_MESSAGE } from './lib/chatDefaults';
