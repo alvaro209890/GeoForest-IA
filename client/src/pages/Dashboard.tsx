@@ -73,6 +73,7 @@ import {
   useCroquiJobs,
   useDashboardNavigation,
   useSimcarClipJobs,
+  useSimcarAnalysis,
   type DashboardView,
   type ChatMessage,
   type Conversation,
@@ -345,40 +346,57 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     loadSimcarClipLayers,
   } = useSimcarClipJobs();
 
-  // ─── SIMCAR AI Analysis State ───
-  const [simcarAnalysisProcessing, setSimcarAnalysisProcessing] = useState(false);
-  const [simcarAnalysisProgress, setSimcarAnalysisProgress] = useState<{ step: string; percent: number; message: string } | null>(null);
-  const [simcarAgentLog, setSimcarAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
-  const [simcarAnalysisImages, setSimcarAnalysisImages] = useState<SimcarAnalysisImage[]>([]);
-  const [simcarAnalysisMessages, setSimcarAnalysisMessages] = useState<SimcarAnalysisMessage[]>([]);
-  const [simcarThinkingText, setSimcarThinkingText] = useState('');
-  const [simcarThinkingHidden, setSimcarThinkingHidden] = useState(false);
-  const [simcarAnalysisInput, setSimcarAnalysisInput] = useState('');
-  const [simcarAnalysisSending, setSimcarAnalysisSending] = useState(false);
-  const [simcarLiveThinkingText, setSimcarLiveThinkingText] = useState('');
-  const [simcarLiveAnswerText, setSimcarLiveAnswerText] = useState('');
-  const simcarAnalysisChatRef = useRef<HTMLDivElement | null>(null);
-  const simcarThinkingPanelRef = useRef<HTMLDivElement | null>(null);
-  const simcarLiveAnswerPanelRef = useRef<HTMLDivElement | null>(null);
-  const simcarAgentLogEndRef = useRef<HTMLDivElement | null>(null);
-  const simcarAnalysisAbortRef = useRef<AbortController | null>(null);
-  const simcarAnalysisProcessJobIdRef = useRef<string | null>(null);
-  const [simcarAnalysisStartTime, setSimcarAnalysisStartTime] = useState<number | null>(null);
-  const [simcarElapsed, setSimcarElapsed] = useState(0);
-
-  // ─── SIMCAR AUAS Analysis State ───
-  const [simcarAuasProcessing, setSimcarAuasProcessing] = useState(false);
-  const [simcarAuasProgress, setSimcarAuasProgress] = useState<{ step: string; percent: number; message: string } | null>(null);
-  const [simcarAuasImages, setSimcarAuasImages] = useState<SimcarAnalysisImage[]>([]);
-  const [simcarImagePreview, setSimcarImagePreview] = useState<SimcarAnalysisImage | null>(null);
-  const [simcarAuasMessages, setSimcarAuasMessages] = useState<SimcarAnalysisMessage[]>([]);
-  const [simcarAuasAgentLog, setSimcarAuasAgentLog] = useState<Array<{ label: string; done: boolean; kind: 'step' | 'thinking' }>>([]);
-  const simcarAuasAbortRef = useRef<AbortController | null>(null);
-  const simcarAuasProcessJobIdRef = useRef<string | null>(null);
-  const [simcarResultImagePanelsOpen, setSimcarResultImagePanelsOpen] = useState<{ acAvn: boolean; auas: boolean }>({
-    acAvn: false,
-    auas: false,
-  });
+  // ─── SIMCAR AI Analysis + AUAS State (extraído para useSimcarAnalysis — plano 03) ───
+  const {
+    simcarAnalysisProcessing,
+    simcarAnalysisProgress,
+    simcarAgentLog,
+    simcarAnalysisImages,
+    simcarAnalysisMessages,
+    simcarThinkingText,
+    simcarThinkingHidden,
+    simcarAnalysisInput,
+    simcarAnalysisSending,
+    simcarLiveThinkingText,
+    simcarLiveAnswerText,
+    simcarAnalysisStartTime,
+    simcarElapsed,
+    simcarAuasProcessing,
+    simcarAuasProgress,
+    simcarAuasImages,
+    simcarImagePreview,
+    simcarAuasMessages,
+    simcarAuasAgentLog,
+    simcarResultImagePanelsOpen,
+    simcarAnalysisChatRef,
+    simcarThinkingPanelRef,
+    simcarLiveAnswerPanelRef,
+    simcarAgentLogEndRef,
+    simcarAnalysisAbortRef,
+    simcarAnalysisProcessJobIdRef,
+    simcarAuasAbortRef,
+    simcarAuasProcessJobIdRef,
+    setSimcarAnalysisProcessing,
+    setSimcarAnalysisProgress,
+    setSimcarAgentLog,
+    setSimcarAnalysisImages,
+    setSimcarAnalysisMessages,
+    setSimcarThinkingText,
+    setSimcarThinkingHidden,
+    setSimcarAnalysisInput,
+    setSimcarAnalysisSending,
+    setSimcarLiveThinkingText,
+    setSimcarLiveAnswerText,
+    setSimcarAnalysisStartTime,
+    setSimcarElapsed,
+    setSimcarAuasProcessing,
+    setSimcarAuasProgress,
+    setSimcarAuasImages,
+    setSimcarImagePreview,
+    setSimcarAuasMessages,
+    setSimcarAuasAgentLog,
+    setSimcarResultImagePanelsOpen,
+  } = useSimcarAnalysis();
 
   // ─── Vértices Próximas State ───
   const [verticesFile, setVerticesFile] = useState<File | null>(null);

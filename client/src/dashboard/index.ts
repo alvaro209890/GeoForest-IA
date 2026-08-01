@@ -32,6 +32,7 @@ export {
 } from './routes';
 export { useDashboardNavigation } from './hooks/useDashboardNavigation';
 export { useSimcarClipJobs } from './hooks/useSimcarClipJobs';
+export { useSimcarAnalysis } from './hooks/useSimcarAnalysis';
 export { DashboardSidebarTabs, DASHBOARD_TABS } from './components/DashboardSidebarTabs';
 export {
   CbersMapPreview,
