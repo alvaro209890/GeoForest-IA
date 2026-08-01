@@ -120,6 +120,8 @@ fazendas_unidas.zip
 # Python
 __pycache__/
 *.pyc
+.venv/
+venv/
 
 # Firebase deploy cache
 .firebase/

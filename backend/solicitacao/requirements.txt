@@ -1,0 +1,6 @@
+# Dependências do script de preenchimento de Solicitação de Prioridade SEMA.
+# Instalação (no PC servidor, onde roda o backend):
+#   cd <repo>/backend/solicitacao
+#   python3 -m venv .venv
+#   .venv/bin/pip install -r requirements.txt
+pymupdf>=1.24

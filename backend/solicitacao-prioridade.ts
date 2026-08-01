@@ -54,12 +54,25 @@ function writeSse(res: Response, data: Record<string, unknown>): void {
   }
 }
 
-const PYTHON_EXE =
-  process.platform === "win32"
-    ? "C:\\Users\\Usuario\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
-    : "python3";
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const PYTHON_EXE = resolvePythonExe();
+
+/**
+ * Resolve o interpretador Python do script de preenchimento.
+ * Prioridade: venv local do backend (backend/solicitacao/.venv) → python3 do PATH.
+ * O venv garante que o PyMuPDF (fitz) esteja disponível sem depender do sistema.
+ */
+function resolvePythonExe(): string {
+  if (process.platform === "win32") {
+    const winVenv = path.join(__dirname, "solicitacao", ".venv", "Scripts", "python.exe");
+    if (fs.existsSync(winVenv)) return winVenv;
+    return "C:\\Users\\Usuario\\AppData\\Local\\Programs\\Python\\Python312\\python.exe";
+  }
+  const venv = path.join(__dirname, "solicitacao", ".venv", "bin", "python");
+  if (fs.existsSync(venv)) return venv;
+  return "python3";
+}
 
 const FILL_SCRIPT = path.resolve(__dirname, "solicitacao", "fill_templates.py");
 
