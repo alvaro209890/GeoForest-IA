@@ -1,178 +1,117 @@
 # Plano: Desmembramento de `client/src/pages/Dashboard.tsx`
 
-**Arquivo atual:** `client/src/pages/Dashboard.tsx` — 9,765 linhas
+**Arquivo atual:** `client/src/pages/Dashboard.tsx` — 9,776 linhas
 **Objetivo:** Separar layout, estado, navegação e sub-páginas em arquivos independentes
+**Status:** 🟡 Em preparação — anatomia mapeada 2026-08-01, extração ainda não iniciada
 
 ---
 
-## Estrutura proposta
+## Anatomia real (analisada 2026-08-01)
 
-```
-client/src/
-├── pages/
-│   ├── Dashboard.tsx                # entry (~150 linhas)
-│   ├── dashboard/
-│   │   ├── DashboardLayout.tsx      # layout: sidebar + header + conteúdo (~200 linhas)
-│   │   ├── DashboardContent.tsx     # switch de abas (~150 linhas)
-│   │   ├── DashboardAuthGate.tsx    # auth + loading + redirect (~100 linhas)
-│   │   ├── MobileBottomNav.tsx      # navegação inferior mobile (~120 linhas)
-│   │   ├── SidebarNav.tsx           # sidebar desktop (~180 linhas)
-│   │   ├── SimcarPage.tsx           # já existe — manter imports
-│   │   ├── CbersPage.tsx            # já existe
-│   │   ├── LandsatPage.tsx          # já existe
-│   │   ├── RecibosPage.tsx          # já existe
-│   │   ├── ErrosPage.tsx            # já existe
-│   │   ├── ChatPage.tsx             # já existe
-│   │   ├── ManualPage.tsx           # já existe
-│   │   ├── ConfiguracoesPage.tsx    # já existe
-│   │   └── ProjectDetailPage.tsx    # já existe
-│   └── ...
-├── hooks/
-│   ├── useAuth.ts                   # hook: auth state, refresh, redirect (~150 linhas)
-│   ├── useDashboardNavigation.ts    # hook: abas + URL sync (~100 linhas)
-│   └── useShapefileUpload.ts        # hook: upload com progresso (~150 linhas)
-└── context/
-    └── DashboardContext.tsx          # React context: estado global (~80 linhas)
-```
+| Bloco | Linhas | % | Conteúdo |
+|-------|--------|---|----------|
+| Imports | 1–125 | 1% | ~50 imports (firebase, localFirestore, panels, hooks, lucide) |
+| Tipos + consts + helpers puros | 126–997 | 9% | 47 declarações: tipos (ChatMessage, SimcarClipHistoryItem, VerticesHistoryItem, ContainmentHistoryItem, GeometryHistoryItem, ReceiptHistoryItem), consts (SIMCAR_MANDATORY_LAYERS, REQUIRED_MODELS, DEFAULT_ASSISTANT_MESSAGE), helpers puros (sanitizeMessagesForFirestore, renderRichText, normalizeImageCaption, formatSimcarAuasStatus, simcarAuasVerdictClass, buildIntegratedVectorizedReport...) |
+| Estado + callbacks | 998–6.226 | 53% | ~1.050 consts: useState/useRef/useCallback de SIMCAR Clip, SIMCAR AI Analysis, AUAS, Vértices, Containment, Geometry, Chat, Billing, Settings |
+| JSX (render) | 6.227–9.776 | 36% | Sidebar, header, histórico por aba, switch de activeView, modais |
 
----
+**Aba do switch de views (JSX):** `simcar-clip` (maior), `cbers-wpm`, `landsat`, `sobreposicoes`, `croqui`, `vertices-proximas`, `simcar-receipts`, `features`, `settings`, `solicitacao-prioridade`.
 
-## O que já está modularizado (NÃO MEXER)
+## O que já está modularizado (NÃO MEXER — usar como está)
 
-O projeto já tem uma modularização parcial iniciada:
 - `client/src/dashboard/panels/` — CbersPanel, LandsatPanel, CroquiPanel, SettingsPanel, SobreposicoesPanel
 - `client/src/dashboard/hooks/` — useCbersJobs, useLandsatJobs, useCroquiJobs, useOverlapJobs, useDashboardNavigation
-- `client/src/pages/dashboard/` — sub-páginas separadas (SimcarPage, CbersPage, etc)
-- `client/src/dashboard/types.ts` — tipos compartilhados
-- `client/src/dashboard/routes.ts` — definição de rotas
+- `client/src/dashboard/types.ts` — tipos compartilhados (DashboardView, DashboardTabId)
+- `client/src/dashboard/routes.ts` — definição de rotas + URL sync
+- `client/src/pages/dashboard/` — sub-páginas (SimcarPage, CbersPage, etc.)
 
-O problema é que `Dashboard.tsx` ainda concentra **toda a lógica de montagem**: estado, auth, sidebar, header, navegação, contexto, upload.
+## ⚠️ Descoberta importante
 
----
+O plano original (escrito em 31/07) propunha `DashboardLayout`/`DashboardContent`/`DashboardAuthGate` como
+arquivos novos — mas as páginas em `client/src/pages/dashboard/` já existem como **stubs de 8 linhas**
+(apenas `export default function XPage() { return <Panel />; }`). A extração de layout/switch **não deve**
+duplicar isso: a arquitetura alvo é o Dashboard.tsx apenas **compor** as páginas já existentes.
 
-## Mapeamento: o que extrair de `Dashboard.tsx`
+## Sequência de extração (revisada — cada passo é 1 commit atômico)
 
-### `context/DashboardContext.tsx`
-Estado global que hoje vive em `useState` no topo do Dashboard:
-```typescript
-interface DashboardContextValue {
-  activeTab: DashboardTab;
-  setActiveTab: (tab: DashboardTab) => void;
-  uploadedFile: File | null;
-  setUploadedFile: (file: File | null) => void;
-  geoJsonData: GeoJSON | null;
-  setGeoJsonData: (data: GeoJSON | null) => void;
-  isMobile: boolean;
-  sidebarCollapsed: boolean;
-  toggleSidebar: () => void;
-}
-```
+### Passo 1: `dashboard/lib/format.ts` (baixo risco — puro)
+- Extrair helpers puros das linhas 126–997: `sanitizeMessagesForFirestore`, `isPlainObject`,
+  `stripUndefinedDeep`, `toCloudinaryDownloadUrl`, `toFileProxyUrl`, `resolveBackendDownloadUrl`,
+  `renderInlineRichText`, `renderRichText`, `renderAnalysisRichText`, `normalizeImageCaption`,
+  `normalizeBackendText`, `removeRoboticAuasLines`, `buildIntegratedVectorizedReport`
+- **Validar:** `npx tsc --noEmit` + `npx vitest run --root . client/` + `npm run dev` abre
 
-### `DashboardAuthGate.tsx`
-- Envolve o dashboard com verificação de auth
-- Mostra tela de loading enquanto verifica Firebase
-- Redireciona para `/auth` se não autenticado
-- Atualiza token automaticamente
+### Passo 2: `dashboard/lib/formatters-simcar.ts` (baixo risco — puro)
+- Extrair formatadores SIMCAR: `formatSimcarAuasStatus`, `formatSimcarAcAvnVerdict`,
+  `formatSimcarAcAvnConfidence`, `formatSimcarAuasVerdict`, `simcarAuasVerdictClass`
+- **Validar:** idem passo 1
 
-### `DashboardLayout.tsx`
-- Estrutura visual: sidebar + header + área de conteúdo
-- Responsivo: mobile empilhado vs desktop lado a lado
-- Header: logo, avatar, notificações
-- Sidebar: navegação entre abas
+### Passo 3: `dashboard/types/history.ts` (baixo risco — tipo puro)
+- Mover tipos de histórico: `SimcarClipHistoryItem`, `SimcarServerRuntimeState`, `VerticesHistoryItem`,
+  `ContainmentHistoryItem`, `GeometryHistoryItem`, `ReceiptHistoryItem`, `SimcarAnalysisImage`,
+  `SimcarAnalysisMessage`, `SimcarLayerSummary`, `SimcarClipSummary`
+- Re-exportar de `dashboard/types.ts` (barrel) para não quebrar imports existentes
 
-### `SidebarNav.tsx`
-- Lista de abas com ícones
-- Indicador de aba ativa
-- Recolher/expandir
-- Versão mobile simplificada
+### Passo 4: `dashboard/lib/mappers.ts` (baixo risco — puro)
+- Extrair mappers doc→history: `mapVerticesDocToHistoryItem`, `mapContainmentDocToHistoryItem`,
+  `mapGeometryDocToHistoryItem`, `mapReceiptDocToHistoryItem`
+- **Validar:** testes de mappers (novos, se viável) + tsc
 
-### `MobileBottomNav.tsx`
-- Barra inferior no mobile (< 768px)
-- Ícones + labels
-- Badge de notificações
+### Passo 5: `dashboard/hooks/useSimcarClipJobs.ts` (médio risco — maior bloco)
+- Extrair estado + callbacks do SIMCAR Clip (linhas ~1.041–1.073 + handlers associados):
+  `loadSimcarClipLayers`, `resetSimcarDraft`, `selectSimcarClipEntry`, `cancelProcessingJobsForCard`
+- Seguir o padrão de `useCroquiJobs.ts` (deps injetadas: apiFetch, downloadZip, fileToBase64Payload)
+- **Validar:** fluxo completo de recorte SIMCAR manualmente (upload → processar → baixar)
 
-### `DashboardContent.tsx`
-- Switch/case baseado na aba ativa:
-  ```tsx
-  switch (activeTab) {
-    case 'simcar': return <SimcarPage />;
-    case 'cbers': return <CbersPage />;
-    case 'landsat': return <LandsatPage />;
-    case 'croqui': return <CroquiPage />;
-    // ...
-  }
-  ```
+### Passo 6: `dashboard/hooks/useSimcarAnalysis.ts` (médio risco)
+- Extrair estado + callbacks do SIMCAR AI Analysis + AUAS: `runSimcarAnalysis`, `runAuasAnalysis`,
+  `sendSimcarChatMessage`, `appendSimcarEntriesToConversation`
+- **Validar:** análise com imagem de teste + chat da análise
 
-### `Dashboard.tsx` (novo, enxuto)
-```tsx
-import { DashboardProvider } from '@/context/DashboardContext';
-import { DashboardAuthGate } from './dashboard/DashboardAuthGate';
-import { DashboardLayout } from './dashboard/DashboardLayout';
+### Passo 7: `dashboard/hooks/useChat.ts` (médio risco)
+- Extrair chat principal: `handleSend`, `loadConversation`, `handleInsufficientCredits`, billing state
+- **Validar:** enviar mensagem no chat, histórico carrega
 
-export default function Dashboard() {
-  return (
-    <DashboardAuthGate>
-      <DashboardProvider>
-        <DashboardLayout />
-      </DashboardProvider>
-    </DashboardAuthGate>
-  );
-}
-```
+### Passo 8: `dashboard/hooks/useErrorsAnalysis.ts` (médio risco)
+- Extrair Vértices/Containment/Geometry: `handleVerticesUpload`, `handleContainmentUpload`,
+  `handleGeometryUpload`, mappers + select/reset
+- **Validar:** cada aba de Erros processa um shapefile
 
----
+### Passo 9: Simplificar `Dashboard.tsx` (baixo risco — mecânico)
+- Reduzir a ~2.000 linhas: imports de hooks + JSX de composição
+- **Validar:** todas as abas abrem, URL sync (`/dashboard/cbers`) funciona, mobile 375px OK
 
-## Passo a passo
-
-### Passo 1: Criar `DashboardContext.tsx`
-- Extrair todos os `useState` do topo do Dashboard
-- Criar provider + hook `useDashboard()`
-- **Validar:** Dashboard renderiza sem erros
-
-### Passo 2: Criar `DashboardAuthGate.tsx`
-- Extrair lógica de auth, loading, redirect
-- **Validar:** Logar, deslogar, refresh
-
-### Passo 3: Criar `SidebarNav.tsx`
-- Extrair JSX da sidebar
-- **Validar:** Navegação entre abas funciona
-
-### Passo 4: Criar `MobileBottomNav.tsx`
-- Extrair navegação mobile
-- **Validar:** Testar no celular (375px)
-
-### Passo 5: Criar `DashboardLayout.tsx`
-- Compor SidebarNav + MobileBottomNav + header + conteúdo
-- **Validar:** Layout responsivo
-
-### Passo 6: Criar `DashboardContent.tsx`
-- Extrair switch de abas
-- **Validar:** Cada aba carrega corretamente
-
-### Passo 7: Simplificar `Dashboard.tsx`
-- Reduzir ao esqueleto mínimo
-- **Validar:** Funcionalidade idêntica
+### Passo 10 (opcional): extrair JSX de histórico por aba em componentes
+- `dashboard/components/SimcarHistoryCards.tsx`, `VerticesHistoryCards.tsx`, etc.
+- **Validar:** visual idêntico antes/depois
 
 ---
 
 ## ⚠️ Cuidados
 
 ### 1. Performance — re-renders
-Ao criar `DashboardContext`, cuidado com:
+Ao criar hooks, cuidado com:
 - `value={{ ... }}` inline recria objeto a cada render → `useMemo`
 - Estados que mudam com frequência (upload progress) não devem ir pro contexto global
-- Separar contexto "estável" (auth, layout) de "volátil" (dados de shapefile)
+- Manter os hooks como estão (useState locais), só mover para arquivo separado
 
 ### 2. Mobile vs Desktop
-- `isMobile` hook (`useMobile`) já existe → usar, não recriar
+- `useMobile` hook já existe → usar, não recriar
 - Sidebar colapsa automaticamente no mobile
 - Touch targets mantidos (44px min)
 
 ### 3. URL sync
-O dashboard usa `useDashboardNavigation` (já existe) que sincroniza abas com URL (`/dashboard/cbers`, `/dashboard/landsat`). Isso **não muda** com o desmembramento — o hook continua funcionando.
+O dashboard usa `useDashboardNavigation` (já existe) que sincroniza abas com URL
+(`/dashboard/cbers`, `/dashboard/landsat`). Isso **não muda** com o desmembramento.
 
-### 4. Hot reload
-React + Vite HMR funciona melhor com arquivos menores. O desmembramento vai **melhorar** o HMR, não piorar.
+### 4. Lazy imports
+`SolicitacaoPrioridadePanel` e outros são `lazy(() => import(...))` — manter o lazy nos
+novos arquivos (evita regressão de bundle).
+
+### 5. Regra de ouro (do Plano 02 — aprendida na prática)
+- 1 extração = 1 commit atômico, sem mudança funcional
+- `npx tsc --noEmit` + testes + build entre cada passo
+- Extrair **código puro primeiro** (format/mappers/types), hooks depois — reduz risco de merge hell
 
 ---
 
@@ -186,21 +125,20 @@ npm run dev                           # sobe dev server
 # Testar URL direta (/dashboard/cbers)
 
 npx tsc --noEmit                      # TypeScript
-npx vitest run client/                # testes existentes
+npx vitest run --root . client/       # testes existentes
+npx vite build                        # build app
+GEOFOREST_BUILD_TARGET=admin npx vite build  # build admin
 ```
 
 ---
 
-## Estimativa
+## Estimativa revisada
 
 | Passo | Tempo | Risco |
 |-------|-------|-------|
-| DashboardContext | 15 min | Baixo |
-| DashboardAuthGate | 15 min | Baixo |
-| SidebarNav | 20 min | Baixo |
-| MobileBottomNav | 15 min | Baixo |
-| DashboardLayout | 20 min | Médio |
-| DashboardContent | 15 min | Baixo |
-| Simplificar Dashboard.tsx | 10 min | Baixo |
-| Testar mobile | 15 min | Baixo |
-| **Total** | **~2 h** | |
+| 1–4 (puro: format, types, mappers) | ~30 min | Baixo |
+| 5 (useSimcarClipJobs) | ~30 min | Médio |
+| 6–8 (analysis, chat, errors) | ~45 min | Médio |
+| 9 (simplificar Dashboard.tsx) | ~20 min | Baixo |
+| 10 (opcional JSX cards) | ~30 min | Baixo |
+| **Total** | **~2,5 h** | |

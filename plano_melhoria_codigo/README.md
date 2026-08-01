@@ -1,21 +1,21 @@
 # Plano de Melhoria de Código — GeoForest-IA
 
 **Criado:** 2026-07-31
-**Status:** 📋 Planejamento — nenhuma alteração no código
+**Status:** 🟢 Planos 01 e 02 concluídos — próximo: Plano 03 (Dashboard)
 
 ---
 
 ## 📂 Documentos do plano
 
-| # | Arquivo | Assunto | Linhas atuais | Módulos propostos |
-|---|---------|---------|---------------|-------------------|
-| 01 | [01_backend_index.md](01_backend_index.md) | `backend/index.ts` — servidor Express | 2,956 | 16 arquivos |
-| 02 | [02_simcar_clip.md](02_simcar_clip.md) | `backend/simcar-clip.ts` — recorte SIMCAR | 10,103 | 11 arquivos |
-| 03 | [03_dashboard.md](03_dashboard.md) | `client/.../Dashboard.tsx` — dashboard | 9,765 | 10 arquivos |
-| 04 | [04_geometry_errors.md](04_geometry_errors.md) | `backend/geometry-errors.ts` — detectores | 2,885 | 10 arquivos |
-| 05 | [05_cbers_wpm.md](05_cbers_wpm.md) | `backend/cbers-wpm.ts` — pipeline CBERS | 2,693 | 9 arquivos |
-| 06 | [06_landsat.md](06_landsat.md) | `backend/landsat.ts` — pipeline Landsat | 1,621 | 7 arquivos |
-| 07 | [07_arquivos_medios.md](07_arquivos_medios.md) | 7 arquivos médios (500–1500 linhas) | ~8,500 | ~31 arquivos |
+| # | Arquivo | Assunto | Linhas atuais | Módulos propostos | Status |
+|---|---------|---------|---------------|-------------------|--------|
+| 01 | [01_backend_index.md](01_backend_index.md) | `backend/index.ts` — servidor Express | 2,956 → 1,536 | 16 arquivos | ✅ Concluído 31/07 |
+| 02 | [02_simcar_clip.md](02_simcar_clip.md) | `backend/simcar-clip.ts` — recorte SIMCAR | 10,103 → 10,026 | 11 arquivos | 🟡 Infra extraída (`simcar/` 10 módulos); monólito principal intacto |
+| 03 | [03_dashboard.md](03_dashboard.md) | `client/.../Dashboard.tsx` — dashboard | 9,776 | 10 arquivos | ⬜ **Próximo** |
+| 04 | [04_geometry_errors.md](04_geometry_errors.md) | `backend/geometry-errors.ts` — detectores | 2,885 | 10 arquivos | ⬜ Pendente |
+| 05 | [05_cbers_wpm.md](05_cbers_wpm.md) | `backend/cbers-wpm.ts` — pipeline CBERS | 2,693 | 9 arquivos | ⬜ Pendente |
+| 06 | [06_landsat.md](06_landsat.md) | `backend/landsat.ts` — pipeline Landsat | 1,621 | 7 arquivos | ⬜ Pendente |
+| 07 | [07_arquivos_medios.md](07_arquivos_medios.md) | 7 arquivos médios (500–1500 linhas) | ~8,500 | ~31 arquivos | ⬜ Pendente |
 
 ---
 
