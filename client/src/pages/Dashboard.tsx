@@ -5293,12 +5293,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </div>
               ))
             ) : (
-              <div className="text-center py-6 block">
-                <div className="inline-flex justify-center items-center w-10 h-10 rounded-full bg-white/5 text-slate-500 mb-2">
-                  <Satellite size={16} />
-                </div>
-                <p className="text-xs text-slate-500">Nenhuma imagem CBERS.</p>
-              </div>
+              <HistoryEmptyState Icon={Satellite} title="Nenhuma imagem CBERS." />
             )
           ) : activeView === 'landsat' ? (
             landsatHistory.length > 0 ? (
@@ -5336,12 +5331,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </div>
               ))
             ) : (
-              <div className="text-center py-6 block">
-                <div className="inline-flex justify-center items-center w-10 h-10 rounded-full bg-white/5 text-slate-500 mb-2">
-                  <Layers size={16} />
-                </div>
-                <p className="text-xs text-slate-500">Nenhuma imagem Landsat.</p>
-              </div>
+              <HistoryEmptyState Icon={Layers} title="Nenhuma imagem Landsat." />
             )
           ) : activeView === 'sobreposicoes' ? (
             overlapHistory.length > 0 ? (
@@ -5379,12 +5369,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </div>
               ))
             ) : (
-              <div className="text-center py-6 block">
-                <div className="inline-flex justify-center items-center w-10 h-10 rounded-full bg-white/5 text-slate-500 mb-2">
-                  <Combine size={16} />
-                </div>
-                <p className="text-xs text-slate-500">Nenhuma análise de sobreposição.</p>
-              </div>
+              <HistoryEmptyState Icon={Combine} title="Nenhuma análise de sobreposição." />
             )
           ) : activeView === 'croqui' ? (
             croquiHistory.length > 0 ? (
@@ -5422,12 +5407,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </div>
               ))
             ) : (
-              <div className="text-center py-6 block">
-                <div className="inline-flex justify-center items-center w-10 h-10 rounded-full bg-white/5 text-slate-500 mb-2">
-                  <MapIcon size={16} />
-                </div>
-                <p className="text-xs text-slate-500">Nenhum croqui gerado.</p>
-              </div>
+              <HistoryEmptyState Icon={MapIcon} title="Nenhum croqui gerado." />
             )
           ) : activeView === 'vertices-proximas' ? (
             errorAnalysisTab === 'containment' ? (
@@ -5471,11 +5451,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
                 ))
               ) : (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <ShieldAlert size={32} className="text-slate-600 mb-3" />
-                  <p className="text-sm text-slate-400">Nenhuma análise de áreas não contidas</p>
-                  <p className="text-[10px] text-slate-600 mt-1">Use a aba para fazer upload</p>
-                </div>
+                <HistoryEmptyState
+                  Icon={ShieldAlert}
+                  title="Nenhuma análise de áreas não contidas"
+                  hint="Use a aba para fazer upload"
+                />
               )
             ) : errorAnalysisTab === 'geometry' ? (
               geometryHistory.length > 0 ? (
@@ -5518,11 +5498,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   </div>
                 ))
               ) : (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <AlertTriangle size={32} className="text-slate-600 mb-3" />
-                  <p className="text-sm text-slate-400">Nenhuma análise de erros de geometria</p>
-                  <p className="text-[10px] text-slate-600 mt-1">Use a aba para fazer upload</p>
-                </div>
+                <HistoryEmptyState
+                  Icon={AlertTriangle}
+                  title="Nenhuma análise de erros de geometria"
+                  hint="Use a aba para fazer upload"
+                />
               )
             ) : (
             verticesHistory.length > 0 ? (
@@ -5560,11 +5540,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </div>
               ))
             ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Network size={32} className="text-slate-600 mb-3" />
-                <p className="text-sm text-slate-400">Nenhuma análise de vértices</p>
-                <p className="text-[10px] text-slate-600 mt-1">Clique em "Nova Análise" para começar</p>
-              </div>
+              <HistoryEmptyState
+                Icon={Network}
+                title="Nenhuma análise de vértices"
+                hint={'Clique em "Nova Análise" para começar'}
+              />
             )
           )) : activeView === 'simcar-clip' ? (
             /* ─── SIMCAR Clip History Cards ─── */
@@ -5684,11 +5664,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </div>
               ))
             ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Scissors size={32} className="text-slate-600 mb-3" />
-                <p className="text-sm text-slate-400">Nenhum recorte ainda</p>
-                <p className="text-[10px] text-slate-600 mt-1">Clique em "Novo Recorte" para começar</p>
-              </div>
+              <HistoryEmptyState
+                Icon={Scissors}
+                title="Nenhum recorte ainda"
+                hint={'Clique em "Novo Recorte" para começar'}
+              />
             )
           ) : activeView === 'simcar-receipts' ? (
             receiptHistory.length > 0 ? (
@@ -5740,11 +5720,11 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 </div>
               ))
             ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Receipt size={32} className="text-slate-600 mb-3" />
-                <p className="text-sm text-slate-400">Nenhum recibo baixado</p>
-                <p className="text-[10px] text-slate-600 mt-1">Os recibos aparecem aqui</p>
-              </div>
+              <HistoryEmptyState
+                Icon={Receipt}
+                title="Nenhum recibo baixado"
+                hint="Os recibos aparecem aqui"
+              />
             )
           ) : (
             /* ─── Chat removido — use as abas acima ─── */
