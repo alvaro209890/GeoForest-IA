@@ -31,6 +31,7 @@ export {
   getPathForView,
 } from './routes';
 export { useDashboardNavigation } from './hooks/useDashboardNavigation';
+export { useSimcarClipJobs } from './hooks/useSimcarClipJobs';
 export { DashboardSidebarTabs, DASHBOARD_TABS } from './components/DashboardSidebarTabs';
 export {
   CbersMapPreview,

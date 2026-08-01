@@ -72,6 +72,7 @@ import {
   useOverlapJobs,
   useCroquiJobs,
   useDashboardNavigation,
+  useSimcarClipJobs,
   type DashboardView,
   type ChatMessage,
   type Conversation,
@@ -282,38 +283,67 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [queuedFiles, setQueuedFiles] = useState<File[]>([]);
 
-  // ─── SIMCAR Clip State ───
-  const [simcarClipFile, setSimcarClipFile] = useState<File | null>(null);
-  const [simcarClipMode, setSimcarClipMode] = useState<'auto-clip' | 'vectorized-analysis'>('auto-clip');
-  const [simcarClipLayers, setSimcarClipLayers] = useState<Array<{ name: string; category: string; selected: boolean }>>([]);
-  const [simcarClipLayersLoading, setSimcarClipLayersLoading] = useState(false);
-  const [simcarClipLayersError, setSimcarClipLayersError] = useState<string | null>(null);
-  const [simcarClipProcessing, setSimcarClipProcessing] = useState(false);
-  const [simcarClipCanceling, setSimcarClipCanceling] = useState(false);
-  const [simcarVectorizedRunning, setSimcarVectorizedRunning] = useState(false);
-  const [simcarVectorizedStatus, setSimcarVectorizedStatus] = useState<{
-    stage: 'importing' | 'acavn' | 'auas' | 'done' | 'error';
-    message: string;
-  } | null>(null);
-  const [simcarClipProgress, setSimcarClipProgress] = useState<{ current: number; total: number; layer: string; status: string } | null>(null);
-  const [simcarClipDownloadUrl, setSimcarClipDownloadUrl] = useState<string | null>(null);
-  const [simcarClipSummary, setSimcarClipSummary] = useState<SimcarClipSummary | null>(null);
-  const [simcarClipError, setSimcarClipError] = useState<string | null>(null);
-  const simcarClipAbortRef = useRef<AbortController | null>(null);
-  const simcarClipProcessJobIdRef = useRef<string | null>(null);
-  const simcarClipCancelRequestedRef = useRef(false);
-  const simcarClipProgressFlushTimerRef = useRef<number | null>(null);
-  const simcarFileInputRef = useRef<HTMLInputElement | null>(null);
-  const simcarClipProgressPendingRef = useRef<{ current: number; total: number; layer: string; status: string } | null>(
-    null
-  );
-  const [simcarAirId, setSimcarAirId] = useState('');
-  const [simcarAirIdStripped, setSimcarAirIdStripped] = useState(false);
-  const [simcarShowCancel, setSimcarShowCancel] = useState(false);
-  const simcarCancelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [simcarCarNumber, setSimcarCarNumber] = useState('');
-  const [simcarSigefParcelCode, setSimcarSigefParcelCode] = useState('');
-  const [simcarClipJobId, setSimcarClipJobId] = useState<string | null>(null);
+  // ─── SIMCAR Clip State (extraído para useSimcarClipJobs — plano 03) ───
+  const {
+    simcarClipFile,
+    simcarClipMode,
+    simcarClipLayers,
+    simcarClipLayersLoading,
+    simcarClipLayersError,
+    simcarClipProcessing,
+    simcarClipCanceling,
+    simcarVectorizedRunning,
+    simcarVectorizedStatus,
+    simcarClipProgress,
+    simcarClipDownloadUrl,
+    simcarClipSummary,
+    simcarClipError,
+    simcarAirId,
+    simcarAirIdStripped,
+    simcarShowCancel,
+    simcarCarNumber,
+    simcarSigefParcelCode,
+    simcarClipJobId,
+    simcarClipHistory,
+    simcarServerRuntimeState,
+    activeSimcarClip,
+    simcarLockedMode,
+    isSimcarModeLocked,
+    selectedSimcarClipLayerNames,
+    selectedSimcarClipLayerCount,
+    simcarVectorizedServerZipReady,
+    canRunVectorizedAnalysis,
+    simcarClipAbortRef,
+    simcarClipProcessJobIdRef,
+    simcarClipCancelRequestedRef,
+    simcarClipProgressFlushTimerRef,
+    simcarFileInputRef,
+    simcarClipProgressPendingRef,
+    simcarCancelTimerRef,
+    simcarVectorizedResumeInFlightRef,
+    setSimcarClipFile,
+    setSimcarClipMode,
+    setSimcarClipLayers,
+    setSimcarClipLayersLoading,
+    setSimcarClipLayersError,
+    setSimcarClipProcessing,
+    setSimcarClipCanceling,
+    setSimcarVectorizedRunning,
+    setSimcarVectorizedStatus,
+    setSimcarClipProgress,
+    setSimcarClipDownloadUrl,
+    setSimcarClipSummary,
+    setSimcarClipError,
+    setSimcarAirId,
+    setSimcarAirIdStripped,
+    setSimcarShowCancel,
+    setSimcarCarNumber,
+    setSimcarSigefParcelCode,
+    setSimcarClipJobId,
+    setSimcarClipHistory,
+    setSimcarServerRuntimeState,
+    loadSimcarClipLayers,
+  } = useSimcarClipJobs();
 
   // ─── SIMCAR AI Analysis State ───
   const [simcarAnalysisProcessing, setSimcarAnalysisProcessing] = useState(false);
@@ -449,46 +479,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
       }));
   }, [simcarAgentLog]);
 
-  // ─── SIMCAR Clip History (for sidebar cards) ───
-  const [simcarClipHistory, setSimcarClipHistory] = useState<SimcarClipHistoryItem[]>([]);
-  const [simcarServerRuntimeState, setSimcarServerRuntimeState] = useState<SimcarServerRuntimeState | null>(null);
-  const simcarVectorizedResumeInFlightRef = useRef<string | null>(null);
-  const activeSimcarClip = useMemo(
-    () => (simcarClipJobId ? simcarClipHistory.find((clip) => clip.jobId === simcarClipJobId) : undefined),
-    [simcarClipHistory, simcarClipJobId]
-  );
-  const simcarLockedMode = activeSimcarClip?.sourceMode;
-  const isSimcarModeLocked = Boolean(simcarLockedMode);
-
-  useEffect(() => {
-    if (!simcarLockedMode) return;
-    if (simcarClipMode !== simcarLockedMode) {
-      setSimcarClipMode(simcarLockedMode);
-    }
-  }, [simcarClipMode, simcarLockedMode]);
-
-  const loadSimcarClipLayers = useCallback(() => {
-    setSimcarClipLayersLoading(true);
-    setSimcarClipLayersError(null);
-    fetch(apiUrl('/api/simcar/layers'))
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((data: any) => {
-        if (!Array.isArray(data?.layers)) throw new Error('Resposta inválida do servidor');
-        setSimcarClipLayers(data.layers.map((l: any) => ({ name: l.name, category: l.category, selected: true })));
-      })
-      .catch((err: any) => {
-        setSimcarClipLayersError(err?.message || 'Falha ao carregar a lista de camadas do servidor.');
-      })
-      .finally(() => setSimcarClipLayersLoading(false));
-  }, []);
-
-  useEffect(() => {
-    loadSimcarClipLayers();
-  }, [loadSimcarClipLayers]);
-
   // ─── SIMCAR Satellite Selection ───
   const simcarFixedSatelliteKeys = useMemo(
     () => SIMCAR_FIXED_AC_AVN_SATELLITES.map((sat) => sat.key),
@@ -549,23 +539,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
   const [settingsRef, setSettingsRef] = useState<DocumentReference | null>(null);
   const settingsImportInputRef = useRef<HTMLInputElement | null>(null);
-  const selectedSimcarClipLayerNames = useMemo(
-    () => simcarClipLayers.filter((layer) => layer.selected).map((layer) => layer.name),
-    [simcarClipLayers]
-  );
-  const selectedSimcarClipLayerCount = selectedSimcarClipLayerNames.length;
-  const simcarVectorizedServerZipReady = useMemo(() => {
-    if (simcarClipMode !== 'vectorized-analysis') return false;
-    if (simcarClipFile) return false;
-    if (!activeSimcarClip || activeSimcarClip.jobId !== simcarClipJobId) return false;
-    const hasPersistedZip = Boolean(
-      activeSimcarClip.outputZipUrl ||
-      activeSimcarClip.downloadUrl ||
-      activeSimcarClip.contextUrl
-    );
-    return hasPersistedZip;
-  }, [activeSimcarClip, simcarClipFile, simcarClipJobId, simcarClipMode]);
-  const canRunVectorizedAnalysis = Boolean(simcarClipFile || simcarVectorizedServerZipReady);
   const simcarUnifiedVectorizedProgress = useMemo(() => {
     if (!simcarVectorizedStatus) return null;
     const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
