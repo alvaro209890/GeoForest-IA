@@ -36,6 +36,12 @@ export { useSimcarAnalysis } from './hooks/useSimcarAnalysis';
 export { useChat } from './hooks/useChat';
 export { useErrorsAnalysis } from './hooks/useErrorsAnalysis';
 export { DEFAULT_ASSISTANT_MESSAGE } from './lib/chatDefaults';
+export {
+  toIsoDateFromUnknown,
+  mapVerticesDocToHistoryItem,
+  mapContainmentDocToHistoryItem,
+  mapGeometryDocToHistoryItem,
+} from './lib/mappers';
 export { DashboardSidebarTabs, DASHBOARD_TABS } from './components/DashboardSidebarTabs';
 export {
   CbersMapPreview,
