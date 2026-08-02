@@ -45,11 +45,13 @@ export type WfsClipFetchResult = {
 export type ClippedPolygonResult = {
     kind: "polygon" | "multipolygon";
     geometry: Polygon | MultiPolygon;
+    properties: Record<string, unknown>;
 };
 
 export type ClippedPointResult = {
     kind: "point" | "multipoint";
-    point: [number, number];
+    pointCoords: Array<[number, number]>;
+    properties: Record<string, unknown>;
 };
 
 export type ClipResult = ClippedPolygonResult | ClippedPointResult;
