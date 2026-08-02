@@ -143,6 +143,9 @@ export {
     isTruncationFinishReason,
 } from "./cloudinary";
 
+// ── CAR Lookup ──
+export { fetchCarBoundaryByNumber } from "./car-lookup";
+
 // ── Clip Pipeline (SSE, job cache, utilities) ──
 export {
     jobCache,
@@ -163,6 +166,5 @@ export {
     getFixedAcAvnSatelliteKeys,
     getSimcarAiRuntimeConfig,
     runAcAvnSatelliteAnalysis,
-    fetchCarBoundaryByNumber,
     registerSimcarClipRoutes,
 } from "../simcar-clip";
