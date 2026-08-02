@@ -58,6 +58,8 @@ export {
 export { DashboardSidebarTabs, DASHBOARD_TABS } from './components/DashboardSidebarTabs';
 export { HistoryStatusBadge } from './components/HistoryStatusBadge';
 export { HistoryEmptyState } from './components/HistoryEmptyState';
+export { HistoryCard } from './components/HistoryCard';
+export type { HistoryCardProps, HistoryCardTheme } from './components/HistoryCard';
 export {
   CbersMapPreview,
   cbersGeometryCoordinates,

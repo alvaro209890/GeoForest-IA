@@ -81,6 +81,7 @@ import {
   DEFAULT_ASSISTANT_MESSAGE,
   HistoryStatusBadge,
   HistoryEmptyState,
+  HistoryCard,
   toIsoDateFromUnknown,
   mapVerticesDocToHistoryItem,
   mapContainmentDocToHistoryItem,
@@ -4199,34 +4200,26 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           {activeView === 'cbers-wpm' ? (
             cbersHistory.length > 0 ? (
               cbersHistory.map((entry) => (
-                <div
+                <HistoryCard
                   key={entry.id}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${cbersJobId === entry.jobId ? 'bg-cyan-500/10 border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' : 'bg-[#071113]/60 hover:bg-[#101b1d] hover:border-cyan-500/20'}`}
-                  onClick={() => selectCbersHistoryEntry(entry)}
-                >
-                  <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${cbersJobId === entry.jobId ? 'bg-gradient-to-br from-cyan-500 to-emerald-500 text-white shadow-md shadow-cyan-900/40' : 'bg-white/5 text-slate-400 group-hover:text-cyan-300 group-hover:bg-cyan-500/10'}`}>
-                    <Satellite size={18} />
-                  </div>
-                  <div className="flex-1 min-w-0 block">
-                    <p className={`text-sm truncate font-medium ${cbersJobId === entry.jobId ? 'text-cyan-100' : 'text-slate-200 group-hover:text-cyan-100'}`}>{entry.scene?.id || entry.itemId || entry.filename}</p>
-                    <div className="flex items-center gap-2 mt-1 opacity-80">
-                      <span className="text-[10px] uppercase tracking-wider font-semibold text-cyan-300">
-                        {entry.percent}%
-                      </span>
-                      <HistoryStatusBadge status={entry.status} />
-                    </div>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void deleteCbersJob(entry);
-                    }}
-                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
-                    title="Excluir imagem"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                  theme={{
+                    Icon: Satellite,
+                    activeBg: 'bg-cyan-500/10 border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]',
+                    inactiveBg: 'bg-[#071113]/60 hover:bg-[#101b1d] hover:border-cyan-500/20',
+                    iconActive: 'bg-gradient-to-br from-cyan-500 to-emerald-500 text-white shadow-md shadow-cyan-900/40',
+                    iconInactive: 'bg-white/5 text-slate-400 group-hover:text-cyan-300 group-hover:bg-cyan-500/10',
+                    titleActive: 'text-cyan-100',
+                    titleInactive: 'text-slate-200 group-hover:text-cyan-100',
+                    percentText: 'text-cyan-300',
+                  }}
+                  active={cbersJobId === entry.jobId}
+                  title={entry.scene?.id || entry.itemId || entry.filename}
+                  percent={entry.percent}
+                  status={entry.status}
+                  onSelect={() => selectCbersHistoryEntry(entry)}
+                  onDelete={() => void deleteCbersJob(entry)}
+                  deleteTitle="Excluir imagem"
+                />
               ))
             ) : (
               <HistoryEmptyState Icon={Satellite} title="Nenhuma imagem CBERS." />
@@ -4234,37 +4227,30 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           ) : activeView === 'landsat' ? (
             landsatHistory.length > 0 ? (
               landsatHistory.map((entry) => (
-                <div
+                <HistoryCard
                   key={entry.id}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${landsatJobId === entry.jobId ? 'bg-sky-500/10 border-sky-500/20 shadow-[0_0_15px_rgba(14,165,233,0.06)]' : 'bg-[#071318]/60 hover:bg-[#101b20] hover:border-sky-500/20'}`}
-                  onClick={() => selectLandsatHistoryEntry(entry)}
-                >
-                  <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${landsatJobId === entry.jobId ? 'bg-gradient-to-br from-sky-500 to-emerald-500 text-white shadow-md shadow-sky-900/40' : 'bg-white/5 text-slate-400 group-hover:text-sky-300 group-hover:bg-sky-500/10'}`}>
-                    <Layers size={18} />
-                  </div>
-                  <div className="flex-1 min-w-0 block">
-                    <p className={`text-sm truncate font-medium ${landsatJobId === entry.jobId ? 'text-sky-100' : 'text-slate-200 group-hover:text-sky-100'}`}>{entry.scene?.id || entry.sceneId || entry.filename}</p>
-                    <div className="flex items-center gap-2 mt-1 opacity-80">
-                      <span className="text-[10px] uppercase tracking-wider font-semibold text-sky-300">
-                        {entry.percent}%
-                      </span>
-                      <HistoryStatusBadge status={entry.status} />
-                    </div>
-                    <p className="mt-0.5 truncate text-[10px] text-slate-500">
+                  theme={{
+                    Icon: Layers,
+                    activeBg: 'bg-sky-500/10 border-sky-500/20 shadow-[0_0_15px_rgba(14,165,233,0.06)]',
+                    inactiveBg: 'bg-[#071318]/60 hover:bg-[#101b20] hover:border-sky-500/20',
+                    iconActive: 'bg-gradient-to-br from-sky-500 to-emerald-500 text-white shadow-md shadow-sky-900/40',
+                    iconInactive: 'bg-white/5 text-slate-400 group-hover:text-sky-300 group-hover:bg-sky-500/10',
+                    titleActive: 'text-sky-100',
+                    titleInactive: 'text-slate-200 group-hover:text-sky-100',
+                    percentText: 'text-sky-300',
+                  }}
+                  active={landsatJobId === entry.jobId}
+                  title={entry.scene?.id || entry.sceneId || entry.filename}
+                  percent={entry.percent}
+                  status={entry.status}
+                  subtitle={
+                    <span>
                       {entry.scene?.date || entry.scene?.year || 'Landsat'} • {entry.scene?.compositionLabel || entry.composition || 'falsa-cor'}
-                    </p>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void deleteLandsatJob(entry);
-                    }}
-                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
-                    title="Excluir imagem"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                    </span>
+                  }
+                  onSelect={() => selectLandsatHistoryEntry(entry)}
+                  onDelete={() => void deleteLandsatJob(entry)}
+                />
               ))
             ) : (
               <HistoryEmptyState Icon={Layers} title="Nenhuma imagem Landsat." />
@@ -4272,37 +4258,30 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           ) : activeView === 'sobreposicoes' ? (
             overlapHistory.length > 0 ? (
               overlapHistory.map((entry) => (
-                <div
+                <HistoryCard
                   key={entry.id}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${overlapJobId === entry.jobId ? 'bg-teal-500/10 border-teal-500/20 shadow-[0_0_15px_rgba(20,184,166,0.06)]' : 'bg-[#071413]/60 hover:bg-[#101b1a] hover:border-teal-500/20'}`}
-                  onClick={() => selectOverlapHistoryEntry(entry)}
-                >
-                  <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${overlapJobId === entry.jobId ? 'bg-gradient-to-br from-teal-500 to-emerald-500 text-white shadow-md shadow-teal-900/40' : 'bg-white/5 text-slate-400 group-hover:text-teal-300 group-hover:bg-teal-500/10'}`}>
-                    <Combine size={18} />
-                  </div>
-                  <div className="flex-1 min-w-0 block">
-                    <p className={`text-sm truncate font-medium ${overlapJobId === entry.jobId ? 'text-teal-100' : 'text-slate-200 group-hover:text-teal-100'}`}>{entry.filename}</p>
-                    <div className="flex items-center gap-2 mt-1 opacity-80">
-                      <span className="text-[10px] uppercase tracking-wider font-semibold text-teal-300">
-                        {entry.percent}%
-                      </span>
-                      <HistoryStatusBadge status={entry.status} />
-                    </div>
-                    <p className="mt-0.5 truncate text-[10px] text-slate-500">
+                  theme={{
+                    Icon: Combine,
+                    activeBg: 'bg-teal-500/10 border-teal-500/20 shadow-[0_0_15px_rgba(20,184,166,0.06)]',
+                    inactiveBg: 'bg-[#071413]/60 hover:bg-[#101b1a] hover:border-teal-500/20',
+                    iconActive: 'bg-gradient-to-br from-teal-500 to-emerald-500 text-white shadow-md shadow-teal-900/40',
+                    iconInactive: 'bg-white/5 text-slate-400 group-hover:text-teal-300 group-hover:bg-teal-500/10',
+                    titleActive: 'text-teal-100',
+                    titleInactive: 'text-slate-200 group-hover:text-teal-100',
+                    percentText: 'text-teal-300',
+                  }}
+                  active={overlapJobId === entry.jobId}
+                  title={entry.filename}
+                  percent={entry.percent}
+                  status={entry.status}
+                  subtitle={
+                    <span>
                       {entry.targetCount ? `${entry.targetCount} imóvel(is)` : 'Sobreposições'} • {(entry.modes || []).length} modo(s)
-                    </p>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void deleteOverlapJob(entry);
-                    }}
-                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
-                    title="Excluir análise"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                    </span>
+                  }
+                  onSelect={() => selectOverlapHistoryEntry(entry)}
+                  onDelete={() => void deleteOverlapJob(entry)}
+                />
               ))
             ) : (
               <HistoryEmptyState Icon={Combine} title="Nenhuma análise de sobreposição." />
@@ -4310,37 +4289,31 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           ) : activeView === 'croqui' ? (
             croquiHistory.length > 0 ? (
               croquiHistory.map((entry) => (
-                <div
+                <HistoryCard
                   key={entry.id}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${croquiJobId === entry.jobId ? 'bg-amber-500/10 border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.06)]' : 'bg-[#141008]/60 hover:bg-[#1b160c] hover:border-amber-500/20'}`}
-                  onClick={() => selectCroquiHistoryEntry(entry)}
-                >
-                  <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${croquiJobId === entry.jobId ? 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-md shadow-amber-900/40' : 'bg-white/5 text-slate-400 group-hover:text-amber-300 group-hover:bg-amber-500/10'}`}>
-                    <MapIcon size={18} />
-                  </div>
-                  <div className="flex-1 min-w-0 block">
-                    <p className={`text-sm truncate font-medium ${croquiJobId === entry.jobId ? 'text-amber-100' : 'text-slate-200 group-hover:text-amber-100'}`}>{entry.title || entry.filename}</p>
-                    <div className="flex items-center gap-2 mt-1 opacity-80">
-                      <span className="text-[10px] uppercase tracking-wider font-semibold text-amber-300">
-                        {entry.percent}%
-                      </span>
-                      <HistoryStatusBadge status={entry.status} />
-                    </div>
-                    <p className="mt-0.5 truncate text-[10px] text-slate-500">
+                  theme={{
+                    Icon: MapIcon,
+                    activeBg: 'bg-amber-500/10 border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.06)]',
+                    inactiveBg: 'bg-[#141008]/60 hover:bg-[#1b160c] hover:border-amber-500/20',
+                    iconActive: 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-md shadow-amber-900/40',
+                    iconInactive: 'bg-white/5 text-slate-400 group-hover:text-amber-300 group-hover:bg-amber-500/10',
+                    titleActive: 'text-amber-100',
+                    titleInactive: 'text-slate-200 group-hover:text-amber-100',
+                    percentText: 'text-amber-300',
+                  }}
+                  active={croquiJobId === entry.jobId}
+                  title={entry.title || entry.filename}
+                  percent={entry.percent}
+                  status={entry.status}
+                  subtitle={
+                    <span>
                       {entry.municipioNome || 'Croqui'} • {entry.routeLabel || 'PDF + DOCX + KML'}
-                    </p>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void deleteCroquiJob(entry.jobId);
-                    }}
-                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
-                    title="Excluir croqui"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                    </span>
+                  }
+                  onSelect={() => selectCroquiHistoryEntry(entry)}
+                  onDelete={() => void deleteCroquiJob(entry.jobId)}
+                  deleteTitle="Excluir croqui"
+                />
               ))
             ) : (
               <HistoryEmptyState Icon={MapIcon} title="Nenhum croqui gerado." />
@@ -4443,37 +4416,30 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             ) : (
             verticesHistory.length > 0 ? (
               verticesHistory.map((entry) => (
-                <div
+                <HistoryCard
                   key={entry.jobId}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all group cursor-pointer mb-2 ${verticesJobId === entry.jobId ? 'bg-violet-500/10 border-violet-500/20 shadow-[0_0_15px_rgba(139,92,246,0.06)]' : 'bg-[#100d18]/70 hover:bg-[#171322] hover:border-violet-500/20'}`}
-                  onClick={() => selectVerticesHistoryEntry(entry)}
-                >
-                  <div className={`p-2.5 rounded-lg shrink-0 transition-colors ${verticesJobId === entry.jobId ? 'bg-gradient-to-br from-violet-500 to-emerald-500 text-white shadow-md shadow-violet-900/40' : 'bg-white/5 text-slate-400 group-hover:text-violet-300 group-hover:bg-violet-500/10'}`}>
-                    <Network size={18} />
-                  </div>
-                  <div className="flex-1 min-w-0 block">
-                    <p className={`text-sm truncate font-medium ${verticesJobId === entry.jobId ? 'text-violet-100' : 'text-slate-200 group-hover:text-violet-100'}`}>{entry.filename}</p>
-                    <div className="flex items-center gap-2 mt-1 opacity-80">
-                      <span className="text-[10px] uppercase tracking-wider font-semibold text-violet-300">
-                        {entry.percent}%
-                      </span>
-                      <HistoryStatusBadge status={entry.status} />
-                    </div>
-                    <p className="text-[10px] text-slate-500 mt-0.5 truncate">
+                  theme={{
+                    Icon: Network,
+                    activeBg: 'bg-violet-500/10 border-violet-500/20 shadow-[0_0_15px_rgba(139,92,246,0.06)]',
+                    inactiveBg: 'bg-[#100d18]/70 hover:bg-[#171322] hover:border-violet-500/20',
+                    iconActive: 'bg-gradient-to-br from-violet-500 to-emerald-500 text-white shadow-md shadow-violet-900/40',
+                    iconInactive: 'bg-white/5 text-slate-400 group-hover:text-violet-300 group-hover:bg-violet-500/10',
+                    titleActive: 'text-violet-100',
+                    titleInactive: 'text-slate-200 group-hover:text-violet-100',
+                    percentText: 'text-violet-300',
+                  }}
+                  active={verticesJobId === entry.jobId}
+                  title={entry.filename}
+                  percent={entry.percent}
+                  status={entry.status}
+                  subtitle={
+                    <span>
                       {(entry.resultRows?.length || 0)} par(es) • {(entry.analyzedLayers?.length || 0)} camada(s)
-                    </p>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void deleteVerticesJob(entry);
-                    }}
-                    className="p-2 -mr-1 rounded-lg text-slate-500 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all block shrink-0"
-                    title="Excluir análise"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                    </span>
+                  }
+                  onSelect={() => selectVerticesHistoryEntry(entry)}
+                  onDelete={() => void deleteVerticesJob(entry)}
+                />
               ))
             ) : (
               <HistoryEmptyState
@@ -4486,118 +4452,120 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             /* ─── SIMCAR Clip History Cards ─── */
             simcarClipHistory.length > 0 ? (
               simcarClipHistory.map((clip) => (
-                <div
+                <HistoryCard
                   key={clip.id}
-                  className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors group cursor-pointer mb-1"
-                  onClick={() => {
+                  theme={{
+                    Icon: Scissors,
+                    activeBg: 'bg-purple-500/10 border-purple-500/20',
+                    inactiveBg: 'bg-white/5 hover:bg-white/10',
+                    iconActive: 'bg-gradient-to-br from-purple-500 to-emerald-500 text-white shadow-md shadow-purple-900/40',
+                    iconInactive: 'bg-purple-500/10 text-purple-400',
+                    titleActive: 'text-purple-100',
+                    titleInactive: 'text-slate-200',
+                    percentText: 'text-purple-300',
+                  }}
+                  active={simcarClipJobId === clip.jobId}
+                  title={clip.filename}
+                  percent={0}
+                  status={clip.status}
+                  className="mb-1"
+                  subtitle={
+                    <span>
+                      {clip.layersWithData}/{clip.totalLayers} camadas • {clip.totalFeatures} feições
+                      {clip.reportPdfStatus === 'ready' && (
+                        <span className="text-cyan-300 flex items-center gap-1 mt-0.5">
+                          <FileText size={10} /> PDF disponível
+                        </span>
+                      )}
+                    </span>
+                  }
+                  onSelect={() => {
                     selectSimcarClipEntry(clip);
                   }}
-                >
-                  <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
-                    <Scissors size={16} />
-                  </div>
-                  <div className="flex-1 min-w-0 block">
-                    <p className="text-sm text-slate-200 truncate">{clip.filename}</p>
-                    <p className="text-[10px] text-slate-500">
-                      {clip.layersWithData}/{clip.totalLayers} camadas • {clip.totalFeatures} feições
-                    </p>
-	                    {clip.status && (
-                    <HistoryStatusBadge status={clip.status} />
-	                    )}
-	                    {clip.reportPdfStatus === 'ready' && (
-	                      <p className="text-[10px] text-cyan-300 mt-0.5 flex items-center gap-1">
-	                        <FileText size={10} /> PDF disponível
-	                      </p>
-	                    )}
-	                  </div>
-	                  {clip.reportPdfStatus === 'ready' && (clip.reportPdfDownloadUrl || clip.reportPdfUrl) && (
-	                    <button
-	                      type="button"
-	                      onClick={(e) => {
-	                        e.stopPropagation();
-	                        openSimcarPdfInNewTab(clip.reportPdfDownloadUrl || clip.reportPdfUrl);
-	                      }}
-	                      className="p-2 rounded-lg text-cyan-300 hover:text-white hover:bg-cyan-500/20 transition-colors opacity-0 group-hover:opacity-100"
-	                      title="Abrir PDF técnico em nova aba"
-	                    >
-	                      <FileDown size={14} />
-	                    </button>
-	                  )}
-	                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      const cancelled = await cancelProcessingJobsForCard({
-                        cardJobId: clip.jobId,
-                        flow: 'simcar',
-                        extraJobIds: [
-                          simcarClipProcessJobIdRef.current,
-                          simcarAnalysisProcessJobIdRef.current,
-                          simcarAuasProcessJobIdRef.current,
-                        ],
-                      });
-                      if (cancelled) {
-                        toast.info('Processamento cancelado ao excluir o card. Cobrança mínima de cancelamento aplicada.');
-                      }
-                      if (simcarClipJobId === clip.jobId) {
-                        simcarClipAbortRef.current?.abort();
-                        simcarClipProcessJobIdRef.current = null;
-                        simcarAnalysisAbortRef.current?.abort();
-                        simcarAnalysisProcessJobIdRef.current = null;
-                        simcarAuasAbortRef.current?.abort();
-                        simcarAuasProcessJobIdRef.current = null;
-                      }
-                      // Delete from Cloudinary + remove from state
-                      const imageUrls = (clip.analysisImages || []).map((img) => img.url);
-                      const auasImageUrls = (clip.auasAnalysisImages || []).map((img) => img.url);
-                      fetch(apiUrl(`/api/simcar/clip/${clip.jobId}`), {
-                        method: 'DELETE',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          imageUrls,
-                          auasImageUrls,
-	                          inputZipUrl: clip.inputZipUrl,
-	                          outputZipUrl: clip.outputZipUrl,
-	                          contextUrl: clip.contextUrl,
-	                          reportPdfUrl: clip.reportPdfUrl || clip.reportPdfDownloadUrl,
-	                        }),
-                      }).catch(() => { });
-                      if (simcarClipsRef) {
-                        void deleteDoc(doc(simcarClipsRef, clip.jobId)).catch(() => undefined);
-                      }
-                      if (conversationsRef) {
-                        const linkedConversationIds = new Set<string>();
-                        if (clip.conversationId) linkedConversationIds.add(clip.conversationId);
-                        for (const conv of conversations) {
-                          if (String(conv.simcarJobId || '').trim() === String(clip.jobId)) {
-                            linkedConversationIds.add(conv.id);
-                          }
-                        }
-                        for (const convId of linkedConversationIds) {
-                          void deleteDoc(doc(conversationsRef.collection, convId)).catch(() => undefined);
-                        }
-                        if (linkedConversationIds.size > 0) {
-                          setConversations((prev) => prev.filter((c) => !linkedConversationIds.has(c.id)));
-                          if (activeConversationId && linkedConversationIds.has(activeConversationId)) {
-                            setActiveConversationId(null);
-                            setActiveConversationRef(null);
-                            setMessages([DEFAULT_ASSISTANT_MESSAGE]);
-                            messagesRef.current = [DEFAULT_ASSISTANT_MESSAGE];
-                          }
+                  extraActions={
+                    clip.reportPdfStatus === 'ready' && (clip.reportPdfDownloadUrl || clip.reportPdfUrl) ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openSimcarPdfInNewTab(clip.reportPdfDownloadUrl || clip.reportPdfUrl);
+                        }}
+                        className="p-2 rounded-lg text-cyan-300 hover:text-white hover:bg-cyan-500/20 transition-colors opacity-0 group-hover:opacity-100"
+                        title="Abrir PDF técnico em nova aba"
+                      >
+                        <FileDown size={14} />
+                      </button>
+                    ) : undefined
+                  }
+                  onDelete={async () => {
+                    const cancelled = await cancelProcessingJobsForCard({
+                      cardJobId: clip.jobId,
+                      flow: 'simcar',
+                      extraJobIds: [
+                        simcarClipProcessJobIdRef.current,
+                        simcarAnalysisProcessJobIdRef.current,
+                        simcarAuasProcessJobIdRef.current,
+                      ],
+                    });
+                    if (cancelled) {
+                      toast.info('Processamento cancelado ao excluir o card. Cobrança mínima de cancelamento aplicada.');
+                    }
+                    if (simcarClipJobId === clip.jobId) {
+                      simcarClipAbortRef.current?.abort();
+                      simcarClipProcessJobIdRef.current = null;
+                      simcarAnalysisAbortRef.current?.abort();
+                      simcarAnalysisProcessJobIdRef.current = null;
+                      simcarAuasAbortRef.current?.abort();
+                      simcarAuasProcessJobIdRef.current = null;
+                    }
+                    // Delete from Cloudinary + remove from state
+                    const imageUrls = (clip.analysisImages || []).map((img) => img.url);
+                    const auasImageUrls = (clip.auasAnalysisImages || []).map((img) => img.url);
+                    fetch(apiUrl(`/api/simcar/clip/${clip.jobId}`), {
+                      method: 'DELETE',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        imageUrls,
+                        auasImageUrls,
+                        inputZipUrl: clip.inputZipUrl,
+                        outputZipUrl: clip.outputZipUrl,
+                        contextUrl: clip.contextUrl,
+                        reportPdfUrl: clip.reportPdfUrl || clip.reportPdfDownloadUrl,
+                      }),
+                    }).catch(() => { });
+                    if (simcarClipsRef) {
+                      void deleteDoc(doc(simcarClipsRef, clip.jobId)).catch(() => undefined);
+                    }
+                    if (conversationsRef) {
+                      const linkedConversationIds = new Set<string>();
+                      if (clip.conversationId) linkedConversationIds.add(clip.conversationId);
+                      for (const conv of conversations) {
+                        if (String(conv.simcarJobId || '').trim() === String(clip.jobId)) {
+                          linkedConversationIds.add(conv.id);
                         }
                       }
-                      setSimcarClipHistory((prev) => prev.filter((c) => c.id !== clip.id));
-                      // Clear active clip if it was this one
-                      if (simcarClipJobId === clip.jobId) {
-                        resetSimcarDraft('auto-clip');
-                        navigateView('simcar-clip');
+                      for (const convId of linkedConversationIds) {
+                        void deleteDoc(doc(conversationsRef.collection, convId)).catch(() => undefined);
                       }
-                    }}
-                    className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition block"
-                    title="Excluir recorte"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                      if (linkedConversationIds.size > 0) {
+                        setConversations((prev) => prev.filter((c) => !linkedConversationIds.has(c.id)));
+                        if (activeConversationId && linkedConversationIds.has(activeConversationId)) {
+                          setActiveConversationId(null);
+                          setActiveConversationRef(null);
+                          setMessages([DEFAULT_ASSISTANT_MESSAGE]);
+                          messagesRef.current = [DEFAULT_ASSISTANT_MESSAGE];
+                        }
+                      }
+                    }
+                    setSimcarClipHistory((prev) => prev.filter((c) => c.id !== clip.id));
+                    // Clear active clip if it was this one
+                    if (simcarClipJobId === clip.jobId) {
+                      resetSimcarDraft('auto-clip');
+                      navigateView('simcar-clip');
+                    }
+                  }}
+                  deleteTitle="Excluir recorte"
+                />
               ))
             ) : (
               <HistoryEmptyState
