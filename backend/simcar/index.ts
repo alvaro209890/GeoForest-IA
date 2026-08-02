@@ -129,6 +129,20 @@ export {
     validateAreaConsistency,
 } from "./validation";
 
+// ── Cloudinary / Storage ──
+export {
+    compressForVision,
+    uploadToCloudinary,
+    getCloudinaryAiUrl,
+    deleteFromCloudinary,
+    uploadRawBufferToCloudinary,
+    uploadBufferToCloudinary,
+    buildVisionContentParts,
+    reduceImageSet,
+    estimateBytesFromDataUrl,
+    isTruncationFinishReason,
+} from "./cloudinary";
+
 // ── Clip Pipeline (SSE, job cache, utilities) ──
 export {
     jobCache,

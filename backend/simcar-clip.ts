@@ -124,6 +124,8 @@ import {
     pointInsidePolygon,
     pointInsideAnyPolygon,
     extractPointCoords,
+    simplifyGeometryForOverlay,
+    perpendicularDistance,
 } from "./simcar/polygon-ops";
 import {
     extractZipEntriesByExtension,
@@ -134,6 +136,19 @@ import {
     featureBbox,
     ringsToFeature,
 } from "./simcar/shapefile-io";
+import {
+    compressForVision,
+    uploadToCloudinary,
+    getCloudinaryAiUrl,
+    deleteFromCloudinary,
+    uploadRawBufferToCloudinary,
+    uploadBufferToCloudinary,
+    buildVisionContentParts,
+    reduceImageSet,
+    estimateBytesFromDataUrl,
+    isTruncationFinishReason,
+} from "./simcar/cloudinary";
+import type { AiImage } from "./simcar/types";
 import {
     readTemplateSchemas,
     mapAttributes,
@@ -437,97 +452,10 @@ async function detectCloudCover(imageBuffer: Buffer): Promise<{
  * Uses Douglas-Peucker with tolerance proportional to polygon extent.
  * This reduces SVG overlay complexity and token usage in prompts.
  */
-function simplifyGeometryForOverlay(
-    geom: Geometry,
-    maxVertices = 1200,
-): Geometry {
-    const countVertices = (g: Geometry): number => {
-        if (g.type === "Polygon") {
-            return (g.coordinates as number[][][]).reduce((s, r) => s + r.length, 0);
-        }
-        if (g.type === "MultiPolygon") {
-            return (g.coordinates as number[][][][]).reduce(
-                (s, poly) => s + poly.reduce((s2, r) => s2 + r.length, 0), 0,
-            );
-        }
-        return 0;
-    };
-
-    const vertices = countVertices(geom);
-    if (vertices <= maxVertices) return geom;
-
-    // Calculate tolerance from geometry extent
-    const simplifyRing = (ring: number[][], tolerance: number): number[][] => {
-        if (ring.length <= 4) return ring;
-        // Douglas-Peucker simplified
-        const simplified = douglasPeucker(ring, tolerance);
-        // Ensure ring is closed
-        if (simplified.length >= 3) {
-            const first = simplified[0];
-            const last = simplified[simplified.length - 1];
-            if (first[0] !== last[0] || first[1] !== last[1]) {
-                simplified.push([first[0], first[1]]);
-            }
-        }
-        return simplified.length >= 4 ? simplified : ring;
-    };
-
-    // Compute a reasonable tolerance
-    let allCoords: number[][] = [];
-    if (geom.type === "Polygon") {
-        allCoords = (geom.coordinates as number[][][]).flat();
-    } else if (geom.type === "MultiPolygon") {
-        allCoords = (geom.coordinates as number[][][][]).flat(2);
-    }
-    if (allCoords.length === 0) return geom;
-
-    const xs = allCoords.map(c => c[0]);
-    const ys = allCoords.map(c => c[1]);
-    const extent = Math.max(
-        Math.max(...xs) - Math.min(...xs),
-        Math.max(...ys) - Math.min(...ys),
-    );
-    // Conservative tolerance: reduce token cost without materially moving boundaries.
-    const ratio = Math.max(1, vertices / maxVertices);
-    const tolerance = extent * 0.00004 * Math.sqrt(ratio);
-
-    if (geom.type === "Polygon") {
-        return {
-            type: "Polygon",
-            coordinates: (geom.coordinates as number[][][]).map(ring => simplifyRing(ring, tolerance)),
-        };
-    }
-    if (geom.type === "MultiPolygon") {
-        return {
-            type: "MultiPolygon",
-            coordinates: (geom.coordinates as number[][][][]).map(
-                poly => poly.map(ring => simplifyRing(ring, tolerance)),
-            ),
-        };
-    }
-    return geom;
-}
 
 /**
  * Douglas-Peucker line simplification algorithm.
  */
-
-function perpendicularDistance(point: number[], lineStart: number[], lineEnd: number[]): number {
-    const dx = lineEnd[0] - lineStart[0];
-    const dy = lineEnd[1] - lineStart[1];
-    const lineLenSq = dx * dx + dy * dy;
-    if (lineLenSq === 0) {
-        const pdx = point[0] - lineStart[0];
-        const pdy = point[1] - lineStart[1];
-        return Math.sqrt(pdx * pdx + pdy * pdy);
-    }
-    const t = Math.max(0, Math.min(1, ((point[0] - lineStart[0]) * dx + (point[1] - lineStart[1]) * dy) / lineLenSq));
-    const projX = lineStart[0] + t * dx;
-    const projY = lineStart[1] + t * dy;
-    const distX = point[0] - projX;
-    const distY = point[1] - projY;
-    return Math.sqrt(distX * distX + distY * distY);
-}
 
 /* 28 layers from the Arquivo Modelo */
 const TEMPLATE_LAYERS = [
@@ -2790,135 +2718,6 @@ async function compositeOverlay(
         .png()
         .toBuffer();
     return `data:image/png;base64,${composited.toString("base64")}`;
-}
-
-/**
- * Compress image for AI vision analysis (base64 fallback path, used when Cloudinary is unavailable).
- * Downscales to max 800×600 and encodes as JPEG at quality 65 with metadata stripped.
- * Keeps enough detail for vegetation/land-use classification while minimising token cost.
- */
-async function compressForVision(dataUrl: string): Promise<string> {
-    const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
-    const buf = Buffer.from(base64, "base64");
-    const compressed = await sharp(buf)
-        .resize(800, 600, { fit: "inside", withoutEnlargement: true })
-        .jpeg({ quality: 65, mozjpeg: true })
-        .toBuffer();
-    return `data:image/jpeg;base64,${compressed.toString("base64")}`;
-}
-
-/** Local storage helpers replacing Cloudinary persistence. */
-async function uploadToCloudinary(dataUrl: string, filename: string, uid = "anonymous"): Promise<string> {
-    const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
-    const buffer = Buffer.from(base64, "base64");
-    return saveUserBuffer({
-        uid,
-        area: "simcar/analysis",
-        filename: `${Date.now()}_${filename}`,
-        buffer,
-    }).publicUrl;
-}
-
-/**
- * Returns a Cloudinary URL with on-the-fly transformations optimized for AI vision APIs.
- * Resizes to max 800×600, converts to JPEG at quality 65, strips metadata.
- * This reduces image token consumption by ~70–80% vs. sending the full-res PNG,
- * while preserving enough detail for land-use / vegetation classification.
- * The original full-resolution URL is kept intact for user display.
- */
-function getCloudinaryAiUrl(url: string): string {
-    if (url.startsWith("/")) {
-        return `${PUBLIC_API_BASE_URL}${url}`;
-    }
-    return url;
-}
-
-async function deleteFromCloudinary(secureUrl: string, resourceType: "image" | "raw" = "image"): Promise<void> {
-    void resourceType;
-    removeStoragePath(secureUrl);
-}
-
-async function uploadRawBufferToCloudinary(
-    buffer: Buffer,
-    filename: string,
-    mimeType: string,
-    uid = "anonymous",
-): Promise<string> {
-    void mimeType;
-    const area = filename.toLowerCase().endsWith(".json") ? "simcar/context" : "simcar/output";
-    return saveUserBuffer({
-        uid,
-        area,
-        filename: `${Date.now()}_${filename}`,
-        buffer,
-    }).publicUrl;
-}
-
-async function uploadBufferToCloudinary(buffer: Buffer, filename: string, uid = "anonymous"): Promise<string> {
-    const storedFilename = filename.toLowerCase().endsWith(".zip") ? filename : `${filename}.zip`;
-    return saveUserBuffer({
-        uid,
-        area: storedFilename.includes("input") ? "simcar/input" : "simcar/output",
-        filename: `${Date.now()}_${storedFilename}`,
-        buffer,
-    }).publicUrl;
-}
-
-type AiImage = {
-    /** URL for Groq vision (compressed 800×600 JPEG). */
-    url?: string;
-    /** Base64 data URL used when Cloudinary is unavailable. */
-    dataUrl?: string;
-    caption: string;
-};
-
-/**
- * Build content parts for vision API from images.
- * Uses Cloudinary URLs when available, otherwise compressed base64.
- */
-function buildVisionContentParts(images: AiImage[], prompt: string): any[] {
-    const contentParts: any[] = [
-        { type: "text", text: prompt },
-    ];
-    for (const img of images) {
-        const imageUrl = img.url || img.dataUrl;
-        if (!imageUrl) continue;
-        contentParts.push({
-            type: "image_url",
-            image_url: { url: imageUrl },
-        });
-        contentParts.push({ type: "text", text: `[Legenda: ${img.caption}]` });
-    }
-    return contentParts;
-}
-
-/**
- * Reduce image set for retry: keep only overview images (1 per satellite)
- * instead of all 3 views per satellite.
- */
-function reduceImageSet(
-    images: AiImage[],
-): AiImage[] {
-    return images.filter((img) => img.caption.includes("Visão Geral"));
-}
-
-function estimateBytesFromDataUrl(dataUrl: string): number {
-    const match = String(dataUrl || "").match(/^data:[^;]+;base64,(.+)$/);
-    if (!match) return 0;
-    const payload = match[1].replace(/\s/g, "");
-    if (!payload) return 0;
-    const padding = payload.match(/=+$/)?.[0]?.length || 0;
-    return Math.max(0, Math.floor((payload.length * 3) / 4) - padding);
-}
-
-function isTruncationFinishReason(reason: unknown): boolean {
-    const normalized = String(reason || "").trim().toLowerCase();
-    return (
-        normalized === "length" ||
-        normalized === "max_tokens" ||
-        normalized === "max_output_tokens" ||
-        normalized === "token_limit"
-    );
 }
 
 const CONTINUATION_INSTRUCTION =

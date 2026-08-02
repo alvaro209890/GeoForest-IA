@@ -99,7 +99,10 @@ export type PersistedClipContextV1 = {
 /* ─── AI Image ───────────────────────────────────── */
 
 export type AiImage = {
-    dataUrl: string;
+    /** URL for Groq vision (compressed 800×600 JPEG). */
+    url?: string;
+    /** Base64 data URL used when Cloudinary is unavailable. */
+    dataUrl?: string;
     cloudinaryUrl?: string;
     mimeType?: "image/png" | "image/jpeg";
     caption: string;
