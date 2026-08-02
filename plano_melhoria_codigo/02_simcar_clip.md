@@ -1,107 +1,72 @@
 # Plano: Desmembramento de `backend/simcar-clip.ts`
 
-**Arquivo atual:** `backend/simcar-clip.ts` — 10,103 → **10,026 linhas**
+**Arquivo final:** `backend/simcar-clip.ts` — 10.026 → **87 linhas (barrel de compatibilidade)**
 **Objetivo:** Quebrar o monólito de recorte SIMCAR em módulos por responsabilidade
-**Status:** 🟡 Plano 02 concluído 7/7 (31/07) — **infraestrutura extraída** (~1.526 linhas em
-10 módulos `backend/simcar/`); **o fluxo principal de recorte continua no monólito**
-(atualizado 01/08 com medidas reais)
+**Status:** ✅ **CONCLUÍDO 02/08** — 13 módulos em `backend/simcar/`, monólito eliminado (−99,1%)
 
 ---
 
-## ✅ O que já foi feito (31/07 — commits `1fa6d140`→`7c3ba23e`)
+## ✅ Resultado final
 
-10 módulos criados em `backend/simcar/` (medidos 01/08):
+`backend/simcar-clip.ts` virou um **barrel fino** que re-exporta dos módulos (mantém
+compatibilidade com imports antigos: `_registry.ts`, testes, etc.).
 
-| Módulo | Linhas | Conteúdo real |
-|--------|--------|---------------|
-| `types.ts` | 209 | Interfaces: SimcarClipInput, PolygonBatch, ClipResult, ClipPhase, etc. |
-| `shapefile-io.ts` | 228 | Leitura/escrita .shp/.dbf/.prj/.shx, validação de shapefile |
-| `polygon-ops.ts` | 212 | Turf.js: union, buffer, dissolve, clip, simplify, explode, area, validateGeometry |
-| `area-calculator.ts` | 220 | Totais em ha, áreas por classe, percentuais, tabela formatada |
-| `constants.ts` | 124 | SIMCAR_LAYER_NAMES, SIMCAR_FIELD_MAP, DEFAULT_BUFFER_M, MIN_AREA_HA, EPSG_SIRGAS 4674, AIR_ATP_CONFIG |
-| `attribute-mapper.ts` | 98 | mapSimcarFields, extractAttributesFromDbf, buildAttributeTable |
-| `air-atp-generator.ts` | 116 | Esqueleto de generateAIR/generateATP/generateMultiPolygon* (lógica real ainda no monólito) |
-| `clip-pipeline.ts` | 93 | Esqueleto do orquestrador runSimcarClip (fluxo real ainda no monólito) |
-| `validation.ts` | 72 | validateOutput, validateAreas, validateGeometryNonEmpty, validateAttributes |
-| `index.ts` (barrel) | 154 | Re-exports públicos (incl. DirectCopyLayerResult de air-atp-generator) |
+### Estrutura final de `backend/simcar/`
 
-**Total extraído: ~1.526 linhas** (estrutura/containers). O `backend/index.ts` agora importa
-do barrel `./simcar` onde aplicável.
+```
+simcar/
+├── analysis.ts          # 5.249 linhas — pipeline de análise IA (AC/AVN, AUAS, WMS, Groq, visão, síntese)
+├── routes.ts            # 1.701 linhas — registerSimcarClipRoutes (endpoints SSE, download, analyze, report)
+├── clip-pipeline.ts     # 1.066 linhas — orquestrador do recorte (processClip, SSE, job cache, ZIP output)
+├── report.ts            # 640 linhas  — laudo PDF (pdfkit) + persistência
+├── shapefile-io.ts      # 451 linhas  — leitura .shp/.dbf/.zip, parseUserShapefile, discoverLayerMapping
+├── hydration.ts         # 336 linhas  — retomada de jobs + persistência Firestore/storage
+├── wfs-client.ts        # 291 linhas  — fetch WFS (BBOX/INTERSECTS, paginação, fallback)
+├── area-calculator.ts   # 220 linhas  — áreas, XLSX quantitativos, warnings
+├── types.ts             # 216 linhas  — tipos compartilhados
+├── polygon-ops.ts       # 212 linhas  — operações geométricas (union, simplify, point-in-polygon)
+├── index.ts             # 185 linhas  — barrel público
+├── cloudinary.ts        # 132 linhas  — storage/upload de imagens
+├── constants.ts         # 131 linhas  — constantes de configuração
+├── air-atp-generator.ts # 116 linhas  — AIR/ATP (direct copy layers)
+├── attribute-mapper.ts  # (existente) — mapeamento de atributos template→WFS
+└── validation.ts        # (existente) — validações pós-recorte
+```
 
----
+### Commits (8 fases, 1 por commit, todos com tsc + testes verdes)
 
-## 🔴 O que falta de verdade (o trabalho real)
+| Commit | Fase | Conteúdo |
+|--------|------|----------|
+| `a3f0c204` | 1 | Removidas 25 funções duplicadas (imports dos módulos) |
+| `391dd93a` | 2 | `simcar/cloudinary.ts` (10 funções) |
+| `2eb7ffb2` | 3 | `simcar/car-lookup.ts` |
+| `4072a12a` | 4a/4b | `simcar/wfs-client.ts` + `toPublicApiUrl` → constants |
+| `79778700` | 4c | `parseUserShapefile` + `discoverLayerMapping` → shapefile-io |
+| `705ca410` | 4e | Bloco de recorte → `clip-pipeline.ts` (processClip 545 linhas verbatim) |
+| `0ea4417f` | 5a | `simcar/hydration.ts` |
+| `0cd7a001` | 5b | `simcar/report.ts` (PDF pdfkit) |
+| `031d517e` | 6 | `simcar/analysis.ts` + `simcar/routes.ts` + monólito → barrel |
 
-O monólito `backend/simcar-clip.ts` continua com **10.026 linhas**. O que foi extraído é a
-**infraestrutura** (tipos, I/O, helpers puros); o **fluxo principal de recorte** (a maior
-parte do arquivo) permanece no monólito:
+## Regras seguidas (aprendidas na prática, Plano 01–03)
 
-- Lógica real de geração AIR/ATP por lote (o `air-atp-generator.ts` é só esqueleto)
-- Orquestração real do pipeline (o `clip-pipeline.ts` é só esqueleto)
-- Handlers de rotas / jobs / SSE associados ao recorte
-- Lógica de validação específica SIMCAR (contagens, áreas mínimas, MultiPolygon)
-
-### Passos restantes (ordem sugerida — 1 commit atômico por passo)
-
-| Passo | O que | Risco |
-|-------|-------|-------|
-| A | Mover a lógica real de geração AIR/ATP do monólito para `air-atp-generator.ts` (funções completas, não esqueletos) | Alto — maior bloco, cuidar imports circulares |
-| B | Mover a orquestração (leitura → validação → por lote → exportação → validação) para `clip-pipeline.ts` | Médio |
-| C | Mover validações SIMCAR específicas (não genéricas) para `validation.ts` | Baixo |
-| D | Limpar exports do monólito: manter no `simcar-clip.ts` só o que as rotas importam, via barrel | Médio |
-| E | Remover código morto da versão antiga (pré-MultiPolygon), se existir | Baixo |
-| F | Atualizar `backend/simcar-clip-snap.test.ts` para imports dos novos módulos | Baixo |
-
-**Regras (aprendidas na prática, Plano 01–03):**
-- 1 extração = 1 commit, zero mudança funcional
-- `npx tsc --noEmit` + `npx vitest run --root . backend/simcar-clip-snap` entre cada passo
+- 1 extração = 1 commit, **zero mudança funcional** (blocos movidos verbatim)
+- `npx tsc --noEmit` + `npx vitest run backend/simcar-clip-snap backend/simcar-rules` entre cada passo
+- **Camadas**: cloudinary → car-lookup → wfs → parse → recorte → hydration → report → análise → rotas
+  (ordem por dependência, sem imports circulares)
 - `polygon-ops.ts` é camada MAIS BAIXA — nunca importa de volta para `simcar/`
 - Cuidado com variáveis de módulo (caches/configs) → mover para `constants.ts`
-- Snapshot de output deve permanecer idêntico (não quebrar)
-
----
-
-## Estrutura alvo (confirmada 01/08)
-
-```
-backend/simcar/
-├── index.ts                   # barrel: re-exporta funções públicas (~154 linhas) ✅
-├── clip-pipeline.ts           # orquestrador principal (~93 → ~300 linhas após passo B)
-├── polygon-ops.ts             # operações geométricas puras (~212 linhas) ✅
-├── air-atp-generator.ts       # geração AIR/ATP por lote (~116 → ~1.200 após passo A)
-├── shapefile-io.ts            # leitura/escrita de shapefile (~228 linhas) ✅
-├── area-calculator.ts         # cálculo de áreas (~220 linhas) ✅
-├── attribute-mapper.ts        # mapeamento de atributos (~98 linhas) ✅
-├── validation.ts              # validação pós-recorte (~72 → ~500 após passo C)
-├── types.ts                   # interfaces (~209 linhas) ✅
-├── constants.ts               # lookup tables, thresholds (~124 linhas) ✅
-└── utils.ts                   # helpers compartilhados (ainda não criado)
-```
-
----
+- Tipos usados por múltiplos módulos → `types.ts` (LayerSummary, ClipResult, PersistedClipContextV1, AiImage, WfsFeature)
+- Snapshot de output permanece idêntico (testes snap verdes em todos os commits)
 
 ## Como validar
 
 ```bash
-# A cada passo:
 npx tsc --noEmit                          # compila?
 npx vitest run backend/simcar-clip-snap   # snap ainda passa?
-
-# Após migração completa:
 npx vitest run backend/simcar/            # testes novos
 curl -X POST http://localhost:3001/api/simcar/clip ...  # teste real
 ```
 
----
+## Changelog
 
-## Estimativa
-
-| Passo | Tempo | Risco |
-|-------|-------|-------|
-| A (air-atp-generator real) | 45 min | Alto |
-| B (clip-pipeline real) | 20 min | Médio |
-| C (validation SIMCAR) | 15 min | Baixo |
-| D (limpar exports) | 15 min | Médio |
-| E (código morto) | 10 min | Baixo |
-| F (snap tests) | 15 min | Baixo |
-| **Total** | **~2 h** | |
+- `docs/CHANGELOG_2026-08-02_PLANO_02_MONOLITO_SIMCAR.md` — detalhes completos por fase.

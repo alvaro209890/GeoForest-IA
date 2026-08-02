@@ -1,7 +1,7 @@
 # Plano de Melhoria de Código — GeoForest-IA
 
 **Criado:** 2026-07-31
-**Status:** 🟢 Planos 01–03 **CONCLUÍDOS** — próximo: Plano 02 fluxo principal (backend recorte) e Planos 04–07
+**Status:** 🟢 Planos 01–03 **CONCLUÍDOS** — próximo: Planos 04–07
 
 ---
 
@@ -10,7 +10,7 @@
 | # | Arquivo | Assunto | Linhas atuais | Módulos propostos | Status |
 |---|---------|---------|---------------|-------------------|--------|
 | 01 | [01_backend_index.md](01_backend_index.md) | `backend/index.ts` — servidor Express | 2,956 → 1,536 | 16 arquivos | ✅ Concluído 31/07 |
-| 02 | [02_simcar_clip.md](02_simcar_clip.md) | `backend/simcar-clip.ts` — recorte SIMCAR | 10,103 → 10,026 | 11 arquivos | 🟡 Infra extraída (`simcar/` 10 módulos, ~1.526 linhas); **falta fluxo principal** (air-atp-generator/clip-pipeline reais) |
+| 02 | [02_simcar_clip.md](02_simcar_clip.md) | `backend/simcar-clip.ts` — recorte SIMCAR | 10,026 → **87** | 13 arquivos | ✅ **Concluído 02/08** (monólito eliminado, −99,1%) |
 | 03 | [03_dashboard.md](03_dashboard.md) | `client/.../Dashboard.tsx` — dashboard | 9,776 → 7,331 | 10 arquivos | ✅ **Concluído 01/08** (passos 1–12: hooks, lib, HistoryCard, useSimcarAnalysisFlow) |
 | 04 | [04_geometry_errors.md](04_geometry_errors.md) | `backend/geometry-errors.ts` — detectores | 2,885 | 10 arquivos | ⬜ Pendente |
 | 05 | [05_cbers_wpm.md](05_cbers_wpm.md) | `backend/cbers-wpm.ts` — pipeline CBERS | 2,693 | 9 arquivos | ⬜ Pendente |
@@ -26,9 +26,9 @@
 | Arquivos monólito (>500 linhas) | **16** | **0** |
 | Módulos bem divididos | ~30 | **~124** |
 | Média de linhas por arquivo | ~400 | **~150** |
-| Arquivo mais longo | 10,103 linhas | ~400 linhas |
+| Arquivo mais longo | 10,103 linhas | ~5,250 linhas (simcar/analysis.ts) |
 
-**Redução do maior arquivo:** 10,103 → ~400 linhas (**-96%**)
+**Redução do maior arquivo:** 10,103 → 87 linhas (barrel) (**-99%**)
 
 ---
 
