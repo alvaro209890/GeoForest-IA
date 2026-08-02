@@ -27,3 +27,9 @@ export {
   formatSimcarAuasVerdict,
   simcarAuasVerdictClass,
 } from './formatters-simcar';
+
+export {
+  splitThinkContent,
+  readFileAsDataUrl,
+  readFileAsBase64Payload,
+} from './analysis-helpers';
