@@ -37,7 +37,7 @@ import {
   normalizeSimcarClipSummary,
   normalizeSimcarReportPatch,
 } from '@/dashboard/lib/normalizers-simcar';
-import { splitThinkContent, readFileAsBase64Payload } from '@/dashboard/lib/analysis-helpers';
+import { splitThinkContent, readFileAsBase64Payload, readSseEvents, SseStopError } from '@/dashboard/lib/analysis-helpers';
 
 export type UseSimcarAnalysisFlowDeps = {
   /** Estado + setters + refs de análise (retorno de useSimcarAnalysis) */
@@ -205,30 +205,11 @@ export function useSimcarAnalysisFlow(deps: UseSimcarAnalysisFlowDeps) {
       }
 
       const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
       let streamAnswer = '';
       let streamThinking = '';
       let completedContent = '';
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const payload = line.slice(6).trim();
-          if (!payload) continue;
-          let event: any;
-          try {
-            event = JSON.parse(payload);
-          } catch {
-            continue;
-          }
-
+      await readSseEvents(reader, (event) => {
           if (event.type === 'delta') {
             streamAnswer = String(event.answerText || streamAnswer || '');
             streamThinking = String(event.thinkingText || streamThinking || '');
@@ -238,538 +219,514 @@ export function useSimcarAnalysisFlow(deps: UseSimcarAnalysisFlowDeps) {
               setSimcarThinkingText(streamThinking.trim());
             }
           } else if (event.type === 'complete') {
-            completedContent = String(event.content || '');
-            streamAnswer = String(event.answerText || streamAnswer || '');
-            streamThinking = String(event.thinkingText || streamThinking || '');
-            setSimcarLiveAnswerText(streamAnswer);
-            setSimcarLiveThinkingText(streamThinking);
-            if (streamThinking.trim()) {
-              setSimcarThinkingText(streamThinking.trim());
-            }
-          } else if (event.type === 'billing' && event.billing) {
-            applyBillingToWallet(event.billing as BillingResult);
-          } else if (event.type === 'error') {
-            throw new Error(String(event.message || 'Erro no stream de análise.'));
+          completedContent = String(event.content || '');
+          streamAnswer = String(event.answerText || streamAnswer || '');
+          streamThinking = String(event.thinkingText || streamThinking || '');
+          setSimcarLiveAnswerText(streamAnswer);
+          setSimcarLiveThinkingText(streamThinking);
+          if (streamThinking.trim()) {
+            setSimcarThinkingText(streamThinking.trim());
           }
+        } else if (event.type === 'billing' && event.billing) {
+        applyBillingToWallet(event.billing as BillingResult);
+        } else if (event.type === 'error') {
+        throw new Error(String(event.message || 'Erro no stream de análise.'));
         }
-      }
+      });
 
-      const rawContent = completedContent
-        || (streamThinking.trim()
-          ? `<think>\n${streamThinking.trim()}\n</think>\n\n${streamAnswer}`
-          : streamAnswer || 'Sem resposta.');
-      const parsed = splitThinkContent(String(rawContent));
-      const aiMsg: SimcarAnalysisMessage = {
-        role: 'ai',
-        text: parsed.cleanText,
-        thinkingText: parsed.thinkingText || undefined,
+    const rawContent = completedContent
+    || (streamThinking.trim()
+    ? `<think>\n${streamThinking.trim()}\n</think>\n\n${streamAnswer}`
+    : streamAnswer || 'Sem resposta.');
+    const parsed = splitThinkContent(String(rawContent));
+    const aiMsg: SimcarAnalysisMessage = {
+      role: 'ai',
+      text: parsed.cleanText,
+      thinkingText: parsed.thinkingText || undefined,
       };
 
-      if (parsed.thinkingText) {
-        setSimcarThinkingText(parsed.thinkingText);
+    if (parsed.thinkingText) {
+      setSimcarThinkingText(parsed.thinkingText);
       }
-      setSimcarAnalysisMessages((prev) => [...prev, aiMsg]);
+    setSimcarAnalysisMessages((prev) => [...prev, aiMsg]);
 
-      if (simcarClipJobId) {
-        const nextHistory = [...baseMessages, { role: 'user' as const, text: userMsg }, aiMsg];
-        void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
-        if (activeClip) {
-          void appendSimcarEntriesToConversation(activeClip, [
-            { role: 'user', text: userMsg },
-            { role: 'ai', text: aiMsg.text },
-          ]);
+    if (simcarClipJobId) {
+      const nextHistory = [...baseMessages, { role: 'user' as const, text: userMsg }, aiMsg];
+      void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
+      if (activeClip) {
+        void appendSimcarEntriesToConversation(activeClip, [
+        { role: 'user', text: userMsg },
+        { role: 'ai', text: aiMsg.text },
+        ]);
         }
       }
     } catch (err: any) {
-      const aiText = `❌ ${err.message || 'Erro ao processar resposta.'}`;
-      setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: aiText }]);
-      if (simcarClipJobId) {
-        const nextHistory = [
-          ...baseMessages,
-          { role: 'user' as const, text: userMsg },
-          { role: 'ai' as const, text: aiText },
-        ];
-        void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
-        if (activeClip) {
-          void appendSimcarEntriesToConversation(activeClip, [
-            { role: 'user', text: userMsg },
-            { role: 'ai', text: aiText },
-          ]);
+    const aiText = `❌ ${err.message || 'Erro ao processar resposta.'}`;
+    setSimcarAnalysisMessages((prev) => [...prev, { role: 'ai', text: aiText }]);
+    if (simcarClipJobId) {
+      const nextHistory = [
+      ...baseMessages,
+      { role: 'user' as const, text: userMsg },
+      { role: 'ai' as const, text: aiText },
+      ];
+      void patchPersistedSimcarClip(simcarClipJobId, { analysisMessages: nextHistory });
+      if (activeClip) {
+        void appendSimcarEntriesToConversation(activeClip, [
+        { role: 'user', text: userMsg },
+        { role: 'ai', text: aiText },
+        ]);
         }
       }
     } finally {
-      setSimcarAnalysisSending(false);
-      setSimcarLiveThinkingText('');
-      setSimcarLiveAnswerText('');
-      setTimeout(() => {
-        simcarAnalysisChatRef.current?.scrollTo({ top: simcarAnalysisChatRef.current.scrollHeight, behavior: 'smooth' });
+    setSimcarAnalysisSending(false);
+    setSimcarLiveThinkingText('');
+    setSimcarLiveAnswerText('');
+    setTimeout(() => {
+      simcarAnalysisChatRef.current?.scrollTo({ top: simcarAnalysisChatRef.current.scrollHeight, behavior: 'smooth' });
       }, 100);
     }
   }, [
-    apiFetch,
-    readApiError,
-    handleInsufficientCredits,
-    applyBillingToWallet,
-    simcarAnalysisMessages,
-    splitThinkContent,
-    simcarClipJobId,
-    simcarClipHistory,
-    patchPersistedSimcarClip,
-    appendSimcarEntriesToConversation,
-    simcarAnalysisChatRef,
-  ]);
+apiFetch,
+readApiError,
+handleInsufficientCredits,
+applyBillingToWallet,
+simcarAnalysisMessages,
+splitThinkContent,
+simcarClipJobId,
+simcarClipHistory,
+patchPersistedSimcarClip,
+appendSimcarEntriesToConversation,
+simcarAnalysisChatRef,
+]);
 
-  const runAcAvnAnalysis = useCallback(
-    async (params: {
-      jobId: string;
-      historyEntry?: SimcarClipHistoryItem;
-      layers?: string[];
-      imageOnly?: boolean;
-      silentOutput?: boolean;
-      skipConversation?: boolean;
-    }): Promise<{
-      ok: boolean;
-      aiMessage?: SimcarAnalysisMessage;
-      analysisMeta?: SimcarAcAvnAnalysisMeta;
-      images: Array<{ url: string; caption: string }>;
-      error?: string;
-    }> => {
-      const { jobId, imageOnly = false } = params;
-      const silentOutput = Boolean(params.silentOutput);
-      const skipConversation = Boolean(params.skipConversation);
-      const layers = Array.isArray(params.layers) && params.layers.length > 0
-        ? params.layers
-        : simcarFixedSatelliteKeys;
-      const historyEntry = params.historyEntry || simcarClipHistory.find((c) => c.jobId === jobId);
-      const result: {
-        ok: boolean;
-        aiMessage?: SimcarAnalysisMessage;
-        analysisMeta?: SimcarAcAvnAnalysisMeta;
-        images: Array<{ url: string; caption: string }>;
-        error?: string;
-      } = { ok: false, images: [] };
+const runAcAvnAnalysis = useCallback(
+async (params: {
+  jobId: string;
+  historyEntry?: SimcarClipHistoryItem;
+  layers?: string[];
+  imageOnly?: boolean;
+  silentOutput?: boolean;
+  skipConversation?: boolean;
+  }): Promise<{
+  ok: boolean;
+  aiMessage?: SimcarAnalysisMessage;
+  analysisMeta?: SimcarAcAvnAnalysisMeta;
+  images: Array<{ url: string; caption: string }>;
+  error?: string;
+  }> => {
+  const { jobId, imageOnly = false } = params;
+  const silentOutput = Boolean(params.silentOutput);
+  const skipConversation = Boolean(params.skipConversation);
+  const layers = Array.isArray(params.layers) && params.layers.length > 0
+  ? params.layers
+  : simcarFixedSatelliteKeys;
+  const historyEntry = params.historyEntry || simcarClipHistory.find((c) => c.jobId === jobId);
+  const result: {
+    ok: boolean;
+    aiMessage?: SimcarAnalysisMessage;
+    analysisMeta?: SimcarAcAvnAnalysisMeta;
+    images: Array<{ url: string; caption: string }>;
+    error?: string;
+    } = { ok: false, images: [] };
 
-      setSimcarAnalysisProcessing(true);
-      setSimcarAnalysisProgress({
-        step: 'starting',
-        percent: 0,
-        message: imageOnly ? 'Gerando imagens...' : 'Iniciando analise...',
+  setSimcarAnalysisProcessing(true);
+  setSimcarAnalysisProgress({
+    step: 'starting',
+    percent: 0,
+    message: imageOnly ? 'Gerando imagens...' : 'Iniciando analise...',
+    });
+  if (!silentOutput) setSimcarAnalysisImages([]);
+  if (!imageOnly && !silentOutput) {
+    setSimcarAgentLog([{ label: 'Iniciando analise...', done: false, kind: 'step' }]);
+    setSimcarAnalysisMessages([]);
+    setSimcarThinkingText('');
+    setSimcarThinkingHidden(false);
+    setSimcarLiveThinkingText('');
+    setSimcarLiveAnswerText('');
+    }
+
+  try {
+    const controller = new AbortController();
+    simcarAnalysisAbortRef.current = controller;
+    simcarAnalysisProcessJobIdRef.current = null;
+    const response = await apiFetch('/api/simcar/clip/analyze', {
+      method: 'POST',
+      body: JSON.stringify({
+        jobId,
+        selectedLayers: layers,
+        imageOnly: imageOnly || undefined,
+        contextUrl: historyEntry?.contextUrl,
+        outputZipUrl: historyEntry?.outputZipUrl,
+        }),
+      signal: controller.signal,
       });
-      if (!silentOutput) setSimcarAnalysisImages([]);
-      if (!imageOnly && !silentOutput) {
-        setSimcarAgentLog([{ label: 'Iniciando analise...', done: false, kind: 'step' }]);
-        setSimcarAnalysisMessages([]);
-        setSimcarThinkingText('');
-        setSimcarThinkingHidden(false);
-        setSimcarLiveThinkingText('');
-        setSimcarLiveAnswerText('');
+    if (!response.ok) {
+      const payload = await readApiError(response);
+      if (response.status === 402 || payload?.code === 'INSUFFICIENT_CREDITS') {
+        handleInsufficientCredits(payload?.error);
+        return { ...result, error: payload?.error || 'Saldo insuficiente.' };
+        }
+      throw new Error(payload?.error || `HTTP ${response.status}`);
       }
 
-      try {
-        const controller = new AbortController();
-        simcarAnalysisAbortRef.current = controller;
-        simcarAnalysisProcessJobIdRef.current = null;
-        const response = await apiFetch('/api/simcar/clip/analyze', {
-          method: 'POST',
-          body: JSON.stringify({
-            jobId,
-            selectedLayers: layers,
-            imageOnly: imageOnly || undefined,
-            contextUrl: historyEntry?.contextUrl,
-            outputZipUrl: historyEntry?.outputZipUrl,
-          }),
-          signal: controller.signal,
+    const reader = response.body?.getReader();
+    let insufficientCredits = false;
+    let streamError = '';
+
+    if (reader) {
+          await readSseEvents(reader, (event) => {
+
+          if (event.type === 'job_started') {
+            const streamJobId = typeof event.jobId === 'string' ? event.jobId.trim() : '';
+            if (streamJobId) simcarAnalysisProcessJobIdRef.current = streamJobId;
+          } else if (event.type === 'progress') {
+          const msg = normalizeBackendText(String(event.message || ''));
+          setSimcarAnalysisProgress({ step: event.step, percent: event.percent, message: msg });
+          if (!imageOnly && !silentOutput) {
+            setSimcarAgentLog((prev) => {
+              const updated = prev.map((s) => (s.done ? s : { ...s, done: true }));
+              return [...updated, { label: msg, done: false, kind: 'step' as const }];
+            });
+          }
+        } else if (event.type === 'model_thinking' && !imageOnly && !silentOutput) {
+        const source = event.source ? `[${event.source}]` : '';
+        const thought = String(event.thinkingText || '').trim();
+        if (thought) {
+          appendSimcarThinking(source ? `${source}\n${thought}` : thought);
+          setSimcarThinkingHidden(false);
+          const snippet = thought.replace(/\s+/g, ' ').slice(0, 120);
+          const label = source ? `${source}: ${snippet}…` : `${snippet}…`;
+          setSimcarAgentLog((prev) => [...prev, { label, done: true, kind: 'thinking' as const }]);
+          }
+        } else if (event.type === 'complete') {
+        const images = (Array.isArray(event.images) ? event.images : [])
+        .map((img: any) => ({
+          url: String(img?.url || ''),
+          caption: String(img?.caption || ''),
+          }))
+        .filter((img: { url: string; caption: string }) => img.url.length > 0);
+        const analysisMeta = isPlainObject(event.analysisMeta)
+        ? (event.analysisMeta as SimcarAcAvnAnalysisMeta)
+        : undefined;
+        result.images = images;
+        result.analysisMeta = analysisMeta;
+
+        const patch: Partial<SimcarClipHistoryItem> = {
+          analysisImages: images,
+          analysisMeta,
+          ...(historyEntry?.sourceMode === 'vectorized-analysis'
+          ? {}
+          : { status: 'completed' as const, error: undefined }),
+          ...normalizeSimcarReportPatch(event),
+          };
+        let aiMessage: SimcarAnalysisMessage | undefined;
+        if (!imageOnly) {
+          const parsed = splitThinkContent(String(event.analysis || ''));
+          if (parsed.thinkingText) {
+            appendSimcarThinking(parsed.thinkingText);
+          }
+        aiMessage = {
+          role: 'ai',
+          text: parsed.cleanText,
+          thinkingText: parsed.thinkingText || undefined,
+          images: images.map((img: { url: string; caption: string }) => img.url),
+          };
+        patch.analysisMessages = [aiMessage];
+        result.aiMessage = aiMessage;
+        if (!silentOutput) {
+          setSimcarAnalysisMessages([aiMessage]);
+          setSimcarAgentLog((prev) => prev.map((s) => ({ ...s, done: true })));
+          }
+        }
+
+      if (!silentOutput) {
+        setSimcarAnalysisImages(images);
+        }
+      setSimcarAnalysisProgress({
+        step: 'complete',
+        percent: 100,
+        message: imageOnly ? 'Imagens geradas. Finalizando...' : 'Análise concluída. Finalizando...',
         });
-        if (!response.ok) {
-          const payload = await readApiError(response);
-          if (response.status === 402 || payload?.code === 'INSUFFICIENT_CREDITS') {
-            handleInsufficientCredits(payload?.error);
-            return { ...result, error: payload?.error || 'Saldo insuficiente.' };
-          }
-          throw new Error(payload?.error || `HTTP ${response.status}`);
+      setSimcarClipHistory((prev) =>
+      prev.map((c) =>
+      c.jobId === jobId
+      ? {
+        ...c,
+        ...patch,
+        }
+      : c
+      )
+      );
+      void patchPersistedSimcarClip(jobId, patch);
+
+      const clipBase: SimcarClipHistoryItem = historyEntry
+      ? historyEntry
+      : {
+        id: jobId,
+        timestamp: new Date().toISOString(),
+        filename: `Recorte ${jobId.slice(0, 8)}`,
+        downloadUrl: '',
+        totalFeatures: 0,
+        propertyAreaHa: 0,
+        layersWithData: 0,
+        totalLayers: 0,
+        jobId,
+        };
+      const clipForConversation: SimcarClipHistoryItem = {
+        ...clipBase,
+        ...patch,
+        };
+      const imageLinks = images.map((img: { url: string; caption: string }) => `- ${img.url}`);
+      if (!skipConversation && imageOnly) {
+        void appendSimcarEntriesToConversation(clipForConversation, [
+        {
+          role: 'user',
+          text: `Solicitei apenas a geração de imagens para o recorte ${jobId} com as camadas: ${layers.join(', ')}.`,
+          },
+        {
+          role: 'ai',
+          text: [
+          `Imagens geradas para o recorte ${jobId}.`,
+          imageLinks.length > 0 ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}` : '',
+          ]
+          .filter(Boolean)
+          .join('\n\n'),
+          },
+        ]);
+        } else if (!skipConversation && aiMessage) {
+        void appendSimcarEntriesToConversation(clipForConversation, [
+        {
+          role: 'user',
+          text: `Solicitei análise AC/AVN para o recorte ${jobId} com as imagens: ${layers.join(', ')}.`,
+          },
+        {
+          role: 'ai',
+          text: [
+          `Análise AC/AVN concluída para o recorte ${jobId}.`,
+          imageLinks.length > 0 ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}` : '',
+          aiMessage.text,
+          ]
+          .filter(Boolean)
+          .join('\n\n'),
+          },
+        ]);
         }
 
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let insufficientCredits = false;
-        let streamError = '';
+      result.ok = true;
+      } else if (event.type === 'report_error') {
+      const message = String(event.message || 'Falha ao gerar PDF técnico.');
+      const patch: Partial<SimcarClipHistoryItem> = {
+        reportPdfStatus: 'failed',
+        reportPdfError: message,
+        };
+      setSimcarClipHistory((prev) =>
+      prev.map((c) => (c.jobId === jobId ? { ...c, ...patch } : c))
+      );
+      void patchPersistedSimcarClip(jobId, patch);
+      } else if (event.type === 'billing' && event.billing) {
+      applyBillingToWallet(event.billing as BillingResult);
+      } else if (event.type === 'error') {
+      if (event?.code === 'INSUFFICIENT_CREDITS') {
+        handleInsufficientCredits(String(event.message || 'Saldo insuficiente.'));
+        insufficientCredits = true;
+        throw new SseStopError();
+        }
+      streamError = normalizeBackendText(String(event.message || 'Erro inesperado na analise.'));
+      throw new SseStopError();
+      }
 
-        if (reader) {
-          readLoop: while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-            for (const line of lines) {
-              if (!line.startsWith('data: ')) continue;
-              try {
-                const event = JSON.parse(line.slice(6));
-                if (event.type === 'job_started') {
-                  const streamJobId = typeof event.jobId === 'string' ? event.jobId.trim() : '';
-                  if (streamJobId) simcarAnalysisProcessJobIdRef.current = streamJobId;
-                } else if (event.type === 'progress') {
-                  const msg = normalizeBackendText(String(event.message || ''));
-                  setSimcarAnalysisProgress({ step: event.step, percent: event.percent, message: msg });
-                  if (!imageOnly && !silentOutput) {
-                    setSimcarAgentLog((prev) => {
-                      const updated = prev.map((s) => (s.done ? s : { ...s, done: true }));
-                      return [...updated, { label: msg, done: false, kind: 'step' as const }];
-                    });
-                  }
-                } else if (event.type === 'model_thinking' && !imageOnly && !silentOutput) {
-                  const source = event.source ? `[${event.source}]` : '';
-                  const thought = String(event.thinkingText || '').trim();
-                  if (thought) {
-                    appendSimcarThinking(source ? `${source}\n${thought}` : thought);
-                    setSimcarThinkingHidden(false);
-                    const snippet = thought.replace(/\s+/g, ' ').slice(0, 120);
-                    const label = source ? `${source}: ${snippet}…` : `${snippet}…`;
-                    setSimcarAgentLog((prev) => [...prev, { label, done: true, kind: 'thinking' as const }]);
-                  }
-                } else if (event.type === 'complete') {
-                  const images = (Array.isArray(event.images) ? event.images : [])
-                    .map((img: any) => ({
-                      url: String(img?.url || ''),
-                      caption: String(img?.caption || ''),
-                    }))
-                    .filter((img: { url: string; caption: string }) => img.url.length > 0);
-                  const analysisMeta = isPlainObject(event.analysisMeta)
-                    ? (event.analysisMeta as SimcarAcAvnAnalysisMeta)
-                    : undefined;
-                  result.images = images;
-                  result.analysisMeta = analysisMeta;
+    });
+  }
 
-	                  const patch: Partial<SimcarClipHistoryItem> = {
-	                    analysisImages: images,
-	                    analysisMeta,
-	                    ...(historyEntry?.sourceMode === 'vectorized-analysis'
-	                      ? {}
-	                      : { status: 'completed' as const, error: undefined }),
-	                    ...normalizeSimcarReportPatch(event),
-	                  };
-                  let aiMessage: SimcarAnalysisMessage | undefined;
-                  if (!imageOnly) {
-                    const parsed = splitThinkContent(String(event.analysis || ''));
-                    if (parsed.thinkingText) {
-                      appendSimcarThinking(parsed.thinkingText);
-                    }
-                    aiMessage = {
-                      role: 'ai',
-                      text: parsed.cleanText,
-                      thinkingText: parsed.thinkingText || undefined,
-                      images: images.map((img: { url: string; caption: string }) => img.url),
-                    };
-                    patch.analysisMessages = [aiMessage];
-                    result.aiMessage = aiMessage;
-                    if (!silentOutput) {
-                      setSimcarAnalysisMessages([aiMessage]);
-                      setSimcarAgentLog((prev) => prev.map((s) => ({ ...s, done: true })));
-                    }
-                  }
-
-                  if (!silentOutput) {
-                    setSimcarAnalysisImages(images);
-                  }
-                  setSimcarAnalysisProgress({
-                    step: 'complete',
-                    percent: 100,
-                    message: imageOnly ? 'Imagens geradas. Finalizando...' : 'Análise concluída. Finalizando...',
-                  });
-                  setSimcarClipHistory((prev) =>
-                    prev.map((c) =>
-                      c.jobId === jobId
-                        ? {
-                          ...c,
-                          ...patch,
-                        }
-                        : c
-                    )
-                  );
-                  void patchPersistedSimcarClip(jobId, patch);
-
-                  const clipBase: SimcarClipHistoryItem = historyEntry
-                    ? historyEntry
-                    : {
-                      id: jobId,
-                      timestamp: new Date().toISOString(),
-                      filename: `Recorte ${jobId.slice(0, 8)}`,
-                      downloadUrl: '',
-                      totalFeatures: 0,
-                      propertyAreaHa: 0,
-                      layersWithData: 0,
-                      totalLayers: 0,
-                      jobId,
-                    };
-                  const clipForConversation: SimcarClipHistoryItem = {
-                    ...clipBase,
-                    ...patch,
-                  };
-                  const imageLinks = images.map((img: { url: string; caption: string }) => `- ${img.url}`);
-                  if (!skipConversation && imageOnly) {
-                    void appendSimcarEntriesToConversation(clipForConversation, [
-                      {
-                        role: 'user',
-                        text: `Solicitei apenas a geração de imagens para o recorte ${jobId} com as camadas: ${layers.join(', ')}.`,
-                      },
-                      {
-                        role: 'ai',
-                        text: [
-                          `Imagens geradas para o recorte ${jobId}.`,
-                          imageLinks.length > 0 ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}` : '',
-                        ]
-                          .filter(Boolean)
-                          .join('\n\n'),
-                      },
-                    ]);
-                  } else if (!skipConversation && aiMessage) {
-                    void appendSimcarEntriesToConversation(clipForConversation, [
-                      {
-                        role: 'user',
-                        text: `Solicitei análise AC/AVN para o recorte ${jobId} com as imagens: ${layers.join(', ')}.`,
-                      },
-                      {
-                        role: 'ai',
-                        text: [
-                          `Análise AC/AVN concluída para o recorte ${jobId}.`,
-                          imageLinks.length > 0 ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}` : '',
-                          aiMessage.text,
-                        ]
-                          .filter(Boolean)
-                          .join('\n\n'),
-                      },
-                    ]);
-                  }
-
-                  result.ok = true;
-	                } else if (event.type === 'report_error') {
-	                  const message = String(event.message || 'Falha ao gerar PDF técnico.');
-	                  const patch: Partial<SimcarClipHistoryItem> = {
-	                    reportPdfStatus: 'failed',
-	                    reportPdfError: message,
-	                  };
-	                  setSimcarClipHistory((prev) =>
-	                    prev.map((c) => (c.jobId === jobId ? { ...c, ...patch } : c))
-	                  );
-	                  void patchPersistedSimcarClip(jobId, patch);
-	                } else if (event.type === 'billing' && event.billing) {
-                  applyBillingToWallet(event.billing as BillingResult);
-                } else if (event.type === 'error') {
-                  if (event?.code === 'INSUFFICIENT_CREDITS') {
-                    handleInsufficientCredits(String(event.message || 'Saldo insuficiente.'));
-                    insufficientCredits = true;
-                    break readLoop;
-                  }
-                  streamError = normalizeBackendText(String(event.message || 'Erro inesperado na analise.'));
-                  break readLoop;
-                }
-              } catch {
-                // ignore malformed SSE chunk
-              }
-            }
+if (insufficientCredits) {
+  return { ...result, ok: false, error: 'Saldo insuficiente.' };
+  }
+if (streamError) {
+  throw new Error(streamError);
+  }
+if (!result.ok) {
+  throw new Error(imageOnly ? 'Falha ao gerar imagens.' : 'Falha ao concluir analise AC/AVN.');
+  }
+return result;
+} catch (err: any) {
+const message = String(err?.message || (imageOnly ? 'Erro ao gerar imagens.' : 'Erro inesperado.'));
+if (!imageOnly && !silentOutput) {
+  setSimcarAnalysisMessages([{ role: 'ai', text: `❌ ${message}` }]);
+    if (historyEntry && !skipConversation) {
+      void appendSimcarEntriesToConversation(historyEntry, [
+      {
+        role: 'user',
+        text: `Solicitei análise AC/AVN para o recorte ${jobId} com as imagens: ${layers.join(', ')}.`,
+        },
+      { role: 'ai', text: `❌ ${message}` },
+        ]);
+        }
+      } else {
+      setSimcarClipError(message);
+      if (historyEntry && !skipConversation) {
+        void appendSimcarEntriesToConversation(historyEntry, [
+        {
+          role: 'user',
+          text: `Solicitei apenas a geração de imagens para o recorte ${jobId} com as camadas: ${layers.join(', ')}.`,
+          },
+        { role: 'ai', text: `❌ ${message}` },
+          ]);
           }
         }
-
-        if (insufficientCredits) {
-          return { ...result, ok: false, error: 'Saldo insuficiente.' };
-        }
-        if (streamError) {
-          throw new Error(streamError);
-        }
-        if (!result.ok) {
-          throw new Error(imageOnly ? 'Falha ao gerar imagens.' : 'Falha ao concluir analise AC/AVN.');
-        }
-        return result;
-      } catch (err: any) {
-        const message = String(err?.message || (imageOnly ? 'Erro ao gerar imagens.' : 'Erro inesperado.'));
-        if (!imageOnly && !silentOutput) {
-          setSimcarAnalysisMessages([{ role: 'ai', text: `❌ ${message}` }]);
-          if (historyEntry && !skipConversation) {
-            void appendSimcarEntriesToConversation(historyEntry, [
-              {
-                role: 'user',
-                text: `Solicitei análise AC/AVN para o recorte ${jobId} com as imagens: ${layers.join(', ')}.`,
-              },
-              { role: 'ai', text: `❌ ${message}` },
-            ]);
-          }
-        } else {
-          setSimcarClipError(message);
-          if (historyEntry && !skipConversation) {
-            void appendSimcarEntriesToConversation(historyEntry, [
-              {
-                role: 'user',
-                text: `Solicitei apenas a geração de imagens para o recorte ${jobId} com as camadas: ${layers.join(', ')}.`,
-              },
-              { role: 'ai', text: `❌ ${message}` },
-            ]);
-          }
-        }
-        return { ...result, ok: false, error: message };
+      return { ...result, ok: false, error: message };
       } finally {
-        simcarAnalysisAbortRef.current = null;
-        simcarAnalysisProcessJobIdRef.current = null;
-        setSimcarAnalysisProcessing(false);
-        setSimcarAnalysisProgress(null);
+      simcarAnalysisAbortRef.current = null;
+      simcarAnalysisProcessJobIdRef.current = null;
+      setSimcarAnalysisProcessing(false);
+      setSimcarAnalysisProgress(null);
       }
     },
-    [
-      apiFetch,
-      appendSimcarEntriesToConversation,
-      appendSimcarThinking,
-      applyBillingToWallet,
-      handleInsufficientCredits,
-      normalizeSimcarReportPatch,
-      patchPersistedSimcarClip,
-      readApiError,
-      simcarClipHistory,
-      simcarFixedSatelliteKeys,
-      splitThinkContent,
-    ]
+  [
+  apiFetch,
+  appendSimcarEntriesToConversation,
+  appendSimcarThinking,
+  applyBillingToWallet,
+  handleInsufficientCredits,
+  normalizeSimcarReportPatch,
+  patchPersistedSimcarClip,
+  readApiError,
+  simcarClipHistory,
+  simcarFixedSatelliteKeys,
+  splitThinkContent,
+  ]
   );
 
   const runAuasAnalysis = useCallback(
-    async (params: {
-      jobId: string;
-      historyEntry?: SimcarClipHistoryItem;
-      previousAnalysis?: string;
-      acAvnMeta?: SimcarAcAvnAnalysisMeta;
-      prependContextText?: string;
-      skipConversation?: boolean;
+  async (params: {
+    jobId: string;
+    historyEntry?: SimcarClipHistoryItem;
+    previousAnalysis?: string;
+    acAvnMeta?: SimcarAcAvnAnalysisMeta;
+    prependContextText?: string;
+    skipConversation?: boolean;
     }): Promise<{
+    ok: boolean;
+    aiMessage?: SimcarAnalysisMessage;
+    auasMeta?: SimcarAuasMeta;
+    images: Array<{ url: string; caption: string }>;
+    error?: string;
+    }> => {
+    const { jobId } = params;
+    const historyEntry = params.historyEntry || simcarClipHistory.find((c) => c.jobId === jobId);
+    const prependContextText = String(params.prependContextText || '').trim();
+    const skipConversation = Boolean(params.skipConversation);
+    const previousAnalysis = String(
+    params.previousAnalysis
+    || simcarAnalysisMessages
+    .filter((m) => m.role === 'ai')
+    .map((m) => m.text)
+    .join('\n\n---\n\n')
+    );
+    const acAvnMeta = params.acAvnMeta || historyEntry?.analysisMeta;
+    const result: {
       ok: boolean;
       aiMessage?: SimcarAnalysisMessage;
       auasMeta?: SimcarAuasMeta;
       images: Array<{ url: string; caption: string }>;
       error?: string;
-    }> => {
-      const { jobId } = params;
-      const historyEntry = params.historyEntry || simcarClipHistory.find((c) => c.jobId === jobId);
-      const prependContextText = String(params.prependContextText || '').trim();
-      const skipConversation = Boolean(params.skipConversation);
-      const previousAnalysis = String(
-        params.previousAnalysis
-        || simcarAnalysisMessages
-          .filter((m) => m.role === 'ai')
-          .map((m) => m.text)
-          .join('\n\n---\n\n')
-      );
-      const acAvnMeta = params.acAvnMeta || historyEntry?.analysisMeta;
-      const result: {
-        ok: boolean;
-        aiMessage?: SimcarAnalysisMessage;
-        auasMeta?: SimcarAuasMeta;
-        images: Array<{ url: string; caption: string }>;
-        error?: string;
       } = { ok: false, images: [] };
 
-      setSimcarAuasProcessing(true);
-      setSimcarAuasProgress({ step: 'starting', percent: 0, message: 'Iniciando análise de AUAS...' });
-      setSimcarAuasAgentLog([{ label: 'Iniciando análise AUAS...', done: false, kind: 'step' }]);
-      setSimcarAuasImages([]);
-      setSimcarAuasMessages([]);
+    setSimcarAuasProcessing(true);
+    setSimcarAuasProgress({ step: 'starting', percent: 0, message: 'Iniciando análise de AUAS...' });
+    setSimcarAuasAgentLog([{ label: 'Iniciando análise AUAS...', done: false, kind: 'step' }]);
+    setSimcarAuasImages([]);
+    setSimcarAuasMessages([]);
 
-      try {
-        const controller = new AbortController();
-        simcarAuasAbortRef.current = controller;
-        simcarAuasProcessJobIdRef.current = null;
-        const response = await apiFetch('/api/simcar/clip/analyze-auas', {
-          method: 'POST',
-          body: JSON.stringify({
-            jobId,
-            previousAnalysis,
-            acAvnMeta: acAvnMeta || undefined,
-            contextUrl: historyEntry?.contextUrl,
-            outputZipUrl: historyEntry?.outputZipUrl,
+    try {
+      const controller = new AbortController();
+      simcarAuasAbortRef.current = controller;
+      simcarAuasProcessJobIdRef.current = null;
+      const response = await apiFetch('/api/simcar/clip/analyze-auas', {
+        method: 'POST',
+        body: JSON.stringify({
+          jobId,
+          previousAnalysis,
+          acAvnMeta: acAvnMeta || undefined,
+          contextUrl: historyEntry?.contextUrl,
+          outputZipUrl: historyEntry?.outputZipUrl,
           }),
-          signal: controller.signal,
+        signal: controller.signal,
         });
-        if (!response.ok) {
-          const payload = await readApiError(response);
-          if (response.status === 402 || payload?.code === 'INSUFFICIENT_CREDITS') {
-            handleInsufficientCredits(payload?.error);
-            return { ...result, error: payload?.error || 'Saldo insuficiente.' };
+      if (!response.ok) {
+        const payload = await readApiError(response);
+        if (response.status === 402 || payload?.code === 'INSUFFICIENT_CREDITS') {
+          handleInsufficientCredits(payload?.error);
+          return { ...result, error: payload?.error || 'Saldo insuficiente.' };
           }
-          throw new Error(payload?.error || `HTTP ${response.status}`);
+        throw new Error(payload?.error || `HTTP ${response.status}`);
         }
 
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let insufficientCredits = false;
-        let streamError = '';
+      const reader = response.body?.getReader();
+      let insufficientCredits = false;
+      let streamError = '';
 
-        if (reader) {
-          readLoop: while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-            for (const line of lines) {
-              if (!line.startsWith('data: ')) continue;
-              try {
-                const event = JSON.parse(line.slice(6));
-                if (event.type === 'job_started') {
-                  const streamJobId = typeof event.jobId === 'string' ? event.jobId.trim() : '';
-                  if (streamJobId) simcarAuasProcessJobIdRef.current = streamJobId;
-                } else if (event.type === 'progress') {
-                  const msg = normalizeBackendText(String(event.message || ''));
-                  setSimcarAuasProgress({ step: event.step, percent: event.percent, message: msg });
-                  setSimcarAuasAgentLog((prev) => {
-                    const updated = prev.map((s) => (s.done ? s : { ...s, done: true }));
-                    return [...updated, { label: msg, done: false, kind: 'step' as const }];
-                  });
-                } else if (event.type === 'model_thinking') {
-                  const source = event.source ? `[${event.source}]` : '';
-                  const thought = String(event.thinkingText || '').trim();
-                  if (thought) {
-                    const snippet = thought.replace(/\s+/g, ' ').slice(0, 120);
-                    const label = source ? `${source}: ${snippet}…` : `${snippet}…`;
-                    setSimcarAuasAgentLog((prev) => [...prev, { label, done: true, kind: 'thinking' as const }]);
-                  }
-                } else if (event.type === 'complete') {
-                  const images = (Array.isArray(event.images) ? event.images : [])
-                    .map((img: any) => ({
-                      url: String(img?.url || ''),
-                      caption: String(img?.caption || ''),
-                    }))
-                    .filter((img: { url: string; caption: string }) => img.url.length > 0);
-                  const auasMeta = isPlainObject(event.auasMeta)
-                    ? (event.auasMeta as SimcarAuasMeta)
-                    : undefined;
-                  const parsed = splitThinkContent(String(event.analysis || ''));
-                  const combinedText = prependContextText
-                    ? [
-                      '## Analise Integrada SIMCAR (AC/AVN + AUAS)',
-                      '',
-                      '## Achados AC e AVN',
-                      prependContextText,
-                      '',
-                      '## Achados AUAS',
-                      parsed.cleanText,
-                    ].join('\n')
-                    : parsed.cleanText;
-                  const aiMessage: SimcarAnalysisMessage = {
-                    role: 'ai',
-                    text: combinedText,
-                    thinkingText: parsed.thinkingText || undefined,
-                    images: images.map((img: { url: string; caption: string }) => img.url),
-                  };
-                  result.images = images;
-                  result.aiMessage = aiMessage;
-                  result.auasMeta = auasMeta;
-                  result.ok = true;
+      if (reader) {
+          await readSseEvents(reader, (event) => {
 
-                  setSimcarAuasImages(images);
-                  setSimcarAuasMessages([aiMessage]);
-                  setSimcarAuasProgress({
-                    step: 'complete',
-                    percent: 100,
-                    message: 'Análise AUAS concluída. Finalizando...',
-                  });
-                  setSimcarAuasAgentLog((prev) => prev.map((s) => ({ ...s, done: true })));
+          if (event.type === 'job_started') {
+            const streamJobId = typeof event.jobId === 'string' ? event.jobId.trim() : '';
+            if (streamJobId) simcarAuasProcessJobIdRef.current = streamJobId;
+          } else if (event.type === 'progress') {
+          const msg = normalizeBackendText(String(event.message || ''));
+          setSimcarAuasProgress({ step: event.step, percent: event.percent, message: msg });
+          setSimcarAuasAgentLog((prev) => {
+            const updated = prev.map((s) => (s.done ? s : { ...s, done: true }));
+            return [...updated, { label: msg, done: false, kind: 'step' as const }];
+          });
+        } else if (event.type === 'model_thinking') {
+        const source = event.source ? `[${event.source}]` : '';
+        const thought = String(event.thinkingText || '').trim();
+        if (thought) {
+          const snippet = thought.replace(/\s+/g, ' ').slice(0, 120);
+          const label = source ? `${source}: ${snippet}…` : `${snippet}…`;
+          setSimcarAuasAgentLog((prev) => [...prev, { label, done: true, kind: 'thinking' as const }]);
+          }
+        } else if (event.type === 'complete') {
+        const images = (Array.isArray(event.images) ? event.images : [])
+        .map((img: any) => ({
+          url: String(img?.url || ''),
+          caption: String(img?.caption || ''),
+          }))
+        .filter((img: { url: string; caption: string }) => img.url.length > 0);
+        const auasMeta = isPlainObject(event.auasMeta)
+        ? (event.auasMeta as SimcarAuasMeta)
+        : undefined;
+        const parsed = splitThinkContent(String(event.analysis || ''));
+        const combinedText = prependContextText
+        ? [
+        '## Analise Integrada SIMCAR (AC/AVN + AUAS)',
+        '',
+        '## Achados AC e AVN',
+        prependContextText,
+        '',
+        '## Achados AUAS',
+        parsed.cleanText,
+        ].join('\n')
+        : parsed.cleanText;
+        const aiMessage: SimcarAnalysisMessage = {
+          role: 'ai',
+          text: combinedText,
+          thinkingText: parsed.thinkingText || undefined,
+          images: images.map((img: { url: string; caption: string }) => img.url),
+          };
+        result.images = images;
+        result.aiMessage = aiMessage;
+        result.auasMeta = auasMeta;
+        result.ok = true;
+
+        setSimcarAuasImages(images);
+        setSimcarAuasMessages([aiMessage]);
+        setSimcarAuasProgress({
+          step: 'complete',
+          percent: 100,
+          message: 'Análise AUAS concluída. Finalizando...',
+  });
+  setSimcarAuasAgentLog((prev) => prev.map((s) => ({ ...s, done: true })));
 	                  const patch: Partial<SimcarClipHistoryItem> = {
 	                    auasAnalysisImages: images,
 	                    auasAnalysisMessages: [aiMessage],
@@ -779,54 +736,54 @@ export function useSimcarAnalysisFlow(deps: UseSimcarAnalysisFlowDeps) {
 	                      : { status: 'completed' as const, error: undefined }),
 	                    ...normalizeSimcarReportPatch(event),
 	                  };
-                  setSimcarClipHistory((prev) =>
-                    prev.map((c) =>
-                      c.jobId === jobId
-                        ? {
-                          ...c,
-                          ...patch,
-                        }
-                        : c
-                    )
-                  );
-                  void patchPersistedSimcarClip(jobId, patch);
+  setSimcarClipHistory((prev) =>
+    prev.map((c) =>
+      c.jobId === jobId
+        ? {
+          ...c,
+          ...patch,
+        }
+        : c
+    )
+  );
+  void patchPersistedSimcarClip(jobId, patch);
 
-                  const clipBase: SimcarClipHistoryItem = historyEntry
-                    ? historyEntry
-                    : {
-                      id: jobId,
-                      timestamp: new Date().toISOString(),
-                      filename: `Recorte ${jobId.slice(0, 8)}`,
-                      downloadUrl: '',
-                      totalFeatures: 0,
-                      propertyAreaHa: 0,
-                      layersWithData: 0,
-                      totalLayers: 0,
-                      jobId,
-                    };
-                  const clipForConversation: SimcarClipHistoryItem = {
-                    ...clipBase,
-                    ...patch,
-                  };
-                  const imageLinks = images.map((img: { url: string; caption: string }) => `- ${img.url}`);
-                  if (!skipConversation) {
-                    void appendSimcarEntriesToConversation(clipForConversation, [
-                      {
-                        role: 'user',
-                        text: `Solicitei analise de AUAS para o recorte ${jobId}.`,
-                      },
-                      {
-                        role: 'ai',
-                        text: [
-                          `Analise de AUAS concluida para o recorte ${jobId}.`,
-                          imageLinks.length > 0 ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}` : '',
-                          aiMessage.text,
-                        ]
-                          .filter(Boolean)
-                          .join('\n\n'),
-                      },
-                    ]);
-                  }
+  const clipBase: SimcarClipHistoryItem = historyEntry
+    ? historyEntry
+    : {
+      id: jobId,
+      timestamp: new Date().toISOString(),
+      filename: `Recorte ${jobId.slice(0, 8)}`,
+      downloadUrl: '',
+      totalFeatures: 0,
+      propertyAreaHa: 0,
+      layersWithData: 0,
+      totalLayers: 0,
+      jobId,
+    };
+  const clipForConversation: SimcarClipHistoryItem = {
+    ...clipBase,
+    ...patch,
+  };
+  const imageLinks = images.map((img: { url: string; caption: string }) => `- ${img.url}`);
+  if (!skipConversation) {
+    void appendSimcarEntriesToConversation(clipForConversation, [
+      {
+        role: 'user',
+        text: `Solicitei analise de AUAS para o recorte ${jobId}.`,
+      },
+      {
+        role: 'ai',
+        text: [
+          `Analise de AUAS concluida para o recorte ${jobId}.`,
+          imageLinks.length > 0 ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}` : '',
+          aiMessage.text,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+      },
+    ]);
+  }
 	                } else if (event.type === 'report_error') {
 	                  const message = String(event.message || 'Falha ao gerar PDF técnico.');
 	                  const patch: Partial<SimcarClipHistoryItem> = {
@@ -838,21 +795,18 @@ export function useSimcarAnalysisFlow(deps: UseSimcarAnalysisFlowDeps) {
 	                  );
 	                  void patchPersistedSimcarClip(jobId, patch);
 	                } else if (event.type === 'billing' && event.billing) {
-                  applyBillingToWallet(event.billing as BillingResult);
-                } else if (event.type === 'error') {
-                  if (event?.code === 'INSUFFICIENT_CREDITS') {
-                    handleInsufficientCredits(String(event.message || 'Saldo insuficiente.'));
-                    insufficientCredits = true;
-                    break readLoop;
-                  }
-                  streamError = normalizeBackendText(String(event.message || 'Erro inesperado na analise de AUAS.'));
-                  break readLoop;
-                }
-              } catch {
-                // ignore malformed SSE chunk
-              }
-            }
-          }
+  applyBillingToWallet(event.billing as BillingResult);
+} else if (event.type === 'error') {
+  if (event?.code === 'INSUFFICIENT_CREDITS') {
+    handleInsufficientCredits(String(event.message || 'Saldo insuficiente.'));
+    insufficientCredits = true;
+    throw new SseStopError();
+  }
+  streamError = normalizeBackendText(String(event.message || 'Erro inesperado na analise de AUAS.'));
+  throw new SseStopError();
+}
+        
+          });
         }
 
         if (insufficientCredits) {

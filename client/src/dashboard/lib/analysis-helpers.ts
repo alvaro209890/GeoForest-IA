@@ -38,3 +38,51 @@ export async function readFileAsBase64Payload(file: File): Promise<string> {
   if (comma < 0) throw new Error('Falha ao preparar arquivo ZIP para envio.');
   return dataUrl.slice(comma + 1);
 }
+
+/**
+ * Sinaliza parada do stream SSE (equivalente ao antigo `break readLoop`).
+ * Lançado pelo callback de evento e capturado pelo `readSseEvents`.
+ */
+export class SseStopError extends Error {
+  constructor() {
+    super('SSE_STOP');
+    this.name = 'SseStopError';
+  }
+}
+
+/**
+ * Lê um stream SSE (`data: {...}\n`) e invoca `onEvent` para cada evento parseado.
+ * Ignora linhas malformadas (try/catch interno). Usado pelos fluxos de análise SIMCAR.
+ * O callback pode lançar `SseStopError` para interromper a leitura imediatamente.
+ */
+export async function readSseEvents(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  onEvent: (event: any) => void | Promise<void>
+): Promise<void> {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const payload = line.slice(6).trim();
+      if (!payload) continue;
+      let event: any;
+      try {
+        event = JSON.parse(payload);
+      } catch {
+        continue; // ignore malformed SSE frame
+      }
+      try {
+        await onEvent(event);
+      } catch (err) {
+        if (err instanceof SseStopError) return;
+        throw err;
+      }
+    }
+  }
+}
