@@ -1,7 +1,7 @@
 # Plano de Melhoria de Código — GeoForest-IA
 
 **Criado:** 2026-07-31
-**Status:** 🟢 Planos 01–03 (passos 1–10) concluídos — próximo: Plano 03 passos 11–12 (monólitos de análise + JSX) e Plano 02 fluxo principal
+**Status:** 🟢 Planos 01–03 **CONCLUÍDOS** — próximo: Plano 02 fluxo principal (backend recorte) e Planos 04–07
 
 ---
 
@@ -11,7 +11,7 @@
 |---|---------|---------|---------------|-------------------|--------|
 | 01 | [01_backend_index.md](01_backend_index.md) | `backend/index.ts` — servidor Express | 2,956 → 1,536 | 16 arquivos | ✅ Concluído 31/07 |
 | 02 | [02_simcar_clip.md](02_simcar_clip.md) | `backend/simcar-clip.ts` — recorte SIMCAR | 10,103 → 10,026 | 11 arquivos | 🟡 Infra extraída (`simcar/` 10 módulos, ~1.526 linhas); **falta fluxo principal** (air-atp-generator/clip-pipeline reais) |
-| 03 | [03_dashboard.md](03_dashboard.md) | `client/.../Dashboard.tsx` — dashboard | 9,776 → 8,466 | 10 arquivos | 🟢 Passos 1–10 ✅ (01/08); **restam passos 11–12**: monólitos de análise (~981 linhas) + JSX principal (~3.500) |
+| 03 | [03_dashboard.md](03_dashboard.md) | `client/.../Dashboard.tsx` — dashboard | 9,776 → 7,331 | 10 arquivos | ✅ **Concluído 01/08** (passos 1–12: hooks, lib, HistoryCard, useSimcarAnalysisFlow) |
 | 04 | [04_geometry_errors.md](04_geometry_errors.md) | `backend/geometry-errors.ts` — detectores | 2,885 | 10 arquivos | ⬜ Pendente |
 | 05 | [05_cbers_wpm.md](05_cbers_wpm.md) | `backend/cbers-wpm.ts` — pipeline CBERS | 2,693 | 9 arquivos | ⬜ Pendente |
 | 06 | [06_landsat.md](06_landsat.md) | `backend/landsat.ts` — pipeline Landsat | 1,621 | 7 arquivos | ⬜ Pendente |

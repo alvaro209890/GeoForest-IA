@@ -138,9 +138,22 @@ Cobertura: `routes.test.ts`, `cbers/*`, `landsat/filenames.test.ts`, `landsat/ma
 7. Novo Recorte / abas ativas em verde esmeralda.
 8. Em Configurações: saldo, histórico e “Adicionar créditos” (modal de topup ainda no Dashboard).
 
+## Plano 03 — 100% concluído (01/08)
+
+O Dashboard.tsx foi de **9.776 → 7.331 linhas** (−25%). O que foi extraído nesta fase:
+
+| Peça | Caminho | Conteúdo |
+|------|---------|----------|
+| `useSimcarAnalysisFlow` | `hooks/useSimcarAnalysisFlow.ts` | Os 4 monólitos de análise (sendSimcarFollowUpMessage, runAcAvnAnalysis, runAuasAnalysis, runVectorizedCompleteAnalysis) com deps injetadas (padrão useSimcarClipActions) |
+| `analysis-helpers` | `lib/analysis-helpers.ts` | `splitThinkContent`, `readFileAsDataUrl`, `readFileAsBase64Payload`, `readSseEvents` + `SseStopError` (leitor SSE comum aos 3 fluxos) |
+| `HistoryCard` | `components/HistoryCard.tsx` | Card de histórico genérico com tema por aba — substitui 6 ocorrências (CBERS, Landsat, Sobreposições, Croqui, Vértices, SIMCAR) |
+| Changelog | `docs/CHANGELOG_2026-08-01_PLANO_03_PASSOS_11_12.md` | Detalhes, validação e instruções de teste manual |
+
+Regras de ouro seguidas: callbacks movidos **verbatim** (hash verificado antes da remoção),
+1 commit por passo, tsc + vitest + build verdes a cada passo.
+
 ## Status GitHub / Deploy
 
-- **Mergeado em `main`**: fases 1–2 (`4a2a4e40`).
-- **Local (esta sessão)**: fases 3–4 (CBERS + Landsat) + `simcar-clip-snap.ts` — ver changelogs de 2026-07-24.
-- **Build**: `pnpm check` OK; testes dashboard: 29 passed.
-- **Firebase Hosting**: deploy **pendente** até commit/push explícito.
+- **Mergeado em `main`**: fases 1–2 (`4a2a4e40`) + Plano 03 completo (`35635eec`, `5edaa607`, `14be6660` — 01/08).
+- **Build**: `tsc --noEmit` OK; 51 testes client + 51 testes backend OK; `vite build` OK.
+- **Deploy**: automático via auto-sync do servidor (push → pull + build + restart + firebase).

@@ -1,9 +1,9 @@
 # Plano: Desmembramento de `client/src/pages/Dashboard.tsx`
 
-**Arquivo atual:** `client/src/pages/Dashboard.tsx` — 9,776 → **8,466 linhas**
+**Arquivo atual:** `client/src/pages/Dashboard.tsx` — 9,776 → **7,331 linhas**
 **Objetivo:** Separar layout, estado, navegação e sub-páginas em arquivos independentes
-**Status:** 🟢 Passos 1–10 concluídos (01/08) — redução de 13,4%; restam os **4 monólitos de
-análise** (~981 linhas, medidos 01/08) e o **JSX principal** (~3.500)
+**Status:** 🟢 **PLANO 03 100% CONCLUÍDO (01/08)** — passos 1–12. Redução total de
+**2.445 linhas (−25%)**. Restam apenas os monólitos de análise dos OUTROS planos (04–07).
 
 ---
 
@@ -71,6 +71,9 @@ client/src/dashboard/
 | `sendSimcarFollowUpMessage` | 3.063–3.229 = **166** | chat, follow-up |
 | **Total** | **~981** | 100+ deps entre eles |
 
+**✅ CONCLUÍDO em 01/08** — extraídos para `useSimcarAnalysisFlow.ts` (commits `35635eec` + `5edaa607`).
+Ver `docs/CHANGELOG_2026-08-01_PLANO_03_PASSOS_11_12.md`.
+
 **Abordagem recomendada (já validada no changelog):** refactor **por fluxo de negócio**, não
 por extração mecânica — criar `useSimcarAnalysisFlow` que encapsula os 4 callbacks com deps
 injetadas (padrão `useSimcarClipActions`), porque:
@@ -90,16 +93,14 @@ injetadas (padrão `useSimcarClipActions`), porque:
 
 ## 🟡 O que falta — Passo 12: JSX principal (~3.500 linhas)
 
-Sidebar, header, modais, painéis de análise e histórico ainda inline. Candidatos a
-componentes com props (rodada futura, depois do Passo 11):
+**✅ CONCLUÍDO em 01/08 (commit `14be6660`)** — cards de histórico por aba extraídos para
+`HistoryCard.tsx` (CBERS, Landsat, Sobreposições, Croqui, Vértices, SIMCAR). Receipts ficou
+inline (estrutura muito diferente). Sidebar/header/modais já estavam em componentes próprios.
 
-- `DashboardSidebar` (props: activeView, onNavigate) — base `DashboardSidebarTabs` já existe
-- `DashboardHeader` (user info, credits, logout)
-- `SimcarHistoryCards.tsx` / `VerticesHistoryCards.tsx` / etc. (JSX de histórico por aba)
-- Modais (delete Cloudinary, confirm, credits)
-
-**Atenção:** NÃO duplicar `client/src/pages/dashboard/*Page.tsx` (stubs de 8 linhas que
-compõem os panels). O Dashboard.tsx deve apenas **compor** páginas existentes.
+O que NÃO foi extraído (decisão consciente — risco > benefício):
+- Painéis de análise do SIMCAR (seções internas da aba simcar-clip) — lógica inline densa
+  com deps do hook de fluxo; extrair exigiria refactor por fluxo com teste manual completo
+- Card de receipts — estrutura única (download + tipo), não justifica componente genérico
 
 ---
 
