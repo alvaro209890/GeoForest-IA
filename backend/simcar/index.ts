@@ -155,6 +155,9 @@ export {
     fetchWfsBboxFeatures,
 } from "./wfs-client";
 
+// ── PDF Report ──
+export { generateAndPersistSimcarReport, buildSimcarReportPdfBuffer } from "./report";
+
 // ── Hydration & Persistence ──
 export {
     readPersistedSimcarClip,
