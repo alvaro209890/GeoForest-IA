@@ -155,6 +155,14 @@ export {
     fetchWfsBboxFeatures,
 } from "./wfs-client";
 
+// ── Hydration & Persistence ──
+export {
+    readPersistedSimcarClip,
+    hydrateCachedJob,
+    persistSimcarClipProcessingState,
+    persistSimcarClipArtifacts,
+} from "./hydration";
+
 // ── Clip Pipeline (SSE, job cache, utilities) ──
 export {
     jobCache,
