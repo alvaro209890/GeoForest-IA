@@ -63,7 +63,14 @@ export const SEMA_WMS_BASE = process.env.SEMA_WMS_BASE_URL || "https://geo.sema.
 export const SEMA_WMS_AUTHKEY = process.env.SEMA_WMS_AUTHKEY || "541085de-9a2e-454e-bdba-eb3d57a2f492";
 export const PUBLIC_API_BASE_URL = (
     process.env.PUBLIC_API_BASE_URL || "https://geoforest-api.cursar.space"
-);
+).trim().replace(/\/+$/, "");
+
+/** Converte URLs internas (/api/...) para a URL pública da API. */
+export function toPublicApiUrl(url: string | undefined | null): string {
+    const clean = String(url || "").trim();
+    if (!clean) return "";
+    return clean.startsWith("/api/") ? `${PUBLIC_API_BASE_URL}${clean}` : clean;
+}
 
 /* ─── Satellite Layers ──────────────────────────────────────── */
 

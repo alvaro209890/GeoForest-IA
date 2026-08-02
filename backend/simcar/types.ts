@@ -26,16 +26,18 @@ export type LocalSimcarLayerSource = {
 /* ─── WFS ────────────────────────────────────────── */
 
 export type WfsFeature = {
-    id: string;
+    id?: string;
     geometry: Geometry | null;
     properties: Record<string, unknown>;
-    bbox: number[];
+    bbox?: number[];
 };
 
 export type WfsClipFetchResult = {
     features: WfsFeature[];
-    totalMatched: number;
-    numberReturned: number;
+    warnings: string[];
+    partial: boolean;
+    totalMatched?: number;
+    numberReturned?: number;
 };
 
 /* ─── Clip results ───────────────────────────────── */

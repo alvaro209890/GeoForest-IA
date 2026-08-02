@@ -146,6 +146,13 @@ export {
 // ── CAR Lookup ──
 export { fetchCarBoundaryByNumber } from "./car-lookup";
 
+// ── WFS Client ──
+export {
+    fetchWfsClipFeatures,
+    fetchWfsIntersectsFeatures,
+    fetchWfsBboxFeatures,
+} from "./wfs-client";
+
 // ── Clip Pipeline (SSE, job cache, utilities) ──
 export {
     jobCache,
