@@ -83,6 +83,8 @@ export {
     bboxIntersects,
     featureBbox,
     ringsToFeature,
+    parseUserShapefile,
+    discoverLayerMapping,
 } from "./shapefile-io";
 
 // ── Polygon Operations ──
@@ -167,7 +169,6 @@ export {
 
 // ── Funções principais (ainda em ../simcar-clip — migração gradual) ──
 export {
-    parseUserShapefile,
     CLIP_SNAP_TOLERANCE_METERS,
     snapClippedGeometryToBoundary,
     getFixedAcAvnSatelliteKeys,
