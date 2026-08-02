@@ -178,12 +178,8 @@ export {
     sleepMs,
 } from "./clip-pipeline";
 
-// ── Funções principais (ainda em ../simcar-clip — migração gradual) ──
-export {
-    CLIP_SNAP_TOLERANCE_METERS,
-    snapClippedGeometryToBoundary,
-    getFixedAcAvnSatelliteKeys,
-    getSimcarAiRuntimeConfig,
-    runAcAvnSatelliteAnalysis,
-    registerSimcarClipRoutes,
-} from "../simcar-clip";
+// ── Funções principais (agora em analysis/routes) ──
+export { getFixedAcAvnSatelliteKeys, getSimcarAiRuntimeConfig, runAcAvnSatelliteAnalysis } from "./analysis";
+export { registerSimcarClipRoutes } from "./routes";
+export { CLIP_SNAP_TOLERANCE_METERS, snapClippedGeometryToBoundary } from "../simcar-clip-snap";
+export { toPublicApiUrl } from "./constants";

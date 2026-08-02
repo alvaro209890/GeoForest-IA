@@ -4,7 +4,7 @@
  */
 import { Express } from "express";
 import { registerWfsIntersectionRoutes } from "../wfs-intersection";
-import { registerSimcarClipRoutes } from "../simcar-clip";
+import { registerSimcarClipRoutes } from "../simcar/routes";
 import { registerSimcarReceiptRoutes } from "../simcar-receipts";
 import { registerApfReceiptRoutes } from "../apf-receipts";
 import { registerCbersWpmRoutes } from "../cbers-wpm";
