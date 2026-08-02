@@ -1,214 +1,82 @@
 # Plano: Desmembramento de `backend/simcar-clip.ts`
 
-**Arquivo atual:** `backend/simcar-clip.ts` — 10,103 linhas
+**Arquivo atual:** `backend/simcar-clip.ts` — 10,103 → **10,026 linhas**
 **Objetivo:** Quebrar o monólito de recorte SIMCAR em módulos por responsabilidade
+**Status:** 🟡 Plano 02 concluído 7/7 (31/07) — **infraestrutura extraída** (~1.526 linhas em
+10 módulos `backend/simcar/`); **o fluxo principal de recorte continua no monólito**
+(atualizado 01/08 com medidas reais)
 
 ---
 
-## Estrutura proposta
+## ✅ O que já foi feito (31/07 — commits `1fa6d140`→`7c3ba23e`)
+
+10 módulos criados em `backend/simcar/` (medidos 01/08):
+
+| Módulo | Linhas | Conteúdo real |
+|--------|--------|---------------|
+| `types.ts` | 209 | Interfaces: SimcarClipInput, PolygonBatch, ClipResult, ClipPhase, etc. |
+| `shapefile-io.ts` | 228 | Leitura/escrita .shp/.dbf/.prj/.shx, validação de shapefile |
+| `polygon-ops.ts` | 212 | Turf.js: union, buffer, dissolve, clip, simplify, explode, area, validateGeometry |
+| `area-calculator.ts` | 220 | Totais em ha, áreas por classe, percentuais, tabela formatada |
+| `constants.ts` | 124 | SIMCAR_LAYER_NAMES, SIMCAR_FIELD_MAP, DEFAULT_BUFFER_M, MIN_AREA_HA, EPSG_SIRGAS 4674, AIR_ATP_CONFIG |
+| `attribute-mapper.ts` | 98 | mapSimcarFields, extractAttributesFromDbf, buildAttributeTable |
+| `air-atp-generator.ts` | 116 | Esqueleto de generateAIR/generateATP/generateMultiPolygon* (lógica real ainda no monólito) |
+| `clip-pipeline.ts` | 93 | Esqueleto do orquestrador runSimcarClip (fluxo real ainda no monólito) |
+| `validation.ts` | 72 | validateOutput, validateAreas, validateGeometryNonEmpty, validateAttributes |
+| `index.ts` (barrel) | 154 | Re-exports públicos (incl. DirectCopyLayerResult de air-atp-generator) |
+
+**Total extraído: ~1.526 linhas** (estrutura/containers). O `backend/index.ts` agora importa
+do barrel `./simcar` onde aplicável.
+
+---
+
+## 🔴 O que falta de verdade (o trabalho real)
+
+O monólito `backend/simcar-clip.ts` continua com **10.026 linhas**. O que foi extraído é a
+**infraestrutura** (tipos, I/O, helpers puros); o **fluxo principal de recorte** (a maior
+parte do arquivo) permanece no monólito:
+
+- Lógica real de geração AIR/ATP por lote (o `air-atp-generator.ts` é só esqueleto)
+- Orquestração real do pipeline (o `clip-pipeline.ts` é só esqueleto)
+- Handlers de rotas / jobs / SSE associados ao recorte
+- Lógica de validação específica SIMCAR (contagens, áreas mínimas, MultiPolygon)
+
+### Passos restantes (ordem sugerida — 1 commit atômico por passo)
+
+| Passo | O que | Risco |
+|-------|-------|-------|
+| A | Mover a lógica real de geração AIR/ATP do monólito para `air-atp-generator.ts` (funções completas, não esqueletos) | Alto — maior bloco, cuidar imports circulares |
+| B | Mover a orquestração (leitura → validação → por lote → exportação → validação) para `clip-pipeline.ts` | Médio |
+| C | Mover validações SIMCAR específicas (não genéricas) para `validation.ts` | Baixo |
+| D | Limpar exports do monólito: manter no `simcar-clip.ts` só o que as rotas importam, via barrel | Médio |
+| E | Remover código morto da versão antiga (pré-MultiPolygon), se existir | Baixo |
+| F | Atualizar `backend/simcar-clip-snap.test.ts` para imports dos novos módulos | Baixo |
+
+**Regras (aprendidas na prática, Plano 01–03):**
+- 1 extração = 1 commit, zero mudança funcional
+- `npx tsc --noEmit` + `npx vitest run --root . backend/simcar-clip-snap` entre cada passo
+- `polygon-ops.ts` é camada MAIS BAIXA — nunca importa de volta para `simcar/`
+- Cuidado com variáveis de módulo (caches/configs) → mover para `constants.ts`
+- Snapshot de output deve permanecer idêntico (não quebrar)
+
+---
+
+## Estrutura alvo (confirmada 01/08)
 
 ```
 backend/simcar/
-├── index.ts                   # barrel: re-exporta funções públicas (~50 linhas)
-├── clip-pipeline.ts           # orquestrador principal: recebe shapefile, coordena pipeline (~300 linhas)
-├── polygon-ops.ts             # operações geométricas puras (~800 linhas)
-├── air-atp-generator.ts       # geração de AIR e ATP por lote de polígono (~1200 linhas)
-├── shapefile-io.ts            # leitura/escrita de shapefile (.shp/.dbf/.prj/.shx) (~600 linhas)
-├── area-calculator.ts         # cálculo de áreas (ha, km², percentuais, totais) (~500 linhas)
-├── attribute-mapper.ts        # mapeamento de atributos (SIMCAR → colunas do shape) (~400 linhas)
-├── validation.ts              # validação pós-recorte (geometria válida, área > 0) (~500 linhas)
-├── types.ts                   # interfaces: ClipJob, ClipResult, PolygonBatch, etc (~200 linhas)
-├── constants.ts               # tabelas de lookup, thresholds, configurações (~300 linhas)
-└── utils.ts                   # helpers compartilhados (~200 linhas)
+├── index.ts                   # barrel: re-exporta funções públicas (~154 linhas) ✅
+├── clip-pipeline.ts           # orquestrador principal (~93 → ~300 linhas após passo B)
+├── polygon-ops.ts             # operações geométricas puras (~212 linhas) ✅
+├── air-atp-generator.ts       # geração AIR/ATP por lote (~116 → ~1.200 após passo A)
+├── shapefile-io.ts            # leitura/escrita de shapefile (~228 linhas) ✅
+├── area-calculator.ts         # cálculo de áreas (~220 linhas) ✅
+├── attribute-mapper.ts        # mapeamento de atributos (~98 linhas) ✅
+├── validation.ts              # validação pós-recorte (~72 → ~500 após passo C)
+├── types.ts                   # interfaces (~209 linhas) ✅
+├── constants.ts               # lookup tables, thresholds (~124 linhas) ✅
+└── utils.ts                   # helpers compartilhados (ainda não criado)
 ```
-
----
-
-## Mapeamento detalhado
-
-### `types.ts` — Extrair PRIMEIRO
-Interfaces e tipos usados por todos os outros módulos:
-```typescript
-interface SimcarClipInput {
-  shapefilePath: string;
-  carNumber: string;
-  outputDir: string;
-  mode: 'completo' | 'air' | 'atp';
-}
-
-interface PolygonBatch {
-  id: number;
-  geometria: GeoJSON.Polygon;
-  atributos: Record<string, any>;
-}
-
-interface ClipResult {
-  airPath?: string;
-  atpPath?: string;
-  airAreaHa: number;
-  atpAreaHa: number;
-  logs: string[];
-}
-
-type ClipPhase = 'leitura' | 'validacao' | 'recorte' | 'air' | 'atp' | 'exportacao' | 'concluido';
-```
-
-### `constants.ts`
-- `SIMCAR_LAYER_NAMES`: mapeamento de nomes de camada
-- `SIMCAR_FIELD_MAP`: campos do DBF → nomes amigáveis
-- `DEFAULT_BUFFER_M`: buffer padrão em metros
-- `MIN_AREA_HA`: área mínima para considerar válido
-- `EPSG_SIRGAS`: 4674
-- `AIR_ATP_CONFIG`: configs de dissolve, simplify tolerance
-
-### `shapefile-io.ts`
-Funções atuais de leitura/escrita:
-- `readShapefile(path)` → GeoJSON FeatureCollection
-- `writeShapefile(geojson, outputPath, fields)`
-- `readDbf(path)` → array de registros
-- `writeDbf(records, outputPath, fields)`
-- `copyPrj(sourcePath, destPath)`
-- `validateShapefile(path)` → boolean + erros
-
-### `polygon-ops.ts`
-Operações geométricas puras (usam Turf.js):
-- `unionPolygons(polygons)` → MultiPolygon unido
-- `bufferPolygon(polygon, distanceM)` → Polygon com buffer
-- `dissolvePolygons(polygons)` → união + dissolve
-- `clipPolygons(targetPolygons, clipPolygon)` → interseção
-- `simplifyPolygon(polygon, tolerance)` → simplificação
-- `explodeMultiPolygon(multiPolygon)` → array de Polygon
-- `calculateArea(polygon)` → hectares
-- `validateGeometry(polygon)` → erros de geometria
-
-### `area-calculator.ts`
-- `calculateTotalArea(polygons)` → soma em ha
-- `calculateAreasByClass(polygons, classField)` → { [classe]: hectares }
-- `calculatePercentages(areas)` → percentuais
-- `formatAreaTable(areas)` → string formatada
-
-### `attribute-mapper.ts`
-- `mapSimcarFields(record)` → traduz nomes de campo
-- `extractAttributesFromDbf(dbfPath)` → extrai + mapeia
-- `buildAttributeTable(polygons, attributes)` → junta geometria + atributos
-
-### `air-atp-generator.ts`
-Funções específicas de AIR e ATP (atualmente a maior parte do arquivo):
-- `generateAIR(polygons, clipArea)` → shapefile AIR
-- `generateATP(polygons, clipArea)` → shapefile ATP
-- `generateMultiPolygonAIR(batches)` → AIR por lote (correção MultiPolygon)
-- `generateMultiPolygonATP(batches)` → ATP por lote
-- `validateAIR_ATP(airPath, atpPath)` → validação cruzada
-
-### `validation.ts`
-- `validateOutput(airPath, atpPath)` → checa arquivos existem
-- `validateAreas(originalArea, airArea, atpArea)` → áreas consistentes
-- `validateGeometryNonEmpty(path)` → shapefile não vazio
-- `validateAttributes(path, expectedFields)` → campos presentes
-
-### `clip-pipeline.ts` — Orquestrador
-```typescript
-export async function runSimcarClip(input: SimcarClipInput): Promise<ClipResult> {
-  // 1. Ler shapefile
-  const source = await readShapefile(input.shapefilePath);
-  
-  // 2. Validar entrada
-  await validateInput(source);
-  
-  // 3. Para cada lote (MultiPolygon):
-  for (const batch of splitIntoBatches(source)) {
-    // 3a. Operações geométricas
-    const buffered = bufferPolygon(batch.geometria, DEFAULT_BUFFER_M);
-    
-    // 3b. Gerar AIR
-    const air = generateAIR([buffered], input.clipArea);
-    
-    // 3c. Gerar ATP
-    const atp = generateATP([buffered], input.clipArea);
-  }
-  
-  // 4. Exportar
-  await writeShapefile(allAir, `${input.outputDir}/AIR.shp`);
-  await writeShapefile(allAtp, `${input.outputDir}/ATP.shp`);
-  
-  // 5. Validar saída
-  const validation = await validateOutput(airPath, atpPath);
-  
-  return { airPath, atpPath, airAreaHa, atpAreaHa, logs };
-}
-```
-
-### `index.ts` — Barrel
-```typescript
-export { runSimcarClip } from './clip-pipeline';
-export type { SimcarClipInput, ClipResult, PolygonBatch } from './types';
-export { readShapefile, writeShapefile } from './shapefile-io';
-// ... apenas exports públicos
-```
-
----
-
-## Passo a passo
-
-### Passo 1: Criar `types.ts` e `constants.ts`
-- Extrair TODAS as interfaces, types, enums, const
-- Garantir que são importáveis sem dependências circulares
-- **Validar:** TypeScript compila
-
-### Passo 2: Extrair `shapefile-io.ts` (baixo acoplamento)
-- Funções puras de I/O — não dependem de regras SIMCAR
-- **Validar:** ler um .shp de teste, escrever, ler de novo
-
-### Passo 3: Extrair `polygon-ops.ts` (baixo acoplamento)
-- Funções geométricas puras — só dependem de Turf.js
-- **Validar:** `npx vitest run backend/simcar/` (testes novos ou movidos)
-
-### Passo 4: Extrair `attribute-mapper.ts` e `area-calculator.ts`
-- Mapeamento de campos + cálculo de área — médio acoplamento
-- **Validar:** teste com fixture de shapefile real
-
-### Passo 5: Extrair `air-atp-generator.ts` (maior parte)
-- Extrair funções de geração AIR e ATP
-- Separar versão MultiPolygon (atual) da versão antiga (se ainda existir código morto, REMOVER)
-- **Validar:** snap test com fixture existente (`simcar-clip-snap.test.ts`)
-
-### Passo 6: Extrair `validation.ts`
-- Validações pós-recorte
-- **Validar:** testes unitários
-
-### Passo 7: Criar `clip-pipeline.ts` (orquestrador)
-- Juntar tudo numa função `runSimcarClip()`
-- Manter mesma assinatura do export atual
-- **Validar:** teste de integração (upload → recorte → download)
-
-### Passo 8: Criar `index.ts` barrel
-- Re-exportar funções que o `index.ts` do backend usa
-- Trocar import no `backend/index.ts` de `./simcar-clip` para `./simcar`
-
----
-
-## ⚠️ Cuidados críticos
-
-### 1. Funções que se referenciam mutuamente
-O `simcar-clip.ts` atual tem funções que chamam outras funções internas em sequência. Ao extrair, essas chamadas viram imports entre módulos. Risco de **circular imports** se `air-atp-generator.ts` importar de `polygon-ops.ts` e vice-versa.
-
-**Solução:** `polygon-ops.ts` é camada MAIS BAIXA — não importa nada do `simcar/`. `air-atp-generator.ts` importa de `polygon-ops.ts` mas nunca o contrário.
-
-### 2. Testes de snapshot
-`backend/simcar-clip-snap.test.ts` faz import direto de funções internas. Ao mover, atualizar imports. NÃO quebrar o snapshot — só confirmar que o output é idêntico.
-
-### 3. Variáveis de módulo (estado global)
-Verificar se o arquivo tem variáveis no escopo do módulo (fora de funções) como caches, contadores, configs. Se tiver, mover para `constants.ts`.
-
-### 4. Código da versão antiga
-Se ainda existir código da versão anterior (sem MultiPolygon), **remover**. Manter código morto "por segurança" é exatamente o que causou o arquivo de 10k linhas.
-
-### 5. Ordem dos exports
-O `backend/index.ts` espera imports específicos:
-```typescript
-import { clipSimcar, generateAIR, generateATP, ... } from './simcar-clip';
-```
-Manter TODOS esses exports no barrel `simcar/index.ts` inicialmente, depois refatorar as rotas para importar só o que usam.
 
 ---
 
@@ -230,12 +98,10 @@ curl -X POST http://localhost:3001/api/simcar/clip ...  # teste real
 
 | Passo | Tempo | Risco |
 |-------|-------|-------|
-| types + constants | 15 min | Baixo |
-| shapefile-io | 20 min | Baixo |
-| polygon-ops | 25 min | Baixo |
-| attribute-mapper + area-calculator | 20 min | Médio |
-| air-atp-generator | 45 min | Alto |
-| validation | 15 min | Baixo |
-| clip-pipeline + barrel | 20 min | Médio |
-| Ajustar imports externos | 15 min | Médio |
-| **Total** | **~3 h** | |
+| A (air-atp-generator real) | 45 min | Alto |
+| B (clip-pipeline real) | 20 min | Médio |
+| C (validation SIMCAR) | 15 min | Baixo |
+| D (limpar exports) | 15 min | Médio |
+| E (código morto) | 10 min | Baixo |
+| F (snap tests) | 15 min | Baixo |
+| **Total** | **~2 h** | |

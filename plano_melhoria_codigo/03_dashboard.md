@@ -1,117 +1,119 @@
 # Plano: Desmembramento de `client/src/pages/Dashboard.tsx`
 
-**Arquivo atual:** `client/src/pages/Dashboard.tsx` — 9,776 → 8,466 linhas
+**Arquivo atual:** `client/src/pages/Dashboard.tsx` — 9,776 → **8,466 linhas**
 **Objetivo:** Separar layout, estado, navegação e sub-páginas em arquivos independentes
-**Status:** 🟢 Passos 1–10 concluídos (2026-08-01) — redução de 13,4%; restam callbacks monólitos (runAcAvnAnalysis, runAuasAnalysis, runVectorizedCompleteAnalysis) e JSX principal
+**Status:** 🟢 Passos 1–10 concluídos (01/08) — redução de 13,4%; restam os **4 monólitos de
+análise** (~981 linhas, medidos 01/08) e o **JSX principal** (~3.500)
 
 ---
 
-## Anatomia real (analisada 2026-08-01)
+## ✅ Estrutura real atual (medida 01/08)
 
-| Bloco | Linhas | % | Conteúdo |
-|-------|--------|---|----------|
-| Imports | 1–125 | 1% | ~50 imports (firebase, localFirestore, panels, hooks, lucide) |
-| Tipos + consts + helpers puros | 126–997 | 9% | 47 declarações: tipos (ChatMessage, SimcarClipHistoryItem, VerticesHistoryItem, ContainmentHistoryItem, GeometryHistoryItem, ReceiptHistoryItem), consts (SIMCAR_MANDATORY_LAYERS, REQUIRED_MODELS, DEFAULT_ASSISTANT_MESSAGE), helpers puros (sanitizeMessagesForFirestore, renderRichText, normalizeImageCaption, formatSimcarAuasStatus, simcarAuasVerdictClass, buildIntegratedVectorizedReport...) |
-| Estado + callbacks | 998–6.226 | 53% | ~1.050 consts: useState/useRef/useCallback de SIMCAR Clip, SIMCAR AI Analysis, AUAS, Vértices, Containment, Geometry, Chat, Billing, Settings |
-| JSX (render) | 6.227–9.776 | 36% | Sidebar, header, histórico por aba, switch de activeView, modais |
+### `client/src/dashboard/` — 50 arquivos
 
-**Aba do switch de views (JSX):** `simcar-clip` (maior), `cbers-wpm`, `landsat`, `sobreposicoes`, `croqui`, `vertices-proximas`, `simcar-receipts`, `features`, `settings`, `solicitacao-prioridade`.
+```
+client/src/dashboard/
+├── index.ts                        # barrel central (re-exporta tudo)
+├── types.ts                        # DashboardView, DashboardTabId + re-export de types/history
+├── routes.ts                       # rotas + URL sync (+ routes.test.ts)
+├── types/
+│   └── history.ts                  # 20 tipos de histórico (SimcarClipHistoryItem, etc.)
+├── lib/
+│   ├── index.ts                    # barrel
+│   ├── format.tsx                  # renderRichText, sanitizeMessagesForFirestore, etc. (JSX → .tsx)
+│   ├── formatters-simcar.ts        # formatSimcarAuasStatus, verdicts, confidence
+│   ├── mappers.ts                  # mapVerticesDocToHistoryItem, etc.
+│   ├── normalizers-simcar.ts       # normalizadores de texto SIMCAR
+│   ├── download-actions.ts         # downloadSimcarZip, etc.
+│   └── chatDefaults.ts             # DEFAULT_ASSISTANT_MESSAGE
+├── hooks/
+│   ├── useSimcarClipJobs.ts        # estado+setters+refs+derivados do SIMCAR Clip
+│   ├── useSimcarAnalysis.ts        # estado da análise SIMCAR AI + AUAS
+│   ├── useSimcarClipActions.ts     # 5 callbacks de persistência/cancelamento (deps injetadas)
+│   ├── useChat.ts                  # chat principal + billing
+│   ├── useErrorsAnalysis.ts        # Vértices/Containment/Geometry uploads
+│   ├── useCbersJobs.ts             # CBERS
+│   ├── useLandsatJobs.ts           # Landsat
+│   ├── useCroquiJobs.ts            # Croqui (padrão de referência: deps injetadas)
+│   ├── useOverlapJobs.ts           # Sobreposições
+│   └── useDashboardNavigation.ts   # URL sync
+├── components/
+│   ├── DashboardSidebarTabs.tsx    # abas do sidebar
+│   ├── HistoryStatusBadge.tsx      # badge de status (8 ocorrências substituídas)
+│   ├── HistoryEmptyState.tsx       # empty state (9+ ocorrências substituídas)
+│   └── CbersMapPreview.tsx
+├── panels/                         # abas completas já extraídas
+│   ├── CbersPanel.tsx / LandsatPanel.tsx / CroquiPanel.tsx
+│   ├── SettingsPanel.tsx / SobreposicoesPanel.tsx
+├── croqui/                         # domínio croqui (types, mapDoc, RoutePicker, routePreview, filenames)
+├── cbers/ landsat/ sobreposicoes/  # domínios com types/mapDoc/filenames + testes
+└── settings/types.ts
+```
 
-## O que já está modularizado (NÃO MEXER — usar como está)
+### `Dashboard.tsx` — como ficou
 
-- `client/src/dashboard/panels/` — CbersPanel, LandsatPanel, CroquiPanel, SettingsPanel, SobreposicoesPanel
-- `client/src/dashboard/hooks/` — useCbersJobs, useLandsatJobs, useCroquiJobs, useOverlapJobs, useDashboardNavigation
-- `client/src/dashboard/types.ts` — tipos compartilhados (DashboardView, DashboardTabId)
-- `client/src/dashboard/routes.ts` — definição de rotas + URL sync
-- `client/src/pages/dashboard/` — sub-páginas (SimcarPage, CbersPage, etc.)
-
-## ⚠️ Descoberta importante
-
-O plano original (escrito em 31/07) propunha `DashboardLayout`/`DashboardContent`/`DashboardAuthGate` como
-arquivos novos — mas as páginas em `client/src/pages/dashboard/` já existem como **stubs de 8 linhas**
-(apenas `export default function XPage() { return <Panel />; }`). A extração de layout/switch **não deve**
-duplicar isso: a arquitetura alvo é o Dashboard.tsx apenas **compor** as páginas já existentes.
-
-## Sequência de extração (revisada — cada passo é 1 commit atômico)
-
-### Passo 1: `dashboard/lib/format.ts` (baixo risco — puro)
-- Extrair helpers puros das linhas 126–997: `sanitizeMessagesForFirestore`, `isPlainObject`,
-  `stripUndefinedDeep`, `toCloudinaryDownloadUrl`, `toFileProxyUrl`, `resolveBackendDownloadUrl`,
-  `renderInlineRichText`, `renderRichText`, `renderAnalysisRichText`, `normalizeImageCaption`,
-  `normalizeBackendText`, `removeRoboticAuasLines`, `buildIntegratedVectorizedReport`
-- **Validar:** `npx tsc --noEmit` + `npx vitest run --root . client/` + `npm run dev` abre
-
-### Passo 2: `dashboard/lib/formatters-simcar.ts` (baixo risco — puro)
-- Extrair formatadores SIMCAR: `formatSimcarAuasStatus`, `formatSimcarAcAvnVerdict`,
-  `formatSimcarAcAvnConfidence`, `formatSimcarAuasVerdict`, `simcarAuasVerdictClass`
-- **Validar:** idem passo 1
-
-### Passo 3: `dashboard/types/history.ts` (baixo risco — tipo puro)
-- Mover tipos de histórico: `SimcarClipHistoryItem`, `SimcarServerRuntimeState`, `VerticesHistoryItem`,
-  `ContainmentHistoryItem`, `GeometryHistoryItem`, `ReceiptHistoryItem`, `SimcarAnalysisImage`,
-  `SimcarAnalysisMessage`, `SimcarLayerSummary`, `SimcarClipSummary`
-- Re-exportar de `dashboard/types.ts` (barrel) para não quebrar imports existentes
-
-### Passo 4: `dashboard/lib/mappers.ts` (baixo risco — puro)
-- Extrair mappers doc→history: `mapVerticesDocToHistoryItem`, `mapContainmentDocToHistoryItem`,
-  `mapGeometryDocToHistoryItem`, `mapReceiptDocToHistoryItem`
-- **Validar:** testes de mappers (novos, se viável) + tsc
-
-### Passo 5: `dashboard/hooks/useSimcarClipJobs.ts` (médio risco — maior bloco)
-- Extrair estado + callbacks do SIMCAR Clip (linhas ~1.041–1.073 + handlers associados):
-  `loadSimcarClipLayers`, `resetSimcarDraft`, `selectSimcarClipEntry`, `cancelProcessingJobsForCard`
-- Seguir o padrão de `useCroquiJobs.ts` (deps injetadas: apiFetch, downloadZip, fileToBase64Payload)
-- **Validar:** fluxo completo de recorte SIMCAR manualmente (upload → processar → baixar)
-
-### Passo 6: `dashboard/hooks/useSimcarAnalysis.ts` (médio risco)
-- Extrair estado + callbacks do SIMCAR AI Analysis + AUAS: `runSimcarAnalysis`, `runAuasAnalysis`,
-  `sendSimcarChatMessage`, `appendSimcarEntriesToConversation`
-- **Validar:** análise com imagem de teste + chat da análise
-
-### Passo 7: `dashboard/hooks/useChat.ts` (médio risco)
-- Extrair chat principal: `handleSend`, `loadConversation`, `handleInsufficientCredits`, billing state
-- **Validar:** enviar mensagem no chat, histórico carrega
-
-### Passo 8: `dashboard/hooks/useErrorsAnalysis.ts` (médio risco)
-- Extrair Vértices/Containment/Geometry: `handleVerticesUpload`, `handleContainmentUpload`,
-  `handleGeometryUpload`, mappers + select/reset
-- **Validar:** cada aba de Erros processa um shapefile
-
-### Passo 9: Simplificar `Dashboard.tsx` (baixo risco — mecânico)
-- Reduzir a ~2.000 linhas: imports de hooks + JSX de composição
-- **Validar:** todas as abas abrem, URL sync (`/dashboard/cbers`) funciona, mobile 375px OK
-
-### Passo 10 (opcional): extrair JSX de histórico por aba em componentes
-- `dashboard/components/SimcarHistoryCards.tsx`, `VerticesHistoryCards.tsx`, etc.
-- **Validar:** visual idêntico antes/depois
+| Bloco | Linhas | Status |
+|-------|--------|--------|
+| Imports | 1–~160 | ✅ |
+| `const { ... } = useSimcarClipJobs()` + 4 hooks | ~349–450 | ✅ (estado extraído) |
+| Monólitos de análise (4 callbacks) | 3.063–4.294 | 🔴 **restam** |
+| JSX principal (sidebar, header, modais, histórico) | ~4.300–8.466 | 🔴 **resta** |
 
 ---
 
-## ⚠️ Cuidados
+## 🔴 O que falta — Passo 11: monólitos de análise (medidos 01/08)
 
-### 1. Performance — re-renders
-Ao criar hooks, cuidado com:
-- `value={{ ... }}` inline recria objeto a cada render → `useMemo`
-- Estados que mudam com frequência (upload progress) não devem ir pro contexto global
-- Manter os hooks como estão (useState locais), só mover para arquivo separado
+| Monólito | Linhas reais | Deps cruzadas |
+|----------|--------------|---------------|
+| `runAcAvnAnalysis` | 3.258–3.552 = **294** | chat, billing, conversas, análise |
+| `runAuasAnalysis` | 3.568–3.820 = **252** | idem |
+| `runVectorizedCompleteAnalysis` | 4.025–4.294 = **269** | idem |
+| `sendSimcarFollowUpMessage` | 3.063–3.229 = **166** | chat, follow-up |
+| **Total** | **~981** | 100+ deps entre eles |
 
-### 2. Mobile vs Desktop
-- `useMobile` hook já existe → usar, não recriar
-- Sidebar colapsa automaticamente no mobile
-- Touch targets mantidos (44px min)
+**Abordagem recomendada (já validada no changelog):** refactor **por fluxo de negócio**, não
+por extração mecânica — criar `useSimcarAnalysisFlow` que encapsula os 4 callbacks com deps
+injetadas (padrão `useSimcarClipActions`), porque:
 
-### 3. URL sync
-O dashboard usa `useDashboardNavigation` (já existe) que sincroniza abas com URL
-(`/dashboard/cbers`, `/dashboard/landsat`). Isso **não muda** com o desmembramento.
+- Os 4 se chamam entre si e compartilham estado de chat/billing/conversas
+- Extração direta quebraria deps em cascata (lição do incidente de 5.093 linhas no Passo 9)
+- Exige **teste manual do fluxo completo**: upload → análise → laudo
 
-### 4. Lazy imports
-`SolicitacaoPrioridadePanel` e outros são `lazy(() => import(...))` — manter o lazy nos
-novos arquivos (evita regressão de bundle).
+### Sub-passos sugeridos (1 commit cada)
 
-### 5. Regra de ouro (do Plano 02 — aprendida na prática)
-- 1 extração = 1 commit atômico, sem mudança funcional
-- `npx tsc --noEmit` + testes + build entre cada passo
-- Extrair **código puro primeiro** (format/mappers/types), hooks depois — reduz risco de merge hell
+| Passo | O que | Validação |
+|-------|-------|-----------|
+| 11a | Mapear as deps reais dos 4 callbacks (quais estados/setters consomem) | grep + leitura |
+| 11b | Criar `useSimcarAnalysisFlow(deps)` com os 4 callbacks movidos intactos | tsc + build |
+| 11c | Dashboard consome o hook; remover as 4 declarações | tsc + build + teste manual upload→análise→laudo |
+| 11d | Quebrar internamente os callbacks grandes em helpers puros (se viável) | tsc + vitest |
+
+## 🟡 O que falta — Passo 12: JSX principal (~3.500 linhas)
+
+Sidebar, header, modais, painéis de análise e histórico ainda inline. Candidatos a
+componentes com props (rodada futura, depois do Passo 11):
+
+- `DashboardSidebar` (props: activeView, onNavigate) — base `DashboardSidebarTabs` já existe
+- `DashboardHeader` (user info, credits, logout)
+- `SimcarHistoryCards.tsx` / `VerticesHistoryCards.tsx` / etc. (JSX de histórico por aba)
+- Modais (delete Cloudinary, confirm, credits)
+
+**Atenção:** NÃO duplicar `client/src/pages/dashboard/*Page.tsx` (stubs de 8 linhas que
+compõem os panels). O Dashboard.tsx deve apenas **compor** páginas existentes.
+
+---
+
+## ⚠️ Cuidados (mantidos)
+
+1. **Performance:** `value={{...}}` inline recria objeto → `useMemo`; estados de upload
+   progress não vão pro contexto global
+2. **Mobile:** `useMobile` já existe; sidebar colapsa; touch targets 44px
+3. **URL sync:** `useDashboardNavigation` sincroniza com URL — não muda
+4. **Lazy imports:** manter `lazy(() => import(...))` nos panels (evita regressão de bundle)
+5. **Regra de ouro:** 1 extração = 1 commit atômico; `tsc` + `vitest` + `vite build` entre passos
+6. **NUNCA** script de faixa para remover callbacks (incidente Passo 9 — 5.093 linhas perdidas).
+   Extrair com **patch manual** (old_string completo até o `});`); após remoção: `grep -n "^};$"`
+   + `npx tsc --noEmit` IMEDIATAMENTE
 
 ---
 
@@ -119,26 +121,25 @@ novos arquivos (evita regressão de bundle).
 
 ```bash
 npm run dev                           # sobe dev server
-# Testar cada aba manualmente
+# Testar cada aba manualmente (especialmente: upload → análise → laudo do SIMCAR)
 # Testar mobile (DevTools → iPhone 13)
 # Testar login/logout
 # Testar URL direta (/dashboard/cbers)
 
 npx tsc --noEmit                      # TypeScript
-npx vitest run --root . client/       # testes existentes
+npx vitest run --root . client/       # 51 testes existentes
 npx vite build                        # build app
 GEOFOREST_BUILD_TARGET=admin npx vite build  # build admin
 ```
 
 ---
 
-## Estimativa revisada
+## Estimativa revisada (01/08)
 
 | Passo | Tempo | Risco |
 |-------|-------|-------|
-| 1–4 (puro: format, types, mappers) | ~30 min | Baixo |
-| 5 (useSimcarClipJobs) | ~30 min | Médio |
-| 6–8 (analysis, chat, errors) | ~45 min | Médio |
-| 9 (simplificar Dashboard.tsx) | ~20 min | Baixo |
-| 10 (opcional JSX cards) | ~30 min | Baixo |
-| **Total** | **~2,5 h** | |
+| 11a–11b (hook de fluxo) | ~45 min | Médio |
+| 11c (Dashboard consome) | ~30 min | Médio |
+| 11d (quebra interna) | ~45 min | Alto |
+| 12 (JSX componentes) | ~1,5 h | Médio |
+| **Total** | **~3,5 h** | |
