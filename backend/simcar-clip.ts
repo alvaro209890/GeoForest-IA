@@ -115,6 +115,37 @@ import {
     startSseHeartbeat,
     throwIfClientDisconnected,
 } from "./simcar/clip-pipeline";
+import {
+    douglasPeucker,
+    computeAreaHa,
+    unionPolygonFeatures,
+    unionPolygonGeometries,
+    isPointOrMultiPoint,
+    pointInsidePolygon,
+    pointInsideAnyPolygon,
+    extractPointCoords,
+} from "./simcar/polygon-ops";
+import {
+    extractZipEntriesByExtension,
+    readFullShapefile,
+    getDbfRecordCount,
+    readDbfRecord,
+    bboxIntersects,
+    featureBbox,
+    ringsToFeature,
+} from "./simcar/shapefile-io";
+import {
+    readTemplateSchemas,
+    mapAttributes,
+    setMappedAttribute,
+    applyLayerAttributeRules,
+} from "./simcar/attribute-mapper";
+import {
+    dedupeWarnings,
+    appendLayerWarning,
+    inspectPropertyLayerConsistency,
+    buildQuantitativeXlsx,
+} from "./simcar/area-calculator";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -480,30 +511,6 @@ function simplifyGeometryForOverlay(
 /**
  * Douglas-Peucker line simplification algorithm.
  */
-function douglasPeucker(points: number[][], tolerance: number): number[][] {
-    if (points.length <= 2) return points;
-
-    let maxDist = 0;
-    let maxIdx = 0;
-    const first = points[0];
-    const last = points[points.length - 1];
-
-    for (let i = 1; i < points.length - 1; i++) {
-        const dist = perpendicularDistance(points[i], first, last);
-        if (dist > maxDist) {
-            maxDist = dist;
-            maxIdx = i;
-        }
-    }
-
-    if (maxDist > tolerance) {
-        const left = douglasPeucker(points.slice(0, maxIdx + 1), tolerance);
-        const right = douglasPeucker(points.slice(maxIdx), tolerance);
-        return [...left.slice(0, -1), ...right];
-    }
-
-    return [first, last];
-}
 
 function perpendicularDistance(point: number[], lineStart: number[], lineEnd: number[]): number {
     const dx = lineEnd[0] - lineStart[0];
@@ -637,70 +644,6 @@ function resolveLocalSimcarLayer(templateLayer: string): LocalSimcarLayerSource 
     return null;
 }
 
-function extractZipEntriesByExtension(zipBuffer: Buffer, extensions: string[]) {
-    const wanted = new Set(extensions.map((ext) => ext.toLowerCase()));
-    const entries: Array<{ name: string; data: Buffer }> = [];
-    const EOCD_SIG = 0x06054b50;
-    const CEN_SIG = 0x02014b50;
-    const LOC_SIG = 0x04034b50;
-    const maxScan = Math.min(zipBuffer.length, 65557);
-
-    let eocdOffset = -1;
-    for (let i = zipBuffer.length - 22; i >= zipBuffer.length - maxScan; i -= 1) {
-        if (i < 0) break;
-        if (zipBuffer.readUInt32LE(i) === EOCD_SIG) {
-            eocdOffset = i;
-            break;
-        }
-    }
-    if (eocdOffset < 0) return entries;
-
-    const totalEntries = zipBuffer.readUInt16LE(eocdOffset + 10);
-    const centralDirOffset = zipBuffer.readUInt32LE(eocdOffset + 16);
-    let cenOffset = centralDirOffset;
-
-    for (let i = 0; i < totalEntries; i += 1) {
-        if (cenOffset + 46 > zipBuffer.length) break;
-        if (zipBuffer.readUInt32LE(cenOffset) !== CEN_SIG) break;
-
-        const method = zipBuffer.readUInt16LE(cenOffset + 10);
-        const compressedSize = zipBuffer.readUInt32LE(cenOffset + 20);
-        const fileNameLength = zipBuffer.readUInt16LE(cenOffset + 28);
-        const extraLength = zipBuffer.readUInt16LE(cenOffset + 30);
-        const commentLength = zipBuffer.readUInt16LE(cenOffset + 32);
-        const localHeaderOffset = zipBuffer.readUInt32LE(cenOffset + 42);
-        const fileNameStart = cenOffset + 46;
-        const fileNameEnd = fileNameStart + fileNameLength;
-        if (fileNameEnd > zipBuffer.length) break;
-        const fileName = zipBuffer.subarray(fileNameStart, fileNameEnd).toString("utf8");
-        const ext = path.extname(fileName).toLowerCase();
-
-        cenOffset = fileNameEnd + extraLength + commentLength;
-        if (!wanted.has(ext)) continue;
-        if (localHeaderOffset + 30 > zipBuffer.length) continue;
-        if (zipBuffer.readUInt32LE(localHeaderOffset) !== LOC_SIG) continue;
-
-        const localNameLen = zipBuffer.readUInt16LE(localHeaderOffset + 26);
-        const localExtraLen = zipBuffer.readUInt16LE(localHeaderOffset + 28);
-        const dataStart = localHeaderOffset + 30 + localNameLen + localExtraLen;
-        const dataEnd = dataStart + compressedSize;
-        if (dataEnd > zipBuffer.length) continue;
-
-        const compressed = zipBuffer.subarray(dataStart, dataEnd);
-        if (method === 0) {
-            entries.push({ name: fileName, data: Buffer.from(compressed) });
-        } else if (method === 8) {
-            try {
-                entries.push({ name: fileName, data: Buffer.from(inflateRawSync(compressed)) });
-            } catch {
-                continue;
-            }
-        }
-    }
-
-    return entries;
-}
-
 /* ─── Job Cache ──────────────────────────────────────────────── */
 
 export type CachedJob = {
@@ -728,151 +671,6 @@ export type CachedJob = {
  * Read ALL polygon records from a .shp buffer.
  * Returns an array of polygon rings (one per record, outer + holes).
  */
-function readFullShapefile(shpBuffer: Buffer): number[][][][] {
-    const polygons: number[][][][] = [];
-    if (shpBuffer.length < 100) return polygons;
-
-    let offset = 100; // skip header
-    while (offset + 12 <= shpBuffer.length) {
-        const contentLengthWords = shpBuffer.readInt32BE(offset + 4);
-        const contentLengthBytes = contentLengthWords * 2;
-        const recStart = offset + 8;
-        const recEnd = recStart + contentLengthBytes;
-        if (recEnd > shpBuffer.length || contentLengthBytes < 4) break;
-
-        const shapeType = shpBuffer.readInt32LE(recStart);
-        // Polygon=5, PolygonZ=15, PolygonM=25
-        if ((shapeType === 5 || shapeType === 15 || shapeType === 25) && contentLengthBytes >= 44) {
-            const numParts = shpBuffer.readInt32LE(recStart + 36);
-            const numPoints = shpBuffer.readInt32LE(recStart + 40);
-            if (numParts > 0 && numPoints > 2) {
-                const partsOffset = recStart + 44;
-                const pointsOffset = partsOffset + numParts * 4;
-                if (pointsOffset + numPoints * 16 <= recEnd) {
-                    const partIndices: number[] = [];
-                    for (let p = 0; p < numParts; p++) {
-                        partIndices.push(shpBuffer.readInt32LE(partsOffset + p * 4));
-                    }
-                    partIndices.push(numPoints);
-
-                    const rings: number[][][] = [];
-                    for (let p = 0; p < numParts; p++) {
-                        const ring: number[][] = [];
-                        for (let i = partIndices[p]; i < partIndices[p + 1]; i++) {
-                            const pOff = pointsOffset + i * 16;
-                            const x = shpBuffer.readDoubleLE(pOff);
-                            const y = shpBuffer.readDoubleLE(pOff + 8);
-                            if (Number.isFinite(x) && Number.isFinite(y)) ring.push([x, y]);
-                        }
-                        if (ring.length >= 3) rings.push(ring);
-                    }
-                    if (rings.length > 0) polygons.push(rings);
-                }
-            }
-        }
-        offset = recEnd;
-    }
-    return polygons;
-}
-
-function getDbfRecordCount(dbfBuffer: Buffer): number {
-    if (dbfBuffer.length < 12) return 0;
-    return dbfBuffer.readInt32LE(4);
-}
-
-function readDbfRecord(
-    dbfBuffer: Buffer,
-    fields: DbfFieldDef[],
-    recordIndex: number,
-): Record<string, unknown> {
-    if (dbfBuffer.length < 32 || recordIndex < 0) return {};
-    const headerBytes = dbfBuffer.readUInt16LE(8);
-    const recordBytes = dbfBuffer.readUInt16LE(10);
-    const offset = headerBytes + recordIndex * recordBytes;
-    if (offset + recordBytes > dbfBuffer.length) return {};
-    if (dbfBuffer[offset] === 0x2a) return {};
-
-    const out: Record<string, unknown> = {};
-    let fieldOffset = offset + 1;
-    for (const field of fields) {
-        const raw = dbfBuffer
-            .subarray(fieldOffset, fieldOffset + field.length)
-            .toString("latin1")
-            .trim();
-        fieldOffset += field.length;
-
-        if (!raw) {
-            out[field.name] = null;
-        } else if (field.type === "N" || field.type === "F") {
-            const num = Number(raw.replace(",", "."));
-            out[field.name] = Number.isFinite(num) ? num : raw;
-        } else {
-            out[field.name] = raw;
-        }
-    }
-    return out;
-}
-
-function bboxIntersects(
-    a: [number, number, number, number],
-    b: [number, number, number, number],
-): boolean {
-    return a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
-}
-
-function featureBbox(feature: Feature<Polygon | MultiPolygon>): [number, number, number, number] {
-    const coords =
-        feature.geometry.type === "Polygon"
-            ? feature.geometry.coordinates.flat()
-            : feature.geometry.coordinates.flat(2);
-    const xs = coords.map((coord) => coord[0]).filter(Number.isFinite);
-    const ys = coords.map((coord) => coord[1]).filter(Number.isFinite);
-    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
-}
-
-function ringsToFeature(rings: number[][][]): Feature<Polygon | MultiPolygon> | null {
-    const closedRings = rings
-        .map((ring) => {
-            if (ring.length < 3) return [];
-            const first = ring[0];
-            const last = ring[ring.length - 1];
-            const closed = first[0] === last[0] && first[1] === last[1]
-                ? ring
-                : [...ring, [first[0], first[1]]];
-            return closed.length >= 4 ? closed : [];
-        })
-        .filter((ring) => ring.length >= 4);
-    if (!closedRings.length) return null;
-
-    const polygons: number[][][][] = [];
-    for (const ring of closedRings) {
-        const area = ringSignedArea(ring);
-        if (area > 0) {
-            // New exterior ring (shell) starts a new polygon
-            polygons.push([ring]);
-        } else {
-            // Interior ring (hole) belongs to the last outer ring
-            if (polygons.length > 0) {
-                polygons[polygons.length - 1].push(ring);
-            } else {
-                // Fallback: if CCW but no shell exists, treat as outer ring
-                polygons.push([ring]);
-            }
-        }
-    }
-
-    if (polygons.length === 0) return null;
-
-    try {
-        if (polygons.length === 1) {
-            return turfPolygon(polygons[0]);
-        } else {
-            return turfMultiPolygon(polygons);
-        }
-    } catch {
-        return null;
-    }
-}
 
 function readLocalSimcarClipFeatures(
     source: LocalSimcarLayerSource,
@@ -1516,50 +1314,15 @@ async function fetchWfsBboxFeatures(
 
 /* ─── Feature Clipping ───────────────────────────────────────── */
 
-function isPointOrMultiPoint(
-    geometry: Geometry | null | undefined,
-): geometry is Geometry & { type: "Point" | "MultiPoint" } {
-    if (!geometry) return false;
-    return geometry.type === "Point" || geometry.type === "MultiPoint";
-}
-
 /**
  * Checks if a Point feature is inside the given polygon.
  * Boundary points count as inside for clipping purposes.
  */
-function pointInsidePolygon(
-    coord: [number, number],
-    polygon: Feature<Polygon | MultiPolygon>,
-): boolean {
-    const [x, y] = coord;
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !polygon.geometry) return false;
-    try {
-        return turfBooleanPointInPolygon(turfPoint(coord), polygon, { ignoreBoundary: false });
-    } catch {
-        return false;
-    }
-}
-
-function pointInsideAnyPolygon(
-    coord: [number, number],
-    polygons: Array<Feature<Polygon | MultiPolygon>>,
-): boolean {
-    return polygons.some((polygon) => pointInsidePolygon(coord, polygon));
-}
 
 /**
  * Extract point coordinates from Point/MultiPoint geometry.
  * Returns null if geometry is not a point type.
  */
-function extractPointCoords(geometry: Geometry): Array<[number, number]> | null {
-    if (geometry.type === "Point") {
-        return [(geometry as any).coordinates as [number, number]];
-    }
-    if (geometry.type === "MultiPoint") {
-        return (geometry as any).coordinates as Array<[number, number]>;
-    }
-    return null;
-}
 
 type ClippedPolygonResult = {
     kind: "polygon";
@@ -1688,90 +1451,7 @@ function selectWholeFeaturesIntersecting(
     return selected;
 }
 
-/* ─── Template Schema Extraction ─────────────────────────────── */
-
-function readTemplateSchemas(
-    modeloEntries: Array<{ name: string; data: Buffer }>,
-): Map<string, DbfFieldDef[]> {
-    const schemas = new Map<string, DbfFieldDef[]>();
-
-    for (const entry of modeloEntries) {
-        if (!entry.name.toLowerCase().endsWith(".dbf")) continue;
-        const baseName = path.basename(entry.name, path.extname(entry.name)).toUpperCase();
-        try {
-            const fields = parseDbfSchema(entry.data);
-            if (fields.length > 0) {
-                schemas.set(baseName, fields);
-            }
-        } catch {
-            // Skip unparseable DBFs
-        }
-    }
-
-    return schemas;
-}
-
 /* ─── Attribute Mapping ──────────────────────────────────────── */
-
-function mapAttributes(
-    properties: Record<string, unknown>,
-    targetFields: DbfFieldDef[],
-): Record<string, string | number | null> {
-    const mapped: Record<string, string | number | null> = {};
-    const propsLower = new Map(
-        Object.entries(properties).map(([k, v]) => [k.toLowerCase(), v]),
-    );
-
-    for (const field of targetFields) {
-        const value = propsLower.get(field.name.toLowerCase());
-        if (value === undefined || value === null) {
-            mapped[field.name] = null;
-        } else if (field.type === "N" || field.type === "F") {
-            const num = Number(value);
-            mapped[field.name] = Number.isFinite(num) ? num : null;
-        } else if (field.type === "D") {
-            mapped[field.name] = String(value);
-        } else {
-            mapped[field.name] = String(value);
-        }
-    }
-
-    return mapped;
-}
-
-function setMappedAttribute(
-    attributes: Record<string, string | number | null>,
-    targetFields: DbfFieldDef[],
-    fieldName: string,
-    value: string | number | null,
-): void {
-    const field = targetFields.find((item) => item.name.toLowerCase() === fieldName.toLowerCase());
-    if (!field) return;
-    attributes[field.name] = value;
-}
-
-function applyLayerAttributeRules(
-    layerName: string,
-    attributes: Record<string, string | number | null>,
-    targetFields: DbfFieldDef[],
-    recordNumber: number,
-): Record<string, string | number | null> {
-    if (layerName === "AVN") {
-        setMappedAttribute(attributes, targetFields, "SITUACAO", "P");
-    }
-
-    if (layerName === "ARL") {
-        setMappedAttribute(attributes, targetFields, "AVERBACAO", "NA");
-        setMappedAttribute(attributes, targetFields, "SITUACAO", "P");
-        setMappedAttribute(attributes, targetFields, "IDENTIFIC", recordNumber);
-    }
-
-    if (layerName === "RESERVATORIO_ARTIFICIAL") {
-        setMappedAttribute(attributes, targetFields, "FAIXA_APP", 30);
-    }
-
-    return attributes;
-}
 
 /* ─── ZIP Output Builder ─────────────────────────────────────── */
 
@@ -1876,131 +1556,6 @@ async function buildOutputZip(
 
 /* ─── XLSX Quantitative Report Builder ───────────────────────── */
 
-async function buildQuantitativeXlsx(
-    layerSummaries: LayerSummary[],
-    propertyAreaHa: number,
-    airIdentificacao?: string,
-): Promise<Buffer> {
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = "GeoForest IA";
-    workbook.created = new Date();
-
-    const headerFill: ExcelJS.Fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FF10B981" }, // emerald-500
-    };
-    const headerFont: Partial<ExcelJS.Font> = {
-        bold: true,
-        color: { argb: "FFFFFFFF" },
-        size: 11,
-    };
-    const thinBorder: Partial<ExcelJS.Border> = { style: "thin", color: { argb: "FFD1D5DB" } };
-    const allBorders: Partial<ExcelJS.Borders> = {
-        top: thinBorder,
-        left: thinBorder,
-        bottom: thinBorder,
-        right: thinBorder,
-    };
-
-    // ── Sheet 1: Resumo ──
-    const resumo = workbook.addWorksheet("Resumo");
-
-    // Title row
-    resumo.mergeCells("A1:B1");
-    const titleCell = resumo.getCell("A1");
-    titleCell.value = "Relatório Quantitativo — Recorte SIMCAR";
-    titleCell.font = { bold: true, size: 14, color: { argb: "FF065F46" } };
-    titleCell.alignment = { horizontal: "center" };
-
-    // Summary data
-    const summaryData: [string, string | number][] = [
-        ["Data do Processamento", new Date().toLocaleString("pt-BR", { timeZone: "America/Cuiaba" })],
-        ["Nº Identificação AIR", airIdentificacao || "—"],
-        ["Área do Imóvel (ha)", Number(propertyAreaHa.toFixed(4))],
-        ["Sistema de Referência", "EPSG:4674 (SIRGAS 2000)"],
-        ["Total de Camadas", layerSummaries.length],
-        ["Camadas com Dados", layerSummaries.filter((l) => l.features > 0).length],
-        ["Total de Feições Recortadas", layerSummaries.reduce((s, l) => s + l.features, 0)],
-    ];
-
-    summaryData.forEach(([label, value], idx) => {
-        const row = resumo.getRow(idx + 3);
-        row.getCell(1).value = label;
-        row.getCell(1).font = { bold: true, size: 11 };
-        row.getCell(2).value = value;
-        row.getCell(2).alignment = { horizontal: "left" };
-        row.getCell(1).border = allBorders;
-        row.getCell(2).border = allBorders;
-    });
-
-    resumo.getColumn(1).width = 32;
-    resumo.getColumn(2).width = 40;
-
-    // ── Sheet 2: Camadas ──
-    const camadas = workbook.addWorksheet("Camadas");
-
-    // Header row
-    const headers = ["Camada", "Origem", "Feições", "Área (ha)", "% do Imóvel", "Observações"];
-    const headerRow = camadas.getRow(1);
-    headers.forEach((h, i) => {
-        const cell = headerRow.getCell(i + 1);
-        cell.value = h;
-        cell.font = headerFont;
-        cell.fill = headerFill;
-        cell.alignment = { horizontal: "center", vertical: "middle" };
-        cell.border = allBorders;
-    });
-    headerRow.height = 24;
-
-    // Data rows
-    layerSummaries.forEach((layer, idx) => {
-        const row = camadas.getRow(idx + 2);
-        const pct = propertyAreaHa > 0 && layer.areaHa
-            ? Number(((layer.areaHa / propertyAreaHa) * 100).toFixed(2))
-            : 0;
-
-        row.getCell(1).value = layer.name;
-        row.getCell(2).value = layer.source === "property" ? "Imóvel" : "WFS";
-        row.getCell(3).value = layer.features;
-        row.getCell(4).value = layer.areaHa ?? 0;
-        row.getCell(5).value = pct;
-        row.getCell(6).value = layer.warning || (layer.features === 0 ? "Sem dados" : "OK");
-
-        // Formatting
-        row.getCell(3).alignment = { horizontal: "center" };
-        row.getCell(4).numFmt = "#,##0.0000";
-        row.getCell(5).numFmt = "#,##0.00";
-        for (let c = 1; c <= 6; c++) row.getCell(c).border = allBorders;
-
-        // Alternate row shading
-        if (idx % 2 === 1) {
-            for (let c = 1; c <= 6; c++) {
-                row.getCell(c).fill = {
-                    type: "pattern",
-                    pattern: "solid",
-                    fgColor: { argb: "FFF0FDF4" }, // emerald-50
-                };
-            }
-        }
-    });
-
-    // Auto-fit columns
-    camadas.getColumn(1).width = 28; // Camada
-    camadas.getColumn(2).width = 12; // Origem
-    camadas.getColumn(3).width = 10; // Feições
-    camadas.getColumn(4).width = 14; // Área (ha)
-    camadas.getColumn(5).width = 14; // % do Imóvel
-    camadas.getColumn(6).width = 36; // Observações
-
-    // Auto-filter
-    camadas.autoFilter = { from: "A1", to: `F${layerSummaries.length + 1}` };
-
-    // Write to buffer
-    const arrayBuffer = await workbook.xlsx.writeBuffer();
-    return Buffer.from(arrayBuffer);
-}
-
 /* ─── Main Processing Pipeline ───────────────────────────────── */
 
 export type LayerSummary = {
@@ -2048,43 +1603,6 @@ function objectToMapGeometry(value: Record<string, Geometry[]> | null | undefine
     return out;
 }
 
-function dedupeWarnings(values: Array<string | undefined | null>): string[] {
-    return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))];
-}
-
-function appendLayerWarning(layer: LayerSummary, warnings: Array<string | undefined | null>, partial = false): LayerSummary {
-    const merged = dedupeWarnings([layer.warning, ...warnings]);
-    return {
-        ...layer,
-        warning: merged.length > 0 ? merged.join(" | ") : undefined,
-        partial: partial || layer.partial || merged.some((item) => /parcial/i.test(item)),
-    };
-}
-
-function unionPolygonFeatures(features: Array<Feature<Polygon | MultiPolygon>>): Feature<Polygon | MultiPolygon> | null {
-    if (features.length === 0) return null;
-    let merged = features[0];
-    for (let i = 1; i < features.length; i += 1) {
-        try {
-            const unioned = turfUnion(turfFeatureCollection([merged, features[i]]) as any) as
-                | Feature<Polygon | MultiPolygon>
-                | null;
-            if (unioned) merged = unioned;
-        } catch {
-            // Keep partial union.
-        }
-    }
-    return merged;
-}
-
-function unionPolygonGeometries(geometries: Geometry[] | undefined): Feature<Polygon | MultiPolygon> | null {
-    if (!Array.isArray(geometries) || geometries.length === 0) return null;
-    const polygonFeatures = geometries
-        .map((geometry) => toPolygonOrMultiFeature(geometry))
-        .filter((feature): feature is Feature<Polygon | MultiPolygon> => Boolean(feature));
-    return unionPolygonFeatures(polygonFeatures);
-}
-
 function getClippedRiverFeatures(
     clippedGeometries: Map<string, Geometry[]>,
 ): Array<Feature<Polygon | MultiPolygon>> {
@@ -2098,15 +1616,6 @@ function getClippedRiverFeatures(
         }
     }
     return features;
-}
-
-function computeAreaHa(feature: Feature<Polygon | MultiPolygon> | null | undefined): number {
-    if (!feature) return 0;
-    try {
-        return turfArea(feature) / 10000;
-    } catch {
-        return 0;
-    }
 }
 
 function buildExpandedClipBoundary(
@@ -2153,67 +1662,6 @@ function buildExpandedClipBoundary(
         wkt: polygonToWkt(fallbackGeometry),
         distanceMeters: 0,
     };
-}
-
-function inspectPropertyLayerConsistency(
-    clippedGeometries: Map<string, Geometry[]>,
-): {
-    feature: Feature<Polygon | MultiPolygon> | null;
-    sourceLayer?: "ATP" | "AIR";
-    warnings: string[];
-} {
-    const atpFeature = unionPolygonGeometries(clippedGeometries.get("ATP"));
-    const airFeature = unionPolygonGeometries(clippedGeometries.get("AIR"));
-    const warnings: string[] = [];
-
-    const chosen = atpFeature
-        ? { feature: atpFeature, sourceLayer: "ATP" as const }
-        : airFeature
-            ? { feature: airFeature, sourceLayer: "AIR" as const }
-            : { feature: null, sourceLayer: undefined };
-
-    if (!atpFeature || !airFeature) {
-        if (chosen.sourceLayer) {
-            warnings.push(`Perimetro reconstruido a partir de ${chosen.sourceLayer}; camada complementar ausente ou invalida no ZIP.`);
-        }
-        return { feature: chosen.feature, sourceLayer: chosen.sourceLayer, warnings };
-    }
-
-    try {
-        const intersection = turfIntersect(turfFeatureCollection([atpFeature, airFeature]) as any) as
-            | Feature<Polygon | MultiPolygon>
-            | null;
-        const unioned = turfUnion(turfFeatureCollection([atpFeature, airFeature]) as any) as
-            | Feature<Polygon | MultiPolygon>
-            | null;
-        const atpAreaHa = computeAreaHa(atpFeature);
-        const airAreaHa = computeAreaHa(airFeature);
-        const unionAreaHa = computeAreaHa(unioned);
-        const overlapAreaHa = computeAreaHa(intersection);
-        const areaDeltaHa = Math.abs(atpAreaHa - airAreaHa);
-        const overlapPctOfUnion = unionAreaHa > 0 ? (overlapAreaHa / unionAreaHa) * 100 : 100;
-        const warnDeltaThresholdHa = Math.max(0.25, unionAreaHa * 0.005);
-        const failDeltaThresholdHa = Math.max(1, unionAreaHa * 0.02);
-
-        if (overlapPctOfUnion < 98 || areaDeltaHa > failDeltaThresholdHa) {
-            throw new Error(
-                `ZIP vetorizado inconsistente: ATP e AIR divergem (${overlapPctOfUnion.toFixed(2)}% de sobreposicao, delta ${areaDeltaHa.toFixed(2)} ha). Revise o perimetro antes da analise.`,
-            );
-        }
-
-        if (overlapPctOfUnion < 99.5 || areaDeltaHa > warnDeltaThresholdHa) {
-            warnings.push(
-                `ATP e AIR divergem levemente (${overlapPctOfUnion.toFixed(2)}% de sobreposicao, delta ${areaDeltaHa.toFixed(2)} ha). O perimetro da analise foi ancorado em ATP.`,
-            );
-        }
-    } catch (error) {
-        if (error instanceof Error && /ZIP vetorizado inconsistente/i.test(error.message)) {
-            throw error;
-        }
-        warnings.push("Nao foi possivel validar totalmente a consistencia geometrica entre ATP e AIR; ATP foi usado como perimetro principal.");
-    }
-
-    return { feature: chosen.feature, sourceLayer: chosen.sourceLayer, warnings };
 }
 
 function parsePersistedClipContext(raw: unknown): PersistedClipContextV1 | null {
