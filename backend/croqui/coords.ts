@@ -40,6 +40,44 @@ export function formatDistance(meters: number): string {
   return `${m} m`;
 }
 
+/** Rumo (bearing) em graus [0, 360) entre dois pontos, no sentido horário a partir do norte. */
+export function bearingDegrees(
+  lon1: number,
+  lat1: number,
+  lon2: number,
+  lat2: number,
+): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const phi1 = toRad(lat1);
+  const phi2 = toRad(lat2);
+  const dLon = toRad(lon2 - lon1);
+  const y = Math.sin(dLon) * Math.cos(phi2);
+  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLon);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+const PONTOS_CARDEAIS = [
+  "norte",
+  "nordeste",
+  "leste",
+  "sudeste",
+  "sul",
+  "sudoeste",
+  "oeste",
+  "noroeste",
+] as const;
+
+/** Ponto cardeal (8 direções) do deslocamento entre dois pontos. */
+export function sentidoCardeal(
+  lon1: number,
+  lat1: number,
+  lon2: number,
+  lat2: number,
+): string {
+  const idx = Math.round(bearingDegrees(lon1, lat1, lon2, lat2) / 45) % 8;
+  return PONTOS_CARDEAIS[idx];
+}
+
 export function escapeXml(text: string): string {
   return String(text || "")
     .replace(/&/g, "&amp;")

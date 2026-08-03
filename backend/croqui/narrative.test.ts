@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDmsPair } from "./coords";
+import { bearingDegrees, formatDmsPair, sentidoCardeal } from "./coords";
 import type { CroquiLandmark } from "./landmarks";
 import { buildCroquiDocxParagraphs, buildCroquiNarrative } from "./narrative";
 import type { CroquiRoute, ManeuverKind, RouteWaypoint } from "./routing";
@@ -41,6 +41,22 @@ const sedeLandmark: CroquiLandmark = {
   introSuffix: "na sede do município de Querência",
 };
 
+describe("croqui coords", () => {
+  it("calcula o bearing entre dois pontos", () => {
+    expect(bearingDegrees(-52.21958333, -12.59903056, -52.21955833, -12.60881111)).toBeGreaterThan(
+      170,
+    );
+    expect(bearingDegrees(-52.21958333, -12.59903056, -52.21955833, -12.60881111)).toBeLessThan(190);
+  });
+
+  it("converte bearing em ponto cardeal (8 direções)", () => {
+    expect(sentidoCardeal(-52.21958333, -12.59903056, -52.21955833, -12.60881111)).toBe("sul");
+    expect(sentidoCardeal(-52.2, -12.6, -52.19, -12.6)).toBe("leste");
+    expect(sentidoCardeal(-52.2, -12.6, -52.21, -12.6)).toBe("oeste");
+    expect(sentidoCardeal(-52.2, -12.6, -52.2, -12.59)).toBe("norte");
+  });
+});
+
 describe("croqui narrative", () => {
   it("reproduz o roteiro do croqui modelo Fazenda Irmãos Sebald", () => {
     // Croquis/Fazenda Irmaos Sebald-lote 121B.pdf
@@ -59,7 +75,8 @@ describe("croqui narrative", () => {
     });
 
     expect(texto).toBe(
-      `Inicia-se o croqui na MT-243, no ponto (12°35'56.51"S, 52°13'10.50"O). ` +
+      `O presente croqui se inicia na cidade Querência no ponto (12°35'56.51"S, 52°13'10.50"O) ` +
+        `seguindo pela MT-243 no sentido sul. ` +
         `Siga em frente por 1,1 km até o ponto (12°36'31.72"S, 52°13'10.41"O). ` +
         `Vire à direita e siga por 5,1 km até o ponto (12°37'43.69"S, 52°15'18.81"O). ` +
         `O destino estará à esquerda.`,
@@ -101,7 +118,7 @@ describe("croqui narrative", () => {
     expect(texto).not.toContain("O destino estará");
   });
 
-  it("não repete a via no primeiro trecho quando ela já abriu o roteiro", () => {
+  it("inicia com o template fixo de abertura com cidade, ponto, via e sentido", () => {
     const texto = buildCroquiNarrative({
       municipioNome: "Querência",
       propertyName: "Fazenda Teste",
@@ -114,12 +131,14 @@ describe("croqui narrative", () => {
         null,
       ),
     });
-    expect(texto).toContain("Inicia-se o croqui na MT-242");
+    expect(texto).toMatch(
+      /^O presente croqui se inicia na cidade Querência no ponto \(.+\) seguindo pela MT-242 no sentido sudoeste\./,
+    );
     expect(texto).toContain("Siga em frente por 3 km");
     expect(texto).not.toContain("pela MT-242 por");
   });
 
-  it("usa o landmark curado na abertura e mantém a via no primeiro trecho", () => {
+  it("usa o landmark curado como referência quando a rota não traz via", () => {
     const curado: CroquiLandmark = {
       label: "rotatória entre a Av. Norte e a MT-109",
       lon: -52.2196222,
@@ -133,15 +152,17 @@ describe("croqui narrative", () => {
       landmark: curado,
       route: route(
         [
-          waypoint(-52.2, -12.6, 3000, "depart", "MT-242"),
+          waypoint(-52.2, -12.6, 3000, "depart", ""),
           waypoint(-52.21, -12.61, 600, "left", "MT-243"),
           waypoint(-52.22, -12.62, 0, "arrive"),
         ],
         null,
       ),
     });
-    expect(texto).toContain("Inicia-se o croqui na rotatória entre a Av. Norte e a MT-109");
-    expect(texto).toContain("Siga em frente pela MT-242 por 3 km");
+    expect(texto).toMatch(
+      /^O presente croqui se inicia na cidade Querência no ponto \(.+\) seguindo na rotatória entre a Av\. Norte e a MT-109/,
+    );
+    expect(texto).toContain("Siga em frente por 3 km");
     expect(texto).toContain("Vire à esquerda e siga em frente pela MT-243 por 600 m");
   });
 
@@ -155,7 +176,9 @@ describe("croqui narrative", () => {
         null,
       ),
     });
-    expect(texto).toContain("no município de Ribeirão Cascalheira – MT");
+    expect(texto).toMatch(
+      /^O presente croqui se inicia na cidade Ribeirão Cascalheira no ponto \(.+\) seguindo no município de Ribeirão Cascalheira/,
+    );
   });
 
   it("gera o DOCX como parágrafo único", () => {

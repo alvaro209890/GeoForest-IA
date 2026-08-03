@@ -141,10 +141,17 @@ No front, `RoutePicker.tsx` desenha os traçados sobre o contorno da ATP num SVG
 
 ## Roteiro
 
-Parágrafo corrido, no padrão dos modelos `chacara_02` e `Fazenda Irmãos Sebald`:
+Parágrafo corrido, no padrão dos modelos `chacara_02` e `Fazenda Irmãos Sebald`. A abertura é um
+**template fixo** (regra do Álvaro, 03/08/2026):
 
 ```
-Inicia-se o croqui na MT-243, no ponto (12°35'56.51"S, 52°13'10.50"O).
+O presente croqui se inicia na cidade {município} no ponto {DMS} seguindo pela {via} no sentido {sentido}.
+```
+
+Exemplo:
+
+```
+O presente croqui se inicia na cidade Querência no ponto (12°35'56.51"S, 52°13'10.50"O) seguindo pela MT-243 no sentido sul.
 Siga em frente por 1,1 km até o ponto (12°36'31.72"S, 52°13'10.41"O).
 Vire à direita e siga por 5,1 km até o ponto (12°37'43.69"S, 52°15'18.81"O).
 O destino estará à esquerda.
@@ -152,9 +159,12 @@ O destino estará à esquerda.
 
 Regras:
 
-- A abertura nomeia a via do primeiro passo. Quando ela já foi nomeada ali, o primeiro trecho
-  **não a repete** — como nos modelos. Com landmark curado, a abertura usa o texto do landmark e
-  o primeiro trecho mantém a via.
+- A abertura **sempre** usa o template: cidade, DMS do ponto inicial, via e sentido. O sentido é o
+  ponto cardeal do primeiro trecho da rota (`sentidoCardeal()` em `backend/croqui/coords.ts` —
+  8 direções: norte, nordeste, leste, sudeste, sul, sudoeste, oeste, noroeste).
+- Quando a via foi nomeada na abertura, o primeiro trecho **não a repete** — como nos modelos.
+  Sem via no primeiro waypoint, a abertura usa o texto do landmark curado e o primeiro trecho
+  mantém a via.
 - Cada trecho termina no **DMS do ponto seguinte**, nunca no do próprio ponto de partida.
 - O fecho é `O destino estará à esquerda/direita.` quando o OSRM informa o lado; senão o último
   trecho termina em `..., onde se encontra a propriedade.`

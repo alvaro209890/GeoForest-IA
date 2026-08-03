@@ -1,4 +1,4 @@
-import { formatDistance } from "./coords";
+import { formatDistance, sentidoCardeal } from "./coords";
 import type { CroquiLandmark } from "./landmarks";
 import type { CroquiRoute, RouteWaypoint } from "./routing";
 
@@ -6,7 +6,8 @@ import type { CroquiRoute, RouteWaypoint } from "./routing";
  * Roteiro no padrão dos croquis modelo: parágrafo corrido em que cada trecho
  * traz a distância percorrida seguida do DMS do ponto de CHEGADA desse trecho.
  *
- *   Inicia-se o croqui na MT-243, no ponto (A).
+ *   O presente croqui se inicia na cidade Querência no ponto (A) seguindo pela
+ *   MT-243 no sentido sul.
  *   Siga em frente por 1,1 km até o ponto (B).
  *   Vire à direita e siga por 5,1 km até o ponto (C).
  *   O destino estará à esquerda.
@@ -50,31 +51,44 @@ function legPhrase(
 }
 
 /**
- * Abertura do roteiro. `usouVia` avisa que a via já foi nomeada aqui — nos
- * modelos, o primeiro trecho não a repete ("Inicia-se o croqui na MT-243...
- * Siga em frente por 1,1 km...").
+ * Abertura do roteiro, no padrão fixo pedido pelo Álvaro:
+ *
+ *   O presente croqui se inicia na cidade X no ponto X seguindo pela
+ *   rua/avenida/estrada X no sentido X.
+ *
+ * `usouVia` avisa que a via já foi nomeada aqui — nos modelos, o primeiro
+ * trecho não a repete ("...seguindo pela MT-243 no sentido sul. Siga em frente
+ * por 1,1 km..."). O `sentido` é o ponto cardeal do primeiro trecho da rota
+ * (norte/sul/leste/oeste...).
  */
 function introPhrase(args: {
   municipioNome: string;
   landmark: CroquiLandmark;
   primeiraVia: string;
   startDms: string;
+  sentido: string | null;
 }): { text: string; usouVia: boolean } {
-  const { municipioNome, landmark, primeiraVia, startDms } = args;
-  if (landmark.fonte === "curado" && landmark.introSuffix) {
-    return {
-      text: `Inicia-se o croqui ${landmark.introSuffix}, no ponto ${startDms}.`,
-      usouVia: false,
-    };
-  }
+  const { municipioNome, landmark, primeiraVia, startDms, sentido } = args;
+  const cidade = municipioNome.trim() || "Mato Grosso";
+
+  const base = `O presente croqui se inicia na cidade ${cidade} no ponto ${startDms}`;
+
   if (primeiraVia) {
+    const s = sentido ? ` no sentido ${sentido}` : "";
     return {
-      text: `Inicia-se o croqui na ${primeiraVia}, no ponto ${startDms}.`,
+      text: `${base} seguindo pela ${primeiraVia}${s}.`,
       usouVia: true,
     };
   }
-  const suffix = landmark.introSuffix || `no município de ${municipioNome} – MT`;
-  return { text: `Inicia-se o croqui ${suffix}, no ponto ${startDms}.`, usouVia: false };
+
+  // Sem via nomeada (OSRM não trouxe nome nem sigla): usa o landmark como
+  // referência de onde o traçado começa.
+  const suffix = landmark.introSuffix || `no município de ${cidade}`;
+  const s = sentido ? ` no sentido ${sentido}` : "";
+  return {
+    text: `${base} seguindo ${suffix}${s}.`,
+    usouVia: false,
+  };
 }
 
 export function buildCroquiNarrative(args: {
@@ -88,7 +102,19 @@ export function buildCroquiNarrative(args: {
   const waypoints = route.waypoints;
 
   if (!waypoints.length) {
-    return `Inicia-se o croqui no município de ${municipioNome} – MT. Onde se encontra a propriedade.`;
+    return `O presente croqui se inicia na cidade ${municipioNome}. Onde se encontra a propriedade.`;
+  }
+
+  // Sentido do primeiro trecho: ponto cardeal entre o waypoint inicial e o
+  // primeiro waypoint seguinte com deslocamento (ignora paradas intermediárias).
+  let sentido: string | null = null;
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    if (waypoints[i].distanceToNextM > 0) {
+      const a = waypoints[i];
+      const b = waypoints[i + 1];
+      sentido = sentidoCardeal(a.lon, a.lat, b.lon, b.lat);
+      break;
+    }
   }
 
   const intro = introPhrase({
@@ -96,6 +122,7 @@ export function buildCroquiNarrative(args: {
     landmark,
     primeiraVia: String(waypoints[0].roadName || "").trim(),
     startDms: waypoints[0].dms,
+    sentido,
   });
   const parts: string[] = [intro.text];
 
