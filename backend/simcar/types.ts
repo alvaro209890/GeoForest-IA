@@ -198,19 +198,4 @@ export type AuasAvnCrossCheck = {
     hasAuasOverlapAvn: boolean;
 };
 
-/* ─── Report ─────────────────────────────────────── */
-
-export type SimcarReportArtifact = {
-    reportVersion: string;
-    jobId: string;
-    carNumber: string;
-    filename: string;
-    areaTotalHa: number;
-    areaAppHa: number;
-    areaArlHa: number;
-    areaConsolidadaHa: number;
-    layerList: string[];
-    summaryMd: string;
-};
-
 export type SimcarReportImage = { url: string; caption: string };

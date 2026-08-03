@@ -89,17 +89,6 @@ export const AC_AVN_FIXED_KEYS = [
 
 /* ─── AI Analysis ───────────────────────────────────────────── */
 
-export const ANALYSIS_VISION_MODELS = [
-    "groq/qwen-qwen3.6-27b",
-    "groq/meta-llama/llama-4-scout-17b-16e-instruct",
-] as const;
-
-export const GROQ_TEXT_MODELS = [
-    "groq/meta-llama/llama-4-maverick-17b-128e-instruct",
-    "groq/qwen-qwen3.6-27b",
-    "groq/deepseek-r1-distill-qwen-32b",
-] as const;
-
 export const SIMCAR_ANALYSIS_MODE = String(process.env.SIMCAR_ANALYSIS_MODE || "efficient").trim().toLowerCase();
 export const SIMCAR_CHAT_MAX_MESSAGES = Number(process.env.SIMCAR_CHAT_MAX_MESSAGES || 10);
 export const SIMCAR_CHAT_MAX_CHARS_PER_MESSAGE = Number(process.env.SIMCAR_CHAT_MAX_CHARS_PER_MESSAGE || 1400);

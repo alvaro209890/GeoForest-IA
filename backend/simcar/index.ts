@@ -29,9 +29,9 @@ export type {
     SatelliteMetadata,
     AiImage,
     GroqTextCallOptions,
-    SimcarReportArtifact,
     SimcarReportImage,
 } from "./types";
+export type { SimcarReportArtifact } from "./report";
 
 // ── Constantes ──
 export {
@@ -56,8 +56,6 @@ export {
     WMS_FETCH_RETRY_ATTEMPTS,
     WMS_RETRY_BASE_DELAY_MS,
     AC_AVN_FIXED_KEYS,
-    ANALYSIS_VISION_MODELS,
-    GROQ_TEXT_MODELS,
     SIMCAR_ANALYSIS_MODE,
     SIMCAR_CHAT_MAX_MESSAGES,
     SIMCAR_CHAT_MAX_CHARS_PER_MESSAGE,
@@ -179,7 +177,13 @@ export {
 } from "./clip-pipeline";
 
 // ── Funções principais (agora em analysis/routes) ──
-export { getFixedAcAvnSatelliteKeys, getSimcarAiRuntimeConfig, runAcAvnSatelliteAnalysis } from "./analysis";
+export {
+    getFixedAcAvnSatelliteKeys,
+    getSimcarAiRuntimeConfig,
+    runAcAvnSatelliteAnalysis,
+    ANALYSIS_VISION_MODELS,
+    GROQ_TEXT_MODELS,
+} from "./analysis";
 export { registerSimcarClipRoutes } from "./routes";
 export { CLIP_SNAP_TOLERANCE_METERS, snapClippedGeometryToBoundary } from "../simcar-clip-snap";
 export { toPublicApiUrl } from "./constants";

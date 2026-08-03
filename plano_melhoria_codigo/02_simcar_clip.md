@@ -70,3 +70,6 @@ curl -X POST http://localhost:3001/api/simcar/clip ...  # teste real
 ## Changelog
 
 - `docs/CHANGELOG_2026-08-02_PLANO_02_MONOLITO_SIMCAR.md` — detalhes completos por fase.
+- `docs/CHANGELOG_2026-08-03_AUDITORIA_POS_DIVISAO_SIMCAR.md` — auditoria pós-divisão:
+  achou e corrigiu 3 constantes/tipo fantasma (`ANALYSIS_VISION_MODELS`, `GROQ_TEXT_MODELS`,
+  `SimcarReportArtifact`) que o barrel `simcar/index.ts` expunha divergentes da versão viva.
