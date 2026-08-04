@@ -1,5 +1,7 @@
 # Plano: Desmembramento de arquivos médios (500–1500 linhas)
 
+**Status:** ✅ **CONCLUÍDO em 03/08/2026** — itens 7, 8, 10, 11, 12 e 13 feitos por inteiro; item 9 parcial (ver ressalva no README e no changelog); itens 14 e 15 mantidos como o próprio plano previa. Ver `docs/CHANGELOG_2026-08-03_PLANOS_04_07_E_AUDITORIA.md`.
+
 Arquivos complementares que também merecem desmembramento, com menor urgência.
 
 ---

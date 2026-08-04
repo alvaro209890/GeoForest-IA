@@ -1,5 +1,7 @@
 # Plano: Desmembramento de `backend/cbers-wpm.ts`
 
+**Status:** ✅ **CONCLUÍDO em 03/08/2026** — `backend/cbers/` com 20 módulos (inclui `cbers-archive.ts` movido para `cbers/archive.ts`, item 13 do plano 07); `cbers-wpm.ts` virou barrel. Ver `docs/CHANGELOG_2026-08-03_PLANOS_04_07_E_AUDITORIA.md`.
+
 **Arquivo atual:** `backend/cbers-wpm.ts` — 2,693 linhas
 **Objetivo:** Separar pipeline CBERS-4A WPM em etapas independentes
 

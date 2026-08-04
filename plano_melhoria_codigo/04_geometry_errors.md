@@ -1,5 +1,7 @@
 # Plano: Desmembramento de `backend/geometry-errors.ts`
 
+**Status:** ✅ **CONCLUÍDO em 03/08/2026** — `backend/geometry/` com 20 módulos; `geometry-errors.ts` virou barrel (46 linhas). Ver `docs/CHANGELOG_2026-08-03_PLANOS_04_07_E_AUDITORIA.md`.
+
 **Arquivo atual:** `backend/geometry-errors.ts` — 2,885 linhas
 **Objetivo:** Separar detectores de erro geométrico SIMCAR em módulos independentes
 

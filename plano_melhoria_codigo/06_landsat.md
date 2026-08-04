@@ -1,5 +1,7 @@
 # Plano: Desmembramento de `backend/landsat.ts`
 
+**Status:** ✅ **CONCLUÍDO em 03/08/2026** — `backend/landsat/` com 13 módulos; o arquivo `landsat.ts` foi removido (o import resolve para o `index.ts` da pasta). Ver `docs/CHANGELOG_2026-08-03_PLANOS_04_07_E_AUDITORIA.md`.
+
 **Arquivo atual:** `backend/landsat.ts` — 1,621 linhas
 **Objetivo:** Separar pipeline Landsat em etapas independentes
 

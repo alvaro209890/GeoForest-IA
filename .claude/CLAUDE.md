@@ -49,6 +49,13 @@ npx firebase deploy --only hosting
 | `backend/simcar-clip.ts` | SIMCAR Clip module (shapefile, WFS, análise de imagens via Groq Vision) |
 | `backend/auas-analysis.ts` | AUAS land use classification |
 | `backend/auas-sccon.ts` | AUAS × SCCON: data ABERTURA via alertas de desmate + pontos sem alerta (ver `docs/AUAS_SCCON.md`) |
+| `backend/geometry/` | Erros de geometria SIMCAR — detectores em `detectors/` (plano 04); `geometry-errors.ts` é só o barrel |
+| `backend/cbers/` | Pipeline CBERS-4A WPM + acervo (`archive.ts`) (planos 05/07); `cbers-wpm.ts` é só o barrel |
+| `backend/landsat/` | Pipeline Landsat 8/9 (plano 06) — não existe mais `landsat.ts` |
+| `backend/overlap/` | Análise de sobreposição SIGEF×CAR (plano 07) — não existe mais `overlap-analysis.ts` |
+| `backend/processar-projeto/`, `backend/vertices-proximas/` | Desmembrados no plano 07 |
+| `backend/proj-defs.ts` | Registro global `proj4.defs` (EPSG:4674/4326) — **importe em todo módulo que usa proj4** |
+| `backend/admin-auth.ts` | Auth do painel admin (JWT). Rotas `/api/admin/*` exigem `requireAdminAuth` |
 | `backend/processing-jobs.ts` | In-memory job tracking with persistence |
 | `backend/croqui.ts` + `backend/croqui/*` | Croqui de acesso: ATP → PDF/DOCX/KML no padrão SEMA (ver `docs/CROQUI_ACESSO.md`) |
 | `config/sedes-mt.json` | Sedes dos 142 municípios de MT (ponto de partida do croqui) |
@@ -59,6 +66,9 @@ npx firebase deploy --only hosting
 Critical:
 - `GROQ_API_KEY` - único provedor de IA: chat, visão (análise de imagens) e síntese de laudos
 - `FIREBASE_SERVICE_ACCOUNT_PATH` - path to service account JSON
+- `ADMIN_PANEL_PASSWORD` / `ADMIN_JWT_SECRET` - painel admin. **Não definidas**: caem
+  no default hardcoded em `backend/admin-auth.ts` (repo público) — defina no
+  `backend.env` do systemd.
 
 WMS/WFS (already configured):
 - `SEMA_WMS_BASE_URL`, `SEMA_WMS_AUTHKEY` - SEMA-MT Geoserver
