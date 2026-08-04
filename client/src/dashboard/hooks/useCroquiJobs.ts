@@ -277,15 +277,12 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
           start: Array.isArray(data?.start) ? data.start : null,
           startLabel: data?.startLabel ? String(data.startLabel) : undefined,
           startSource: data?.startSource ? String(data.startSource) : undefined,
-          basemap: data?.basemap && typeof data.basemap === 'object' ? data.basemap : null,
-          basemapError: data?.basemapError ? String(data.basemapError) : null,
         };
         if (parsed.municipioNome) setCroquiMunicipio(parsed.municipioNome);
         setCroquiRoutes(parsed);
         setCroquiRouteId(
           parsed.options.find((option) => option.recommended)?.id || parsed.options[0]?.id || null,
         );
-        if (parsed.basemapError) toast.warning(parsed.basemapError);
         return parsed;
       } catch (error: unknown) {
         const message =

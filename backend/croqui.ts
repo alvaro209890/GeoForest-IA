@@ -16,7 +16,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { centroid } from "@turf/turf";
-import type { Polygon, MultiPolygon, Position } from "geojson";
+import type { Polygon, MultiPolygon } from "geojson";
 import {
   getAbsoluteStoragePath,
   listCollectionBySegments,
@@ -45,7 +45,6 @@ import {
   type RouteOption,
   type RouteOptionSummary,
 } from "./croqui/route-options";
-import { bboxOfPositions, fetchBasemapImage, resolveMapFrame } from "./croqui/basemap";
 import type { BasemapProvider } from "./croqui/basemap";
 import { buildCroquiDocxBuffer } from "./croqui/render-docx";
 import { buildCroquiKml } from "./croqui/render-kml";
@@ -479,35 +478,11 @@ export function registerCroquiRoutes(app: Express): void {
       });
       const routesRelativePath = saveRouteOptions(uid, uploadId, options);
       const payload = options.map(toRouteOptionPayload);
-
-      // Basemap: imagem de satélite para o mapinha de escolha no frontend.
-      // Usa o mesmo pipeline do PDF (resolveMapFrame + fetchBasemapImage),
-      // mas em dimensão menor (640 px CSS) para caber em JSON base64.
-      const allCoords: Position[] = [];
-      for (const opt of options) allCoords.push(...opt.route.coordinates);
+      // Contorno do imóvel: sem ele o mapa de escolha ficaria só com as linhas
+      // de rota, sem o polígono do ATP para dar contexto. O mapinha em si é o
+      // mapa de satélite navegável do navegador (tiles Esri ao vivo) — não
+      // precisa mais de imagem estática vinda do backend.
       const atpRings = outlineRings(parsed.geometry);
-      for (const ring of atpRings) {
-        for (const [lon, lat] of ring) allCoords.push([lon, lat]);
-      }
-      const frame = resolveMapFrame({
-        contentBbox: bboxOfPositions(allCoords),
-        widthPt: 560,
-        heightPt: 420,
-        paddingRatio: 0.04,
-      });
-      const basemapImage = await fetchBasemapImage(frame).catch(() => null);
-      const basemap = basemapImage
-        ? {
-            dataUrl: `data:image/${basemapImage.provider === "google" ? "png" : "jpeg"};base64,${basemapImage.buffer.toString("base64")}`,
-            provider: basemapImage.provider,
-            bboxLonLat: frame.bboxLonLat,
-            imageWidthPx: frame.imageWidthPx,
-            imageHeightPx: frame.imageHeightPx,
-            centerLon: frame.centerLon,
-            centerLat: frame.centerLat,
-            zoom: frame.zoom,
-          }
-        : null;
 
       persistJob(uid, uploadId, {
         municipioNome,
@@ -518,14 +493,10 @@ export function registerCroquiRoutes(app: Express): void {
         ok: true,
         municipioNome,
         options: payload,
-        // Contorno do imóvel e ponto de partida: sem eles o mapinha de escolha
-        // seria um punhado de linhas sem destino visível.
         atp: atpRings,
         start: [startPoint.lon, startPoint.lat],
         startLabel: startPoint.label,
         startSource: startPoint.source,
-        basemap,
-        basemapError: basemapImage ? null : "Imagem de satélite indisponível no momento — o mapinha e o croqui saem com fundo neutro.",
       });
     } catch (error: any) {
       console.error("[CROQUI] route-options failed:", error?.message || error);

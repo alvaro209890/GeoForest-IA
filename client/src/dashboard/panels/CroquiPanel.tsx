@@ -9,7 +9,6 @@ import {
   FolderOpen,
   Loader2,
   Map,
-  MapPinned,
   RefreshCw,
   Route,
   Upload,
@@ -66,7 +65,6 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
 
   const [dragActive, setDragActive] = useState(false);
   const [uploadsOpen, setUploadsOpen] = useState(false);
-  const [movingStart, setMovingStart] = useState(false);
   const busy = croquiProcessing || croquiUploading || croquiLoadingRoutes;
   const dropDisabled = busy;
   const hasChoice = !!croquiRoutes && croquiRoutes.options.length > 1;
@@ -74,9 +72,8 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
   const lastCompleted = croquiDownload && !croquiProcessing;
   const missingBasemap = lastCompleted && croqui.croquiHistory.find((h) => h.jobId === croqui.croquiJobId)?.hasBasemapImage === false;
 
-  const handleMoveStart = async (lon: number, lat: number) => {
-    setMovingStart(false);
-    await recalculateCroquiFromPoint(lon, lat);
+  const handleMoveStart = (lon: number, lat: number) => {
+    void recalculateCroquiFromPoint(lon, lat);
   };
 
   const acceptZip = (file: File | null | undefined) => {
@@ -354,21 +351,6 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
                 Recalcular caminhos
               </button>
             )}
-            {!!croquiRoutes && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setMovingStart((v) => !v)}
-                className={`inline-flex items-center gap-2 rounded-xl border px-4 py-3 text-sm disabled:opacity-50 ${
-                  movingStart
-                    ? 'border-amber-400/50 bg-amber-500/10 text-amber-200'
-                    : 'border-white/10 text-slate-300 hover:bg-white/5'
-                }`}
-              >
-                <MapPinned size={15} />
-                {movingStart ? 'Cancelar' : 'Mudar ponto de partida'}
-              </button>
-            )}
             <button
               type="button"
               onClick={resetCroquiDraft}
@@ -398,8 +380,8 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
                   <p className="text-xs text-slate-400">
                     {hasChoice
                       ? 'O mais curto nem sempre é o que se usa em campo. Escolha o traçado correto antes de gerar — ele vai para o PDF, o Word e o KML.'
-                      : 'Confira o traçado sobre a imagem de satélite antes de gerar o croqui.'}
-                    {croquiRoutes.startLabel ? ` Partida atual: ${croquiRoutes.startLabel}.` : ''}
+                      : 'Confira o traçado sobre o mapa de satélite antes de gerar o croqui.'}
+                    {' '}Navegue livremente pelo mapa e arraste ou clique para mudar de onde o croqui parte.
                   </p>
                 </div>
               </div>
@@ -408,8 +390,7 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
                 selectedId={croquiRouteId}
                 onSelect={setCroquiRouteId}
                 disabled={busy}
-                movingStart={movingStart}
-                onMoveStart={(lon, lat) => void handleMoveStart(lon, lat)}
+                onMoveStart={handleMoveStart}
               />
             </div>
           )}

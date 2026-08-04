@@ -25,18 +25,6 @@ export type CroquiRouteOptionsResponse = {
   /** De onde veio o ponto de partida: "sede de X", "ponto escolhido no mapa"... */
   startLabel?: string;
   startSource?: string;
-  basemap: {
-    dataUrl: string;
-    provider: string;
-    bboxLonLat: [number, number, number, number];
-    imageWidthPx: number;
-    imageHeightPx: number;
-    centerLon: number;
-    centerLat: number;
-    zoom: number;
-  } | null;
-  /** Mensagem para o usuário quando nenhum provedor de satélite respondeu. */
-  basemapError?: string | null;
 };
 
 export type CroquiHistoryItem = {
