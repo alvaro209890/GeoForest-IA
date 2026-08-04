@@ -1,6 +1,7 @@
 /**
  * Helpers geométricos compartilhados pelos detectores (projeção métrica, áreas, hull, amostragem).
  */
+import "../proj-defs";
 import proj4 from "proj4";
 import { featureCollection as turfFeatureCollection, union as turfUnion } from "@turf/turf";
 import type { Feature, MultiPolygon, Polygon } from "geojson";

@@ -1,6 +1,7 @@
 /**
  * Detector: anéis sobrepostos dentro do MESMO registro (borda compartilhada ≥ 1 m).
  */
+import "../../proj-defs";
 import proj4 from "proj4";
 import { featureCollection as turfFeatureCollection, intersect as turfIntersect } from "@turf/turf";
 import type { Feature, MultiPolygon, Polygon } from "geojson";

@@ -1,6 +1,7 @@
 /**
  * Helpers do pipeline CBERS: ambiente GDAL, arquivos, bbox/cobertura, fetch JSON e projeções.
  */
+import "../proj-defs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import proj4 from "proj4";
