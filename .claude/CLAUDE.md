@@ -34,8 +34,11 @@ systemctl --user restart geoforest-backend.service
 
 ### Deploy frontend
 ```bash
-npx firebase deploy --only hosting
+npx firebase deploy --only hosting   # site único: ia-florestal
 ```
+
+> Push no `main` já dispara o auto-sync do servidor (build + restart + deploy em
+> até 2 min). Ver `docs/AUTO_SYNC.md`.
 
 ## Key Files
 
@@ -55,7 +58,6 @@ npx firebase deploy --only hosting
 | `backend/overlap/` | Análise de sobreposição SIGEF×CAR (plano 07) — não existe mais `overlap-analysis.ts` |
 | `backend/processar-projeto/`, `backend/vertices-proximas/` | Desmembrados no plano 07 |
 | `backend/proj-defs.ts` | Registro global `proj4.defs` (EPSG:4674/4326) — **importe em todo módulo que usa proj4** |
-| `backend/admin-auth.ts` | Auth do painel admin (JWT). Rotas `/api/admin/*` exigem `requireAdminAuth` |
 | `backend/processing-jobs.ts` | In-memory job tracking with persistence |
 | `backend/croqui.ts` + `backend/croqui/*` | Croqui de acesso: ATP → PDF/DOCX/KML no padrão SEMA (ver `docs/CROQUI_ACESSO.md`) |
 | `config/sedes-mt.json` | Sedes dos 142 municípios de MT (ponto de partida do croqui) |
@@ -66,9 +68,7 @@ npx firebase deploy --only hosting
 Critical:
 - `GROQ_API_KEY` - único provedor de IA: chat, visão (análise de imagens) e síntese de laudos
 - `FIREBASE_SERVICE_ACCOUNT_PATH` - path to service account JSON
-- `ADMIN_PANEL_PASSWORD` / `ADMIN_JWT_SECRET` - painel admin. **Não definidas**: caem
-  no default hardcoded em `backend/admin-auth.ts` (repo público) — defina no
-  `backend.env` do systemd.
+
 
 WMS/WFS (already configured):
 - `SEMA_WMS_BASE_URL`, `SEMA_WMS_AUTHKEY` - SEMA-MT Geoserver
@@ -79,6 +79,17 @@ Croqui de acesso:
 - `GOOGLE_STATIC_MAPS_KEY` - Maps Static API. **Não configurada**: o croqui cai no Esri World
   Imagery, que não traz rótulo de cidade nem escudo de rodovia. Ver `docs/CROQUI_ACESSO.md`.
 - `CROQUI_OSRM_BASE_URL`, `CROQUI_OSRM_RETRIES`, `CROQUI_MIN_STEP_M`
+
+## Painel admin: REMOVIDO (03/08/2026)
+
+Não existe mais painel administrativo — nem `client/src/admin/`, nem
+`backend/admin-*.ts`, nem rotas `/api/admin/*`, nem o site
+`geoforest-admin.web.app` (desativado). O sistema é de uso interno: só o app
+principal (`ia-florestal.web.app`). **Não recriar.** Ver
+`docs/CHANGELOG_2026-08-03_REMOCAO_PAINEL_ADMIN.md`.
+
+`backend/firebase-admin.ts` / `adminAuth` / `adminDb` são o SDK Admin do Firebase
+(verificação de token dos usuários) — nada a ver com o painel.
 
 ## Important Notes
 

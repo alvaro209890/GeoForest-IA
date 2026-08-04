@@ -36,7 +36,6 @@ Hostnames relevantes:
 https://wms.cursar.space              WMS publico
 https://geoforest-api.cursar.space    API GeoForest
 https://ia-florestal.web.app          app principal Firebase Hosting
-https://geoforest-admin.web.app       painel publico de administracao CBERS
 ```
 
 ## Estrutura do acervo CBERS
@@ -237,14 +236,11 @@ mantem layer no GeoServer/WMS
 marca userDeletedAt no indice global
 ```
 
-Exclusao feita no painel admin:
-
-```text
-remove coverage store/layer do GeoServer com recurse=true
-remove a layer dos grupos orbit/ano quando necessario
-remove o GeoTIFF permanente do HD Backup
-marca adminDeletedAt no indice global
-```
+Exclusao definitiva do HD/WMS: **nao existe mais pela interface**. O painel admin
+foi removido em 03/08/2026 (ver `docs/CHANGELOG_2026-08-03_REMOCAO_PAINEL_ADMIN.md`).
+Para apagar uma cena do acervo hoje: remover o coverage store no GeoServer, tirar a
+layer dos grupos orbit/ano, apagar o GeoTIFF do HD Backup e marcar `adminDeletedAt`
+no JSON do indice global — tudo manualmente no PC do WMS.
 
 ## Indice global do acervo
 
@@ -270,33 +266,8 @@ wmsLayerName
 wmsPublicUrl
 createdAt
 userDeletedAt
-adminDeletedAt
-```
-
-## Painel admin CBERS
-
-Site publico, sem autenticacao:
-
-```text
-https://geoforest-admin.web.app
-```
-
-APIs publicas do backend:
-
-```text
-GET    /api/admin/cbers-storage/summary
-GET    /api/admin/cbers-storage/users/:uid/images
-DELETE /api/admin/cbers-storage/images/:imageId
-```
-
-O painel mostra:
-
-```text
-uso total por conta
-quantidade de imagens ativas
-lista de imagens por usuario
-status: ativa, removida da conta, excluida do HD/WMS
-botao de exclusao definitiva do HD/WMS
+adminDeletedAt   (legado: so em registros excluidos pelo antigo painel admin;
+                  o backend ainda respeita a marca para nao ressuscitar a cena)
 ```
 
 ## Puxar no servidor do WMS (deploy)
@@ -373,7 +344,6 @@ Esse comando gera:
 
 ```text
 dist/public    app principal
-dist/admin     painel admin
 dist/index.js  backend
 ```
 
@@ -392,22 +362,22 @@ systemctl --user restart geoforest-backend.service
 Validacoes rapidas:
 
 ```bash
-curl -sS https://geoforest-api.cursar.space/api/admin/cbers-storage/summary
-curl -fsSI https://geoforest-admin.web.app
+curl -sS https://geoforest-api.cursar.space/api/health
+curl -fsSI https://ia-florestal.web.app
 curl -sS "https://wms.cursar.space/geoserver/cbers/wms?service=WMS&version=1.3.0&request=GetCapabilities"
 ```
 
 ## Arquivos principais no codigo
 
 ```text
-backend/cbers-wpm.ts        processamento CBERS, pansharpen, realce, validacao
-backend/cbers-archive.ts    acervo permanente, GeoServer REST e APIs admin
+backend/cbers/              processamento CBERS: pansharpen, realce, validacao,
+                            publicacao (barrel em backend/cbers-wpm.ts)
+backend/cbers/archive.ts    acervo permanente e GeoServer REST
 backend/index.ts            CORS, registro de rotas e servico HTTP
 scripts/cbers-doctor.sh     preflight CBERS/WMS no servidor
 scripts/deploy-firebase-restart-backend.sh  deploy completo (pull+build+restart)
 config/geoforest-backend.env.example  referencia das variaveis de ambiente
 .agents/WMS_LOCAL_SITE_VINCULACAO.md  vinculo WMS local, API e site
-client/src/admin/main.tsx   painel admin publico
-firebase.json               Firebase Hosting multi-site
-vite.config.ts              build separado app/admin
+firebase.json               Firebase Hosting (site unico: ia-florestal)
+vite.config.ts              build do app
 ```

@@ -23,10 +23,6 @@ export const DEFAULT_CORS_ORIGINS = [
   "http://ia-florestal.web.app",
   "https://ia-florestal.firebaseapp.com",
   "http://ia-florestal.firebaseapp.com",
-  "https://geoforest-admin.web.app",
-  "http://geoforest-admin.web.app",
-  "https://geoforest-admin.firebaseapp.com",
-  "http://geoforest-admin.firebaseapp.com",
 ].map(normalizeOrigin);
 
 /** Regex para origens CORS permitidas. */
@@ -35,8 +31,6 @@ export const CORS_ORIGIN_REGEX = [
   /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
   /^https?:\/\/ia-florestal\.web\.app$/i,
   /^https?:\/\/ia-florestal\.firebaseapp\.com$/i,
-  /^https?:\/\/geoforest-admin\.web\.app$/i,
-  /^https?:\/\/geoforest-admin\.firebaseapp\.com$/i,
 ];
 
 /** Monta o conjunto de origens CORS permitidas (defaults + env). */

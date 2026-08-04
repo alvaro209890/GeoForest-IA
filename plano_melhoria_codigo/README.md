@@ -40,7 +40,7 @@
 | `backend/processar-projeto/` | 9 | 1.516 | `processar-projeto.ts` (1.489) |
 | `backend/overlap/` | 9 | 1.408 | `overlap-analysis.ts` (1.364) |
 | `backend/vertices-proximas/` | 9 | 1.156 | `vertices-proximas.ts` (1.104) |
-| `client/src/admin/` | 11 | 1.875 | `admin/main.tsx` (1.310) + login novo |
+| ~~`client/src/admin/`~~ | — | — | desmembrado e depois **removido** no mesmo dia (painel admin saiu do projeto) |
 | `client/src/dashboard/panels/cbers/` | 4 | 1.034 | `CbersPanel.tsx` (927) |
 
 **Ainda >500 linhas (fora do escopo dos planos 01–07):** 31 arquivos — os maiores

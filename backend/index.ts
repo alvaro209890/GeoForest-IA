@@ -88,7 +88,6 @@ import { registerGeometryErrorsRoutes } from "./geometry-errors";
 import { registerProcessarProjetoRoutes } from "./processar-projeto";
 import { registerSimcarOraculoRoutes } from "./simcar-oraculo";
 import { registerAuasScconRoutes } from "./auas-sccon";
-import { requireAdminAuth } from "./admin-auth";
 import {
   JobCancelledError,
   finishJob,
@@ -1251,45 +1250,6 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/server/metrics", requireAdminAuth, async (_req, res) => {
-    try {
-      const cpuInfo = os.cpus();
-      const totalBytes = os.totalmem();
-      const freeBytes = os.freemem();
-      const usedBytes = Math.max(0, totalBytes - freeBytes);
-      const cpuUsagePercent = await sampleCpuUsagePercent();
-      const temperature = parseTemperatureReadings(runCommandText("sensors", []));
-
-      res.json({
-        ok: true,
-        updatedAt: new Date().toISOString(),
-        host: {
-          hostname: os.hostname(),
-          platform: os.platform(),
-          release: os.release(),
-          uptimeSec: os.uptime(),
-        },
-        cpu: {
-          model: String(cpuInfo[0]?.model || "").trim(),
-          cores: cpuInfo.length,
-          loadAvg: os.loadavg().map((value) => Number(value.toFixed(2))),
-          usagePercent: cpuUsagePercent,
-        },
-        memory: {
-          totalBytes,
-          usedBytes,
-          freeBytes,
-          usagePercent: totalBytes > 0 ? Number(((usedBytes / totalBytes) * 100).toFixed(1)) : 0,
-        },
-        temperature,
-        storage: parseStorageMetrics(),
-        processes: parseProcesses(),
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error?.message || "Falha ao coletar metricas do servidor." });
-    }
-  });
-
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, ts: Date.now() });
   });
@@ -1465,16 +1425,7 @@ async function startServer() {
     process.env.NODE_ENV === "production"
       ? path.resolve(__dirname, "public")
       : path.resolve(__dirname, "..", "dist", "public");
-  const adminStaticPath =
-    process.env.NODE_ENV === "production"
-      ? path.resolve(__dirname, "admin")
-      : path.resolve(__dirname, "..", "dist", "admin");
-
-  app.use("/assets", express.static(path.join(adminStaticPath, "assets")));
   app.use(express.static(staticPath));
-  app.get(["/admin", "/admin/", "/admin/*"], (_req, res) => {
-    res.sendFile(path.join(adminStaticPath, "admin.html"));
-  });
 
   // Handle client-side routing - serve index.html for all routes
   app.get("*", (_req, res) => {

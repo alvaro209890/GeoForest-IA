@@ -153,8 +153,6 @@ function vitePluginManusDebugCollector(): Plugin {
 export default defineConfig(({ mode }) => {
   const isProduction = mode === "production";
   const env = loadEnv(mode, process.cwd(), "");
-  const buildTarget = env.GEOFOREST_BUILD_TARGET || process.env.GEOFOREST_BUILD_TARGET || "app";
-  const isAdminBuild = buildTarget === "admin";
   const apiTarget = env.VITE_API_BASE || "http://localhost:3001";
   // Identificador único deste build. Exposto ao app (__APP_BUILD_ID__) e gravado
   // em version.json para que abas já abertas detectem uma nova versão e recarreguem
@@ -169,7 +167,7 @@ export default defineConfig(({ mode }) => {
     name: "geoforest-version-json",
     apply: "build",
     closeBundle() {
-      const outDir = path.resolve(import.meta.dirname, isAdminBuild ? "dist/admin" : "dist/public");
+      const outDir = path.resolve(import.meta.dirname, "dist/public");
       try {
         fs.mkdirSync(outDir, { recursive: true });
         fs.writeFileSync(
@@ -196,12 +194,10 @@ export default defineConfig(({ mode }) => {
   envDir: path.resolve(import.meta.dirname),
   root: path.resolve(import.meta.dirname, "client"),
   build: {
-    outDir: path.resolve(import.meta.dirname, isAdminBuild ? "dist/admin" : "dist/public"),
+    outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
     rollupOptions: {
-      input: isAdminBuild
-        ? path.resolve(import.meta.dirname, "client", "admin.html")
-        : path.resolve(import.meta.dirname, "client", "index.html"),
+      input: path.resolve(import.meta.dirname, "client", "index.html"),
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return;

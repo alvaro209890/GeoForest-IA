@@ -8,10 +8,9 @@ O PC servidor (`server-desktop`, Tailscale `100.65.138.58`, usuário `server`) m
 GitHub **a cada 2 minutos** e, quando detecta commit novo em `main`, executa sozinho:
 
 1. `git reset --hard origin/main` no checkout de produção
-2. `pnpm run build` (frontend app + admin + backend esbuild → `dist/`)
-3. Copia `backend/admin-panel.html` → `dist/admin-panel.html`
-4. `systemctl --user restart geoforest-backend`
-5. `firebase deploy --only hosting` (ia-florestal + geoforest-admin)
+2. `pnpm run build` (frontend app + backend esbuild → `dist/`)
+3. `systemctl --user restart geoforest-backend`
+4. `firebase deploy --only hosting` (só `ia-florestal`)
 
 Ou seja: **push no GitHub = deploy automático**. Nada de deploy manual no servidor
 (na maioria das vezes).
@@ -92,3 +91,11 @@ ssh server-desktop 'cd "/media/server/HD Backup/Servidores_NAO_MEXA/GeoForest-IA
 
 Sem isso, o job morre com `ModuleNotFoundError: No module named 'fitz'`.
 (Verificado 2026-08-01: venv criado, PyMuPDF 1.28.0 ok.)
+
+## 2026-08-03: painel admin removido
+
+O passo `cp backend/admin-panel.html dist/admin-panel.html` saiu do script no
+servidor (o arquivo não existe mais) e o `firebase deploy --only hosting` passou a
+publicar somente `ia-florestal` — o site `geoforest-admin` foi tirado do
+`firebase.json` e desativado. Ver
+`docs/CHANGELOG_2026-08-03_REMOCAO_PAINEL_ADMIN.md`.

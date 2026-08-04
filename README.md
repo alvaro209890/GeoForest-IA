@@ -5,7 +5,6 @@ Sistema de apoio à Engenharia Florestal com inteligência artificial, voltado p
 > **🌐 Acesso público:** Backend exposto via Cloudflare Tunnel
 > **API:** `https://geoforest-api.cursar.space`
 > **App:** `https://ia-florestal.web.app`
-> **Admin CBERS:** `https://geoforest-admin.web.app`
 > **WMS:** `https://wms.cursar.space`
 
 ---
@@ -139,8 +138,7 @@ GeoForest-IA/
 │   ├── components/            # Map, dialogs + shadcn/ui
 │   └── lib/                   # auth, firebase, localFirestore
 ├── dist/
-│   ├── public/                # Frontend buildado
-│   └── admin/                 # Painel admin CBERS
+│   └── public/                # Frontend buildado
 ├── banco_de_dados/            # Conhecimento florestal (29 .md)
 ├── docs/WMS_CBERS.md          # Documentação WMS/CBERS
 ├── docs/WMS_LANDSAT.md        # Documentação WMS/Landsat
@@ -436,7 +434,6 @@ Documentação detalhada: [`docs/WMS_CBERS.md`](docs/WMS_CBERS.md) e [`docs/WMS_
 - **Árvore WMS:** `RASTER -> CBERS-4A-Apos_2019 -> orbit_* -> ano -> layer` e `RASTER -> LANDSAT -> landsat_orbit_* -> ano -> layer`
 - **STAC INPE:** `https://data.inpe.br/bdc/stac/v1` (collection `CB4A-WPM-L4-DN-1`)
 - **STAC Landsat:** `https://landsatlook.usgs.gov/stac-server` (collection `landsat-c2l2-sr`)
-- **Painel Admin:** `https://geoforest-admin.web.app`
 - **Índice global:** Armazenado em JSON em `Banco_de_dados/GeoForest/cbers_archive/images/`
 
 ---
@@ -527,13 +524,6 @@ Sistema **RAG** próprio: carrega apenas documentos relevantes para otimizar tok
 | GET | `/api/landsat/wms-download` | ZIP de imagem Landsat publicada |
 | HEAD | `/api/landsat/wms-download` | Verifica disponibilidade do ZIP |
 
-### CBERS Archive (Admin)
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| GET | `/api/admin/cbers-storage/summary` | Resumo acervo |
-| GET | `/api/admin/cbers-storage/users/:uid/images` | Imagens por user |
-| DELETE | `/api/admin/cbers-storage/images/:imageId` | Exclusão definitiva |
-
 ### Upload e Storage
 | Método | Rota | Descrição |
 |--------|------|-----------|
@@ -575,7 +565,7 @@ npm run dev:server
 ### Build completo
 ```bash
 npm run build
-# Gera: dist/public/, dist/admin/, dist/index.js
+# Gera: dist/public/ e dist/index.js
 ```
 
 ---
@@ -595,9 +585,6 @@ curl -sS -u admin:geoserver http://127.0.0.1:8081/geoserver/rest/about/version.j
 
 # App principal
 curl -fsSI https://ia-florestal.web.app
-
-# Admin CBERS
-curl -fsSI https://geoforest-admin.web.app
 
 # Cloudflare Tunnel
 systemctl --user status geoserver-wms-tunnel.service

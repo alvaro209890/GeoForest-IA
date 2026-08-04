@@ -89,11 +89,11 @@ echo "[2/6] Validando TypeScript..."
 npm run check
 
 echo
-echo "[3/6] Gerando build do app publico, admin e backend..."
+echo "[3/6] Gerando build do app publico e do backend..."
 npm run build
 
 echo
-echo "[4/6] Publicando app publico e admin no Firebase Hosting..."
+echo "[4/6] Publicando app publico no Firebase Hosting..."
 firebase deploy --only hosting
 
 echo
@@ -119,7 +119,7 @@ git push "$REMOTE_NAME" "$MAIN_BRANCH"
 
 echo
 echo "Concluido com sucesso."
-echo "App publico e admin publicados no Firebase Hosting."
+echo "App publico publicado no Firebase Hosting."
 echo "Projeto enviado para $REMOTE_NAME/$MAIN_BRANCH."
 echo "Backend reiniciado."
 echo "Log: $LOG_FILE"

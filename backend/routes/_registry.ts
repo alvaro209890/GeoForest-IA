@@ -17,7 +17,6 @@ import { registerGeometryErrorsRoutes } from "../geometry-errors";
 import { registerProcessarProjetoRoutes } from "../processar-projeto";
 import { registerSimcarOraculoRoutes } from "../simcar-oraculo";
 import { registerAuasScconRoutes } from "../auas-sccon";
-import { registerCbersArchiveAdminRoutes } from "../cbers/archive";
 import { registerAccountRoutes } from "./account";
 import { registerStoreRoutes } from "./store";
 import { registerProcessRoutes } from "./process";
@@ -46,7 +45,6 @@ export function registerAllRoutes(app: Express) {
   registerProcessarProjetoRoutes(app);
   registerSimcarOraculoRoutes(app);
   registerAuasScconRoutes(app);
-  registerCbersArchiveAdminRoutes(app);
 
   registerModelsRoutes(app);
   registerBillingRoutes(app);

@@ -88,6 +88,11 @@ backend/simcar-oraculo/
 
 ## 10. `client/src/admin/main.tsx` — 1,310 linhas
 
+> ⚠️ **Obsoleto (03/08/2026):** o desmembramento foi feito e, no mesmo dia, o
+> painel admin inteiro foi **removido do projeto** — o GeoForest é de uso interno e
+> o painel era superfície exposta sem dono. Ver
+> `docs/CHANGELOG_2026-08-03_REMOCAO_PAINEL_ADMIN.md`.
+
 ### Estrutura proposta
 ```
 client/src/admin/

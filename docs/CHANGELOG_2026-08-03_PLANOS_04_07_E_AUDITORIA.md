@@ -1,5 +1,12 @@
 # 03/08/2026 — Planos 04–07 concluídos + auditoria de segurança
 
+> **Atualização no mesmo dia:** tudo que este documento descreve sobre o **painel
+> admin** (proteção das rotas `/api/admin/*`, login novo, env vars
+> `ADMIN_PANEL_PASSWORD`/`ADMIN_JWT_SECRET`) foi **superado**: o painel inteiro foi
+> removido do projeto. Ver `docs/CHANGELOG_2026-08-03_REMOCAO_PAINEL_ADMIN.md`. O
+> resto — desmembramento dos planos 04–07 e o fix do `DELETE /api/simcar/clip/:jobId`
+> — continua valendo.
+
 Duas frentes nesta rodada: terminar o desmembramento dos monólitos
 (`plano_melhoria_codigo/`) e caçar bugs no que sobrou.
 
