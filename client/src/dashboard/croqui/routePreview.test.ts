@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   boundsOf,
   buildProjection,
+  buildProjectionFromFrame,
   formatKm,
   routeColor,
   ROUTE_COLORS,
@@ -83,5 +84,40 @@ describe('routePreview — desenho', () => {
     expect(formatKm(29400)).toBe('29,4 km');
     expect(formatKm(950)).toBe('0,9 km');
     expect(formatKm(1000)).toBe('1,0 km');
+  });
+});
+
+/**
+ * `unproject` é o que permite clicar no mapinha para mover o ponto de
+ * partida — sem round-trip exato o pino salta pra um lugar errado a cada
+ * clique.
+ */
+describe('routePreview — unproject (clique no mapa vira lon/lat)', () => {
+  it('project → unproject volta ao ponto original (enquadramento por bounds)', () => {
+    const projection = buildProjection([QUADRADO], 400, 300)!;
+    for (const [lon, lat] of [...QUADRADO, [-52.2, -12.5] as LonLat]) {
+      const [x, y] = projection.project(lon, lat);
+      const [lon2, lat2] = projection.unproject(x, y);
+      expect(lon2).toBeCloseTo(lon, 9);
+      expect(lat2).toBeCloseTo(lat, 9);
+    }
+  });
+
+  it('project → unproject volta ao ponto original (enquadramento por frame de satélite)', () => {
+    const projection = buildProjectionFromFrame({
+      centerLon: -52.2,
+      centerLat: -12.5,
+      zoom: 14,
+      imageWidthPx: 560,
+      imageHeightPx: 420,
+      widthPt: 560,
+      heightPt: 420,
+    })!;
+    for (const [lon, lat] of [[-52.2, -12.5], [-52.25, -12.55], [-52.15, -12.45]] as LonLat[]) {
+      const [x, y] = projection.project(lon, lat);
+      const [lon2, lat2] = projection.unproject(x, y);
+      expect(lon2).toBeCloseTo(lon, 6);
+      expect(lat2).toBeCloseTo(lat, 6);
+    }
   });
 });

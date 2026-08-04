@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { CheckCircle2, MapPin, Route } from 'lucide-react';
+import { useMemo, useRef, type MouseEvent } from 'react';
+import { CheckCircle2, MapPin, MousePointerClick, Route } from 'lucide-react';
 import type { CroquiRouteOptionsResponse } from './types';
 import {
   buildProjection,
@@ -15,6 +15,9 @@ export type RoutePickerProps = {
   selectedId: string | null;
   onSelect: (id: string) => void;
   disabled?: boolean;
+  /** Modo "mudar ponto de partida": um clique no mapa recalcula os caminhos a partir dali. */
+  movingStart?: boolean;
+  onMoveStart?: (lon: number, lat: number) => void;
 };
 
 const MAP_W = 560;
@@ -23,10 +26,19 @@ const MAP_H = 420;
 /**
  * O caminho mais curto nem sempre é o que se usa em campo. Aqui os corredores
  * encontrados aparecem lado a lado, desenhados por cima do contorno do imóvel,
- * para o usuário reconhecer o de sempre antes de gerar o croqui.
+ * para o usuário reconhecer o de sempre antes de gerar o croqui — e, em modo
+ * "mudar partida", um clique no mapa manda recalcular a partir de outro ponto.
  */
-export default function RoutePicker({ data, selectedId, onSelect, disabled }: RoutePickerProps) {
+export default function RoutePicker({
+  data,
+  selectedId,
+  onSelect,
+  disabled,
+  movingStart,
+  onMoveStart,
+}: RoutePickerProps) {
   const hasBasemap = !!data.basemap;
+  const svgRef = useRef<SVGSVGElement | null>(null);
 
   const projection = useMemo(() => {
     if (hasBasemap && data.basemap) {
@@ -53,15 +65,39 @@ export default function RoutePicker({ data, selectedId, onSelect, disabled }: Ro
     return projection.project(data.start[0], data.start[1]);
   }, [projection, data.start]);
 
+  const canMoveStart = movingStart && !!onMoveStart && !disabled;
+
+  const handleMapClick = (event: MouseEvent<SVGSVGElement>) => {
+    if (!canMoveStart || !projection) return;
+    const svg = svgRef.current;
+    if (!svg) return;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    const point = svg.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    const local = point.matrixTransform(ctm.inverse());
+    const [lon, lat] = projection.unproject(local.x, local.y);
+    onMoveStart?.(lon, lat);
+  };
+
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div className="rounded-xl border border-white/10 bg-black/40 p-2">
+        {canMoveStart && (
+          <p className="mb-2 flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            <MousePointerClick size={13} className="shrink-0" />
+            Clique no mapa para mover a partida do croqui — os caminhos são recalculados a partir daí.
+          </p>
+        )}
         {projection ? (
           <svg
+            ref={svgRef}
             viewBox={`0 0 ${MAP_W} ${MAP_H}`}
-            className="h-auto w-full"
+            className={`h-auto w-full ${canMoveStart ? 'cursor-crosshair' : ''}`}
             role="img"
             aria-label="Caminhos de acesso encontrados"
+            onClick={handleMapClick}
           >
             {hasBasemap && data.basemap ? (
               <image
@@ -104,7 +140,17 @@ export default function RoutePicker({ data, selectedId, onSelect, disabled }: Ro
 
             {startPoint && (
               <g>
-                <circle cx={startPoint[0]} cy={startPoint[1]} r={6} fill="#f8fafc" stroke="#0f172a" strokeWidth={2} />
+                {canMoveStart && (
+                  <circle cx={startPoint[0]} cy={startPoint[1]} r={11} fill="none" stroke="#fbbf24" strokeWidth={1.4} strokeDasharray="3 3" />
+                )}
+                <circle
+                  cx={startPoint[0]}
+                  cy={startPoint[1]}
+                  r={6}
+                  fill={canMoveStart ? '#fbbf24' : '#f8fafc'}
+                  stroke="#0f172a"
+                  strokeWidth={2}
+                />
                 <text
                   x={startPoint[0] + 10}
                   y={startPoint[1] + 4}
@@ -112,7 +158,7 @@ export default function RoutePicker({ data, selectedId, onSelect, disabled }: Ro
                   fontSize={12}
                   fontWeight={600}
                 >
-                  Partida
+                  Partida{data.startLabel ? ` — ${data.startLabel}` : ''}
                 </text>
               </g>
             )}

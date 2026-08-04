@@ -15,8 +15,18 @@ const EARTH_CIRCUMFERENCE_M = 40075016.686;
 
 /** Teto da Maps Static API: 640x640 em pixels lógicos (scale=2 dobra a resolução real). */
 const GOOGLE_MAX_CSS_PX = 640;
-/** Teto prático do `export` do ArcGIS. */
-const ESRI_MAX_PX = 4096;
+/**
+ * Orçamento de pixels do `export` público do ArcGIS World_Imagery.
+ *
+ * O serviço não documenta um limite de largura/altura — o que existe é um teto
+ * de pixels totais. Medido ao vivo: 2048×1436 (2,9 Mpx) e 2400×1683 (4,0 Mpx)
+ * respondem 200; 2600×1823 (4,7 Mpx) e a antiga constante 4096×2871 (11,8 Mpx)
+ * respondem 500 "Error: bytes". 3 Mpx fica bem abaixo da fronteira medida e
+ * ainda sai bem mais nítido que os 640px do preview do Google.
+ */
+const ESRI_MAX_TOTAL_PX = 3_000_000;
+/** Teto de segurança por eixo — só entra em jogo com aspect ratio extremo. */
+const ESRI_MAX_DIM_PX = 4096;
 
 const MIN_ZOOM = 3;
 const MAX_ZOOM = 19;
@@ -201,13 +211,24 @@ function googleKey(): string {
   return String(process.env.GOOGLE_STATIC_MAPS_KEY || "").trim();
 }
 
-async function fetchImage(url: string, timeoutMs: number): Promise<Buffer | null> {
+async function fetchImage(url: string, timeoutMs: number, label: string): Promise<Buffer | null> {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const bodySnippet = await response.text().catch(() => "");
+      console.warn(
+        `[CROQUI] Basemap ${label} respondeu ${response.status}: ${bodySnippet.slice(0, 200)}`,
+      );
+      return null;
+    }
     const buffer = Buffer.from(await response.arrayBuffer());
-    return buffer.length > 1000 ? buffer : null;
-  } catch {
+    if (buffer.length <= 1000) {
+      console.warn(`[CROQUI] Basemap ${label} devolveu imagem suspeita (${buffer.length} bytes).`);
+      return null;
+    }
+    return buffer;
+  } catch (error) {
+    console.warn(`[CROQUI] Basemap ${label} falhou:`, (error as Error)?.message || error);
     return null;
   }
 }
@@ -228,8 +249,16 @@ export function buildGoogleStaticUrl(frame: MapFrame, key: string): string {
 export function buildEsriExportUrl(frame: MapFrame): string {
   const [west, south, east, north] = frame.bboxLonLat;
   const aspect = frame.widthPt / frame.heightPt;
-  const width = aspect >= 1 ? ESRI_MAX_PX : Math.round(ESRI_MAX_PX * aspect);
-  const height = aspect >= 1 ? Math.round(ESRI_MAX_PX / aspect) : ESRI_MAX_PX;
+  let width = Math.round(Math.sqrt(ESRI_MAX_TOTAL_PX * aspect));
+  let height = Math.round(width / aspect);
+  if (width > ESRI_MAX_DIM_PX) {
+    width = ESRI_MAX_DIM_PX;
+    height = Math.round(width / aspect);
+  }
+  if (height > ESRI_MAX_DIM_PX) {
+    height = ESRI_MAX_DIM_PX;
+    width = Math.round(height * aspect);
+  }
   const params = new URLSearchParams({
     bbox: [
       mercatorMetersX(west),
@@ -256,14 +285,14 @@ export function buildEsriExportUrl(frame: MapFrame): string {
 export async function fetchBasemapImage(frame: MapFrame): Promise<BasemapImage | null> {
   const key = googleKey();
   if (key) {
-    const buffer = await fetchImage(buildGoogleStaticUrl(frame, key), 45000);
+    const buffer = await fetchImage(buildGoogleStaticUrl(frame, key), 45000, "Google Static Maps");
     if (buffer) {
       // A Static API já embute a atribuição do Google na própria imagem.
       return { buffer, provider: "google", attribution: "" };
     }
     console.warn("[CROQUI] Google Static Maps indisponível; usando Esri World Imagery.");
   }
-  const esri = await fetchImage(buildEsriExportUrl(frame), 45000);
+  const esri = await fetchImage(buildEsriExportUrl(frame), 45000, "Esri World Imagery");
   if (esri) {
     return {
       buffer: esri,
@@ -271,5 +300,6 @@ export async function fetchBasemapImage(frame: MapFrame): Promise<BasemapImage |
       attribution: "Esri, Maxar, Earthstar Geographics",
     };
   }
+  console.error("[CROQUI] Nenhum provedor de imagem de satélite disponível; croqui sai com fundo neutro.");
   return null;
 }

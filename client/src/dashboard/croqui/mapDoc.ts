@@ -44,5 +44,7 @@ export function mapCroquiDocToHistoryItem(docId: string, data: Record<string, un
     routeLabel: data?.routeLabel ? String(data.routeLabel) : undefined,
     downloadUrl: data?.downloadUrl ? resolveBackendUrl(String(data.downloadUrl)) : undefined,
     outputUrl: data?.outputUrl ? resolveBackendUrl(String(data.outputUrl)) : undefined,
+    hasBasemapImage: typeof data?.hasBasemapImage === 'boolean' ? data.hasBasemapImage : undefined,
+    basemapProvider: data?.basemapProvider ? String(data.basemapProvider) : undefined,
   };
 }

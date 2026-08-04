@@ -2,7 +2,7 @@ import PDFDocument from "pdfkit";
 import type { MultiPolygon, Polygon, Position } from "geojson";
 import { ylwPushpinPng } from "./assets/ylw-pushpin-data";
 import { bboxOfPositions, fetchBasemapImage, pickScaleBar, resolveMapFrame } from "./basemap";
-import type { MapFrame } from "./basemap";
+import type { BasemapProvider, MapFrame } from "./basemap";
 import { formatDmsLabel } from "./coords";
 import { sedesNaBbox } from "./landmarks";
 import type { PlaceLabel } from "./landmarks";
@@ -292,12 +292,19 @@ function drawWaypointLabels(
   return placed;
 }
 
+export type CroquiPdfResult = {
+  buffer: Buffer;
+  /** Se a imagem de satélite saiu no PDF ou se ele ficou com o fundo neutro. */
+  hasBasemapImage: boolean;
+  basemapProvider: BasemapProvider | null;
+};
+
 export async function buildCroquiPdfBuffer(args: {
   title: string;
   narrative: string;
   atpGeometry: Polygon | MultiPolygon;
   route: CroquiRoute;
-}): Promise<Buffer> {
+}): Promise<CroquiPdfResult> {
   const { title, narrative, atpGeometry, route } = args;
 
   const allCoords: Position[] = [...route.coordinates];
@@ -407,5 +414,6 @@ export async function buildCroquiPdfBuffer(args: {
     doc.end();
   }
 
-  return finished;
+  const buffer = await finished;
+  return { buffer, hasBasemapImage: !!basemap, basemapProvider: basemap?.provider ?? null };
 }

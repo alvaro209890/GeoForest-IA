@@ -10,6 +10,8 @@ export type PreviewProjection = {
   width: number;
   height: number;
   project: (lon: number, lat: number) => [number, number];
+  /** Inversa do `project` — clique no SVG (pontos) de volta em lon/lat. */
+  unproject: (xPt: number, yPt: number) => [number, number];
 };
 
 export type LonLat = [number, number];
@@ -33,6 +35,15 @@ function mercatorY(lat: number): number {
   const clamped = Math.max(Math.min(lat, 85), -85);
   const rad = (clamped * Math.PI) / 180;
   return Math.log(Math.tan(Math.PI / 4 + rad / 2));
+}
+
+function mercatorXToLon(mx: number): number {
+  return (mx * 180) / Math.PI;
+}
+
+function mercatorYToLat(my: number): number {
+  const rad = 2 * Math.atan(Math.exp(my)) - Math.PI / 2;
+  return (rad * 180) / Math.PI;
 }
 
 export function boundsOf(groups: LonLat[][]): {
@@ -91,6 +102,10 @@ export function buildProjection(
       offsetX + (mercatorX(lon) - x0) * scale,
       offsetY + (y1 - mercatorY(lat)) * scale,
     ],
+    unproject: (xPt: number, yPt: number) => [
+      mercatorXToLon(x0 + (xPt - offsetX) / scale),
+      mercatorYToLat(y1 - (yPt - offsetY) / scale),
+    ],
   };
 }
 
@@ -125,6 +140,15 @@ function latToWorldY(lat: number, worldSize: number): number {
   return (0.5 - Math.log((1 + clamped) / (1 - clamped)) / (4 * Math.PI)) * worldSize;
 }
 
+function worldXToLon(x: number, worldSize: number): number {
+  return (x / worldSize) * 360 - 180;
+}
+
+function worldYToLat(y: number, worldSize: number): number {
+  const n = Math.PI - (2 * Math.PI * y) / worldSize;
+  return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+}
+
 export type FrameParams = {
   centerLon: number;
   centerLat: number;
@@ -156,5 +180,12 @@ export function buildProjectionFromFrame(
       (lonToWorldX(lon, worldSize) - centerX + frame.imageWidthPx / 2) * ptPerPxX,
       (latToWorldY(lat, worldSize) - centerY + frame.imageHeightPx / 2) * ptPerPxY,
     ],
+    // Inversa: clique no SVG (pontos) de volta em lon/lat — arrasta o pino de
+    // partida sobre a imagem de satélite mantendo o mesmo enquadramento.
+    unproject: (xPt: number, yPt: number): [number, number] => {
+      const worldX = xPt / ptPerPxX + centerX - frame.imageWidthPx / 2;
+      const worldY = yPt / ptPerPxY + centerY - frame.imageHeightPx / 2;
+      return [worldXToLon(worldX, worldSize), worldYToLat(worldY, worldSize)];
+    },
   };
 }

@@ -121,4 +121,36 @@ describe("croqui basemap", () => {
       -52.3, -12.7, -52.1, -12.5,
     ]);
   });
+
+  /**
+   * Regressão: a URL do Esri chegou a pedir 4096×2871 (11,8 Mpx) e o
+   * `export` público do World_Imagery devolve HTTP 500 "Error: bytes" acima de
+   * ~4,7 Mpx — falha silenciosa que deixava o croqui sem imagem de satélite
+   * (medido ao vivo em 2026-08-04). O orçamento tem que ficar bem abaixo disso
+   * para os dois formatos usados em produção: o mapa cheio do PDF (826×579 pt)
+   * e o mapinha de escolha do RoutePicker (560×420 pt).
+   */
+  it("mantém o pedido ao Esri dentro do orçamento de pixels que o serviço aceita", () => {
+    const shapes: Array<[number, number]> = [
+      [826, 579], // página do PDF
+      [560, 420], // mapinha de escolha (RoutePicker)
+      [420, 560], // retrato, defensivo
+    ];
+    for (const [widthPt, heightPt] of shapes) {
+      const frame = resolveMapFrame({
+        contentBbox: [-52.3, -12.7, -52.1, -12.5],
+        widthPt,
+        heightPt,
+      });
+      const esri = buildEsriExportUrl(frame);
+      const size = /size=([\d,%2C]+)/.exec(esri)?.[1] || "";
+      const [w, h] = decodeURIComponent(size).split(",").map(Number);
+      expect(w * h).toBeLessThanOrEqual(4_000_000);
+      expect(w).toBeLessThanOrEqual(4096);
+      expect(h).toBeLessThanOrEqual(4096);
+      // Aspect da imagem pedida casa com o aspect da área de mapa — senão o
+      // provedor reenquadra por conta própria e desalinha da vetorização.
+      expect(w / h).toBeCloseTo(widthPt / heightPt, 1);
+    }
+  });
 });

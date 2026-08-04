@@ -69,7 +69,7 @@ describe("croqui render-pdf pushpin", () => {
       geometry: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } },
     };
 
-    const pdf = await buildCroquiPdfBuffer({
+    const result = await buildCroquiPdfBuffer({
       title: "Teste Pushpin",
       narrative: "Inicia-se o croqui no ponto de teste.",
       atpGeometry: {
@@ -87,10 +87,13 @@ describe("croqui render-pdf pushpin", () => {
       route,
     });
 
+    const pdf = result.buffer;
     expect(pdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
     expect(pdf.includes(Buffer.from("/XObject"))).toBe(true);
     expect(pdf.includes(Buffer.from("/Image"))).toBe(true);
     // Sem basemap, a única imagem embutida é o pushpin (aparece 1× por waypoint + legenda).
     expect(pdf.length).toBeGreaterThan(5_000);
+    expect(result.hasBasemapImage).toBe(false);
+    expect(result.basemapProvider).toBeNull();
   });
 });

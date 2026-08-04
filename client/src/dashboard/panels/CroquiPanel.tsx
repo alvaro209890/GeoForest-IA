@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -8,6 +9,7 @@ import {
   FolderOpen,
   Loader2,
   Map,
+  MapPinned,
   RefreshCw,
   Route,
   Upload,
@@ -50,6 +52,7 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
     setCroquiRouteId,
     croquiLoadingRoutes,
     loadCroquiRouteOptions,
+    recalculateCroquiFromPoint,
     applyZipFile,
     startCroquiProcessing,
     downloadCroquiZip,
@@ -63,10 +66,18 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
 
   const [dragActive, setDragActive] = useState(false);
   const [uploadsOpen, setUploadsOpen] = useState(false);
+  const [movingStart, setMovingStart] = useState(false);
   const busy = croquiProcessing || croquiUploading || croquiLoadingRoutes;
   const dropDisabled = busy;
   const hasChoice = !!croquiRoutes && croquiRoutes.options.length > 1;
   const hasRemoteFile = !croquiFile && !!croquiUploadId;
+  const lastCompleted = croquiDownload && !croquiProcessing;
+  const missingBasemap = lastCompleted && croqui.croquiHistory.find((h) => h.jobId === croqui.croquiJobId)?.hasBasemapImage === false;
+
+  const handleMoveStart = async (lon: number, lat: number) => {
+    setMovingStart(false);
+    await recalculateCroquiFromPoint(lon, lat);
+  };
 
   const acceptZip = (file: File | null | undefined) => {
     if (!file || dropDisabled) return;
@@ -332,7 +343,7 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
                   ? 'Gerar croqui com este caminho'
                   : 'Gerar croqui'}
             </button>
-            {hasChoice && (
+            {!!croquiRoutes && (
               <button
                 type="button"
                 disabled={busy || !croquiUploadId}
@@ -341,6 +352,21 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
               >
                 <RefreshCw size={15} />
                 Recalcular caminhos
+              </button>
+            )}
+            {!!croquiRoutes && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setMovingStart((v) => !v)}
+                className={`inline-flex items-center gap-2 rounded-xl border px-4 py-3 text-sm disabled:opacity-50 ${
+                  movingStart
+                    ? 'border-amber-400/50 bg-amber-500/10 text-amber-200'
+                    : 'border-white/10 text-slate-300 hover:bg-white/5'
+                }`}
+              >
+                <MapPinned size={15} />
+                {movingStart ? 'Cancelar' : 'Mudar ponto de partida'}
               </button>
             )}
             <button
@@ -359,17 +385,21 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
             </p>
           )}
 
-          {croquiRoutes && hasChoice && !croquiProcessing && (
+          {croquiRoutes && !croquiProcessing && (
             <div className="space-y-3 rounded-xl border border-white/10 bg-white/[0.02] p-4">
               <div className="flex items-start gap-2">
                 <Route size={16} className="mt-0.5 shrink-0 text-amber-300" />
                 <div>
                   <p className="text-sm font-semibold text-white">
-                    {croquiRoutes.options.length} caminhos de acesso encontrados
+                    {hasChoice
+                      ? `${croquiRoutes.options.length} caminhos de acesso encontrados`
+                      : 'Caminho de acesso encontrado'}
                   </p>
                   <p className="text-xs text-slate-400">
-                    O mais curto nem sempre é o que se usa em campo. Escolha o traçado correto
-                    antes de gerar — ele vai para o PDF, o Word e o KML.
+                    {hasChoice
+                      ? 'O mais curto nem sempre é o que se usa em campo. Escolha o traçado correto antes de gerar — ele vai para o PDF, o Word e o KML.'
+                      : 'Confira o traçado sobre a imagem de satélite antes de gerar o croqui.'}
+                    {croquiRoutes.startLabel ? ` Partida atual: ${croquiRoutes.startLabel}.` : ''}
                   </p>
                 </div>
               </div>
@@ -378,6 +408,8 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
                 selectedId={croquiRouteId}
                 onSelect={setCroquiRouteId}
                 disabled={busy}
+                movingStart={movingStart}
+                onMoveStart={(lon, lat) => void handleMoveStart(lon, lat)}
               />
             </div>
           )}
@@ -400,6 +432,14 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
 
           {croquiError && (
             <p className="text-sm text-red-300">{croquiError}</p>
+          )}
+
+          {missingBasemap && (
+            <p className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+              <AlertTriangle size={14} className="shrink-0" />
+              Este croqui saiu sem a imagem de satélite (provedor indisponível no momento). O
+              roteiro e o traçado estão corretos; se quiser a imagem, recalcule os caminhos e gere de novo.
+            </p>
           )}
 
           {croquiDownload && !croquiProcessing && (

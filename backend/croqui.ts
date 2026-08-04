@@ -46,6 +46,7 @@ import {
   type RouteOptionSummary,
 } from "./croqui/route-options";
 import { bboxOfPositions, fetchBasemapImage, resolveMapFrame } from "./croqui/basemap";
+import type { BasemapProvider } from "./croqui/basemap";
 import { buildCroquiDocxBuffer } from "./croqui/render-docx";
 import { buildCroquiKml } from "./croqui/render-kml";
 import { buildCroquiPdfBuffer } from "./croqui/render-pdf";
@@ -151,21 +152,38 @@ async function resolveCroquiContext(atpGeometry: Polygon | MultiPolygon): Promis
 /**
  * Caminhos de acesso possíveis, para o usuário escolher antes de gerar. O mais
  * curto vem marcado como recomendado, mas nem sempre é o que se usa em campo.
+ *
+ * `startOverride` deixa o usuário mover o ponto de partida (ex.: o landmark
+ * curado não é onde ele realmente sai em campo) e mandar recalcular os
+ * caminhos a partir dali — o município e o centroide do imóvel continuam
+ * vindo do ATP, só a partida muda.
  */
 export async function buildCroquiRouteOptions(args: {
   atpGeometry: Polygon | MultiPolygon;
+  startOverride?: { lon: number; lat: number } | null;
   onProgress?: (message: string) => void;
-}): Promise<{ municipioNome: string; options: RouteOption[] }> {
+}): Promise<{
+  municipioNome: string;
+  options: RouteOption[];
+  start: { lon: number; lat: number; label: string; source: "curado" | "sede-ibge" | "centroide" | "customizado" };
+}> {
   const context = await resolveCroquiContext(args.atpGeometry);
+  const override = args.startOverride;
+  const hasOverride =
+    !!override && Number.isFinite(override.lon) && Number.isFinite(override.lat);
+  const start = hasOverride
+    ? { lon: override!.lon, lat: override!.lat, label: "ponto escolhido no mapa", source: "customizado" as const }
+    : { lon: context.landmark.lon, lat: context.landmark.lat, label: context.landmark.label, source: context.landmark.fonte };
+
   const options = await discoverRouteOptions({
-    startLon: context.landmark.lon,
-    startLat: context.landmark.lat,
+    startLon: start.lon,
+    startLat: start.lat,
     destLon: context.centLon,
     destLat: context.centLat,
     atpGeometry: args.atpGeometry,
     onProgress: args.onProgress,
   });
-  return { municipioNome: context.municipioNome, options };
+  return { municipioNome: context.municipioNome, options, start };
 }
 
 /** Anéis externos do imóvel, leves, para o mapinha de escolha. */
@@ -221,6 +239,8 @@ export async function generateCroquiArtifacts(args: {
   narrative: string;
   municipioNome: string;
   files: Array<{ name: string; buffer: Buffer }>;
+  hasBasemapImage: boolean;
+  basemapProvider: BasemapProvider | null;
 }> {
   const { atpGeometry, title, propertyName } = args;
   const { municipioNome, landmark, centLon, centLat } = await resolveCroquiContext(atpGeometry);
@@ -237,7 +257,12 @@ export async function generateCroquiArtifacts(args: {
     fileName: `${fileStem}.kml`,
   });
   const docx = await buildCroquiDocxBuffer(narrative);
-  const pdf = await buildCroquiPdfBuffer({ title, narrative, atpGeometry, route });
+  const { buffer: pdf, hasBasemapImage, basemapProvider } = await buildCroquiPdfBuffer({
+    title,
+    narrative,
+    atpGeometry,
+    route,
+  });
 
   const pdfName = `${fileStem}.pdf`;
   const docxName = `${fileStem}.docx`;
@@ -246,6 +271,8 @@ export async function generateCroquiArtifacts(args: {
   return {
     narrative,
     municipioNome,
+    hasBasemapImage,
+    basemapProvider,
     files: [
       { name: pdfName, buffer: pdf },
       { name: docxName, buffer: docx },
@@ -336,16 +363,21 @@ async function runCroquiJob(args: {
 
     const downloadUrl = stored.publicUrl;
     const fileNames = result.files.map((f) => f.name);
+    const message = result.hasBasemapImage
+      ? `Croqui gerado (${result.municipioNome}).`
+      : `Croqui gerado (${result.municipioNome}), mas sem imagem de satélite — provedor indisponível no momento.`;
     progress(uid, jobId, {
       status: "completed",
       stage: "done",
       percent: 100,
-      message: `Croqui gerado (${result.municipioNome}).`,
+      message,
       municipioNome: result.municipioNome,
       title,
       propertyName,
       routeLabel: args.routeLabel || null,
       files: fileNames,
+      hasBasemapImage: result.hasBasemapImage,
+      basemapProvider: result.basemapProvider,
       outputRelativePath: stored.relativePath,
       outputUrl: downloadUrl,
       downloadUrl,
@@ -434,8 +466,16 @@ export function registerCroquiRoutes(app: Express): void {
         throw new Error("O ZIP deve conter exatamente um polígono ATP.");
       }
 
-      const { municipioNome, options } = await buildCroquiRouteOptions({
+      const rawStartLon = Number((req.body as any)?.startLon);
+      const rawStartLat = Number((req.body as any)?.startLat);
+      const startOverride =
+        Number.isFinite(rawStartLon) && Number.isFinite(rawStartLat)
+          ? { lon: rawStartLon, lat: rawStartLat }
+          : null;
+
+      const { municipioNome, options, start: startPoint } = await buildCroquiRouteOptions({
         atpGeometry: parsed.geometry,
+        startOverride,
       });
       const routesRelativePath = saveRouteOptions(uid, uploadId, options);
       const payload = options.map(toRouteOptionPayload);
@@ -481,8 +521,11 @@ export function registerCroquiRoutes(app: Express): void {
         // Contorno do imóvel e ponto de partida: sem eles o mapinha de escolha
         // seria um punhado de linhas sem destino visível.
         atp: atpRings,
-        start: options[0]?.route.coordinates[0] || null,
+        start: [startPoint.lon, startPoint.lat],
+        startLabel: startPoint.label,
+        startSource: startPoint.source,
         basemap,
+        basemapError: basemapImage ? null : "Imagem de satélite indisponível no momento — o mapinha e o croqui saem com fundo neutro.",
       });
     } catch (error: any) {
       console.error("[CROQUI] route-options failed:", error?.message || error);

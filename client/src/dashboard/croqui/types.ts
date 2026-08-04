@@ -22,6 +22,9 @@ export type CroquiRouteOptionsResponse = {
   options: CroquiRouteOption[];
   atp: [number, number][][];
   start: [number, number] | null;
+  /** De onde veio o ponto de partida: "sede de X", "ponto escolhido no mapa"... */
+  startLabel?: string;
+  startSource?: string;
   basemap: {
     dataUrl: string;
     provider: string;
@@ -32,6 +35,8 @@ export type CroquiRouteOptionsResponse = {
     centerLat: number;
     zoom: number;
   } | null;
+  /** Mensagem para o usuário quando nenhum provedor de satélite respondeu. */
+  basemapError?: string | null;
 };
 
 export type CroquiHistoryItem = {
@@ -54,6 +59,9 @@ export type CroquiHistoryItem = {
   outputUrl?: string;
   /** Nome do caminho escolhido, quando o croqui não usou o traçado padrão. */
   routeLabel?: string;
+  /** Se o PDF final saiu com a imagem de satélite ou com o fundo neutro. */
+  hasBasemapImage?: boolean;
+  basemapProvider?: string;
 };
 
 /** Resumo de um upload de ATP salvo, disponível para reuso na aba de croqui. */
