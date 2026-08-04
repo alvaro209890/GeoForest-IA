@@ -1,7 +1,13 @@
 import jwt from "jsonwebtoken";
 
-const ADMIN_PASSWORD = "admin12345678";
-const JWT_SECRET = "admin12345678";
+/**
+ * ⚠️ Os valores padrão estão no código-fonte (repositório público). Defina
+ * `ADMIN_PANEL_PASSWORD` e `ADMIN_JWT_SECRET` no ambiente do backend para que a
+ * senha real não fique versionada — o fallback existe só para não quebrar
+ * instalações antigas.
+ */
+const ADMIN_PASSWORD = process.env.ADMIN_PANEL_PASSWORD || "admin12345678";
+const JWT_SECRET = process.env.ADMIN_JWT_SECRET || "admin12345678";
 const TOKEN_EXPIRY = "8h";
 
 interface AdminPayload {

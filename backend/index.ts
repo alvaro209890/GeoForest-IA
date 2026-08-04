@@ -88,6 +88,7 @@ import { registerGeometryErrorsRoutes } from "./geometry-errors";
 import { registerProcessarProjetoRoutes } from "./processar-projeto";
 import { registerSimcarOraculoRoutes } from "./simcar-oraculo";
 import { registerAuasScconRoutes } from "./auas-sccon";
+import { requireAdminAuth } from "./admin-auth";
 import {
   JobCancelledError,
   finishJob,
@@ -1250,7 +1251,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/server/metrics", async (_req, res) => {
+  app.get("/api/admin/server/metrics", requireAdminAuth, async (_req, res) => {
     try {
       const cpuInfo = os.cpus();
       const totalBytes = os.totalmem();

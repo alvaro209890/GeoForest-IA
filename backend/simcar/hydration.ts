@@ -8,7 +8,7 @@
 import fs from "fs";
 import path from "path";
 import { parsePolygonGeometryFromGml } from "../sigef-client";
-import { STORAGE_ROOT, writeDocBySegments } from "../local-storage";
+import { STORAGE_ROOT, storageUrlToRelativePath, writeDocBySegments } from "../local-storage";
 import { normalizePolygonGeometry, polygonToWkt, toPolygonOrMultiFeature } from "../wfs-intersection";
 import { extractZipEntries } from "../geo-utils";
 import { readFullShapefile } from "./shapefile-io";
@@ -38,6 +38,37 @@ export function readPersistedSimcarClip(jobId: string): Record<string, any> | nu
         console.warn("[SIMCAR CLIP] failed to read persisted clip for download:", error);
     }
     return null;
+}
+
+/**
+ * Igual a `readPersistedSimcarClip`, mas escopado a um uid — usado onde a posse
+ * do job precisa ser comprovada (exclusão de artefatos).
+ */
+export function readPersistedSimcarClipForUid(uid: string, jobId: string): Record<string, any> | null {
+    const safeUid = String(uid || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_");
+    const safeJobId = String(jobId || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_");
+    if (!safeUid || !safeJobId) return null;
+    const docPath = path.join(STORAGE_ROOT, "users", safeUid, "simcar_clips", `${safeJobId}.json`);
+    try {
+        if (!fs.existsSync(docPath)) return null;
+        const parsed = JSON.parse(fs.readFileSync(docPath, "utf8"));
+        return parsed && typeof parsed === "object" ? (parsed as Record<string, any>) : null;
+    } catch (error) {
+        console.warn("[SIMCAR CLIP] failed to read persisted clip for uid:", error);
+        return null;
+    }
+}
+
+/**
+ * Um recurso só pode ser apagado pelo dono: o caminho relativo em storage
+ * precisa estar dentro de `users/<uid>/`.
+ */
+export function storagePathBelongsToUid(uid: string, urlOrPath: string | undefined | null): boolean {
+    const safeUid = String(uid || "").trim();
+    if (!safeUid) return false;
+    const relative = storageUrlToRelativePath(urlOrPath);
+    if (!relative) return false;
+    return relative.startsWith(`users/${safeUid}/`);
 }
 
 function getFeatureBbox(feature: Feature<Polygon | MultiPolygon>): [number, number, number, number] | null {

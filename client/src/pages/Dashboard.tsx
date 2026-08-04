@@ -4521,7 +4521,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     // Delete from Cloudinary + remove from state
                     const imageUrls = (clip.analysisImages || []).map((img) => img.url);
                     const auasImageUrls = (clip.auasAnalysisImages || []).map((img) => img.url);
-                    fetch(apiUrl(`/api/simcar/clip/${clip.jobId}`), {
+                    // Exige token: o backend só apaga artefatos do próprio uid.
+                    apiFetch(`/api/simcar/clip/${clip.jobId}`, {
                       method: 'DELETE',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({

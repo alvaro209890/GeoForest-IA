@@ -24,6 +24,7 @@ import {
     settleReservedCredits,
 } from "../billing";
 import { adminAuth, isFirebaseConfigError } from "../firebase-admin";
+import { getAuthUid } from "../auth";
 import { removeStoragePath, saveUserBuffer, STORAGE_ROOT, writeDocBySegments } from "../local-storage";
 import {
     finishJob,
@@ -50,6 +51,8 @@ import {
 } from "./clip-pipeline";
 import {
     readPersistedSimcarClip,
+    readPersistedSimcarClipForUid,
+    storagePathBelongsToUid,
     hydrateCachedJob,
     persistSimcarClipProcessingState,
     persistSimcarClipArtifacts,
@@ -1653,14 +1656,29 @@ export function registerSimcarClipRoutes(app: Express) {
             reportPdfUrl?: string;
         };
 
+        // A rota apaga arquivos a partir de URLs vindas do corpo: sem uid e sem
+        // checagem de posse, qualquer chamador apagaria artefato de outro usuário.
+        let uid = "";
+        try {
+            uid = getAuthUid(req);
+        } catch {
+            res.status(401).json({ error: "Token de autenticação obrigatório.", code: "UNAUTHENTICATED" });
+            return;
+        }
+
         try {
             const cached = jobCache.get(jobId);
             const deletions: Promise<void>[] = [];
             const seen = new Set<string>();
+            let skipped = 0;
 
             const queueDelete = (url: string | undefined, forcedType?: "raw" | "image") => {
                 const clean = String(url || "").trim();
                 if (!clean) return;
+                if (!storagePathBelongsToUid(uid, clean)) {
+                    skipped += 1;
+                    return;
+                }
                 const inferredType: "raw" | "image" =
                     forcedType
                     || (/\/raw\/upload\//i.test(clean) || /\.(zip|json)(\?|$)/i.test(clean) ? "raw" : "image");
@@ -1674,7 +1692,7 @@ export function registerSimcarClipRoutes(app: Express) {
             queueDelete(cached?.inputZipUrl || inputZipUrl, "raw");
             queueDelete(cached?.outputZipUrl || outputZipUrl, "raw");
             queueDelete(cached?.contextJsonUrl || contextUrl, "raw");
-            queueDelete(reportPdfUrl || String(readPersistedSimcarClip(jobId)?.reportPdfUrl || ""), "raw");
+            queueDelete(reportPdfUrl || String(readPersistedSimcarClipForUid(uid, jobId)?.reportPdfUrl || ""), "raw");
 
             // Delete analysis images from Cloudinary (image type)
             if (Array.isArray(imageUrls)) {
@@ -1691,8 +1709,11 @@ export function registerSimcarClipRoutes(app: Express) {
             await Promise.allSettled(deletions);
             jobCache.delete(jobId);
 
-            console.log(`[SIMCAR CLIP] Deleted job ${jobId} + ${deletions.length} Cloudinary resources`);
-            res.json({ ok: true, deleted: deletions.length });
+            console.log(
+                `[SIMCAR CLIP] Deleted job ${jobId} + ${deletions.length} recursos`
+                + (skipped ? ` (${skipped} ignorados por não pertencerem ao uid ${uid})` : ""),
+            );
+            res.json({ ok: true, deleted: deletions.length, skipped });
         } catch (err: any) {
             console.error("[SIMCAR CLIP DELETE] Error:", err);
             res.status(500).json({ error: err.message });

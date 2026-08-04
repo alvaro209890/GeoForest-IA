@@ -71,11 +71,15 @@ import {
   StorageBarChart,
   StoragePieChart,
 } from "./components";
-import { fetchJson, cbersImageToStorageFile, isAdminUserSummary } from "./format";
+import { adminDelete, fetchJson, cbersImageToStorageFile, isAdminUserSummary } from "./format";
 import { StorageTab } from "./StorageTab";
 import { ServerTab } from "./ServerTab";
 
-export function AdminApp() {
+export type AdminAppProps = {
+  onLogout?: () => void;
+};
+
+export function AdminApp({ onLogout }: AdminAppProps = {}) {
   const [activeTab, setActiveTab] = useState("storage");
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [selectedUid, setSelectedUid] = useState("");
@@ -217,11 +221,7 @@ export function AdminApp() {
     if (!confirmed) return;
     setStorageError("");
     try {
-      const response = await fetch(apiUrl(`/api/admin/cbers-storage/images/${encodeURIComponent(file.imageId)}`), {
-        method: "DELETE",
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error || "Falha ao excluir imagem.");
+      await adminDelete(`/api/admin/cbers-storage/images/${encodeURIComponent(file.imageId)}`);
       await Promise.all([loadSummary(), loadFiles(selectedUid)]);
     } catch (err: any) {
       setStorageError(String(err?.message || err));
@@ -378,6 +378,14 @@ export function AdminApp() {
             <RefreshCw size={16} className={activeLoading ? "animate-spin" : ""} />
             Atualizar
           </button>
+          {onLogout && (
+            <button
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-slate-400 hover:bg-white/5"
+              onClick={onLogout}
+            >
+              Sair
+            </button>
+          )}
         </div>
       </header>
 

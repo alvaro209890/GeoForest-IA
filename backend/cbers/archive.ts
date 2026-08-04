@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { STORAGE_ROOT } from "../local-storage";
+import { requireAdminAuth } from "../admin-auth";
 
 type PlainObject = Record<string, any>;
 
@@ -969,7 +970,7 @@ async function deleteCbersArchiveRecord(imageId: string): Promise<CbersArchiveRe
 }
 
 export function registerCbersArchiveAdminRoutes(app: Express): void {
-  app.get("/api/admin/storage/summary", (_req: Request, res: ExpressResponse) => {
+  app.get("/api/admin/storage/summary", requireAdminAuth, (_req: Request, res: ExpressResponse) => {
     const profiles = listUserProfiles();
     const records = listCbersArchiveRecords();
     const users = listUserIdsForAdmin(profiles, records).map((uid) => {
@@ -1030,7 +1031,7 @@ export function registerCbersArchiveAdminRoutes(app: Express): void {
     });
   });
 
-  app.get("/api/admin/storage/users/:uid/files", (req: Request, res: ExpressResponse) => {
+  app.get("/api/admin/storage/users/:uid/files", requireAdminAuth, (req: Request, res: ExpressResponse) => {
     const uid = safeSegment(req.params.uid);
     const records = listCbersArchiveRecords();
     const userFiles = listUserStorageFiles(uid);
@@ -1047,7 +1048,7 @@ export function registerCbersArchiveAdminRoutes(app: Express): void {
     });
   });
 
-  app.get("/api/admin/cbers-storage/summary", (_req: Request, res: ExpressResponse) => {
+  app.get("/api/admin/cbers-storage/summary", requireAdminAuth, (_req: Request, res: ExpressResponse) => {
     const profiles = listUserProfiles();
     const records = listCbersArchiveRecords();
     const byUser = new Map<string, PlainObject>();
@@ -1081,7 +1082,7 @@ export function registerCbersArchiveAdminRoutes(app: Express): void {
     });
   });
 
-  app.get("/api/admin/cbers-storage/users/:uid/images", (req: Request, res: ExpressResponse) => {
+  app.get("/api/admin/cbers-storage/users/:uid/images", requireAdminAuth, (req: Request, res: ExpressResponse) => {
     const uid = safeSegment(req.params.uid);
     res.json({
       ok: true,
@@ -1090,7 +1091,7 @@ export function registerCbersArchiveAdminRoutes(app: Express): void {
     });
   });
 
-  app.delete("/api/admin/cbers-storage/images/:imageId", async (req: Request, res: ExpressResponse) => {
+  app.delete("/api/admin/cbers-storage/images/:imageId", requireAdminAuth, async (req: Request, res: ExpressResponse) => {
     try {
       const record = await deleteCbersArchiveRecord(String(req.params.imageId || ""));
       if (!record) {

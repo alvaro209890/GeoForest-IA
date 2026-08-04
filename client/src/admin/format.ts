@@ -109,8 +109,28 @@ export function isAdminUserSummary(item: UserSummary): boolean {
   return Boolean(item.email || item.fullName || Number(item.sharedRasterBytes || 0) > 0 || Number(item.fileCount || 0) > 0);
 }
 
+/** Token JWT do admin, mantido em sincronia por `useAdminAuth`. */
+let adminToken = localStorage.getItem("admin_token") || "";
+
+export function setAdminToken(token: string): void {
+  adminToken = String(token || "");
+}
+
+/** DELETE autenticado contra /api/admin/*. */
+export async function adminDelete(path: string): Promise<any> {
+  const response = await fetch(apiUrl(path), {
+    method: "DELETE",
+    headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : undefined,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.error || "Falha ao excluir imagem.");
+  return payload;
+}
+
 export async function fetchJson(path: string): Promise<any> {
-  const response = await fetch(apiUrl(path));
+  const response = await fetch(apiUrl(path), {
+    headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : undefined,
+  });
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.toLowerCase().includes("application/json")) {
     throw new Error("Resposta do backend nao e JSON.");
