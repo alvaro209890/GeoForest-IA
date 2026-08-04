@@ -688,6 +688,7 @@ Arquivo de referência: [`config/geoforest-backend.env.example`](config/geofores
 - [`docs/PROCESSAR_PROJETO_SIMCAR.md`](docs/PROCESSAR_PROJETO_SIMCAR.md) — Manual Processar Projeto (Importar → ProcessarGeo)
 - [`docs/AREAS_NAO_CONTIDAS.md`](docs/AREAS_NAO_CONTIDAS.md) — Áreas não contidas (containment SIMCAR)
 - [`docs/CROQUI_ACESSO.md`](docs/CROQUI_ACESSO.md) — Croqui de acesso (ATP → PDF + Word + KML): modelos, ponto de partida, **escolha do caminho**, roteiro, base do mapa e API
+- [`docs/CHANGELOG_2026-08-04_CROQUI_ATE_PROPRIEDADE.md`](docs/CHANGELOG_2026-08-04_CROQUI_ATE_PROPRIEDADE.md) — Completa o caminho até a porteira quando o OSM não alcança (Estância MDM)
 - [`docs/CHANGELOG_2026-07-30_CROQUI_ESCOLHA_CAMINHO.md`](docs/CHANGELOG_2026-07-30_CROQUI_ESCOLHA_CAMINHO.md) — O usuário escolhe o caminho de acesso antes de gerar o croqui (caso Lote 89-A, Querência III)
 - [`docs/CHANGELOG_2026-07-10_AREAS_NAO_CONTIDAS.md`](docs/CHANGELOG_2026-07-10_AREAS_NAO_CONTIDAS.md) — Áreas não contidas + auto-update sem Ctrl+F5
 - [`docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md`](docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md) — Recibos SIMCAR, cache Firebase e deploy de 2026-07-09

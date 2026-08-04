@@ -41,6 +41,14 @@ onde a rede alcança, depois acesso rural até a porteira.
 | Gap até a ATP | ~1.856 m | 0 m |
 | Distância total | 9,7 km | ~11,6 km |
 
+## Validação em produção (2026-08-04 ~14:21, PC `server`)
+
+- `origin/main` = `62edb7a2` (GitHub e working tree alinhados)
+- `pnpm exec vitest run backend/croqui/{routing,narrative,route-options}.test.ts` → **36/36**
+- `geoforest-backend.service` ativo; `http://127.0.0.1:3001/api/health` e `https://geoforest-api.cursar.space/api/health` → **200**
+- Job `3116742c-…` regenerado: label **11,6 km**, KML com último trecho até a divisa, pin de chegada na porteira
+- Changelog neste arquivo: raw GitHub **HTTP 200**
+
 ## Testes
 
 `backend/croqui/routing.test.ts` — casos novos:
