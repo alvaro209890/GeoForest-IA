@@ -23,6 +23,7 @@ import {
 import type { MultiPolygon, Polygon, Position } from "geojson";
 import {
   destinationOnPolygonBoundary,
+  ensureRouteReachesPolygon,
   fetchDrivingRoutes,
   fetchNearestOnRoad,
   trimRouteAtPolygon,
@@ -226,8 +227,9 @@ export function labelForOption(
 
 /**
  * Roteia até o centroide e corta na divisa: o corte é o acesso real. Quando a
- * rota nem chega a entrar no imóvel, refaz mirando o ponto de divisa mais
- * próximo — mesmo comportamento de antes, agora reaproveitado por candidato.
+ * rota nem chega a entrar no imóvel (OSM sem via rural até a porteira), refaz
+ * mirando a divisa e, se ainda ficar curto, completa o trecho final em linha
+ * reta até a porteira (`ensureRouteReachesPolygon`).
  */
 async function routeToProperty(
   waypoints: Position[],
@@ -243,7 +245,7 @@ async function routeToProperty(
       ...waypoints.slice(0, -1),
       [dest.lon, dest.lat],
     ]);
-    return trimRouteAtPolygon(rerouted[0], atpGeometry).route;
+    return ensureRouteReachesPolygon(rerouted[0], atpGeometry);
   } catch {
     return null;
   }
@@ -281,8 +283,7 @@ export async function discoverRouteOptions(args: DiscoverRouteOptionsArgs): Prom
   try {
     const variants = await fetchDrivingRoutes([start, [destLon, destLat]], { alternatives: 3 });
     for (const variant of variants.slice(1)) {
-      const cut = trimRouteAtPolygon(variant, atpGeometry);
-      pushIfDistinct(accepted, cut.route, maxOptions);
+      pushIfDistinct(accepted, ensureRouteReachesPolygon(variant, atpGeometry), maxOptions);
     }
   } catch {
     // sem alternativas nativas: segue só com os desvios forçados

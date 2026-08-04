@@ -34,6 +34,7 @@ import { resolveLandmark } from "./croqui/landmarks";
 import { buildCroquiNarrative } from "./croqui/narrative";
 import {
   destinationOnPolygonBoundary,
+  ensureRouteReachesPolygon,
   fetchDrivingRoute,
   trimRouteAtPolygon,
   type CroquiRoute,
@@ -193,8 +194,8 @@ export function toRouteOptionPayload(
 
 /**
  * Roteia até o centroide e corta na divisa: o ponto de corte é o acesso real.
- * Quando a rota não chega a entrar no imóvel, cai para o ponto de divisa mais
- * próximo.
+ * Quando a rota não chega a entrar no imóvel (OSM incompleto no rural), completa
+ * o trecho final até a porteira em linha reta.
  */
 async function routeToBoundary(
   atpGeometry: Polygon | MultiPolygon,
@@ -206,7 +207,8 @@ async function routeToBoundary(
   const cut = trimRouteAtPolygon(toCentroid, atpGeometry);
   if (cut.trimmed) return cut.route;
   const dest = destinationOnPolygonBoundary(atpGeometry, landmark.lon, landmark.lat);
-  return fetchDrivingRoute(landmark.lon, landmark.lat, dest.lon, dest.lat);
+  const fallback = await fetchDrivingRoute(landmark.lon, landmark.lat, dest.lon, dest.lat);
+  return ensureRouteReachesPolygon(fallback, atpGeometry);
 }
 
 export async function generateCroquiArtifacts(args: {

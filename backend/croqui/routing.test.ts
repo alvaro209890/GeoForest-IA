@@ -5,6 +5,8 @@ import { formatDmsPair } from "./coords";
 import {
   classifyManeuver,
   destinationOnPolygonBoundary,
+  ensureRouteReachesPolygon,
+  extendRouteToPolygon,
   primaryRoadRef,
   resolveRoadLabel,
   simplifyRouteSteps,
@@ -168,6 +170,82 @@ describe("croqui routing", () => {
     const { route, trimmed } = trimRouteAtPolygon(rota, quadrado);
     expect(trimmed).toBe(false);
     expect(route).toBe(rota);
+  });
+
+  it("completa o caminho até a divisa quando o OSRM para longe do imóvel", () => {
+    // Caso Estância MDM: via mapeada acaba ~1,9 km ao norte da ATP.
+    const propriedade: Polygon = {
+      type: "Polygon",
+      coordinates: [
+        [
+          [-51.8255, -13.0377],
+          [-51.8127, -13.0377],
+          [-51.8127, -13.0214],
+          [-51.8255, -13.0214],
+          [-51.8255, -13.0377],
+        ],
+      ],
+    };
+    const coordinates = [
+      [-51.824578, -12.936782],
+      [-51.80353, -13.010433],
+    ];
+    const rota: CroquiRoute = {
+      coordinates,
+      waypoints: [
+        waypoint(-51.824578, -12.936782, 9718, "depart", "Avenida Padre João Bosco", 0),
+        waypoint(-51.80353, -13.010433, 0, "arrive", "", 1),
+      ],
+      totalDistanceM: 9718,
+      arrivalSide: "direita",
+      geometry: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } },
+    };
+
+    const { route, extended, gapM } = extendRouteToPolygon(rota, propriedade);
+    expect(extended).toBe(true);
+    expect(gapM).toBeGreaterThan(1000);
+    const fim = route.coordinates[route.coordinates.length - 1];
+    expect(fim[1]).toBeCloseTo(-13.0214, 3); // divisa norte
+    expect(route.waypoints[route.waypoints.length - 1].maneuver).toBe("arrive");
+    expect(route.totalDistanceM).toBeGreaterThan(rota.totalDistanceM);
+    expect(route.arrivalSide).toBeNull();
+
+    const ensured = ensureRouteReachesPolygon(rota, propriedade);
+    expect(ensured.coordinates).toHaveLength(3);
+    const gate = ensured.coordinates[ensured.coordinates.length - 1];
+    expect(gate[1]).toBeCloseTo(-13.0214, 3);
+  });
+
+  it("não inventa trecho quando o fim já está na divisa", () => {
+    const quadrado: Polygon = {
+      type: "Polygon",
+      coordinates: [
+        [
+          [-52.0, -12.0],
+          [-51.9, -12.0],
+          [-51.9, -11.9],
+          [-52.0, -11.9],
+          [-52.0, -12.0],
+        ],
+      ],
+    };
+    const coordinates = [
+      [-52.2, -11.95],
+      [-52.0, -11.95],
+    ];
+    const rota: CroquiRoute = {
+      coordinates,
+      waypoints: [
+        waypoint(-52.2, -11.95, 20000, "depart", "MT-242", 0),
+        waypoint(-52.0, -11.95, 0, "arrive", "", 1),
+      ],
+      totalDistanceM: 20000,
+      arrivalSide: null,
+      geometry: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } },
+    };
+    const { extended, gapM } = extendRouteToPolygon(rota, quadrado);
+    expect(extended).toBe(false);
+    expect(gapM).toBeLessThan(80);
   });
 
   it("encontra o ponto da divisa mais próximo como destino de fallback", () => {

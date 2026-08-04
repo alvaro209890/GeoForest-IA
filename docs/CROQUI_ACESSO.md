@@ -54,7 +54,10 @@ O que foi medido nos modelos e virou especificação:
 2. **Município** — malha IBGE local, com fallback no WFS da SEMA.
 3. **Ponto de partida** — landmark curado → sede do município → centroide da malha.
 4. **Caminhos de acesso** — descobre os corredores viários distintos até o imóvel, cada um
-   cortado onde cruza a divisa. Havendo mais de um, **o usuário escolhe**.
+   cortado onde cruza a divisa. Se a rede OSM **não chega** à porteira (comum no rural de MT),
+   o traçado é **completado em linha reta** do fim da via mapeada até a divisa
+   (`ensureRouteReachesPolygon` / `extendRouteToPolygon`). Havendo mais de um corredor,
+   **o usuário escolhe**.
 5. **Simplificação** — trechos na mesma via são fundidos e os curtos absorvidos.
 6. **Artefatos** — PDF, DOCX e KML, empacotados num ZIP.
 
@@ -275,6 +278,7 @@ GOOGLE_STATIC_MAPS_KEY=          # Maps Static API — base com rótulos, igual 
 CROQUI_OSRM_BASE_URL=https://router.project-osrm.org
 CROQUI_OSRM_RETRIES=3           # tentativas em caso de falha de rede
 CROQUI_MIN_STEP_M=300           # trechos menores viram parte do anterior
+CROQUI_REACH_TOLERANCE_M=80     # abaixo disso não estende até a divisa (já na porteira)
 
 # --- Escolha do caminho ---
 CROQUI_MAX_ROUTE_OPTIONS=4       # teto de caminhos oferecidos ao usuário
@@ -294,7 +298,7 @@ PUBLIC_API_BASE_URL=             # base pública p/ URLs de download (default: h
 |---------|-------|
 | `backend/croqui.ts` | Rotas Express, job assíncrono, SSE, empacotamento do ZIP |
 | `backend/croqui/basemap.ts` | Web Mercator, zoom, provedores de imagem, barra de escala |
-| `backend/croqui/routing.ts` | OSRM (rota, alternativas, `/nearest`), nomes de via, simplificação, corte na divisa |
+| `backend/croqui/routing.ts` | OSRM (rota, alternativas, `/nearest`), nomes de via, simplificação, corte na divisa, extensão até a porteira quando o OSM não alcança |
 | `backend/croqui/route-options.ts` | Descoberta, limpeza, deduplicação e rótulo dos caminhos |
 | `backend/croqui/landmarks.ts` | Ponto de partida e rótulos de cidade dentro do quadro |
 | `backend/croqui/narrative.ts` | Texto do roteiro |
@@ -385,6 +389,10 @@ melhor faltar uma sede do que gravar uma sede errada. Leva ~4 minutos.
 - **Ponto de passagem fora de rota gera vai-e-volta.** O OSRM vai até ele e volta pelo mesmo
   caminho. Entregar esse traçado ao usuário seria mostrar um desvio que ninguém faz — daí o
   `stripOutAndBackSpurs` + reroteamento pelo ponto que identifica o corredor.
+- **OSM sem via até a porteira.** No rural de MT o OSRM encaixa o destino na estrada mais
+  próxima e a rota **nunca entra** no polígono. Sem `ensureRouteReachesPolygon` o croqui
+  termina quilômetros antes (Estância MDM, ago/2026: gap de ~1,9 km). O trecho final off-road
+  é linha reta até a divisa — igual aos croquis manuais no Google Earth.
 
 ### KML
 

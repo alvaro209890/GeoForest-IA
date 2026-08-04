@@ -443,3 +443,94 @@ export function trimRouteAtPolygon(
     },
   };
 }
+
+/** Abaixo disso o fim da rota já é a porteira — não inventa trecho off-road. */
+const REACH_TOLERANCE_M = Number(process.env.CROQUI_REACH_TOLERANCE_M || 80);
+
+/**
+ * Completa o caminho até a divisa quando o OSRM para na via asfaltada mais
+ * próxima e a rede OSM não cobre o acesso rural até a porteira.
+ *
+ * Sem isso o croqui termina quilômetros antes do imóvel (ex.: Estância MDM,
+ * Ribeirão Cascalheira — gap de ~1,9 km). O trecho final é linha reta do fim
+ * da via mapeada até o ponto da divisa mais próximo — o padrão dos croquis
+ * manuais no Google Earth quando não há estrada no OSM.
+ */
+export function extendRouteToPolygon(
+  route: CroquiRoute,
+  geometry: Polygon | MultiPolygon,
+): { route: CroquiRoute; extended: boolean; gapM: number } {
+  const coords = route.coordinates;
+  if (!coords.length) return { route, extended: false, gapM: 0 };
+
+  const end = coords[coords.length - 1];
+  const gate = destinationOnPolygonBoundary(geometry, end[0], end[1]);
+  const gapSegment = lineString([end, [gate.lon, gate.lat]]);
+  const gapM = turfLength(gapSegment, { units: "meters" });
+
+  if (!(gapM > REACH_TOLERANCE_M)) {
+    return { route, extended: false, gapM };
+  }
+
+  const extendedCoords = [...coords, [gate.lon, gate.lat] as Position];
+  const waypoints = route.waypoints.map((w) => ({ ...w }));
+  if (!waypoints.length) {
+    waypoints.push({
+      lon: end[0],
+      lat: end[1],
+      dms: formatDmsPair(end[0], end[1]),
+      distanceToNextM: gapM,
+      maneuver: "depart",
+      roadName: "",
+      coordIndex: Math.max(0, coords.length - 1),
+    });
+  } else {
+    const last = waypoints[waypoints.length - 1];
+    last.lon = end[0];
+    last.lat = end[1];
+    last.dms = formatDmsPair(end[0], end[1]);
+    last.coordIndex = Math.max(0, coords.length - 1);
+    last.distanceToNextM = gapM;
+    if (last.maneuver === "arrive") last.maneuver = "straight";
+  }
+
+  waypoints.push({
+    lon: gate.lon,
+    lat: gate.lat,
+    dms: formatDmsPair(gate.lon, gate.lat),
+    distanceToNextM: 0,
+    maneuver: "arrive",
+    roadName: "",
+    coordIndex: extendedCoords.length - 1,
+  });
+
+  return {
+    extended: true,
+    gapM,
+    route: {
+      ...route,
+      coordinates: extendedCoords,
+      waypoints,
+      arrivalSide: null,
+      totalDistanceM: turfLength(lineString(extendedCoords), { units: "meters" }),
+      geometry: {
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: extendedCoords },
+      },
+    },
+  };
+}
+
+/**
+ * Garante que o traçado chega na divisa: corta se entra no polígono; senão
+ * completa o trecho off-road até a porteira.
+ */
+export function ensureRouteReachesPolygon(
+  route: CroquiRoute,
+  geometry: Polygon | MultiPolygon,
+): CroquiRoute {
+  const cut = trimRouteAtPolygon(route, geometry);
+  if (cut.trimmed) return cut.route;
+  return extendRouteToPolygon(cut.route, geometry).route;
+}
