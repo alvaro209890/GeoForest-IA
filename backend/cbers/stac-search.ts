@@ -2,7 +2,7 @@
  * Busca STAC no BDC/INPE: cenas por área/órbita-ponto, item e estimativa de download.
  */
 import type { MultiPolygon, Polygon } from "geojson";
-import { attachArchiveAvailability } from "./archive";
+import { attachArchiveAvailability } from "./reuse";
 import { assertCbersL4GenerationItem, inferCbersCollection } from "./collections";
 import { CBERS_COLLECTIONS, CBERS_ORBIT_POINT_SEARCH_MAX_PAGES, CBERS_REQUIRED_ASSETS, CBERS_SEARCH_LIMIT, FETCH_TIMEOUT_MS, STAC_ROOT } from "./constants";
 import { CbersCollectionConfig, CbersEstimate, CbersScene } from "./types";

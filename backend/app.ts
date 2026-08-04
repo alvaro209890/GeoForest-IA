@@ -7,7 +7,7 @@ import { createCorsMiddleware } from "./middleware/cors";
 import { createRequestLogger } from "./middleware/request-logger";
 import { requireAuth, attachOptionalAuth } from "./auth";
 import { STORAGE_ROOT } from "./local-storage";
-import { CBERS_ARCHIVE_ROOT } from "./cbers-archive";
+import { CBERS_ARCHIVE_ROOT } from "./cbers/archive";
 import { registerAllRoutes } from "./routes/_registry";
 import type { Logger } from "./lib/logger";
 

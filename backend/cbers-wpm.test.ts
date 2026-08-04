@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CbersArchiveRecord } from "./cbers-archive";
+import type { CbersArchiveRecord } from "./cbers/archive";
 import { assertCbersL4GenerationItem, buildReusedCbersSceneState } from "./cbers-wpm";
 
 describe("CBERS WPM generation guard", () => {

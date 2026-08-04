@@ -246,3 +246,6 @@
 [2026-07-17T13:13:56.751Z] {"timestamp":1784294036735,"level":"WARN","args":["[auth-wake] backend respondeu com erro","500","Internal Server Error"],"stack":null}
 [2026-07-17T13:14:36.779Z] {"timestamp":1784294075974,"level":"DEBUG","args":["[vite]","hot updated: /src/index.css"],"stack":null}
 [2026-07-17T13:14:36.779Z] {"timestamp":1784294075981,"level":"DEBUG","args":["[vite]","hot updated: /src/pages/Dashboard.tsx"],"stack":null}
+[2026-08-02T02:20:08.357Z] {"timestamp":1785637206353,"level":"DEBUG","args":["[Manus] Debug collector initialized (no rrweb, UI events only)"],"stack":null}
+[2026-08-02T02:20:08.357Z] {"timestamp":1785637206451,"level":"DEBUG","args":["[vite] connected."],"stack":null}
+[2026-08-02T02:20:08.357Z] {"timestamp":1785637206859,"level":"INFO","args":["%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools","font-weight:bold"],"stack":null}

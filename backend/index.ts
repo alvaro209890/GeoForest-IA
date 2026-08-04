@@ -82,7 +82,7 @@ import { registerCbersWpmRoutes } from "./cbers-wpm";
 import { registerLandsatRoutes } from "./landsat";
 import { registerVerticesRoutes } from "./vertices-proximas";
 import { registerContainmentRoutes } from "./containment-analysis";
-import { registerOverlapRoutes } from "./overlap-analysis";
+import { registerOverlapRoutes } from "./overlap";
 import { registerCroquiRoutes } from "./croqui";
 import { registerGeometryErrorsRoutes } from "./geometry-errors";
 import { registerProcessarProjetoRoutes } from "./processar-projeto";

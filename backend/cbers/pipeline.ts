@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { MultiPolygon, Polygon } from "geojson";
-import { publishCbersPanToArchive } from "../cbers-archive";
+import { publishCbersPanToArchive } from "./archive";
 import { cbersOutputFilename } from "./collections";
 import { CBERS_STRETCH_SIGMA } from "./constants";
 import { downloadAsset } from "./download";

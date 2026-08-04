@@ -1,171 +1,1105 @@
-/**
- * Acervo CBERS: reaproveitamento de cenas já processadas e disponibilidade WMS.
- */
-import { finishJob } from "../processing-jobs";
-import type { CbersArchiveRecord } from "../cbers-archive";
-import { listCbersArchiveRecords } from "../cbers-archive";
-import { cbersCollectionByLevel } from "./collections";
-import { CBERS_GENERATION_LEVEL } from "./constants";
-import { findLocalGeoserverLayerForItem } from "./geoserver";
-import { persistCbersJob } from "./sse";
-import { CbersAreaContext, CbersScene, CbersSceneJobState } from "./types";
-import { CbersWmsAvailability, parseCbersItemIdForWms, wmsDownloadPathForArchiveImage } from "./wms";
+import type { Express, Request, Response as ExpressResponse } from "express";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { STORAGE_ROOT } from "../local-storage";
 
-export function isActiveArchiveRecord(record: CbersArchiveRecord | null | undefined): record is CbersArchiveRecord {
-  return Boolean(
-    record &&
-    !record.adminDeletedAt &&
-    record.wmsPublicUrl &&
-    (record.wmsLayerName || record.wmsStoreName),
+type PlainObject = Record<string, any>;
+
+type AdminStorageFile = {
+  id: string;
+  uid: string;
+  name: string;
+  relativePath: string;
+  absolutePath?: string;
+  publicUrl?: string;
+  category: string;
+  source: "user_storage" | "raster_archive";
+  extension: string;
+  bytes: number;
+  modifiedAt?: string;
+  createdAt?: string;
+  imageId?: string;
+  wmsPublicUrl?: string;
+  adminDeletedAt?: string;
+  userDeletedAt?: string;
+};
+
+export type CbersArchiveRecord = {
+  imageId: string;
+  uid: string;
+  jobId: string;
+  itemId: string;
+  level?: "L4" | "L2";
+  geometryHash?: string;
+  orbit: string;
+  year: string;
+  sourceFilename: string;
+  archiveFilename: string;
+  hdRelativePath: string;
+  hdPath: string;
+  bytes: number;
+  publicUrl: string;
+  wmsLayerName: string;
+  wmsStoreName: string;
+  wmsPublicUrl: string;
+  createdAt: string;
+  updatedAt: string;
+  userDeletedAt?: string;
+  adminDeletedAt?: string;
+  adminDeleteError?: string;
+};
+
+export const CBERS_ARCHIVE_ROOT = path.resolve(
+  process.env.CBERS_ARCHIVE_ROOT || "/media/server/HD Backup/RASTER/CBERS_4A",
+);
+const CBERS_ARCHIVE_INDEX_DIR = path.join(STORAGE_ROOT, "cbers_archive", "images");
+const GEOSERVER_BASE_URL = String(
+  process.env.GEOSERVER_BASE_URL || "http://127.0.0.1:8081/geoserver",
+).replace(/\/+$/, "");
+const GEOSERVER_USER = process.env.GEOSERVER_USER || "admin";
+const GEOSERVER_PASSWORD = process.env.GEOSERVER_PASSWORD || "geoserver";
+const GEOSERVER_WORKSPACE = process.env.GEOSERVER_WORKSPACE || "cbers";
+const GEOSERVER_STYLE = process.env.GEOSERVER_RASTER_STYLE || "raster";
+const GEOSERVER_PUBLIC_WMS_BASE = String(
+  process.env.GEOSERVER_PUBLIC_WMS_BASE ||
+    "https://wms.cursar.space/geoserver/cbers/wms",
+).trim();
+const GEOSERVER_EXTERNAL_CBRS_ROOT = path.resolve(
+  process.env.GEOSERVER_EXTERNAL_CBRS_ROOT ||
+    "/home/server/.local/geoserver-work/data_dir/external/cbers",
+);
+const ROOT_CBRS_GROUP = "CBERS-4A-Apos_2019";
+const RESERVED_USER_STORAGE_NAMES = new Set([
+  "attachments",
+  "auas",
+  "cbers",
+  "cbers_wpm_jobs",
+  "conversations",
+  "processing_jobs",
+  "settings",
+  "simcar",
+  "simcar_clips",
+  "trash",
+]);
+const CBERS_OVERVIEW_LEVELS = String(
+  process.env.CBERS_OVERVIEW_LEVELS || "2 4 8 16 32 64 128",
+)
+  .split(/\s+/)
+  .map((value) => Number(value))
+  .filter((value) => Number.isInteger(value) && value > 1);
+// Resampling used to build the .ovr pyramids. "average" smooths the zoomed-out imagery far
+// better than gdaladdo's default "nearest", which looks noisy/aliased at small scales.
+const CBERS_OVERVIEW_RESAMPLING = String(
+  process.env.CBERS_OVERVIEW_RESAMPLING || "average",
+).trim() || "average";
+// GeoServer can be briefly unavailable right after a deploy/restart while a scene finishes
+// processing. Retry publish operations with a short backoff instead of dropping the scene.
+const GEOSERVER_PUBLISH_RETRIES = Math.max(
+  0,
+  Number(process.env.GEOSERVER_PUBLISH_RETRIES || 4),
+);
+const GEOSERVER_PUBLISH_RETRY_DELAY_MS = Math.max(
+  500,
+  Number(process.env.GEOSERVER_PUBLISH_RETRY_DELAY_MS || 4000),
+);
+const GEOSERVER_READY_TIMEOUT_MS = Math.max(
+  0,
+  Number(process.env.GEOSERVER_READY_TIMEOUT_MS || 60000),
+);
+
+function ensureDir(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function removeStaleTempCopies(dir: string, prefix: string): void {
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix) || !entry.endsWith(".tmp")) continue;
+    const tempPath = path.join(dir, entry);
+    try {
+      const stat = fs.statSync(tempPath);
+      if (stat.mtimeMs < cutoff) fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+}
+
+function copyFileAtomic(sourcePath: string, destPath: string): number {
+  ensureDir(path.dirname(destPath));
+  const sourceStat = fs.statSync(sourcePath);
+  const tempPrefix = `.${path.basename(destPath)}.`;
+  removeStaleTempCopies(path.dirname(destPath), tempPrefix);
+  const tempPath = path.join(path.dirname(destPath), `${tempPrefix}${crypto.randomUUID()}.tmp`);
+  try {
+    fs.copyFileSync(sourcePath, tempPath);
+    const tempStat = fs.statSync(tempPath);
+    if (tempStat.size !== sourceStat.size) {
+      throw new Error(`COPY_SIZE_MISMATCH:${tempStat.size}:${sourceStat.size}`);
+    }
+    fs.renameSync(tempPath, destPath);
+    return tempStat.size;
+  } catch (error) {
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Keep the original copy error.
+    }
+    throw error;
+  }
+}
+
+export function cbersArchivePublicUrl(relativePath: string): string {
+  return `/api/raster/${relativePath.split(path.sep).join("/")}`;
+}
+
+export function saveCbersArchiveAsset(args: {
+  subdir?: string;
+  filename: string;
+  sourcePath: string;
+}): { relativePath: string; absolutePath: string; publicUrl: string; bytes: number } {
+  const subdirParts = String(args.subdir || "")
+    .split(/[\\/]+/)
+    .map((part) => safeSegment(part))
+    .filter(Boolean);
+  const cleanName = safeSegment(args.filename) || crypto.randomUUID();
+  const absoluteDir = path.join(CBERS_ARCHIVE_ROOT, ...subdirParts);
+  const absolutePath = path.join(absoluteDir, cleanName);
+  const bytes = copyFileAtomic(args.sourcePath, absolutePath);
+  const relativePath = path.relative(CBERS_ARCHIVE_ROOT, absolutePath).split(path.sep).join("/");
+  return {
+    relativePath,
+    absolutePath,
+    publicUrl: cbersArchivePublicUrl(relativePath),
+    bytes,
+  };
+}
+
+async function runCommand(command: string, args: string[]): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    const keepOutput = (chunk: Buffer) => {
+      output += chunk.toString("utf8");
+      if (output.length > 6000) output = output.slice(-6000);
+    };
+    child.stdout.on("data", keepOutput);
+    child.stderr.on("data", keepOutput);
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`${command} falhou com codigo ${code}: ${output.slice(-1200)}`));
+    });
+  });
+}
+
+async function ensureExternalOverviews(tifPath: string): Promise<string | null> {
+  if (!CBERS_OVERVIEW_LEVELS.length) return null;
+  const overviewPath = `${tifPath}.ovr`;
+  const tifStat = fs.statSync(tifPath);
+  if (fs.existsSync(overviewPath)) {
+    const overviewStat = fs.statSync(overviewPath);
+    if (overviewStat.size > 0 && overviewStat.mtimeMs >= tifStat.mtimeMs) return overviewPath;
+  }
+  await runCommand("gdaladdo", [
+    "-ro",
+    "-r", CBERS_OVERVIEW_RESAMPLING,
+    "--config", "COMPRESS_OVERVIEW", "LZW",
+    "--config", "INTERLEAVE_OVERVIEW", "PIXEL",
+    "--config", "BIGTIFF_OVERVIEW", "IF_SAFER",
+    tifPath,
+    ...CBERS_OVERVIEW_LEVELS.map(String),
+  ]);
+  return fs.existsSync(overviewPath) ? overviewPath : null;
+}
+
+async function ensureRgbColorInterpretation(tifPath: string): Promise<void> {
+  await runCommand("gdal_edit.py", [
+    "-colorinterp_1", "red",
+    "-colorinterp_2", "green",
+    "-colorinterp_3", "blue",
+    tifPath,
+  ]);
+}
+
+function writeJsonAtomic(filePath: string, data: unknown): void {
+  ensureDir(path.dirname(filePath));
+  const tmp = `${filePath}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+  fs.renameSync(tmp, filePath);
+}
+
+function readJsonSafe<T>(filePath: string, fallback: T): T {
+  try {
+    if (!fs.existsSync(filePath)) return fallback;
+    return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function safeSegment(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function isAdminUserIdCandidate(uid: string): boolean {
+  const clean = safeSegment(uid);
+  if (!clean || clean !== uid) return false;
+  if (RESERVED_USER_STORAGE_NAMES.has(clean)) return false;
+  return true;
+}
+
+function cleanLayerName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function xmlEscape(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function parseCbersItemId(itemId: string): { orbit: string; year: string } {
+  const match = String(itemId || "").match(/(20\d{2})\d{4}[_-](\d{3})[_-](\d{3})/);
+  if (!match) throw new Error(`Item CBERS sem data/orbita valida: ${itemId}`);
+  return { year: match[1], orbit: `${match[2]}_${match[3]}` };
+}
+
+function parseCbersItemLevel(itemId: string): "L4" | "L2" | null {
+  const match = String(itemId || "").match(/[_-](L[24])(?:$|[_-])/i);
+  const level = match?.[1]?.toUpperCase();
+  return level === "L4" || level === "L2" ? level : null;
+}
+
+function ensureCbersLevelInFilename(filename: string, level?: string | null): string {
+  const cleanLevel = String(level || "").toUpperCase();
+  if (cleanLevel !== "L4" && cleanLevel !== "L2") return filename;
+  const ext = path.extname(filename) || ".TIF";
+  let stem = filename.slice(0, filename.length - ext.length);
+  stem = /[_-]L[24](?=$|[_-])/i.test(stem)
+    ? stem.replace(/([_-])L[24](?=$|[_-])/i, `$1${cleanLevel}`)
+    : `${stem}_${cleanLevel}`;
+  return `${stem}${ext}`;
+}
+
+function withJobSuffix(filename: string, jobId: string): string {
+  const ext = path.extname(filename) || ".TIF";
+  const stem = filename.slice(0, filename.length - ext.length);
+  return `${stem}_J${safeSegment(jobId).slice(0, 8).toUpperCase()}${ext.toUpperCase()}`;
+}
+
+function authHeader(): string {
+  return `Basic ${Buffer.from(`${GEOSERVER_USER}:${GEOSERVER_PASSWORD}`).toString("base64")}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// 5xx/connection failures here are almost always GeoServer mid-restart (e.g. right after a
+// deploy) rather than a bad request, so they are worth retrying.
+function isTransientStatus(status: number): boolean {
+  return status === 0 || status === 429 || (status >= 500 && status <= 599);
+}
+
+async function geoserverFetch(
+  restPath: string,
+  options: RequestInit = {},
+): Promise<globalThis.Response> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= GEOSERVER_PUBLISH_RETRIES; attempt += 1) {
+    try {
+      const response = (await fetch(`${GEOSERVER_BASE_URL}${restPath}`, {
+        ...options,
+        headers: {
+          Authorization: authHeader(),
+          ...(options.headers || {}),
+        },
+      })) as globalThis.Response;
+      if (isTransientStatus(response.status) && attempt < GEOSERVER_PUBLISH_RETRIES) {
+        await sleep(GEOSERVER_PUBLISH_RETRY_DELAY_MS);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      // Network-level failure (connection refused/reset while GeoServer restarts).
+      lastError = error;
+      if (attempt >= GEOSERVER_PUBLISH_RETRIES) break;
+      await sleep(GEOSERVER_PUBLISH_RETRY_DELAY_MS);
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`GeoServer indisponível em ${GEOSERVER_BASE_URL}${restPath}`);
+}
+
+// Polls GeoServer until it answers, so a scene that finishes processing while GeoServer is
+// still coming up after a restart waits for it instead of failing to publish.
+async function waitForGeoserverReady(): Promise<void> {
+  if (GEOSERVER_READY_TIMEOUT_MS <= 0) return;
+  const deadline = Date.now() + GEOSERVER_READY_TIMEOUT_MS;
+  let lastError: unknown = null;
+  for (;;) {
+    try {
+      const response = (await fetch(`${GEOSERVER_BASE_URL}/rest/about/version.json`, {
+        headers: { Authorization: authHeader() },
+      })) as globalThis.Response;
+      if (response.ok || response.status === 401 || response.status === 403) return;
+      lastError = new Error(`status ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `GeoServer não respondeu em ${GEOSERVER_BASE_URL} após ${Math.round(
+          GEOSERVER_READY_TIMEOUT_MS / 1000,
+        )}s: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+      );
+    }
+    await sleep(GEOSERVER_PUBLISH_RETRY_DELAY_MS);
+  }
+}
+
+async function geoserverJson(restPath: string): Promise<PlainObject | null> {
+  const response = await geoserverFetch(restPath, { method: "GET" });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`GeoServer GET ${restPath} falhou: ${response.status}`);
+  return (await response.json()) as PlainObject;
+}
+
+async function geoserverWrite(
+  restPath: string,
+  method: "POST" | "PUT" | "DELETE",
+  body?: string,
+  contentType?: string,
+): Promise<void> {
+  const response = await geoserverFetch(restPath, {
+    method,
+    body,
+    headers: contentType ? { "Content-Type": contentType } : undefined,
+  });
+  if ([200, 201, 202, 204, 409, 404].includes(response.status)) return;
+  const text = await response.text().catch(() => "");
+  throw new Error(`GeoServer ${method} ${restPath} falhou: ${response.status} ${text.slice(0, 300)}`);
+}
+
+function asArray(value: unknown): any[] {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") return [value];
+  return [];
+}
+
+function groupPublished(payload: PlainObject | null): PlainObject[] {
+  return asArray(payload?.layerGroup?.publishables?.published);
+}
+
+function groupStyles(payload: PlainObject | null): any[] {
+  return asArray(payload?.layerGroup?.styles?.style);
+}
+
+async function upsertLayerGroup(args: {
+  name: string;
+  title: string;
+  publishable: PlainObject;
+  style: PlainObject | string;
+}): Promise<void> {
+  const existing = await geoserverJson(
+    `/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${encodeURIComponent(args.name)}.json`,
+  );
+  const currentPublished = groupPublished(existing);
+  const currentStyles = groupStyles(existing);
+  const alreadyAt = currentPublished.findIndex((item) => String(item?.name || "") === args.publishable.name);
+  const published =
+    alreadyAt >= 0
+      ? currentPublished
+      : [...currentPublished, args.publishable];
+  const styles =
+    alreadyAt >= 0
+      ? currentStyles
+      : [...currentStyles, args.style];
+
+  const payload = {
+    layerGroup: {
+      name: args.name,
+      mode: "NAMED",
+      title: args.title,
+      enabled: true,
+      advertised: true,
+      workspace: { name: GEOSERVER_WORKSPACE },
+      publishables: { published },
+      styles: { style: styles },
+    },
+  };
+  const body = JSON.stringify(payload);
+  if (existing) {
+    await geoserverWrite(
+      `/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${encodeURIComponent(args.name)}`,
+      "PUT",
+      body,
+      "application/json",
+    );
+  } else {
+    await geoserverWrite(
+      `/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups`,
+      "POST",
+      body,
+      "application/json",
+    );
+  }
+}
+
+async function deleteLayerGroup(name: string): Promise<void> {
+  await geoserverWrite(
+    `/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${encodeURIComponent(name)}`,
+    "DELETE",
   );
 }
 
-export function archiveAvailabilityFromRecord(record: CbersArchiveRecord): CbersWmsAvailability {
-  return {
-    wmsLayerName: record.wmsLayerName || record.wmsStoreName,
-    wmsUrl: record.wmsPublicUrl,
-    wmsDownloadUrl: wmsDownloadPathForArchiveImage(record.imageId),
-    sourcePath: record.hdPath,
-    archiveImageId: record.imageId,
-    archiveFilename: record.archiveFilename,
-  };
+async function removePublishableFromGroup(groupName: string, publishableName: string): Promise<boolean> {
+  const existing = await geoserverJson(
+    `/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${encodeURIComponent(groupName)}.json`,
+  );
+  if (!existing?.layerGroup) return false;
+  const currentPublished = groupPublished(existing);
+  const currentStyles = groupStyles(existing);
+  const published: PlainObject[] = [];
+  const styles: any[] = [];
+  currentPublished.forEach((item, index) => {
+    if (String(item?.name || "") === publishableName) return;
+    published.push(item);
+    styles.push(currentStyles[index] ?? "");
+  });
+  if (published.length === currentPublished.length) return published.length === 0;
+  if (published.length === 0 && groupName !== "RASTER" && groupName !== ROOT_CBRS_GROUP) {
+    await deleteLayerGroup(groupName);
+    return true;
+  }
+  const previous = existing.layerGroup;
+  await geoserverWrite(
+    `/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${encodeURIComponent(groupName)}`,
+    "PUT",
+    JSON.stringify({
+      layerGroup: {
+        name: groupName,
+        mode: previous.mode || "NAMED",
+        title: previous.title || groupName,
+        enabled: previous.enabled !== false,
+        advertised: previous.advertised !== false,
+        workspace: { name: GEOSERVER_WORKSPACE },
+        publishables: { published },
+        styles: { style: styles },
+      },
+    }),
+    "application/json",
+  );
+  return false;
 }
 
-export function cbersDatetimeFromItemId(itemId: string): string {
-  const parsed = parseCbersItemIdForWms(itemId);
-  if (!parsed?.dateCompact) return "";
-  const iso = `${parsed.dateCompact.slice(0, 4)}-${parsed.dateCompact.slice(4, 6)}-${parsed.dateCompact.slice(6, 8)}T00:00:00Z`;
-  return Number.isFinite(new Date(iso).getTime()) ? iso : "";
+async function removeFromCbersGroups(record: CbersArchiveRecord): Promise<void> {
+  const yearGroup = `orbit_${record.orbit}_y${record.year}`;
+  const orbitGroup = `orbit_${record.orbit}`;
+  const yearDeleted = await removePublishableFromGroup(yearGroup, `${GEOSERVER_WORKSPACE}:${record.wmsStoreName}`);
+  if (yearDeleted) {
+    const orbitDeleted = await removePublishableFromGroup(orbitGroup, `${GEOSERVER_WORKSPACE}:${yearGroup}`);
+    if (orbitDeleted) {
+      await removePublishableFromGroup(ROOT_CBRS_GROUP, `${GEOSERVER_WORKSPACE}:${orbitGroup}`);
+    }
+  }
 }
 
-export function buildReusedCbersSceneState(record: CbersArchiveRecord): CbersSceneJobState {
-  const level = record.level === "L2" || record.level === "L4" ? record.level : CBERS_GENERATION_LEVEL;
-  const collection = level === CBERS_GENERATION_LEVEL
-    ? cbersCollectionByLevel(CBERS_GENERATION_LEVEL)
-    : null;
-  const wmsDownloadUrl = wmsDownloadPathForArchiveImage(record.imageId);
-  return {
-    itemId: record.itemId,
-    collectionId: collection?.collectionId,
-    level,
-    scene: {
-      id: record.itemId,
-      collectionId: collection?.collectionId,
-      level,
-      datetime: cbersDatetimeFromItemId(record.itemId),
-      cloudCover: null,
-      bbox: null,
-      assetKeys: [],
-      wmsAvailable: true,
-      wmsLayerName: record.wmsLayerName,
-      wmsUrl: record.wmsPublicUrl,
-      wmsDownloadUrl,
-      archiveImageId: record.imageId,
-      archiveFilename: record.archiveFilename,
-      alignmentStatus: "aligned",
+async function createCoverageStore(storeName: string): Promise<void> {
+  const body =
+    `<coverageStore>` +
+    `<name>${xmlEscape(storeName)}</name>` +
+    `<type>GeoTIFF</type>` +
+    `<enabled>true</enabled>` +
+    `<workspace><name>${xmlEscape(GEOSERVER_WORKSPACE)}</name></workspace>` +
+    `</coverageStore>`;
+  await geoserverWrite(
+    `/rest/workspaces/${GEOSERVER_WORKSPACE}/coveragestores`,
+    "POST",
+    body,
+    "application/xml",
+  );
+}
+
+function linkForGeoserver(hdPath: string, orbit: string, year: string, storeName: string): string {
+  const mirrorDir = path.join(GEOSERVER_EXTERNAL_CBRS_ROOT, orbit, year, storeName);
+  ensureDir(mirrorDir);
+  const target = path.join(mirrorDir, path.basename(hdPath));
+  try {
+    if (fs.existsSync(target) || fs.lstatSync(target).isSymbolicLink()) fs.unlinkSync(target);
+  } catch {
+    // Missing symlink is fine.
+  }
+  fs.symlinkSync(hdPath, target);
+  const overviewPath = `${hdPath}.ovr`;
+  const overviewTarget = `${target}.ovr`;
+  try {
+    if (fs.existsSync(overviewTarget) || fs.lstatSync(overviewTarget).isSymbolicLink()) fs.unlinkSync(overviewTarget);
+  } catch {
+    // Missing symlink is fine.
+  }
+  if (fs.existsSync(overviewPath)) {
+    fs.symlinkSync(overviewPath, overviewTarget);
+  }
+  return target;
+}
+
+function firstFiniteNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return null;
+}
+
+function coverageBounds(payload: PlainObject | null): { minx: number; miny: number; maxx: number; maxy: number } | null {
+  const coverage = payload?.coverage || {};
+  const bbox = coverage.latLonBoundingBox || coverage.nativeBoundingBox || {};
+  const minx = firstFiniteNumber(bbox.minx, bbox.minX);
+  const miny = firstFiniteNumber(bbox.miny, bbox.minY);
+  const maxx = firstFiniteNumber(bbox.maxx, bbox.maxX);
+  const maxy = firstFiniteNumber(bbox.maxy, bbox.maxY);
+  if ([minx, miny, maxx, maxy].some((value) => value === null)) return null;
+  if (!(Number(maxx) > Number(minx)) || !(Number(maxy) > Number(miny))) return null;
+  return { minx: Number(minx), miny: Number(miny), maxx: Number(maxx), maxy: Number(maxy) };
+}
+
+async function verifyGeoTiffWmsPublication(storeName: string): Promise<void> {
+  const layer = await geoserverJson(`/rest/layers/${GEOSERVER_WORKSPACE}:${encodeURIComponent(storeName)}.json`);
+  if (!layer?.layer) throw new Error(`GeoServer não retornou a layer publicada ${GEOSERVER_WORKSPACE}:${storeName}.`);
+
+  const coverage = await geoserverJson(
+    `/rest/workspaces/${GEOSERVER_WORKSPACE}/coveragestores/${encodeURIComponent(storeName)}/coverages/${encodeURIComponent(storeName)}.json`,
+  );
+  const bbox = coverageBounds(coverage);
+  if (!bbox) throw new Error(`GeoServer não retornou bbox válida para ${GEOSERVER_WORKSPACE}:${storeName}.`);
+
+  const params = new URLSearchParams({
+    service: "WMS",
+    version: "1.1.1",
+    request: "GetMap",
+    layers: `${GEOSERVER_WORKSPACE}:${storeName}`,
+    styles: "",
+    srs: "EPSG:4326",
+    bbox: `${bbox.minx},${bbox.miny},${bbox.maxx},${bbox.maxy}`,
+    width: "64",
+    height: "64",
+    format: "image/png",
+    transparent: "true",
+  });
+  const response = await fetch(`${GEOSERVER_BASE_URL}/${GEOSERVER_WORKSPACE}/wms?${params.toString()}`, {
+    headers: { Authorization: authHeader() },
+  }) as globalThis.Response;
+  const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+  const bytes = Buffer.from(await response.arrayBuffer()).length;
+  if (!response.ok || !contentType.startsWith("image/") || bytes < 100) {
+    throw new Error(
+      `WMS GetMap não validou ${GEOSERVER_WORKSPACE}:${storeName}: status=${response.status}, contentType=${contentType}, bytes=${bytes}.`,
+    );
+  }
+}
+
+async function publishGeoTiff(args: {
+  storeName: string;
+  hdPath: string;
+  orbit: string;
+  year: string;
+  title: string;
+}): Promise<void> {
+  await waitForGeoserverReady();
+  await createCoverageStore(args.storeName);
+  const linkedFile = linkForGeoserver(args.hdPath, args.orbit, args.year, args.storeName);
+  await geoserverWrite(
+    `/rest/workspaces/${GEOSERVER_WORKSPACE}/coveragestores/${encodeURIComponent(args.storeName)}/external.geotiff` +
+      `?configure=first&coverageName=${encodeURIComponent(args.storeName)}&recalculate=nativebbox,latlonbbox`,
+    "PUT",
+    linkedFile,
+    "text/plain",
+  );
+
+  await geoserverWrite(
+    `/rest/layers/${GEOSERVER_WORKSPACE}:${encodeURIComponent(args.storeName)}.json`,
+    "PUT",
+    JSON.stringify({
+      layer: {
+        enabled: true,
+        advertised: true,
+        defaultStyle: {
+          name: GEOSERVER_STYLE,
+          href: `${GEOSERVER_BASE_URL}/rest/styles/${GEOSERVER_STYLE}.json`,
+        },
+      },
+    }),
+    "application/json",
+  );
+  await geoserverWrite(
+    `/rest/workspaces/${GEOSERVER_WORKSPACE}/coveragestores/${encodeURIComponent(args.storeName)}/coverages/${encodeURIComponent(args.storeName)}.json`,
+    "PUT",
+    JSON.stringify({ coverage: { title: args.title, enabled: true } }),
+    "application/json",
+  );
+
+  const yearGroup = `orbit_${args.orbit}_y${args.year}`;
+  const orbitGroup = `orbit_${args.orbit}`;
+  await upsertLayerGroup({
+    name: yearGroup,
+    title: args.year,
+    publishable: {
+      "@type": "layer",
+      name: `${GEOSERVER_WORKSPACE}:${args.storeName}`,
+      href: `${GEOSERVER_BASE_URL}/rest/workspaces/${GEOSERVER_WORKSPACE}/layers/${args.storeName}.json`,
     },
-    status: "completed",
-    stage: "completed",
-    percent: 100,
-    message: "Imagem CBERS já publicada no WMS; acervo reaproveitado para este usuário.",
-    outputUrl: wmsDownloadUrl,
-    outputRelativePath: record.hdRelativePath,
-    outputFilename: record.sourceFilename,
-    outputBytes: record.bytes,
-    archive: record,
-    archiveImageId: record.imageId,
-    wmsLayerName: record.wmsLayerName,
-    wmsUrl: record.wmsPublicUrl,
-    wmsDownloadUrl,
-    alignmentStatus: "aligned",
-  };
+    style: { name: GEOSERVER_STYLE, href: `${GEOSERVER_BASE_URL}/rest/styles/${GEOSERVER_STYLE}.json` },
+  });
+  await upsertLayerGroup({
+    name: orbitGroup,
+    title: args.orbit,
+    publishable: {
+      "@type": "layerGroup",
+      name: `${GEOSERVER_WORKSPACE}:${yearGroup}`,
+      href: `${GEOSERVER_BASE_URL}/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${yearGroup}.json`,
+    },
+    style: "",
+  });
+  await upsertLayerGroup({
+    name: ROOT_CBRS_GROUP,
+    title: ROOT_CBRS_GROUP,
+    publishable: {
+      "@type": "layerGroup",
+      name: `${GEOSERVER_WORKSPACE}:${orbitGroup}`,
+      href: `${GEOSERVER_BASE_URL}/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${orbitGroup}.json`,
+    },
+    style: "",
+  });
+  await upsertLayerGroup({
+    name: "RASTER",
+    title: "RASTER",
+    publishable: {
+      "@type": "layerGroup",
+      name: `${GEOSERVER_WORKSPACE}:${ROOT_CBRS_GROUP}`,
+      href: `${GEOSERVER_BASE_URL}/rest/workspaces/${GEOSERVER_WORKSPACE}/layergroups/${ROOT_CBRS_GROUP}.json`,
+    },
+    style: "",
+  });
+
+  await verifyGeoTiffWmsPublication(args.storeName);
 }
 
-export function persistCompletedCbersReuseJob(args: {
+function recordPath(imageId: string): string {
+  return path.join(CBERS_ARCHIVE_INDEX_DIR, `${safeSegment(imageId)}.json`);
+}
+
+function saveRecord(record: CbersArchiveRecord): void {
+  writeJsonAtomic(recordPath(record.imageId), record);
+}
+
+export function listCbersArchiveRecords(): CbersArchiveRecord[] {
+  if (!fs.existsSync(CBERS_ARCHIVE_INDEX_DIR)) return [];
+  return fs
+    .readdirSync(CBERS_ARCHIVE_INDEX_DIR)
+    .filter((entry) => entry.endsWith(".json"))
+    .map((entry) => readJsonSafe<CbersArchiveRecord | null>(path.join(CBERS_ARCHIVE_INDEX_DIR, entry), null))
+    .filter((item): item is CbersArchiveRecord => Boolean(item))
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
+export async function publishCbersPanToArchive(args: {
   uid: string;
   jobId: string;
-  filename: string;
-  area: CbersAreaContext;
-  itemIds: string[];
-  reusedScenes: CbersSceneJobState[];
-}): void {
-  const first = args.reusedScenes[0];
-  const now = new Date().toISOString();
-  persistCbersJob(args.uid, args.jobId, {
-    status: "completed",
-    stage: "completed",
-    percent: 100,
-    message: args.reusedScenes.length === 1
-      ? "Imagem CBERS já estava publicada no WMS; acervo reaproveitado."
-      : `${args.reusedScenes.length} imagem(ns) CBERS já estavam publicadas no WMS; acervo reaproveitado.`,
-    filename: args.filename,
-    itemId: args.itemIds[0],
-    itemIds: args.itemIds,
-    mode: args.itemIds.length > 1 ? "batch" : "single",
-    areaHa: args.area.areaHa || undefined,
-    propertyGeometry: args.area.geometry,
-    scene: first?.scene || null,
-    scenes: args.reusedScenes,
-    outputUrl: first?.outputUrl,
-    outputRelativePath: first?.outputRelativePath,
-    outputFilename: first?.outputFilename,
-    outputBytes: first?.outputBytes,
-    archive: first?.archive,
-    archiveImageId: first?.archiveImageId,
-    wmsLayerName: first?.wmsLayerName,
-    wmsUrl: first?.wmsUrl,
-    wmsDownloadUrl: first?.wmsDownloadUrl,
-    alignmentStatus: first?.alignmentStatus,
-    createdAt: now,
-    completedAt: now,
+  itemId: string;
+  level?: "L4" | "L2" | string | null;
+  geometryHash?: string | null;
+  outputFilename: string;
+  sourcePath: string;
+}): Promise<CbersArchiveRecord> {
+  const { orbit, year } = parseCbersItemId(args.itemId);
+  const level = args.level === "L4" || args.level === "L2" ? args.level : parseCbersItemLevel(args.itemId);
+  const outputFilename = ensureCbersLevelInFilename(args.outputFilename, level);
+  const archiveFilename = withJobSuffix(outputFilename, args.jobId);
+  const stored = saveCbersArchiveAsset({
+    subdir: path.join(orbit, year),
+    filename: archiveFilename,
+    sourcePath: args.sourcePath,
   });
-  finishJob({ jobId: args.jobId, status: "completed" });
-}
+  await ensureRgbColorInterpretation(stored.absolutePath);
+  await ensureExternalOverviews(stored.absolutePath);
+  const storeName = cleanLayerName(`${orbit}_${year}_${path.basename(archiveFilename, path.extname(archiveFilename))}`);
+  const imageId = storeName;
 
-export function findArchiveRecordByImageId(imageId: string): CbersArchiveRecord | null {
-  const cleanImageId = String(imageId || "").trim();
-  if (!cleanImageId) return null;
-  return listCbersArchiveRecords().find((record) => (
-    record.imageId === cleanImageId &&
-    isActiveArchiveRecord(record)
-  )) || null;
-}
+  await publishGeoTiff({
+    storeName,
+    hdPath: stored.absolutePath,
+    orbit,
+    year,
+    title: path.basename(archiveFilename, path.extname(archiveFilename)),
+  });
 
-export function findActiveArchiveRecordForItem(itemId: string): CbersArchiveRecord | null {
-  const cleanItemId = String(itemId || "").trim();
-  if (!cleanItemId) return null;
-  return listCbersArchiveRecords().find((record) => (
-    record.itemId === cleanItemId &&
-    isActiveArchiveRecord(record)
-  )) || null;
-}
-
-export function findAnyActiveArchiveForItem(itemId: string): CbersWmsAvailability | null {
-  const cleanItemId = String(itemId || "").trim();
-  if (!cleanItemId) return null;
-  const archive = findActiveArchiveRecordForItem(cleanItemId);
-  if (archive) return archiveAvailabilityFromRecord(archive);
-  return findLocalGeoserverLayerForItem(cleanItemId);
-}
-
-export function findExactArchiveAvailability(
-  itemId: string,
-  _geometryHash?: string | null,
-): CbersWmsAvailability | null {
-  const archive = findActiveArchiveRecordForItem(itemId);
-  return archive ? archiveAvailabilityFromRecord(archive) : null;
-}
-
-export function attachArchiveAvailability(scene: CbersScene, geometryHash?: string | null): CbersScene {
-  const archive = findExactArchiveAvailability(scene.id, geometryHash);
-  if (!archive) return scene;
-  return {
-    ...scene,
-    wmsAvailable: true,
-    wmsLayerName: archive.wmsLayerName,
-    wmsUrl: archive.wmsUrl,
-    wmsDownloadUrl: archive.wmsDownloadUrl,
-    archiveImageId: archive.archiveImageId,
-    archiveFilename: archive.archiveFilename,
+  const now = new Date().toISOString();
+  const record: CbersArchiveRecord = {
+    imageId,
+    uid: safeSegment(args.uid),
+    jobId: safeSegment(args.jobId),
+    itemId: args.itemId,
+    level: level || undefined,
+    geometryHash: args.geometryHash || undefined,
+    orbit,
+    year,
+    sourceFilename: outputFilename,
+    archiveFilename,
+    hdRelativePath: stored.relativePath,
+    hdPath: stored.absolutePath,
+    bytes: stored.bytes,
+    publicUrl: stored.publicUrl,
+    wmsLayerName: `${GEOSERVER_WORKSPACE}:${storeName}`,
+    wmsStoreName: storeName,
+    wmsPublicUrl:
+      `${GEOSERVER_PUBLIC_WMS_BASE}?service=WMS&version=1.3.0&request=GetCapabilities`,
+    createdAt: now,
+    updatedAt: now,
   };
+  saveRecord(record);
+  return record;
+}
+
+export function markCbersArchiveUserDeleted(uid: string, jobId: string): void {
+  const now = new Date().toISOString();
+  for (const record of listCbersArchiveRecords()) {
+    if (record.uid !== safeSegment(uid) || record.jobId !== safeSegment(jobId) || record.userDeletedAt) continue;
+    saveRecord({ ...record, userDeletedAt: now, updatedAt: now });
+  }
+}
+
+function listUserProfiles(): Record<string, PlainObject> {
+  const usersDir = path.join(STORAGE_ROOT, "users");
+  if (!fs.existsSync(usersDir)) return {};
+  const profiles: Record<string, PlainObject> = {};
+  for (const entry of fs.readdirSync(usersDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const uid = entry.name;
+    if (!isAdminUserIdCandidate(uid)) continue;
+    const profilePath = path.join(usersDir, uid, "profile.json");
+    if (!fs.existsSync(profilePath)) continue;
+    const profile = readJsonSafe<PlainObject>(profilePath, { uid });
+    profiles[uid] = { ...profile, uid: String(profile.uid || uid) };
+  }
+  return profiles;
+}
+
+function adminPublicStorageUrl(relativePath: string): string {
+  return `/api/storage/${relativePath.split(path.sep).join("/")}`;
+}
+
+function adminFileCategory(relativePath: string): string {
+  const rel = relativePath.split(path.sep).join("/").toLowerCase();
+  if (rel.includes("/attachments/images/")) return "Imagens anexadas";
+  if (rel.includes("/attachments/pdfs/")) return "PDFs anexados";
+  if (rel.includes("/simcar/output/")) return "Recortes SIMCAR";
+  if (rel.includes("/simcar/analysis/")) return "Resultados SIMCAR";
+  if (rel.includes("/simcar/input/")) return "Entradas SIMCAR";
+  if (rel.includes("/simcar/context/")) return "Contexto SIMCAR";
+  if (rel.includes("/auas/output/")) return "Resultados AUAS legado";
+  if (rel.includes("/auas/input/")) return "Entradas AUAS legado";
+  if (rel.includes("/auas/context/")) return "Contexto AUAS legado";
+  if (rel.includes("/cbers/output/")) return "CBERS legado";
+  if (rel.includes("/trash/")) return "Lixeira";
+  if (rel.endsWith(".json")) return "Historico/configuracao";
+  return "Outros arquivos";
+}
+
+function listUserIdsForAdmin(profiles: Record<string, PlainObject>, records: CbersArchiveRecord[]): string[] {
+  const usersDir = path.join(STORAGE_ROOT, "users");
+  const ids = new Set<string>(Object.keys(profiles).filter(isAdminUserIdCandidate));
+  if (fs.existsSync(usersDir)) {
+    for (const entry of fs.readdirSync(usersDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !isAdminUserIdCandidate(entry.name)) continue;
+      if (fs.existsSync(path.join(usersDir, entry.name, "profile.json"))) ids.add(entry.name);
+    }
+  }
+  for (const record of records) {
+    if (isAdminUserIdCandidate(record.uid)) ids.add(record.uid);
+  }
+  return [...ids].filter(Boolean).sort();
+}
+
+function listUserStorageFiles(uid: string): AdminStorageFile[] {
+  const cleanUid = safeSegment(uid);
+  const userDir = path.join(STORAGE_ROOT, "users", cleanUid);
+  if (!cleanUid || !fs.existsSync(userDir)) return [];
+  const files: AdminStorageFile[] = [];
+  const walk = (dir: string) => {
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const absolutePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(absolutePath);
+      } catch {
+        continue;
+      }
+      const relativePath = path.relative(STORAGE_ROOT, absolutePath).split(path.sep).join("/");
+      const extension = path.extname(entry.name).replace(/^\./, "").toLowerCase() || "sem_extensao";
+      files.push({
+        id: crypto.createHash("sha1").update(relativePath).digest("hex"),
+        uid: cleanUid,
+        name: entry.name,
+        relativePath,
+        absolutePath,
+        publicUrl: adminPublicStorageUrl(relativePath),
+        category: adminFileCategory(relativePath),
+        source: "user_storage",
+        extension,
+        bytes: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+        createdAt: stat.birthtime.toISOString(),
+      });
+    }
+  };
+  walk(userDir);
+  return files.sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0));
+}
+
+function cbersArchiveFileForAdmin(record: CbersArchiveRecord): AdminStorageFile | null {
+  if (record.adminDeletedAt) return null;
+  return {
+    id: `cbers_archive:${record.imageId}`,
+    uid: record.uid,
+    name: record.archiveFilename,
+    relativePath: record.hdRelativePath,
+    absolutePath: record.hdPath,
+    publicUrl: record.publicUrl,
+    category: "Raster compartilhado",
+    source: "raster_archive",
+    extension: path.extname(record.archiveFilename).replace(/^\./, "").toLowerCase() || "tif",
+    bytes: Number(record.bytes || 0),
+    createdAt: record.createdAt,
+    modifiedAt: record.updatedAt,
+    imageId: record.imageId,
+    wmsPublicUrl: record.wmsPublicUrl,
+    userDeletedAt: record.userDeletedAt,
+    adminDeletedAt: record.adminDeletedAt,
+  };
+}
+
+function summarizeAdminFiles(files: AdminStorageFile[]): PlainObject {
+  const byCategory: Record<string, PlainObject> = {};
+  const byExtension: Record<string, PlainObject> = {};
+  const bySource: Record<string, PlainObject> = {};
+  for (const file of files) {
+    const category = file.category || "Outros arquivos";
+    byCategory[category] = byCategory[category] || { category, count: 0, bytes: 0 };
+    byCategory[category].count += 1;
+    byCategory[category].bytes += Number(file.bytes || 0);
+    const extension = file.extension || "sem_extensao";
+    byExtension[extension] = byExtension[extension] || { extension, count: 0, bytes: 0 };
+    byExtension[extension].count += 1;
+    byExtension[extension].bytes += Number(file.bytes || 0);
+    const source = file.source || "user_storage";
+    bySource[source] = bySource[source] || { source, count: 0, bytes: 0 };
+    bySource[source].count += 1;
+    bySource[source].bytes += Number(file.bytes || 0);
+  }
+  return {
+    fileCount: files.length,
+    bytes: files.reduce((sum, file) => sum + Number(file.bytes || 0), 0),
+    byCategory: Object.values(byCategory).sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0)),
+    byExtension: Object.values(byExtension).sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0)),
+    bySource: Object.values(bySource).sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0)),
+  };
+}
+
+async function deleteCbersArchiveRecord(imageId: string): Promise<CbersArchiveRecord | null> {
+  const record = listCbersArchiveRecords().find((item) => item.imageId === safeSegment(imageId));
+  if (!record || record.adminDeletedAt) return record || null;
+  const now = new Date().toISOString();
+  try {
+    await geoserverWrite(
+      `/rest/workspaces/${GEOSERVER_WORKSPACE}/coveragestores/${encodeURIComponent(record.wmsStoreName)}?recurse=true`,
+      "DELETE",
+    );
+    await removeFromCbersGroups(record);
+    if (record.hdPath.startsWith(CBERS_ARCHIVE_ROOT) && fs.existsSync(record.hdPath)) {
+      fs.rmSync(record.hdPath, { force: true });
+    }
+    const deleted = { ...record, adminDeletedAt: now, updatedAt: now };
+    saveRecord(deleted);
+    return deleted;
+  } catch (error: any) {
+    const failed = {
+      ...record,
+      adminDeleteError: String(error?.message || error),
+      updatedAt: now,
+    };
+    saveRecord(failed);
+    throw error;
+  }
+}
+
+export function registerCbersArchiveAdminRoutes(app: Express): void {
+  app.get("/api/admin/storage/summary", (_req: Request, res: ExpressResponse) => {
+    const profiles = listUserProfiles();
+    const records = listCbersArchiveRecords();
+    const users = listUserIdsForAdmin(profiles, records).map((uid) => {
+      const userFiles = listUserStorageFiles(uid);
+      const archiveFiles = records
+        .filter((record) => record.uid === uid)
+        .map(cbersArchiveFileForAdmin)
+        .filter((file): file is AdminStorageFile => Boolean(file));
+      const allFiles = [...userFiles, ...archiveFiles];
+      const summary = summarizeAdminFiles(allFiles);
+      const userStorageBytes = userFiles.reduce((sum, file) => sum + Number(file.bytes || 0), 0);
+      const userStorageCount = userFiles.length;
+      const sharedRasterBytes = archiveFiles.reduce((sum, file) => sum + Number(file.bytes || 0), 0);
+      const sharedRasterCount = archiveFiles.length;
+      const lastModifiedAt = allFiles
+        .map((file) => file.modifiedAt || file.createdAt || "")
+        .filter(Boolean)
+        .sort()
+        .at(-1) || "";
+      return {
+        uid,
+        email: profiles[uid]?.email || "",
+        fullName: profiles[uid]?.fullName || "",
+        fileCount: summary.fileCount,
+        bytes: summary.bytes,
+        userStorageBytes,
+        userStorageCount,
+        sharedRasterBytes,
+        sharedRasterCount,
+        lastModifiedAt,
+        byCategory: summary.byCategory,
+        byExtension: summary.byExtension,
+        bySource: summary.bySource,
+      };
+    }).sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0));
+    const totals = summarizeAdminFiles(users.flatMap((user) => {
+      const userFiles = listUserStorageFiles(user.uid);
+      const archiveFiles = records
+        .filter((record) => record.uid === user.uid)
+        .map(cbersArchiveFileForAdmin)
+        .filter((file): file is AdminStorageFile => Boolean(file));
+      return [...userFiles, ...archiveFiles];
+    }));
+    const userStorageTotalBytes = users.reduce((sum, user) => sum + Number(user.userStorageBytes || 0), 0);
+    const sharedRasterTotalBytes = users.reduce((sum, user) => sum + Number(user.sharedRasterBytes || 0), 0);
+    res.json({
+      ok: true,
+      totalBytes: totals.bytes,
+      totalFiles: totals.fileCount,
+      users,
+      byCategory: totals.byCategory,
+      byExtension: totals.byExtension,
+      bySource: totals.bySource,
+      userStorageBytes: userStorageTotalBytes,
+      sharedRasterBytes: sharedRasterTotalBytes,
+      userStorageFiles: users.reduce((sum, user) => sum + Number(user.userStorageCount || 0), 0),
+      sharedRasterFiles: users.reduce((sum, user) => sum + Number(user.sharedRasterCount || 0), 0),
+    });
+  });
+
+  app.get("/api/admin/storage/users/:uid/files", (req: Request, res: ExpressResponse) => {
+    const uid = safeSegment(req.params.uid);
+    const records = listCbersArchiveRecords();
+    const userFiles = listUserStorageFiles(uid);
+    const archiveFiles = records
+      .filter((record) => record.uid === uid)
+      .map(cbersArchiveFileForAdmin)
+      .filter((file): file is AdminStorageFile => Boolean(file));
+    const files = [...userFiles, ...archiveFiles].sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0));
+    res.json({
+      ok: true,
+      uid,
+      ...summarizeAdminFiles(files),
+      files,
+    });
+  });
+
+  app.get("/api/admin/cbers-storage/summary", (_req: Request, res: ExpressResponse) => {
+    const profiles = listUserProfiles();
+    const records = listCbersArchiveRecords();
+    const byUser = new Map<string, PlainObject>();
+    for (const record of records) {
+      const current = byUser.get(record.uid) || {
+        uid: record.uid,
+        email: profiles[record.uid]?.email || "",
+        fullName: profiles[record.uid]?.fullName || "",
+        imageCount: 0,
+        activeImageCount: 0,
+        bytes: 0,
+        deletedBytes: 0,
+        lastCreatedAt: "",
+      };
+      current.imageCount += 1;
+      if (record.adminDeletedAt) {
+        current.deletedBytes += record.bytes || 0;
+      } else {
+        current.activeImageCount += 1;
+        current.bytes += record.bytes || 0;
+      }
+      if (String(record.createdAt || "") > String(current.lastCreatedAt || "")) current.lastCreatedAt = record.createdAt;
+      byUser.set(record.uid, current);
+    }
+    const users = [...byUser.values()].sort((a, b) => Number(b.bytes || 0) - Number(a.bytes || 0));
+    res.json({
+      ok: true,
+      totalBytes: users.reduce((sum, item) => sum + Number(item.bytes || 0), 0),
+      totalImages: records.filter((item) => !item.adminDeletedAt).length,
+      users,
+    });
+  });
+
+  app.get("/api/admin/cbers-storage/users/:uid/images", (req: Request, res: ExpressResponse) => {
+    const uid = safeSegment(req.params.uid);
+    res.json({
+      ok: true,
+      uid,
+      images: listCbersArchiveRecords().filter((record) => record.uid === uid),
+    });
+  });
+
+  app.delete("/api/admin/cbers-storage/images/:imageId", async (req: Request, res: ExpressResponse) => {
+    try {
+      const record = await deleteCbersArchiveRecord(String(req.params.imageId || ""));
+      if (!record) {
+        res.status(404).json({ error: "Imagem CBERS não encontrada." });
+        return;
+      }
+      res.json({ ok: true, image: record });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Falha ao excluir imagem CBERS do acervo." });
+    }
+  });
 }

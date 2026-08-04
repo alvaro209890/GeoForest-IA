@@ -10,6 +10,7 @@ export * from "./stac-search";
 export * from "./wms";
 export * from "./geoserver";
 export * from "./archive";
+export * from "./reuse";
 export * from "./zip";
 export * from "./sse";
 export * from "./download";

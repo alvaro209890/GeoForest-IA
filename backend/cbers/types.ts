@@ -2,7 +2,7 @@
  * Tipos e erro de cancelamento do pipeline CBERS-4A WPM.
  */
 import type { MultiPolygon, Polygon } from "geojson";
-import type { CbersArchiveRecord } from "../cbers-archive";
+import type { CbersArchiveRecord } from "./archive";
 
 export type CbersJobStatus = "processing" | "completed" | "failed" | "cancelled";
 export type CbersCollectionLevel = "L4" | "L2";
