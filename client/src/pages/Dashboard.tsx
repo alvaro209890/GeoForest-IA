@@ -1322,6 +1322,11 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     setVerticesLayers((prev) => prev.map((layer) => layer.id === layerId ? { ...layer, ...patch } : layer));
   }, []);
 
+  /** ZIPs com várias camadas de shapes diferentes vêm todas marcadas — aqui desmarca tudo de uma vez. */
+  const deselectAllVerticesLayers = useCallback(() => {
+    setVerticesLayers((prev) => prev.map((layer) => layer.analyze ? { ...layer, analyze: false } : layer));
+  }, []);
+
   const startVerticesProcessing = useCallback(async () => {
     if (!verticesUploadId) {
       toast.error('Envie um ZIP antes de processar.');
@@ -6724,17 +6729,30 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           Escolha quais camadas entram na análise e ajuste pontos, tolerância e CRS antes de processar.
                         </p>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 text-center sm:min-w-[360px]">
-                        {[
-                          { label: 'Camadas', value: verticesLayers.length },
-                          { label: 'Analisáveis', value: verticesLayers.filter((layer) => !layer.ignoredReason && layer.featureCount > 0 && layer.geometryType === 'Polygon').length },
-                          { label: 'Selecionadas', value: verticesLayers.filter((layer) => layer.analyze && !layer.ignoredReason && layer.featureCount > 0 && layer.geometryType === 'Polygon').length },
-                        ].map((item) => (
-                          <div key={item.label} className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{item.label}</p>
-                            <p className="mt-1 text-base font-black tabular-nums text-white">{item.value}</p>
-                          </div>
-                        ))}
+                      <div className="flex flex-col items-end gap-2">
+                        <div className="grid grid-cols-3 gap-2 text-center sm:min-w-[360px]">
+                          {[
+                            { label: 'Camadas', value: verticesLayers.length },
+                            { label: 'Analisáveis', value: verticesLayers.filter((layer) => !layer.ignoredReason && layer.featureCount > 0 && layer.geometryType === 'Polygon').length },
+                            { label: 'Selecionadas', value: verticesLayers.filter((layer) => layer.analyze && !layer.ignoredReason && layer.featureCount > 0 && layer.geometryType === 'Polygon').length },
+                          ].map((item) => (
+                            <div key={item.label} className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{item.label}</p>
+                              <p className="mt-1 text-base font-black tabular-nums text-white">{item.value}</p>
+                            </div>
+                          ))}
+                        </div>
+                        {verticesLayers.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={deselectAllVerticesLayers}
+                            disabled={!verticesLayers.some((layer) => layer.analyze)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition-colors hover:border-violet-400/30 hover:bg-violet-500/10 hover:text-violet-200 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <Square size={13} />
+                            Desmarcar todas
+                          </button>
+                        )}
                       </div>
                     </div>
 
