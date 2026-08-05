@@ -7,10 +7,18 @@
  *  - cancelamento entrega o ZIP parcial com os lotes já concluídos (decisão A2);
  *  - credenciais vivem só na memória do job: nunca logadas, nunca persistidas.
  */
-import { getSimcarTokenFor, withSimcarAuthRetryFor } from "../simcar-oraculo/client";
+import {
+  SimcarHttpError,
+  clearSimcarTokenCache,
+  getSimcarTokenFor,
+  simcarCredentialKey,
+  withSimcarAuthRetryFor,
+} from "../simcar-oraculo/client";
 import { saveUserBuffer } from "../local-storage";
 import { finishJob, isCancelRequested } from "../processing-jobs";
+import { aguardarSimcarLivre } from "./aguardar";
 import { baixarArtefatosDoLote } from "./downloader";
+import { lerOcupacaoSimcar, monitorHabilitado, monitorMaxRetry } from "./monitor";
 import { extrairPdfsDoEnvio, parseReciboPdf } from "./recibo-parse";
 import { resolverCar } from "./resolver";
 import { comSessaoExclusiva } from "./session-queue";
@@ -19,6 +27,16 @@ import type { PastaLote, ReciboParseado, RelatorioLote } from "./types";
 import { montarZipLotes, nomePastaLote, nomeZipLotes } from "./zip-builder";
 
 const CANCELADO = "cancel_requested";
+
+/**
+ * 401/403 depois do retry interno do `withSimcarAuthRetryFor` = alguém logou no
+ * SIMCAR com a mesma conta e derrubou a nossa sessão (não é credencial errada:
+ * essa falha no login, com 400).
+ */
+function isSessaoDerrubada(error: unknown): boolean {
+  if (error instanceof SimcarHttpError) return error.status === 401 || error.status === 403;
+  return error instanceof Error && /\b(401|403)\b/.test(error.message);
+}
 
 function mensagemDeErro(error: any): string {
   const msg = String(error?.message || error || "Falha desconhecida.");
@@ -65,8 +83,31 @@ export async function runLotesJob(args: {
     }
     const totalLotes = recibos.length;
 
+    // R1 — a conta do SIMCAR é compartilhada: esperar FORA da fila, para não
+    // segurar a vez de outro job da mesma conta enquanto o navegador de alguém
+    // estiver logado.
+    const esperaInicial = await aguardarSimcarLivre({
+      uid,
+      jobId,
+      motivo: "antes_de_logar",
+      percent: 3,
+    });
+    if (esperaInicial.interrompido) cancelado = true;
+
     // Tudo que fala com a conta técnica acontece dentro da fila exclusiva.
-    await comSessaoExclusiva(cpf, senha, async () => {
+    const rodarLotes = async () => {
+      // Corrida: entre a espera lá fora e a nossa vez na fila alguém pode ter logado.
+      const esperaNaFila = await aguardarSimcarLivre({
+        uid,
+        jobId,
+        motivo: "antes_de_logar",
+        percent: 3,
+      });
+      if (esperaNaFila.interrompido) {
+        cancelado = true;
+        return;
+      }
+
       progress(uid, jobId, {
         status: "processing",
         fase: "login",
@@ -97,67 +138,112 @@ export async function runLotesJob(args: {
           erro: null,
         };
 
-        try {
-          if (recibo.erro) throw new Error(recibo.erro);
+        // R3 — se alguém logar no SIMCAR no meio do lote, a SEMA derruba a nossa
+        // sessão. Em vez de perder o lote, esperamos o monitor liberar e
+        // repetimos ESTE lote; os anteriores já estão guardados em `pastas`.
+        let esperasPorInterrupcao = 0;
+        let tentativasCegas = 0;
+        for (;;) {
+          try {
+            if (recibo.erro) throw new Error(recibo.erro);
 
-          progress(uid, jobId, {
-            status: "processing",
-            fase: "resolvendo",
-            percent: base,
-            totalLotes,
-            loteAtual: i + 1,
-            loteNome: recibo.carEstadual || recibo.filename,
-            message: `Localizando ${recibo.carEstadual || recibo.filename} no SIMCAR.`,
-          });
+            progress(uid, jobId, {
+              status: "processing",
+              fase: "resolvendo",
+              percent: base,
+              totalLotes,
+              loteAtual: i + 1,
+              loteNome: recibo.carEstadual || recibo.filename,
+              message: `Localizando ${recibo.carEstadual || recibo.filename} no SIMCAR.`,
+            });
 
-          // Token pego por chamada, com retry em 401. A sessão da SEMA cai entre
-          // lotes (sessão única por conta) e um token capturado antes do laço
-          // envelhece: em produção o lote 1 passava e os seguintes davam
-          // "sessão expirada" no ListarRasc. Os downloads já faziam isso.
-          const resolucao = await withSimcarAuthRetryFor(cpf, senha, (token) =>
-            resolverCar({
-              carEstadual: recibo.carEstadual,
-              reciboFederal: recibo.reciboFederal,
-              token,
-            }),
-          );
-          linha.car = resolucao.numeroCompleto;
-          linha.propriedade = resolucao.propriedade || recibo.propriedade;
-          linha.municipio = resolucao.municipio || recibo.municipio;
+            // Token pego por chamada, com retry em 401. A sessão da SEMA cai entre
+            // lotes (sessão única por conta) e um token capturado antes do laço
+            // envelhece: em produção o lote 1 passava e os seguintes davam
+            // "sessão expirada" no ListarRasc. Os downloads já faziam isso.
+            const resolucao = await withSimcarAuthRetryFor(cpf, senha, (token) =>
+              resolverCar({
+                carEstadual: recibo.carEstadual,
+                reciboFederal: recibo.reciboFederal,
+                token,
+              }),
+            );
+            linha.car = resolucao.numeroCompleto;
+            linha.propriedade = resolucao.propriedade || recibo.propriedade;
+            linha.municipio = resolucao.municipio || recibo.municipio;
 
-          const { arquivos, faltantes } = await baixarArtefatosDoLote({
-            cpf,
-            senha,
-            requerimentoId: resolucao.requerimentoId,
-            carEstadual: resolucao.numeroCompleto,
-            reciboEnviado: pdfEnviado,
-            onArtefato: ({ nome, indice, total }) => {
-              progress(uid, jobId, {
-                status: "processing",
-                fase: "baixando",
-                percent: base + Math.round((indice / total) * (85 / totalLotes)),
-                totalLotes,
-                loteAtual: i + 1,
-                loteNome: linha.car,
-                artefatoAtual: indice,
-                totalArtefatos: total,
-                message: `Lote ${i + 1}/${totalLotes} — baixando ${nome}.`,
-              });
-            },
-          });
+            const { arquivos, faltantes } = await baixarArtefatosDoLote({
+              cpf,
+              senha,
+              requerimentoId: resolucao.requerimentoId,
+              carEstadual: resolucao.numeroCompleto,
+              reciboEnviado: pdfEnviado,
+              onArtefato: ({ nome, indice, total }) => {
+                progress(uid, jobId, {
+                  status: "processing",
+                  fase: "baixando",
+                  percent: base + Math.round((indice / total) * (85 / totalLotes)),
+                  totalLotes,
+                  loteAtual: i + 1,
+                  loteNome: linha.car,
+                  artefatoAtual: indice,
+                  totalArtefatos: total,
+                  message: `Lote ${i + 1}/${totalLotes} — baixando ${nome}.`,
+                });
+              },
+            });
 
-          linha.pasta = nomePastaLote(linha.car, linha.propriedade);
-          linha.baixados = arquivos.map((a) => a.nome);
-          linha.faltantes = faltantes;
-          if (arquivos.length) pastas.push({ nomePasta: linha.pasta, arquivos });
-        } catch (error: any) {
-          linha.erro = mensagemDeErro(error);
+            linha.pasta = nomePastaLote(linha.car, linha.propriedade);
+            linha.baixados = arquivos.map((a) => a.nome);
+            linha.faltantes = faltantes;
+            if (arquivos.length) pastas.push({ nomePasta: linha.pasta, arquivos });
+            linha.erro = null;
+            break;
+          } catch (error: any) {
+            const teto = monitorMaxRetry();
+            const podeRetomar =
+              isSessaoDerrubada(error) &&
+              monitorHabilitado() &&
+              (teto === 0 || esperasPorInterrupcao < teto);
+            if (!podeRetomar) {
+              linha.erro = mensagemDeErro(error);
+              break;
+            }
+
+            // Sessão nova na próxima tentativa (a atual acabou de ser derrubada).
+            clearSimcarTokenCache(simcarCredentialKey(cpf, senha));
+            const ocupacao = await lerOcupacaoSimcar();
+            const espera = await aguardarSimcarLivre({
+              uid,
+              jobId,
+              motivo: "sessao_interrompida",
+              por: ocupacao.por,
+              percent: base,
+            });
+            if (espera.interrompido) {
+              cancelado = true;
+              linha.erro = mensagemDeErro(error);
+              break;
+            }
+            if (espera.esperou) {
+              esperasPorInterrupcao += 1;
+              continue;
+            }
+            // O monitor diz LIVRE e mesmo assim tomamos 401: a causa não é o
+            // login compartilhado. Repetir sem limite só marteleria a SEMA.
+            tentativasCegas += 1;
+            if (tentativasCegas > 2) {
+              linha.erro = mensagemDeErro(error);
+              break;
+            }
+          }
         }
 
         relatorio.push(linha);
         progress(uid, jobId, { relatorio, lotesConcluidos: relatorio.length, totalLotes });
       }
-    });
+    };
+    if (!cancelado) await comSessaoExclusiva(cpf, senha, rodarLotes);
 
     if (!pastas.length && relatorio.every((l) => l.erro)) {
       throw new Error(relatorio[0]?.erro || "Nenhum documento pôde ser baixado.");

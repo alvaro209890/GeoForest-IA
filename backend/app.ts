@@ -91,6 +91,7 @@ const AUTH_REQUIRED_PATHS: (string | RegExp)[] = [
   /^\/api\/simcar-oraculo\/jobs\/[^/]+\/pdf-import$/,
   /^\/api\/simcar-oraculo\/jobs\/[^/]+\/pdf-process$/,
   /^\/api\/simcar-oraculo\/jobs\/[^/]+\/erros-zip$/,
+  "/api/simcar-lotes/monitor-status",
   "/api/simcar-lotes/parse-recibos",
   "/api/simcar-lotes/process",
   /^\/api\/simcar-lotes\/jobs\/[^/]+\/(status|events)$/,

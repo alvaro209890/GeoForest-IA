@@ -84,6 +84,10 @@ function stubSema(options: { processado?: number } = {}) {
     "fetch",
     vi.fn(async (input: any) => {
       const url = String(input);
+      // Monitor SIMCAR livre (ninguém logado no navegador).
+      if (url.includes("monitor-car-default-rtdb")) {
+        return new Response("null", { status: 200 });
+      }
       if (url.includes("Autenticacao/Autenticar")) {
         return new Response(JSON.stringify("TECNICO sessao"), { status: 200 });
       }
@@ -132,6 +136,42 @@ async function aguardarJob(uid: string, jobId: string, timeoutMs = 5000): Promis
   }
   throw new Error("job não concluiu no tempo esperado");
 }
+
+describe("/api/simcar-lotes/monitor-status", () => {
+  it("exige autenticação", async () => {
+    const { req, res } = troca({}, "");
+    await get.get("/api/simcar-lotes/monitor-status")!(req, res);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("devolve a ocupação do monitor e reaproveita o cache de 5s", async () => {
+    const { limparCacheMonitor } = await import("./monitor");
+    limparCacheMonitor();
+    const fetchMock = vi.fn(
+      async (input: any) =>
+        new Response(
+          String(input).includes("clients.json")
+            ? JSON.stringify({ uidA: { c1: { who: "Bruno", lastSeen: Date.now() - 2000 } } })
+            : "null",
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const primeira = troca();
+    await get.get("/api/simcar-lotes/monitor-status")!(primeira.req, primeira.res);
+    const segunda = troca();
+    await get.get("/api/simcar-lotes/monitor-status")!(segunda.req, segunda.res);
+
+    expect(primeira.res.payload).toMatchObject({
+      ok: true,
+      monitor: { ocupado: true, por: "Bruno", conexoes: 1 },
+    });
+    expect(segunda.res.payload.monitor.ocupado).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // 2ª resposta veio do cache
+    limparCacheMonitor();
+  });
+});
 
 describe("/api/simcar-lotes/parse-recibos", () => {
   it("lê o recibo e devolve o lote detectado sem tocar na SEMA", async () => {

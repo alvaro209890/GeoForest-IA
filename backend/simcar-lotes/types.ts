@@ -56,4 +56,13 @@ export interface RelatorioLote {
 }
 
 /** Fases reportadas via SSE. */
-export type FaseLotes = "lendo" | "login" | "resolvendo" | "baixando" | "zipando";
+export type FaseLotes =
+  | "lendo"
+  /** Monitor SIMCAR acusou EM USO: o job espera o navegador de alguém sair. */
+  | "aguardando_simcar"
+  | "login"
+  | "resolvendo"
+  | "baixando"
+  /** Alguém logou no meio do lote e derrubou a sessão; o lote será repetido. */
+  | "sessao_interrompida"
+  | "zipando";

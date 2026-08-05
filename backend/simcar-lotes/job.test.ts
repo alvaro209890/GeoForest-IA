@@ -10,7 +10,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
   class SimcarHttpErrorFake extends Error {
@@ -29,7 +29,15 @@ const h = vi.hoisted(() => {
       tokenValido: "",
       /** Lotes cujo download derruba a sessão (SEMA aceita uma sessão por conta). */
       derrubarSessaoApos: new Set<string>(),
+      /** CAR → quantos 401 o download ainda vai devolver antes de funcionar. */
+      falhas401: new Map<string, number>(),
       tokensNoResolver: [] as string[],
+      /** Fila de respostas do monitor; a última se repete. */
+      ocupacoes: [] as Array<{ ocupado: boolean; por?: string; conexoes: number; checadoEm: number }>,
+      leiturasMonitor: 0,
+      /** Ordem dos eventos, para provar que o login só veio depois da espera. */
+      eventos: [] as string[],
+      cancelado: false,
     },
   };
 });
@@ -44,6 +52,7 @@ vi.mock("../simcar-oraculo/client", () => {
     const chave = simcarCredentialKey(cpf, senha);
     const cached = sessoes.get(chave);
     if (cached) return cached;
+    h.estado.eventos.push("login");
     h.estado.logins += 1;
     const token = `TECNICO-${h.estado.logins}`;
     h.estado.tokenValido = token;
@@ -79,6 +88,26 @@ vi.mock("../simcar-oraculo/client", () => {
     withSimcarAuthRetryFor,
   };
 });
+
+/** Monitor SIMCAR falso (o real é read-only sobre o RTDB do monitor-car). */
+vi.mock("./monitor", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./monitor")>();
+  return {
+    ...original,
+    lerOcupacaoSimcar: async () => {
+      const fila = h.estado.ocupacoes;
+      const atual = fila[Math.min(h.estado.leiturasMonitor, fila.length - 1)];
+      h.estado.leiturasMonitor += 1;
+      if (atual?.ocupado) h.estado.eventos.push("monitor:ocupado");
+      return atual || { ocupado: false, conexoes: 0, checadoEm: Date.now() };
+    },
+  };
+});
+
+vi.mock("../processing-jobs", () => ({
+  isCancelRequested: () => h.estado.cancelado,
+  finishJob: () => {},
+}));
 
 const RECIBOS = ["lote1.pdf", "lote2.pdf", "lote3.pdf"];
 
@@ -116,6 +145,16 @@ vi.mock("./resolver", () => ({
 
 vi.mock("./downloader", () => ({
   baixarArtefatosDoLote: async (args: { carEstadual: string }) => {
+    const falhas = h.estado.falhas401.get(args.carEstadual) || 0;
+    if (falhas > 0) {
+      // Alguém logou no SIMCAR e a SEMA derrubou a nossa sessão no meio do lote.
+      h.estado.falhas401.set(args.carEstadual, falhas - 1);
+      h.estado.tokenValido = "";
+      throw new h.SimcarHttpErrorFake(
+        401,
+        'DOWNLOAD Requerimento/DownloadArquivoEnviado 401: "sessão expirada"',
+      );
+    }
     if (h.estado.derrubarSessaoApos.has(args.carEstadual)) {
       // A SEMA derrubou a sessão: o token que estava valendo deixa de valer.
       h.estado.tokenValido = "";
@@ -146,12 +185,26 @@ afterAll(() => {
   if (storageRoot) fs.rmSync(storageRoot, { recursive: true, force: true });
 });
 
+const LIVRE = { ocupado: false, conexoes: 0, checadoEm: Date.now() };
+const EM_USO = (por: string) => ({ ocupado: true, por, conexoes: 1, checadoEm: Date.now() });
+
 beforeEach(() => {
   clearSimcarTokenCache();
   h.estado.logins = 0;
   h.estado.tokenValido = "";
   h.estado.tokensNoResolver = [];
   h.estado.derrubarSessaoApos = new Set();
+  h.estado.falhas401 = new Map();
+  h.estado.ocupacoes = [LIVRE];
+  h.estado.leiturasMonitor = 0;
+  h.estado.eventos = [];
+  h.estado.cancelado = false;
+  // A espera real é de 15s; nos testes, 1s (mínimo aceito).
+  vi.stubEnv("SIMCAR_MONITOR_POLL_MS", "1000");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 function doc(jobId: string): Record<string, any> {
@@ -192,5 +245,74 @@ describe("runLotesJob — sessão da SEMA entre lotes", () => {
     expect(final.status).toBe("completed");
     expect(final.lotesConcluidos).toBe(3);
     expect(h.estado.logins).toBe(1);
+  });
+});
+
+describe("R1 — não logar enquanto o SIMCAR estiver em uso", () => {
+  it("espera o monitor liberar antes do primeiro login", async () => {
+    // 1ª leitura (gate fora da fila) EM USO; depois liberou.
+    h.estado.ocupacoes = [EM_USO("Bruno"), LIVRE];
+
+    const final = await rodar("job-espera");
+
+    expect(final.status).toBe("completed");
+    // O login só aconteceu DEPOIS de o monitor acusar ocupado.
+    expect(h.estado.eventos[0]).toBe("monitor:ocupado");
+    expect(h.estado.eventos.indexOf("login")).toBeGreaterThan(0);
+  });
+
+  it("cancelar durante a espera não loga no SIMCAR", async () => {
+    h.estado.ocupacoes = [EM_USO("Bruno")];
+    h.estado.cancelado = true;
+
+    const final = await rodar("job-cancelado-na-espera");
+
+    expect(final.status).toBe("cancelled");
+    expect(h.estado.logins).toBe(0);
+  });
+});
+
+describe("R3 — sessão derrubada no meio do lote", () => {
+  it("espera o SIMCAR liberar e refaz o MESMO lote, preservando os anteriores", async () => {
+    // Leituras do monitor, em ordem: gate fora da fila, gate na fila,
+    // diagnóstico do erro, espera (ocupado) e espera (liberou).
+    h.estado.ocupacoes = [LIVRE, LIVRE, EM_USO("Bruno"), EM_USO("Bruno"), LIVRE];
+    // Lote 2: dois 401 (o 1º é consumido pelo retry interno do client).
+    h.estado.falhas401.set("MT2/2024", 2);
+
+    const final = await rodar("job-interrompido");
+
+    expect(final.status).toBe("completed");
+    expect(final.lotesConcluidos).toBe(3);
+    expect(final.relatorio.map((l: any) => l.erro)).toEqual([null, null, null]);
+    expect(final.relatorio[1]).toMatchObject({ car: "MT2/2024", baixados: ["Arquivo Enviado.zip"] });
+    // O lote 1 continuou no ZIP e o 2 não foi duplicado.
+    expect(final.relatorio).toHaveLength(3);
+  });
+
+  it("SIMCAR_MONITOR_MAX_RETRY limita as retomadas e o lote vira erro", async () => {
+    vi.stubEnv("SIMCAR_MONITOR_MAX_RETRY", "1");
+    h.estado.ocupacoes = [LIVRE, LIVRE, EM_USO("Bruno"), EM_USO("Bruno"), LIVRE];
+    h.estado.falhas401.set("MT2/2024", 99); // nunca volta
+
+    const final = await rodar("job-teto");
+
+    expect(final.status).toBe("completed");
+    expect(final.relatorio[1].erro).toMatch(/401/);
+    // Lotes 1 e 3 seguiram normalmente.
+    expect(final.relatorio[0].erro).toBeNull();
+    expect(final.relatorio[2].erro).toBeNull();
+    expect(final.lotesConcluidos).toBe(2);
+  });
+
+  it("401 com o monitor LIVRE não vira loop infinito", async () => {
+    h.estado.ocupacoes = [LIVRE];
+    h.estado.falhas401.set("MT2/2024", 99);
+
+    const final = await rodar("job-401-sem-monitor");
+
+    expect(final.status).toBe("completed");
+    expect(final.relatorio[1].erro).toMatch(/401/);
+    expect(final.lotesConcluidos).toBe(2);
   });
 });

@@ -8,6 +8,7 @@ import type { Express, Request, Response } from "express";
 import { getAbsoluteStoragePath, readDocBySegments, removeStoragePath } from "../local-storage";
 import { requestCancel, startJob } from "../processing-jobs";
 import { runLotesJob } from "./job";
+import { lerOcupacaoSimcarCached } from "./monitor";
 import { parseRecibosDoEnvio } from "./recibo-parse";
 import { persistLotesJob, subscribers, writeSse } from "./sse";
 
@@ -33,6 +34,18 @@ function credenciais(body: any): { cpf: string; senha: string } {
 }
 
 export function registerSimcarLotesRoutes(app: Express): void {
+  /**
+   * Status do Monitor SIMCAR (monitor-car.web.app) para o badge do painel.
+   * Leitura pura, com cache de 5s no servidor — o navegador consulta a cada 15s.
+   */
+  app.get("/api/simcar-lotes/monitor-status", async (req: Request, res: Response) => {
+    if (!authUid(req)) {
+      res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+      return;
+    }
+    res.json({ ok: true, monitor: await lerOcupacaoSimcarCached() });
+  });
+
   /** Fase 0 — lê os recibos sem tocar na SEMA. */
   app.post("/api/simcar-lotes/parse-recibos", async (req: Request, res: Response) => {
     try {
