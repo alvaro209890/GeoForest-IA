@@ -16,6 +16,7 @@ import { registerCroquiRoutes } from "../croqui";
 import { registerGeometryErrorsRoutes } from "../geometry-errors";
 import { registerProcessarProjetoRoutes } from "../processar-projeto";
 import { registerSimcarOraculoRoutes } from "../simcar-oraculo";
+import { registerSimcarLotesRoutes } from "../simcar-lotes";
 import { registerAuasScconRoutes } from "../auas-sccon";
 import { registerAccountRoutes } from "./account";
 import { registerStoreRoutes } from "./store";
@@ -44,6 +45,7 @@ export function registerAllRoutes(app: Express) {
   registerGeometryErrorsRoutes(app);
   registerProcessarProjetoRoutes(app);
   registerSimcarOraculoRoutes(app);
+  registerSimcarLotesRoutes(app);
   registerAuasScconRoutes(app);
 
   registerModelsRoutes(app);

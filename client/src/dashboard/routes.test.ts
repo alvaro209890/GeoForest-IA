@@ -7,6 +7,7 @@ describe('dashboard routes', () => {
     ['/dashboard', 'simcar-clip'],
     ['/dashboard/simcar', 'simcar-clip'],
     ['/dashboard/recibos', 'simcar-receipts'],
+    ['/dashboard/lotes', 'simcar-lotes'],
     ['/dashboard/cbers', 'cbers-wpm'],
     ['/dashboard/landsat', 'landsat'],
     ['/dashboard/erros', 'vertices-proximas'],
@@ -28,6 +29,7 @@ describe('dashboard routes', () => {
     const views: DashboardView[] = [
       'simcar-clip',
       'simcar-receipts',
+      'simcar-lotes',
       'cbers-wpm',
       'landsat',
       'vertices-proximas',

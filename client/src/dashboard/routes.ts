@@ -7,6 +7,7 @@ export const DASHBOARD_PATH_TO_VIEW: Record<string, DashboardView> = {
   '/dashboard': 'simcar-clip',
   '/dashboard/simcar': 'simcar-clip',
   '/dashboard/recibos': 'simcar-receipts',
+  '/dashboard/lotes': 'simcar-lotes',
   '/dashboard/cbers': 'cbers-wpm',
   '/dashboard/landsat': 'landsat',
   '/dashboard/erros': 'vertices-proximas',
@@ -22,6 +23,7 @@ export const DASHBOARD_PATH_TO_VIEW: Record<string, DashboardView> = {
 export const DASHBOARD_VIEW_TO_PATH: Record<DashboardView, string> = {
   'simcar-clip': '/dashboard/simcar',
   'simcar-receipts': '/dashboard/recibos',
+  'simcar-lotes': '/dashboard/lotes',
   'cbers-wpm': '/dashboard/cbers',
   landsat: '/dashboard/landsat',
   'vertices-proximas': '/dashboard/erros',

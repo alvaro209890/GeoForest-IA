@@ -687,6 +687,8 @@ Arquivo de referência: [`config/geoforest-backend.env.example`](config/geofores
 - [`docs/CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md`](docs/CHANGELOG_2026-07-15_IMPORT_PARITY_SIMCAR.md) — Paridade de importação Processar Projeto com PDF SEMA (teste_1: ARL 4 bordas + 2 pontos repetidos)
 - [`docs/PROCESSAR_PROJETO_SIMCAR.md`](docs/PROCESSAR_PROJETO_SIMCAR.md) — Manual Processar Projeto (Importar → ProcessarGeo)
 - [`docs/AREAS_NAO_CONTIDAS.md`](docs/AREAS_NAO_CONTIDAS.md) — Áreas não contidas (containment SIMCAR)
+- [`docs/SIMCAR_LOTES.md`](docs/SIMCAR_LOTES.md) — **Lotes SIMCAR**: recibo(s) do CAR → ZIP com uma pasta por lote (Arquivo Enviado + Processado + Recibo), credenciais no navegador, job SSE
+- [`docs/CHANGELOG_2026-08-05_SIMCAR_LOTES.md`](docs/CHANGELOG_2026-08-05_SIMCAR_LOTES.md) — Entrega da aba Lotes SIMCAR + sessão SIMCAR por credencial
 - [`docs/CROQUI_ACESSO.md`](docs/CROQUI_ACESSO.md) — Croqui de acesso (ATP → PDF + Word + KML): modelos, ponto de partida, **escolha do caminho**, roteiro, base do mapa e API
 - [`docs/CHANGELOG_2026-08-04_CROQUI_ATE_PROPRIEDADE.md`](docs/CHANGELOG_2026-08-04_CROQUI_ATE_PROPRIEDADE.md) — Completa o caminho até a porteira quando o OSM não alcança (Estância MDM)
 - [`docs/CHANGELOG_2026-07-30_CROQUI_ESCOLHA_CAMINHO.md`](docs/CHANGELOG_2026-07-30_CROQUI_ESCOLHA_CAMINHO.md) — O usuário escolhe o caminho de acesso antes de gerar o croqui (caso Lote 89-A, Querência III)

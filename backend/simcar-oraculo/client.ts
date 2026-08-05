@@ -14,7 +14,19 @@ const BROWSER_HEADERS: Record<string, string> = {
 };
 
 type TokenCache = { token: string; expiresAtMs: number };
-let tokenCache: TokenCache | null = null;
+
+/**
+ * Sessões SIMCAR indexadas por credencial. O oráculo usa a conta do env; a aba
+ * "Lotes SIMCAR" usa a conta que o próprio usuário digitou. Contas diferentes
+ * não podem compartilhar (nem invalidar) o token uma da outra.
+ */
+const sessoes = new Map<string, TokenCache>();
+const loginsEmVoo = new Map<string, Promise<string>>();
+
+/** Chave de cache — CPF só dígitos + senha (nunca logada). */
+export function simcarCredentialKey(cpf: string, senha: string): string {
+  return `${String(cpf || "").replace(/\D/g, "")}:${String(senha || "")}`;
+}
 
 export class SimcarHttpError extends Error {
   readonly status: number;
@@ -102,7 +114,10 @@ export async function simcarLogin(cpf: string, senha: string): Promise<string> {
       if (!/^TECNICO /.test(token)) {
         throw new Error(`token SIMCAR inesperado: ${token.slice(0, 80)}`);
       }
-      tokenCache = { token, expiresAtMs: Date.now() + 25 * 60 * 1000 };
+      sessoes.set(simcarCredentialKey(cpf, senha), {
+        token,
+        expiresAtMs: Date.now() + 25 * 60 * 1000,
+      });
       return token;
     } catch (error: any) {
       const msg = String(error?.message || error || "");
@@ -122,26 +137,42 @@ export async function simcarLogin(cpf: string, senha: string): Promise<string> {
   throw lastErr || new Error("login SIMCAR falhou após retentativas.");
 }
 
-let loginInFlight: Promise<string> | null = null;
+/**
+ * Token de uma conta qualquer (aba "Lotes SIMCAR" usa a credencial do usuário).
+ * Conta SIMCAR é de sessão única: logins concorrentes se invalidam. Coalesce as
+ * chamadas simultâneas da MESMA conta num único login em voo, para não derrubar
+ * a sessão em uso; contas distintas nunca se bloqueiam.
+ */
+export async function getSimcarTokenFor(cpf: string, senha: string): Promise<string> {
+  if (!cpf || !senha) throw new Error("Credenciais do SIMCAR não informadas.");
+  const chave = simcarCredentialKey(cpf, senha);
+  const cached = sessoes.get(chave);
+  if (cached && cached.expiresAtMs > Date.now() + 60_000) return cached.token;
 
-export async function getSimcarToken(): Promise<string> {
-  if (tokenCache && tokenCache.expiresAtMs > Date.now() + 60_000) {
-    return tokenCache.token;
-  }
-  // Conta SIMCAR é de sessão única: logins concorrentes se invalidam. Coalesce as
-  // chamadas simultâneas (pipeline na fila + endpoints read-only fora dela) num
-  // único login em voo, para não derrubar a sessão em uso.
-  if (loginInFlight) return loginInFlight;
-  const c = getSimcarOraculoConfig();
-  if (!c.cpf || !c.senha) throw new Error("SIMCAR_CPF/SIMCAR_SENHA não configurados.");
-  loginInFlight = simcarLogin(c.cpf, c.senha).finally(() => {
-    loginInFlight = null;
+  const emVoo = loginsEmVoo.get(chave);
+  if (emVoo) return emVoo;
+
+  const promise = simcarLogin(cpf, senha).finally(() => {
+    loginsEmVoo.delete(chave);
   });
-  return loginInFlight;
+  loginsEmVoo.set(chave, promise);
+  return promise;
 }
 
-export function clearSimcarTokenCache(): void {
-  tokenCache = null;
+/** Token da conta do env (oráculo) — comportamento histórico preservado. */
+export async function getSimcarToken(): Promise<string> {
+  const c = getSimcarOraculoConfig();
+  if (!c.cpf || !c.senha) throw new Error("SIMCAR_CPF/SIMCAR_SENHA não configurados.");
+  return getSimcarTokenFor(c.cpf, c.senha);
+}
+
+/** Sem argumentos limpa todas as sessões; com chave limpa só a conta indicada. */
+export function clearSimcarTokenCache(chave?: string): void {
+  if (chave === undefined) {
+    sessoes.clear();
+    return;
+  }
+  sessoes.delete(chave);
 }
 
 function isUnauthorized(error: unknown): boolean {
@@ -161,14 +192,26 @@ export async function withSimcarAuthRetry<T>(
   operation: (token: string) => Promise<T>,
   options: { onRetry?: () => void | Promise<void> } = {},
 ): Promise<T> {
-  const token = await getSimcarToken();
+  const c = getSimcarOraculoConfig();
+  if (!c.cpf || !c.senha) throw new Error("SIMCAR_CPF/SIMCAR_SENHA não configurados.");
+  return withSimcarAuthRetryFor(c.cpf, c.senha, operation, options);
+}
+
+/** Mesma semântica de `withSimcarAuthRetry`, mas na sessão de uma conta específica. */
+export async function withSimcarAuthRetryFor<T>(
+  cpf: string,
+  senha: string,
+  operation: (token: string) => Promise<T>,
+  options: { onRetry?: () => void | Promise<void> } = {},
+): Promise<T> {
+  const token = await getSimcarTokenFor(cpf, senha);
   try {
     return await operation(token);
   } catch (error) {
     if (!isUnauthorized(error)) throw error;
-    clearSimcarTokenCache();
+    clearSimcarTokenCache(simcarCredentialKey(cpf, senha));
     await options.onRetry?.();
-    const renewedToken = await getSimcarToken();
+    const renewedToken = await getSimcarTokenFor(cpf, senha);
     return operation(renewedToken);
   }
 }

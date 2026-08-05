@@ -50,6 +50,8 @@ npx firebase deploy --only hosting   # site único: ia-florestal
 | `backend/billing.ts` | Billing disabled (all costs return 0 BRL) |
 | `backend/auth.ts` | requireAuth middleware (Firebase token verification) |
 | `backend/simcar-clip.ts` | SIMCAR Clip module (shapefile, WFS, análise de imagens via Groq Vision) |
+| `backend/simcar-lotes/` | Aba "Lotes SIMCAR": recibo do CAR → ZIP com pasta por lote (ver `docs/SIMCAR_LOTES.md`) |
+| `backend/simcar-oraculo/client.ts` | Cliente SEMA; sessão **por credencial** (`getSimcarTokenFor`) — oráculo e Lotes não se derrubam |
 | `backend/auas-analysis.ts` | AUAS land use classification |
 | `backend/auas-sccon.ts` | AUAS × SCCON: data ABERTURA via alertas de desmate + pontos sem alerta (ver `docs/AUAS_SCCON.md`) |
 | `backend/geometry/` | Erros de geometria SIMCAR — detectores em `detectors/` (plano 04); `geometry-errors.ts` é só o barrel |

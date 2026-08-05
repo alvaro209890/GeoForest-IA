@@ -30,6 +30,7 @@ export type {
 export type DashboardView =
   | 'simcar-clip'
   | 'simcar-receipts'
+  | 'simcar-lotes'
   | 'cbers-wpm'
   | 'landsat'
   | 'vertices-proximas'
@@ -43,6 +44,7 @@ export type DashboardView =
 export type DashboardTabId =
   | 'simcar-clip'
   | 'simcar-receipts'
+  | 'simcar-lotes'
   | 'cbers-wpm'
   | 'landsat'
   | 'vertices-proximas'
@@ -54,6 +56,7 @@ export type DashboardTabId =
 export const DASHBOARD_VIEW_LABELS: Record<DashboardView, string> = {
   'simcar-clip': 'Recorte SIMCAR',
   'simcar-receipts': 'Recibos SIMCAR',
+  'simcar-lotes': 'Lotes SIMCAR',
   'cbers-wpm': 'CBERS 4A WPM',
   landsat: 'Landsat WMS',
   'vertices-proximas': 'Análise de Erros',

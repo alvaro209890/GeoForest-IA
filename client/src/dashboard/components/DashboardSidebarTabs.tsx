@@ -3,6 +3,7 @@ import {
   CalendarClock,
   Combine,
   FileText,
+  FolderArchive,
   Layers,
   Map,
   Network,
@@ -36,6 +37,13 @@ export const DASHBOARD_TABS: DashboardTabDef[] = [
     Icon: Receipt,
     activeGradient: 'linear-gradient(135deg, #059669, #84cc16)',
     iconGlowClass: 'drop-shadow-[0_0_6px_rgba(16,185,129,0.5)]',
+  },
+  {
+    id: 'simcar-lotes',
+    label: 'Lotes',
+    Icon: FolderArchive,
+    activeGradient: 'linear-gradient(135deg, #059669, #22d3ee)',
+    iconGlowClass: 'drop-shadow-[0_0_6px_rgba(34,211,238,0.5)]',
   },
   {
     id: 'cbers-wpm',
