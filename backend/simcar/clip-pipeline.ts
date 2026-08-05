@@ -639,7 +639,10 @@ export async function processClip(
         const modeloBuffer = fs.readFileSync(MODELO_ZIP_PATH);
         templateEntries = extractZipEntries(modeloBuffer);
     } catch (err: any) {
-        sendSSE(res, { type: "error", message: "Arquivo Modelo.zip não encontrado no servidor." });
+        sendSSE(res, {
+            type: "error",
+            message: `Arquivo Modelo.zip não encontrado no servidor (${MODELO_ZIP_PATH}).`,
+        });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
 

@@ -193,7 +193,6 @@ const __dirname = path.dirname(__filename);
 
 /* ─── Constants ──────────────────────────────────────────────── */
 
-const MODELO_ZIP_PATH = path.resolve(__dirname, "..", "Arquivo Modelo.zip");
 const SIMCAR_LOCAL_SHAPES_ROOT =
     process.env.SIMCAR_LOCAL_SHAPES_ROOT ||
     "/media/server/HD Backup/VETOR/CAR_Digital/current/datasets/simcar_digital";

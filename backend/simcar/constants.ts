@@ -3,6 +3,7 @@
  * Extraídas de simcar-clip.ts (Plano 02).
  */
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -10,7 +11,30 @@ const __dirname = path.dirname(__filename);
 
 /* ─── Paths ──────────────────────────────────────────────────── */
 
-export const MODELO_ZIP_PATH = path.resolve(__dirname, "..", "..", "Arquivo Modelo.zip");
+/**
+ * Local do "Arquivo Modelo.zip" (template de shapefiles da SEMA usado no recorte).
+ *
+ * Em DEV (fonte) o módulo vive em `backend/simcar/`; em PRODUÇÃO o esbuild empacota
+ * tudo em `dist/index.js`. Resolução por candidatos para funcionar nos dois mundos:
+ *   1. env SIMCAR_MODELO_ZIP_PATH (override explícito);
+ *   2. fonte:    backend/simcar/../../Arquivo Modelo.zip  → raiz do repo;
+ *   3. dist:     dist/../Arquivo Modelo.zip               → raiz do repo;
+ *   4. cwd:      a raiz do repo (systemd WorkingDirectory / dev server).
+ * (Bug histórico: o candidato único `__dirname/../../` resolvia para a pasta ACIMA do
+ * repo em produção — "Arquivo Modelo.zip não encontrado no servidor" no recorte.)
+ */
+function resolveModeloZipPath(): string {
+    const fromEnv = String(process.env.SIMCAR_MODELO_ZIP_PATH || "").trim();
+    if (fromEnv) return path.resolve(fromEnv);
+    const candidatos = [
+        path.resolve(__dirname, "..", "..", "Arquivo Modelo.zip"),
+        path.resolve(__dirname, "..", "Arquivo Modelo.zip"),
+        path.resolve(process.cwd(), "Arquivo Modelo.zip"),
+    ];
+    return candidatos.find((p) => fs.existsSync(p)) || candidatos[0];
+}
+
+export const MODELO_ZIP_PATH = resolveModeloZipPath();
 export const SIMCAR_LOCAL_SHAPES_ROOT =
     process.env.SIMCAR_LOCAL_SHAPES_ROOT ||
     "/media/server/HD Backup/VETOR/CAR_Digital/current/datasets/simcar_digital";
