@@ -5,12 +5,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const ITEM_10005 = {
+/**
+ * ATENÇÃO — dois espaços de Id diferentes (confirmado ao vivo em 2026-08-05):
+ *   API pública  (`Publico/ListarRequerimento`): Id 470498, RId 10005
+ *   API técnica  (`Requerimento/ListarRasc`)   : Id 10005
+ * Os downloads técnicos usam o Id TÉCNICO; `Publico/DownloadReciboCar` usa o
+ * Id PÚBLICO. Por isso o resolver e `requerimentoIdPublico` são consultas separadas.
+ */
+const ITEM_TECNICO = {
+  Id: 10005,
+  NumeroCompleto: "MT10005/2019",
+  NumeroReciboFedederal: "MT-5107065-AEC311BDEA79437099F3D97F9D599345",
+  Situacao: "[EM_ANALISE]",
+  PropriedadeNome: "LOTE RURAL 81",
+  MunicipioTexto: "Querência",
+};
+
+const ITEM_PUBLICO = {
   Id: 470498,
   RId: 10005,
   NumeroCompleto: "MT10005/2019",
   NumeroReciboFedederal: "MT-5107065-AEC311BDEA79437099F3D97F9D599345",
-  Situacao: "[AGUARDANDO_ANALISE]",
   PropriedadeNome: "LOTE RURAL 81",
   MunicipioTexto: "Querência",
 };
@@ -41,7 +56,7 @@ function stubFetch(handlers: {
 
 describe("simcar-lotes/resolver", () => {
   it("resolve o CAR estadual pelo ListarRasc e devolve o RequerimentoId", async () => {
-    const { bodies } = stubFetch({ rasc: () => ({ QuantidadeTotal: 1, Itens: [ITEM_10005] }) });
+    const { bodies } = stubFetch({ rasc: () => ({ QuantidadeTotal: 1, Itens: [ITEM_TECNICO] }) });
 
     const resolucao = await resolverCar({
       carEstadual: "MT10005/2019",
@@ -49,10 +64,11 @@ describe("simcar-lotes/resolver", () => {
       token: "TECNICO abc",
     });
 
+    // Id TÉCNICO (10005), não o público (470498) — é ele que os downloads usam.
     expect(resolucao).toEqual({
-      requerimentoId: 470498,
+      requerimentoId: 10005,
       numeroCompleto: "MT10005/2019",
-      situacao: "[AGUARDANDO_ANALISE]",
+      situacao: "[EM_ANALISE]",
       propriedade: "LOTE RURAL 81",
       municipio: "Querência",
     });
@@ -71,7 +87,7 @@ describe("simcar-lotes/resolver", () => {
         Itens: [
           { Id: 1, NumeroCompleto: "MT99999/2020", PropriedadeNome: "OUTRA" },
           { Id: 2, NumeroCompleto: "MT100050/2019", PropriedadeNome: "PARECIDA" },
-          ITEM_10005,
+          ITEM_TECNICO,
         ],
       }),
     });
@@ -82,14 +98,14 @@ describe("simcar-lotes/resolver", () => {
       token: "TECNICO abc",
     });
 
-    expect(resolucao.requerimentoId).toBe(470498);
+    expect(resolucao.requerimentoId).toBe(10005);
     expect(resolucao.propriedade).toBe("LOTE RURAL 81");
   });
 
   it("usa a API pública para achar o estadual quando só há recibo federal", async () => {
     const { bodies } = stubFetch({
-      publico: () => ({ Itens: [ITEM_10005] }),
-      rasc: () => ({ Itens: [ITEM_10005] }),
+      publico: () => ({ Itens: [ITEM_PUBLICO] }),
+      rasc: () => ({ Itens: [ITEM_TECNICO] }),
     });
 
     const resolucao = await resolverCar({
@@ -102,7 +118,7 @@ describe("simcar-lotes/resolver", () => {
       NUMERO_CAR_FERERAL: "MT-5107065-AEC311BDEA79437099F3D97F9D599345",
     });
     expect(bodies[1].url).toContain("Requerimento/ListarRasc");
-    expect(resolucao.requerimentoId).toBe(470498);
+    expect(resolucao.requerimentoId).toBe(10005);
   });
 
   it("erro claro quando o CAR não está na conta", async () => {
@@ -125,8 +141,9 @@ describe("simcar-lotes/resolver", () => {
     expect(await carEstadualPorReciboFederal("MT-0000000-AAAA")).toBeNull();
   });
 
-  it("requerimentoIdPublico devolve o Id do recibo público", async () => {
-    stubFetch({ publico: () => ({ Itens: [ITEM_10005] }) });
+  it("requerimentoIdPublico devolve o Id PÚBLICO, diferente do técnico", async () => {
+    stubFetch({ publico: () => ({ Itens: [ITEM_PUBLICO] }) });
+    // 470498 (público) ≠ 10005 (técnico): o recibo em PDF só baixa com este.
     expect(await requerimentoIdPublico("MT10005/2019")).toBe(470498);
   });
 });

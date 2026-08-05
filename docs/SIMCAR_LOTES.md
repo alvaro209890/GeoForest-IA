@@ -62,7 +62,18 @@ Todas exigem token Firebase (`AUTH_REQUIRED_PATHS` em `backend/app.ts`).
 | resolver nº CAR → Id | `Requerimento/ListarRasc` | sessão técnica |
 | recibo federal → nº CAR | `Publico/ListarRequerimento` (`NUMERO_CAR_FERERAL`) | pública |
 
-`{id}` = `RequerimentoId`. Contrato completo em
+> ⚠️ **Há DOIS espaços de Id** (confirmado ao vivo em 2026-08-05 com `MT10005/2019`):
+>
+> | API | Id | Onde usar |
+> |---|---|---|
+> | técnica (`Requerimento/ListarRasc`) | **10005** | `DownloadArquivoEnviado` / `DownloadArquivoProcessado` |
+> | pública (`Publico/ListarRequerimento`) | **470498** (com `RId: 10005`) | `Publico/DownloadReciboCar` |
+>
+> Trocar um pelo outro faz o download falhar. Por isso `resolver.ts` faz **duas
+> consultas separadas**: `resolverCar()` para o Id técnico e `requerimentoIdPublico()`
+> para o do recibo. O Id técnico coincide com o `RId` do público, mas não com o `Id`.
+
+Contrato completo em
 [`docs/planos/simcar-oraculo-proxy/11-endpoints-sema-descobertos.md`](planos/simcar-oraculo-proxy/11-endpoints-sema-descobertos.md).
 
 ### Detalhes descobertos ao vivo (2026-08-05)
@@ -108,7 +119,23 @@ conta dentro do processo. Contas diferentes (oráculo × usuário) não se bloqu
   conferência, pendências e croquis ficam para uma fase 2 — os endpoints já estão
   catalogados no doc 11 do plano do oráculo.
 - O download depende de credenciais **válidas** do SIMCAR. A conta tem bloqueio após
-  3 tentativas de login inválidas.
+  3 tentativas de login inválidas — nunca "testar mais uma vez" sem certeza da senha.
+
+## Validação ao vivo (2026-08-05)
+
+Fluxo completo com a conta técnica contra a SEMA real, CAR `MT10005/2019`:
+
+| Etapa | Resultado |
+|---|---|
+| Login (`Autenticacao/Autenticar`) | OK |
+| `resolverCar` (ListarRasc) | `requerimentoId: 10005`, `[EM_ANALISE]`, LOTE RURAL 81, Querência |
+| `Arquivo Enviado.zip` | **32.803 bytes** — 156 arquivos (AIR, APP, APPD… shapefiles) |
+| `Arquivo Processado.zip` | **36.954 bytes** — 148 arquivos (AREA_ABRANGENCIA, ATP…) |
+| `Recibo de Inscricao.pdf` | **665.078 bytes**, `%PDF-` (API pública, Id 470498) |
+| ZIP final | **654.219 bytes** — `MT10005-2019 - LOTE_RURAL_81/` com os 3 + `RELATORIO.txt` |
+
+O parser também foi validado contra o PDF real do recibo: extraiu `MT10005/2019`,
+o recibo federal, `LOTE RURAL 81` e `Querência`.
 
 ## Testes
 

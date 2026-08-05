@@ -66,5 +66,5 @@ Nova aba no GeoForest-IA onde o usuário arrasta o **recibo de inscrição do CA
 - [x] Progresso visível por lote/arquivo + cancelamento preservando o que já baixou
 - [x] `pnpm run check` + `pnpm run build` verdes; testes unitários passando (56 do módulo, 453 na suíte)
 
-> ⚠️ O e2e **ao vivo** com a conta técnica ficou pendente: `SIMCAR_SENHA` no
-> `backend.env` do PC servidor está inválida (ver STATUS.md).
+- [x] **E2E ao vivo** com a conta técnica no CAR `MT10005/2019`: os 3 artefatos reais
+  baixados (32,8 KB + 37,0 KB + 665 KB) e ZIP de 654 KB com a pasta do lote (ver STATUS.md)

@@ -31,12 +31,24 @@
 | A4 | Pasta do lote = `MT10005-2019 - LOTE_RURAL_81` |
 | A6 | Só download pelo navegador (nenhuma pasta fixa no servidor) |
 
-## Pendência operacional (fora do código)
+## Validação ao vivo (2026-08-05, conta técnica, CAR MT10005/2019)
 
-`SIMCAR_SENHA` no `~/.config/geoforest/backend.env` do PC servidor está **inválida**
-(a SEMA respondeu "Tentativa 2 de 3… o usuário será suspenso"). As sondas de login
-foram interrompidas para não suspender a conta. O e2e ao vivo com a conta técnica
-depende de atualizar essa senha — o que foi validado ao vivo cobre só a API pública.
+Fluxo completo contra a SEMA real: login → `resolverCar` (`requerimentoId 10005`,
+LOTE RURAL 81, Querência) → `Arquivo Enviado.zip` 32.803 B (156 shapefiles) +
+`Arquivo Processado.zip` 36.954 B (148 arquivos) + recibo 665.078 B → ZIP final
+654.219 B com a pasta `MT10005-2019 - LOTE_RURAL_81/` e `RELATORIO.txt`. Zero faltantes.
+
+Descoberta que corrigiu a documentação: **os Ids técnico e público são diferentes**
+(técnico 10005 via `ListarRasc`; público 470498 via `ListarRequerimento`, cujo `RId`
+é 10005). Cada download usa o seu — o código já fazia as duas consultas separadas.
+
+## Pendência operacional (fora do código, não afeta esta aba)
+
+`SIMCAR_SENHA` do **oráculo** (CPF `04438470102`) no `~/.config/geoforest/backend.env`
+segue **inválida** — a SEMA respondeu "Tentativa 2 de 3… o usuário será suspenso" e as
+sondas foram interrompidas. O arquivo ficou como estava (backup
+`backend.env.bak-2026-08-05`). A aba Lotes não depende disso (credencial vem do
+usuário); o oráculo sim.
 
 ## Histórico
 

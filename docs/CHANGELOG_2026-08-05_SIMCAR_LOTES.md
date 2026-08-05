@@ -73,8 +73,14 @@ se derrubam); contas diferentes correm em paralelo.
    Consequências no parser: lê a **linha seguinte** ao rótulo; o regex do CAR **não**
    pode terminar em `\b` (entre `2019` e `Ativo` não há fronteira de palavra); a UF
    é o **último** `MT` da linha, o que preserva propriedades cujo nome contém "MT".
-3. **Id público = Id técnico.** `Publico/ListarRequerimento` para `MT10005/2019`
-   devolve `Id: 470498` / `RId: 10005`; o `Id` é o `RequerimentoId` dos downloads.
+3. **Existem DOIS espaços de Id — não são intercambiáveis.** Para `MT10005/2019`:
+   `Publico/ListarRequerimento` devolve `Id: 470498` / `RId: 10005`, enquanto
+   `Requerimento/ListarRasc` (técnica) devolve `Id: 10005`. Os downloads técnicos
+   (`DownloadArquivoEnviado`/`DownloadArquivoProcessado`) usam o **Id técnico
+   (10005)**; `Publico/DownloadReciboCar` usa o **Id público (470498)**. O Id técnico
+   bate com o `RId` do público, nunca com o `Id`. Por isso `resolver.ts` mantém duas
+   consultas separadas (`resolverCar` e `requerimentoIdPublico`) — trocar uma pela
+   outra quebra o download.
 
 ---
 
@@ -105,18 +111,35 @@ se derrubam); contas diferentes correm em paralelo.
 
 ---
 
+## Validação end-to-end ao vivo (conta técnica, CAR MT10005/2019)
+
+Executada no PC servidor com a conta técnica informada pelo Álvaro (CPF
+016.917.071-39). Fluxo inteiro contra a SEMA real:
+
+| Etapa | Resultado |
+|---|---|
+| Login | OK |
+| `resolverCar` (ListarRasc) | `requerimentoId: 10005`, `[EM_ANALISE]`, LOTE RURAL 81, Querência |
+| `Arquivo Enviado.zip` | 32.803 bytes — 156 arquivos (AIR, APP, APPD… shapefiles reais) |
+| `Arquivo Processado.zip` | 36.954 bytes — 148 arquivos (AREA_ABRANGENCIA, ATP…) |
+| `Recibo de Inscricao.pdf` | 665.078 bytes, `%PDF-` (API pública) |
+| ZIP final | 654.219 bytes — `MT10005-2019 - LOTE_RURAL_81/` com os 3 + `RELATORIO.txt` |
+| Faltantes | nenhum |
+
+O parser foi validado contra o PDF real do recibo (extraiu CAR, recibo federal,
+propriedade e município corretamente).
+
 ## Pendência operacional (não é do código)
 
-A senha do SIMCAR em `~/.config/geoforest/backend.env` do PC servidor
-(`SIMCAR_SENHA`, conta do oráculo) está **inválida**: a SEMA respondeu
+O `SIMCAR_SENHA` em `~/.config/geoforest/backend.env` do PC servidor — a conta
+**do oráculo**, CPF `04438470102` — continua **inválido**: a SEMA respondeu
 `"Tentativa 2 de 3: após a 3ª tentativa de login inválido o usuário será suspenso."`
-As sondas de login foram **interrompidas** para não suspender a conta.
+As sondas foram **interrompidas** para não suspender a conta, e o `backend.env` foi
+deixado exatamente como estava (backup em `backend.env.bak-2026-08-05`).
 
-Consequência: o teste end-to-end **ao vivo** com a conta técnica não foi executado.
-O que foi validado ao vivo usa apenas a API **pública** (busca do requerimento e
-download do recibo em PDF, 665 KB, conteúdo conferido). Os endpoints técnicos
-(`DownloadArquivoEnviado`/`DownloadArquivoProcessado`) já estavam validados ao vivo
-na bateria T9 do oráculo (doc 11) e aqui estão cobertos por testes com mock.
+Isso **não afeta a aba Lotes** (as credenciais vêm do usuário, por requisição), mas
+o **oráculo SIMCAR segue fora do ar** até a senha daquela conta ser corrigida.
 
-**Ação para o Álvaro:** atualizar `SIMCAR_SENHA` no `backend.env` do servidor e
-rodar o fluxo manual da aba com um recibo real.
+**Ação para o Álvaro:** decidir se o oráculo passa a usar a conta 016.917.071-39
+(atenção: o CAR-teste `271442` precisa estar visível nessa conta) ou se a senha do
+CPF `04438470102` será atualizada.

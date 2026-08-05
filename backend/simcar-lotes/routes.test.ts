@@ -92,9 +92,10 @@ function stubSema(options: { processado?: number } = {}) {
           JSON.stringify({
             Itens: [
               {
-                Id: 470498,
+                // Id TECNICO (ListarRasc) — diferente do Id publico do recibo.
+                Id: 10005,
                 NumeroCompleto: "MT10005/2019",
-                Situacao: "[AGUARDANDO_ANALISE]",
+                Situacao: "[EM_ANALISE]",
                 PropriedadeNome: "LOTE RURAL 81",
                 MunicipioTexto: "Querência",
               },
