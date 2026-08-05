@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { length as turfLength, lineString } from "@turf/turf";
+import {
+  booleanPointInPolygon,
+  length as turfLength,
+  lineString,
+  point,
+} from "@turf/turf";
 import type { Polygon } from "geojson";
 import { formatDmsPair } from "./coords";
 import {
   classifyManeuver,
   destinationOnPolygonBoundary,
+  ensureRouteEndsInsidePolygon,
   ensureRouteReachesPolygon,
+  extendRouteToInsidePoint,
   extendRouteToPolygon,
+  interiorDestination,
   primaryRoadRef,
   resolveRoadLabel,
   simplifyRouteSteps,
@@ -265,5 +273,129 @@ describe("croqui routing", () => {
     // Tolerância de ~10 m: o turf interpola o ponto mais próximo sobre a esfera.
     expect(destino.lon).toBeCloseTo(-52.0, 4);
     expect(destino.lat).toBeCloseTo(-11.95, 3);
+  });
+
+  const quadrado: Polygon = {
+    type: "Polygon",
+    coordinates: [
+      [
+        [-52.0, -12.0],
+        [-51.9, -12.0],
+        [-51.9, -11.9],
+        [-52.0, -11.9],
+        [-52.0, -12.0],
+      ],
+    ],
+  };
+
+  function rotaQueTerminaNaDivisa(): CroquiRoute {
+    const coordinates = [
+      [-52.2, -11.95],
+      [-52.1, -11.95],
+      [-52.0, -11.95], // porteira: exatamente na divisa oeste
+    ];
+    return {
+      coordinates,
+      waypoints: [
+        waypoint(-52.2, -11.95, 20000, "depart", "MT-242", 0),
+        waypoint(-52.0, -11.95, 0, "arrive", "", 2),
+      ],
+      totalDistanceM: 20000,
+      arrivalSide: null,
+      geometry: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } },
+    };
+  }
+
+  function dentroDoQuadrado(lon: number, lat: number): boolean {
+    return booleanPointInPolygon(point([lon, lat]), {
+      type: "Feature",
+      properties: {},
+      geometry: quadrado,
+    });
+  }
+
+  it("termina na sede quando o shapefile trouxe o ponto dentro do imóvel", () => {
+    const sede = { lon: -51.96, lat: -11.94 }; // dentro do quadrado
+    const final = ensureRouteEndsInsidePolygon(rotaQueTerminaNaDivisa(), quadrado, sede);
+
+    const fim = final.coordinates[final.coordinates.length - 1];
+    expect(fim[0]).toBeCloseTo(sede.lon, 6);
+    expect(fim[1]).toBeCloseTo(sede.lat, 6);
+    expect(dentroDoQuadrado(fim[0], fim[1])).toBe(true);
+    expect(final.waypoints[final.waypoints.length - 1].maneuver).toBe("arrive");
+    expect(final.waypoints[final.waypoints.length - 1].dms).toBe(
+      formatDmsPair(sede.lon, sede.lat),
+    );
+    expect(final.destinationLabel).toBe("sede da propriedade");
+    // O último trecho vira um seguimento até a sede e o total sai da geometria.
+    expect(final.waypoints[final.waypoints.length - 2].maneuver).toBe("straight");
+    expect(final.totalDistanceM).toBeCloseTo(
+      turfLength(lineString(final.coordinates), { units: "meters" }),
+      6,
+    );
+  });
+
+  it("termina num ponto interior quando não há sede", () => {
+    const final = ensureRouteEndsInsidePolygon(rotaQueTerminaNaDivisa(), quadrado);
+
+    const fim = final.coordinates[final.coordinates.length - 1];
+    expect(dentroDoQuadrado(fim[0], fim[1])).toBe(true);
+    // Centroide do quadrado: (-51.95, -11.95), longe da divisa.
+    expect(fim[0]).toBeCloseTo(-51.95, 5);
+    expect(fim[1]).toBeCloseTo(-11.95, 5);
+    expect(final.destinationLabel).toBeNull();
+    expect(final.totalDistanceM).toBeGreaterThan(rotaQueTerminaNaDivisa().totalDistanceM);
+  });
+
+  it("ignora sede fora do polígono e cai no centroide", () => {
+    const final = ensureRouteEndsInsidePolygon(
+      rotaQueTerminaNaDivisa(),
+      quadrado,
+      { lon: -52.2, lat: -11.95 }, // fora
+    );
+
+    const fim = final.coordinates[final.coordinates.length - 1];
+    expect(fim[0]).toBeCloseTo(-51.95, 5);
+    expect(final.destinationLabel).toBeNull();
+  });
+
+  it("não altera a rota que já termina dentro do imóvel", () => {
+    const coordinates = [
+      [-52.2, -11.95],
+      [-52.0, -11.95],
+      [-51.96, -11.94], // já dentro, na futura sede
+    ];
+    const rota: CroquiRoute = {
+      coordinates,
+      waypoints: [
+        waypoint(-52.2, -11.95, 20000, "depart", "MT-242", 0),
+        waypoint(-51.96, -11.94, 0, "arrive", "", 2),
+      ],
+      totalDistanceM: 20000,
+      arrivalSide: null,
+      geometry: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } },
+    };
+
+    const { extended, route } = extendRouteToInsidePoint(rota, quadrado, {
+      lon: -51.96,
+      lat: -11.94,
+    });
+    expect(extended).toBe(false);
+    expect(route).toBe(rota);
+    // ensureRouteEndsInsidePolygon também devolve a mesma rota (idempotente).
+    expect(ensureRouteEndsInsidePolygon(rota, quadrado)).toBe(rota);
+  });
+
+  it("interiorDestination prefere a sede, depois o centroide", () => {
+    expect(interiorDestination(quadrado, { lon: -51.96, lat: -11.94 }).label).toBe(
+      "sede da propriedade",
+    );
+    const semSede = interiorDestination(quadrado);
+    expect(semSede.label).toBeNull();
+    expect(semSede.lon).toBeCloseTo(-51.95, 5);
+    // Sede fora do polígono não vale; cai no centroide sem rótulo.
+    const comSedeFora = interiorDestination(quadrado, { lon: -52.5, lat: -12.5 });
+    expect(comSedeFora.label).toBeNull();
+    expect(comSedeFora.lon).toBeCloseTo(-51.95, 5);
   });
 });

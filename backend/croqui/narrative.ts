@@ -102,7 +102,9 @@ export function buildCroquiNarrative(args: {
   const waypoints = route.waypoints;
 
   if (!waypoints.length) {
-    return `O presente croqui se inicia na cidade ${municipioNome}. Onde se encontra a propriedade.`;
+    return `O presente croqui se inicia na cidade ${municipioNome}. Onde se encontra a ${
+      route.destinationLabel || "propriedade"
+    }.`;
   }
 
   // Sentido do primeiro trecho: ponto cardeal entre o waypoint inicial e o
@@ -134,17 +136,17 @@ export function buildCroquiNarrative(args: {
   }
 
   if (!legs.length) {
-    parts.push("Onde se encontra a propriedade.");
+    parts.push(`Onde se encontra a ${route.destinationLabel || "propriedade"}.`);
     return parts.join(" ");
   }
 
   if (route.arrivalSide) {
     parts.push(...legs, `O destino estará à ${route.arrivalSide}.`);
   } else {
-    legs[legs.length - 1] = legs[legs.length - 1].replace(
-      /\.$/,
-      ", onde se encontra a propriedade.",
-    );
+    const fecho = route.destinationLabel
+      ? `, onde se encontra a ${route.destinationLabel}.`
+      : ", onde se encontra a propriedade.";
+    legs[legs.length - 1] = legs[legs.length - 1].replace(/\.$/, fecho);
     parts.push(...legs);
   }
 

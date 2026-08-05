@@ -34,6 +34,7 @@ import { resolveLandmark } from "./croqui/landmarks";
 import { buildCroquiNarrative } from "./croqui/narrative";
 import {
   destinationOnPolygonBoundary,
+  ensureRouteEndsInsidePolygon,
   ensureRouteReachesPolygon,
   fetchDrivingRoute,
   trimRouteAtPolygon,
@@ -45,6 +46,7 @@ import {
   type RouteOption,
   type RouteOptionSummary,
 } from "./croqui/route-options";
+import { findSedePoint, type SedePoint } from "./croqui/sede";
 import type { BasemapProvider } from "./croqui/basemap";
 import { buildCroquiDocxBuffer } from "./croqui/render-docx";
 import { buildCroquiKml } from "./croqui/render-kml";
@@ -160,6 +162,8 @@ async function resolveCroquiContext(atpGeometry: Polygon | MultiPolygon): Promis
 export async function buildCroquiRouteOptions(args: {
   atpGeometry: Polygon | MultiPolygon;
   startOverride?: { lon: number; lat: number } | null;
+  /** Ponto da sede da propriedade, detectado no ZIP da ATP. */
+  sedePoint?: SedePoint | null;
   onProgress?: (message: string) => void;
 }): Promise<{
   municipioNome: string;
@@ -180,6 +184,7 @@ export async function buildCroquiRouteOptions(args: {
     destLon: context.centLon,
     destLat: context.centLat,
     atpGeometry: args.atpGeometry,
+    destination: args.sedePoint ?? null,
     onProgress: args.onProgress,
   });
   return { municipioNome: context.municipioNome, options, start };
@@ -212,20 +217,28 @@ export function toRouteOptionPayload(
 /**
  * Roteia até o centroide e corta na divisa: o ponto de corte é o acesso real.
  * Quando a rota não chega a entrar no imóvel (OSM incompleto no rural), completa
- * o trecho final até a porteira em linha reta.
+ * o trecho final até a porteira em linha reta. Em ambos os casos o fim da rota
+ * é levado para DENTRO do imóvel — na sede quando há uma, senão num ponto
+ * interior — para o croqui terminar na propriedade, não na cerca.
  */
 async function routeToBoundary(
   atpGeometry: Polygon | MultiPolygon,
   landmark: CroquiContext["landmark"],
   centLon: number,
   centLat: number,
+  sedePoint?: SedePoint | null,
 ): Promise<CroquiRoute> {
   const toCentroid = await fetchDrivingRoute(landmark.lon, landmark.lat, centLon, centLat);
   const cut = trimRouteAtPolygon(toCentroid, atpGeometry);
-  if (cut.trimmed) return cut.route;
-  const dest = destinationOnPolygonBoundary(atpGeometry, landmark.lon, landmark.lat);
-  const fallback = await fetchDrivingRoute(landmark.lon, landmark.lat, dest.lon, dest.lat);
-  return ensureRouteReachesPolygon(fallback, atpGeometry);
+  let route: CroquiRoute;
+  if (cut.trimmed) {
+    route = cut.route;
+  } else {
+    const dest = destinationOnPolygonBoundary(atpGeometry, landmark.lon, landmark.lat);
+    const fallback = await fetchDrivingRoute(landmark.lon, landmark.lat, dest.lon, dest.lat);
+    route = ensureRouteReachesPolygon(fallback, atpGeometry);
+  }
+  return ensureRouteEndsInsidePolygon(route, atpGeometry, sedePoint);
 }
 
 export async function generateCroquiArtifacts(args: {
@@ -234,6 +247,8 @@ export async function generateCroquiArtifacts(args: {
   propertyName: string;
   /** Caminho escolhido pelo usuário; sem ele o croqui usa o mais curto. */
   route?: CroquiRoute | null;
+  /** Ponto da sede da propriedade, detectado no ZIP da ATP. */
+  sedePoint?: SedePoint | null;
 }): Promise<{
   narrative: string;
   municipioNome: string;
@@ -243,16 +258,19 @@ export async function generateCroquiArtifacts(args: {
 }> {
   const { atpGeometry, title, propertyName } = args;
   const { municipioNome, landmark, centLon, centLat } = await resolveCroquiContext(atpGeometry);
-  const route = args.route || (await routeToBoundary(atpGeometry, landmark, centLon, centLat));
+  const route = args.route || (await routeToBoundary(atpGeometry, landmark, centLon, centLat, args.sedePoint));
+  // Rota guardada (escolhida pelo usuário) já termina dentro; reforça a
+  // garantia aqui também, para nenhum caminho de geração escapar do fim interior.
+  const finalRoute = ensureRouteEndsInsidePolygon(route, atpGeometry, args.sedePoint);
 
-  const narrative = buildCroquiNarrative({ municipioNome, propertyName, landmark, route });
+  const narrative = buildCroquiNarrative({ municipioNome, propertyName, landmark, route: finalRoute });
   const fileStem = safeFileStem(title);
 
   const kml = buildCroquiKml({
     title,
     propertyName,
     atpGeometry,
-    route,
+    route: finalRoute,
     fileName: `${fileStem}.kml`,
   });
   const docx = await buildCroquiDocxBuffer(narrative);
@@ -260,7 +278,7 @@ export async function generateCroquiArtifacts(args: {
     title,
     narrative,
     atpGeometry,
-    route,
+    route: finalRoute,
   });
 
   const pdfName = `${fileStem}.pdf`;
@@ -329,6 +347,7 @@ async function runCroquiJob(args: {
     if (parsed.polygons.length !== 1) {
       throw new Error("O ZIP deve conter exatamente um polígono ATP.");
     }
+    const sedePoint = findSedePoint(inputZipBuffer, parsed.geometry);
 
     progress(uid, jobId, {
       stage: "route",
@@ -342,6 +361,7 @@ async function runCroquiJob(args: {
       title,
       propertyName,
       route: args.route,
+      sedePoint,
     });
 
     if (isCancelRequested(jobId)) {
@@ -464,6 +484,7 @@ export function registerCroquiRoutes(app: Express): void {
       if (parsed.polygons.length !== 1) {
         throw new Error("O ZIP deve conter exatamente um polígono ATP.");
       }
+      const sedePoint = findSedePoint(inputZipBuffer, parsed.geometry);
 
       const rawStartLon = Number((req.body as any)?.startLon);
       const rawStartLat = Number((req.body as any)?.startLat);
@@ -475,6 +496,7 @@ export function registerCroquiRoutes(app: Express): void {
       const { municipioNome, options, start: startPoint } = await buildCroquiRouteOptions({
         atpGeometry: parsed.geometry,
         startOverride,
+        sedePoint,
       });
       const routesRelativePath = saveRouteOptions(uid, uploadId, options);
       const payload = options.map(toRouteOptionPayload);

@@ -24,8 +24,10 @@ import type { MultiPolygon, Polygon, Position } from "geojson";
 import {
   destinationOnPolygonBoundary,
   ensureRouteReachesPolygon,
+  extendRouteToInsidePoint,
   fetchDrivingRoutes,
   fetchNearestOnRoad,
+  interiorDestination,
   trimRouteAtPolygon,
   type CroquiRoute,
 } from "./routing";
@@ -262,11 +264,13 @@ export type DiscoverRouteOptionsArgs = {
   destLat: number;
   atpGeometry: Polygon | MultiPolygon;
   maxOptions?: number;
+  /** Ponto da sede da propriedade (dentro do polígono); sem ele, usa um ponto interior. */
+  destination?: { lon: number; lat: number } | null;
   onProgress?: (message: string) => void;
 };
 
 export async function discoverRouteOptions(args: DiscoverRouteOptionsArgs): Promise<RouteOption[]> {
-  const { startLon, startLat, destLon, destLat, atpGeometry } = args;
+  const { startLon, startLat, destLon, destLat, atpGeometry, destination } = args;
   const maxOptions = Math.max(1, args.maxOptions ?? MAX_OPTIONS);
   const start: Position = [startLon, startLat];
   const notify = args.onProgress || (() => {});
@@ -324,6 +328,15 @@ export async function discoverRouteOptions(args: DiscoverRouteOptionsArgs): Prom
       }
       pushIfDistinct(accepted, clean, maxOptions);
     }
+  }
+
+  // O fim da rota fica DENTRO do imóvel, não na cerca: na sede quando o
+  // shapefile trouxe o ponto, senão num ponto interior. Aplicado antes de
+  // medir e rotular, para o mapa e o PDF mostrarem o mesmo traçado.
+  const dest = interiorDestination(atpGeometry, destination || null);
+  for (let i = 0; i < accepted.length; i++) {
+    const extended = extendRouteToInsidePoint(accepted[i], atpGeometry, dest);
+    if (extended.extended) accepted[i] = extended.route;
   }
 
   const shortest = Math.min(...accepted.map((route) => route.totalDistanceM || Infinity));

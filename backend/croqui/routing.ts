@@ -1,10 +1,12 @@
 import {
   booleanPointInPolygon,
+  centroid,
   length as turfLength,
   lineIntersect,
   lineString,
   nearestPointOnLine,
   point,
+  pointOnFeature,
   polygonToLine,
 } from "@turf/turf";
 import type { Feature, LineString, MultiPolygon, Polygon, Position } from "geojson";
@@ -46,6 +48,8 @@ export type CroquiRoute = {
   /** Lado em que o destino fica, quando o OSRM informa. */
   arrivalSide: "esquerda" | "direita" | null;
   geometry: Feature<LineString>;
+  /** Onde a rota termina dentro do imóvel: "sede da propriedade" ou null. */
+  destinationLabel?: string | null;
 };
 
 type OsrmStep = {
@@ -533,4 +537,156 @@ export function ensureRouteReachesPolygon(
   const cut = trimRouteAtPolygon(route, geometry);
   if (cut.trimmed) return cut.route;
   return extendRouteToPolygon(cut.route, geometry).route;
+}
+
+/* ─── Fim da rota dentro do imóvel ─────────────────────────── */
+
+function polygonRings(polygon: Polygon | MultiPolygon): Position[][] {
+  if (polygon.type === "Polygon") return polygon.coordinates;
+  return polygon.coordinates.flat();
+}
+
+/**
+ * Só considera "dentro" o ponto que está a mais de `marginM` de qualquer
+ * divisa. Um ponto exatamente na porteira (fim do corte) não conta como
+ * dentro — o croqui precisa terminar no interior, não na cerca.
+ */
+function isStrictlyInside(
+  polygon: Polygon | MultiPolygon,
+  lon: number,
+  lat: number,
+  marginM = 1,
+): boolean {
+  const feature = { type: "Feature" as const, properties: {}, geometry: polygon };
+  const p = point([lon, lat]);
+  if (!booleanPointInPolygon(p, feature)) return false;
+  for (const ring of polygonRings(polygon)) {
+    const snapped = nearestPointOnLine(lineString(ring), p, { units: "meters" });
+    if (Number(snapped.properties?.dist ?? 0) < marginM) return false;
+  }
+  return true;
+}
+
+/**
+ * Ponto onde a rota termina dentro do imóvel: a sede da propriedade quando o
+ * ponto foi informado e cai dentro do polígono; senão o centroide (quando
+ * dentro); último recurso, um ponto sobre a superfície do polígono.
+ */
+export function interiorDestination(
+  polygon: Polygon | MultiPolygon,
+  prefer?: { lon: number; lat: number } | null,
+): { lon: number; lat: number; label: string | null } {
+  if (prefer && Number.isFinite(prefer.lon) && Number.isFinite(prefer.lat)) {
+    if (isStrictlyInside(polygon, prefer.lon, prefer.lat)) {
+      return { lon: prefer.lon, lat: prefer.lat, label: "sede da propriedade" };
+    }
+  }
+  const feature = { type: "Feature" as const, properties: {}, geometry: polygon };
+  const c = centroid(feature);
+  const [clon, clat] = c.geometry.coordinates as [number, number];
+  if (Number.isFinite(clon) && Number.isFinite(clat) && isStrictlyInside(polygon, clon, clat)) {
+    return { lon: clon, lat: clat, label: null };
+  }
+  const on = pointOnFeature(feature);
+  const [olon, olat] = on.geometry.coordinates as [number, number];
+  return { lon: olon, lat: olat, label: null };
+}
+
+/**
+ * Completa o caminho da porteira até o destino dentro do imóvel. O último
+ * trecho é linha reta da divisa até a sede (ou o ponto interior) — o mesmo
+ * padrão dos croquis manuais, que terminam na sede e não na cerca.
+ *
+ * Idempotente: rota que já termina no interior volta intacta.
+ */
+export function extendRouteToInsidePoint(
+  route: CroquiRoute,
+  polygon: Polygon | MultiPolygon,
+  destination: { lon: number; lat: number; label?: string | null },
+): { route: CroquiRoute; extended: boolean; legM: number } {
+  const coords = route.coordinates;
+  if (!coords.length) return { route, extended: false, legM: 0 };
+
+  const end = coords[coords.length - 1];
+  if (isStrictlyInside(polygon, end[0], end[1])) {
+    return { route, extended: false, legM: 0 };
+  }
+
+  const leg = lineString([end, [destination.lon, destination.lat]]);
+  const legM = turfLength(leg, { units: "meters" });
+  if (!(legM > 0)) return { route, extended: false, legM: 0 };
+
+  const extendedCoords = [...coords, [destination.lon, destination.lat] as Position];
+  const waypoints = route.waypoints.map((w) => ({ ...w }));
+  if (waypoints.length) {
+    const last = waypoints[waypoints.length - 1];
+    last.distanceToNextM = legM;
+    if (last.maneuver === "arrive") last.maneuver = "straight";
+  } else {
+    waypoints.push({
+      lon: end[0],
+      lat: end[1],
+      dms: formatDmsPair(end[0], end[1]),
+      distanceToNextM: legM,
+      maneuver: "straight",
+      roadName: "",
+      coordIndex: Math.max(0, coords.length - 1),
+    });
+  }
+
+  waypoints.push({
+    lon: destination.lon,
+    lat: destination.lat,
+    dms: formatDmsPair(destination.lon, destination.lat),
+    distanceToNextM: 0,
+    maneuver: "arrive",
+    roadName: "",
+    coordIndex: extendedCoords.length - 1,
+  });
+
+  return {
+    extended: true,
+    legM,
+    route: {
+      ...route,
+      coordinates: extendedCoords,
+      waypoints,
+      arrivalSide: null,
+      destinationLabel: destination.label || route.destinationLabel || null,
+      totalDistanceM: turfLength(lineString(extendedCoords), { units: "meters" }),
+      geometry: {
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: extendedCoords },
+      },
+    },
+  };
+}
+
+/**
+ * Garante que o fim da rota fica DENTRO do imóvel, não na cerca: primeiro
+ * alcança a divisa (corte ou extensão), depois completa até a sede quando há
+ * uma, senão até um ponto interior do polígono.
+ */
+export function ensureRouteEndsInsidePolygon(
+  route: CroquiRoute,
+  polygon: Polygon | MultiPolygon,
+  destination?: { lon: number; lat: number; label?: string | null } | null,
+): CroquiRoute {
+  // Valida e rotula o destino: sede apenas quando cai dentro do polígono,
+  // senão cai para o centroide/ponto interior (sem rótulo).
+  const dest = interiorDestination(polygon, destination);
+
+  const end = route.coordinates[route.coordinates.length - 1];
+  // Já termina dentro do imóvel? Não mexe (idempotente) — só garante o rótulo
+  // quando o destino foi informado e a rota ainda não tem um.
+  if (end && isStrictlyInside(polygon, end[0], end[1])) {
+    if (dest.label && !route.destinationLabel) {
+      return { ...route, destinationLabel: dest.label };
+    }
+    return route;
+  }
+  const reached = ensureRouteReachesPolygon(route, polygon);
+  const extended = extendRouteToInsidePoint(reached, polygon, dest);
+  return extended.extended ? extended.route : reached;
 }

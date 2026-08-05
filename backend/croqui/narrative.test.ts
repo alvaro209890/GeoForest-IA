@@ -118,6 +118,24 @@ describe("croqui narrative", () => {
     expect(texto).not.toContain("O destino estará");
   });
 
+  it("fecha na sede da propriedade quando a rota termina nela", () => {
+    const rota = route(
+      [
+        waypoint(-51.8, -12.9, 706, "depart", "MT-242"),
+        waypoint(-51.7, -12.95, 0, "arrive"),
+      ],
+      null,
+    );
+    const texto = buildCroquiNarrative({
+      municipioNome: "Ribeirão Cascalheira",
+      propertyName: "Fazenda Aruanã I",
+      landmark: sedeLandmark,
+      route: { ...rota, destinationLabel: "sede da propriedade" },
+    });
+    expect(texto).toMatch(/, onde se encontra a sede da propriedade\.$/);
+    expect(texto).not.toContain("O destino estará");
+  });
+
   it("inicia com o template fixo de abertura com cidade, ponto, via e sentido", () => {
     const texto = buildCroquiNarrative({
       municipioNome: "Querência",

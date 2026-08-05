@@ -58,8 +58,13 @@ O que foi medido nos modelos e virou especificação:
    o traçado é **completado em linha reta** do fim da via mapeada até a divisa
    (`ensureRouteReachesPolygon` / `extendRouteToPolygon`). Havendo mais de um corredor,
    **o usuário escolhe**.
-5. **Simplificação** — trechos na mesma via são fundidos e os curtos absorvidos.
-6. **Artefatos** — PDF, DOCX e KML, empacotados num ZIP.
+5. **Fim dentro do imóvel** — a última coordenada fica **sempre dentro do polígono da ATP**:
+   na **sede da propriedade** quando o ZIP traz um layer de pontos dentro do imóvel
+   (`findSedePoint` em `backend/croqui/sede.ts`), senão num ponto interior (centroide,
+   com fallback na superfície). O trecho final da porteira até lá é linha reta
+   (`ensureRouteEndsInsidePolygon` / `extendRouteToInsidePoint`).
+6. **Simplificação** — trechos na mesma via são fundidos e os curtos absorvidos.
+7. **Artefatos** — PDF, DOCX e KML, empacotados num ZIP.
 
 O job roda de forma assíncrona com progresso por SSE e histórico em `users/{uid}/croqui_jobs`.
 Uploads de ATP ficam salvos por 24h e podem ser reutilizados sem reenvio.
@@ -170,7 +175,9 @@ Regras:
   mantém a via.
 - Cada trecho termina no **DMS do ponto seguinte**, nunca no do próprio ponto de partida.
 - O fecho é `O destino estará à esquerda/direita.` quando o OSRM informa o lado; senão o último
-  trecho termina em `..., onde se encontra a propriedade.`
+  trecho termina em `..., onde se encontra a propriedade.` — e em
+  `..., onde se encontra a sede da propriedade.` quando a rota termina na sede
+  (layer de pontos do ZIP dentro do imóvel).
 - Nome da via: `name` do OSRM e, quando vier vazio (o normal no rural de MT), a primeira sigla de
   `ref` (`"BR-158 | BR-242"` → `BR-158`).
 - Distâncias: até 2 casas, com vírgula e sem zeros à direita — `706 m`, `1,1 km`, `1,67 km`, `3 km`.
@@ -298,9 +305,10 @@ PUBLIC_API_BASE_URL=             # base pública p/ URLs de download (default: h
 |---------|-------|
 | `backend/croqui.ts` | Rotas Express, job assíncrono, SSE, empacotamento do ZIP |
 | `backend/croqui/basemap.ts` | Web Mercator, zoom, provedores de imagem, barra de escala |
-| `backend/croqui/routing.ts` | OSRM (rota, alternativas, `/nearest`), nomes de via, simplificação, corte na divisa, extensão até a porteira quando o OSM não alcança |
+| `backend/croqui/routing.ts` | OSRM (rota, alternativas, `/nearest`), nomes de via, simplificação, corte na divisa, extensão até a porteira quando o OSM não alcança, fim da rota dentro do imóvel (sede/ponto interior) |
 | `backend/croqui/route-options.ts` | Descoberta, limpeza, deduplicação e rótulo dos caminhos |
 | `backend/croqui/landmarks.ts` | Ponto de partida e rótulos de cidade dentro do quadro |
+| `backend/croqui/sede.ts` | Sede da propriedade: leitura de `.shp` de pontos do ZIP da ATP (`findSedePoint`) |
 | `backend/croqui/narrative.ts` | Texto do roteiro |
 | `backend/croqui/coords.ts` | DMS, distâncias, escape XML, nome de arquivo |
 | `backend/croqui/render-pdf.ts` | Layout do PDF |
@@ -332,9 +340,10 @@ npx tsc --noEmit
 | Arquivo | O que cobre |
 |---------|-------------|
 | `basemap.test.ts` | Projeção ida-e-volta, conteúdo dentro do quadro, aspect da bbox, escala, URLs |
-| `narrative.test.ts` | Reproduz o croqui Sebald; pareamento distância ↔ ponto seguinte; fechos |
-| `routing.test.ts` | `ref` das vias, classificação de manobra, simplificação, corte na divisa |
+| `narrative.test.ts` | Reproduz o croqui Sebald; pareamento distância ↔ ponto seguinte; fechos (incl. "sede da propriedade") |
+| `routing.test.ts` | `ref` das vias, classificação de manobra, simplificação, corte na divisa, fim dentro do imóvel (sede/centroide/fora) |
 | `route-options.test.ts` | Sobreposição de traçados, remoção de vai-e-volta, pontos de passagem, lado do desvio, rótulos |
+| `sede.test.ts` | Leitura de `.shp` de pontos, sede dentro/fora do polígono, reprojeção UTM via `.prj` |
 | `render-kml.test.ts` | Envelope GE Pro, cores, ordem intercalada, rótulo DMS |
 | `render-pdf.test.ts` | PNG oficial embutido no PDF; PDFKit aceita o ícone com alpha |
 | `coords.test.ts` | DMS e formatação de distância |
@@ -393,6 +402,11 @@ melhor faltar uma sede do que gravar uma sede errada. Leva ~4 minutos.
   próxima e a rota **nunca entra** no polígono. Sem `ensureRouteReachesPolygon` o croqui
   termina quilômetros antes (Estância MDM, ago/2026: gap de ~1,9 km). O trecho final off-road
   é linha reta até a divisa — igual aos croquis manuais no Google Earth.
+- **A última coordenada não pode ser a cerca.** O croqui termina DENTRO do imóvel
+  (`ensureRouteEndsInsidePolygon`): ponto exatamente na divisa não conta como dentro
+  (`isStrictlyInside` exige ≥ 1 m de qualquer divisa). Sede vinda do ZIP só vale se cair
+  dentro do polígono — fora dela, cai para o centroide. Um ponto de layer no ZIP não é a
+  sede por si só; `findSedePoint` valida contra o ATP.
 
 ### KML
 
