@@ -50,27 +50,34 @@ export const CACHE_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 /* ─── Layer Processing ──────────────────────────────────────── */
 
+/**
+ * Camadas do "Arquivo Modelo" (template SEMA) processadas no recorte.
+ *
+ * ⚠️ Lista CANÔNICA — 28 camadas, idêntica ao monólito `simcar-clip.ts` anterior ao
+ * Plano 02 (commit 74a5c3b11 trocou por 12 nomes errados — RESERVA_LEGAL/APP/
+ * HIDROGRAFIA/SERVIDAO_ADMINISTRATIVA não existem no template nem no WFS, e os 5
+ * rios + 13 outras camadas sumiram do recorte). Teste de regressão em
+ * `backend/simcar/constants.test.ts` trava esta lista contra o ZIP do modelo.
+ */
 export const TEMPLATE_LAYERS = [
-    "ATP",
-    "AIR",
-    "AREA_CONSOLIDADA",
-    "RESERVA_LEGAL",
-    "APP",
-    "AVN",
-    "AUAS",
-    "HIDROGRAFIA",
-    "NASCENTE",
-    "RESERVATORIO_ARTIFICIAL",
-    "LAGOA_NATURAL",
-    "SERVIDAO_ADMINISTRATIVA",
+    "AIR", "ATP",
+    "AREA_CONSOLIDADA", "AREA_USO_RESTRITO", "INTERESSE_SOCIAL", "UTILIDADE_PUBLICA",
+    "RIO_ATE_10", "RIO_10_A_50", "RIO_50_A_200", "RIO_200_A_600", "RIO_ACIMA_600",
+    "NASCENTE", "RESERVATORIO_ARTIFICIAL", "LAGOA_NATURAL",
+    "TIPOLOGIA_VEGETAL", "MANGUEZAL", "RESTINGA", "VEREDA",
+    "AREA_ALTITUDE_1800", "AREA_DECLIVIDADE", "AREA_TOPO_MORRO", "BORDA_CHAPADA",
+    "ARL", "ARLREM", "AUAS", "AURD", "AVN", "AREA_UMIDA",
 ] as const;
 
 export const DIRECT_COPY_LAYERS = new Set(["AIR", "ATP"]);
 
+/** Camadas de rio: buscadas por BBOX e recortadas com margem além da divisa (500m). */
 export const RIVER_CLIP_LAYERS = new Set([
-    "APP",
-    "RESERVA_LEGAL",
-    "AREA_CONSOLIDADA",
+    "RIO_ATE_10",
+    "RIO_10_A_50",
+    "RIO_50_A_200",
+    "RIO_200_A_600",
+    "RIO_ACIMA_600",
 ]);
 
 export const SPRING_LAYER_NAME = "NASCENTE";
