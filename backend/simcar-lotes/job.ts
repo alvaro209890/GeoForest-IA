@@ -7,7 +7,7 @@
  *  - cancelamento entrega o ZIP parcial com os lotes já concluídos (decisão A2);
  *  - credenciais vivem só na memória do job: nunca logadas, nunca persistidas.
  */
-import { getSimcarTokenFor } from "../simcar-oraculo/client";
+import { getSimcarTokenFor, withSimcarAuthRetryFor } from "../simcar-oraculo/client";
 import { saveUserBuffer } from "../local-storage";
 import { finishJob, isCancelRequested } from "../processing-jobs";
 import { baixarArtefatosDoLote } from "./downloader";
@@ -74,7 +74,9 @@ export async function runLotesJob(args: {
         totalLotes,
         message: "Autenticando no SIMCAR.",
       });
-      const token = await getSimcarTokenFor(cpf, senha);
+      // Só aquece a sessão: credencial errada falha aqui, antes de varrer os lotes.
+      // NÃO reusar este token no laço — ver o comentário do resolver abaixo.
+      await getSimcarTokenFor(cpf, senha);
 
       for (let i = 0; i < recibos.length; i += 1) {
         if (isCancelRequested(jobId)) {
@@ -108,11 +110,17 @@ export async function runLotesJob(args: {
             message: `Localizando ${recibo.carEstadual || recibo.filename} no SIMCAR.`,
           });
 
-          const resolucao = await resolverCar({
-            carEstadual: recibo.carEstadual,
-            reciboFederal: recibo.reciboFederal,
-            token,
-          });
+          // Token pego por chamada, com retry em 401. A sessão da SEMA cai entre
+          // lotes (sessão única por conta) e um token capturado antes do laço
+          // envelhece: em produção o lote 1 passava e os seguintes davam
+          // "sessão expirada" no ListarRasc. Os downloads já faziam isso.
+          const resolucao = await withSimcarAuthRetryFor(cpf, senha, (token) =>
+            resolverCar({
+              carEstadual: recibo.carEstadual,
+              reciboFederal: recibo.reciboFederal,
+              token,
+            }),
+          );
           linha.car = resolucao.numeroCompleto;
           linha.propriedade = resolucao.propriedade || recibo.propriedade;
           linha.municipio = resolucao.municipio || recibo.municipio;
