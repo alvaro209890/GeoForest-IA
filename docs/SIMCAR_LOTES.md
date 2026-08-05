@@ -37,12 +37,15 @@ apenas na memória do job e **nunca** são gravadas no servidor nem logadas.
 | `backend/simcar-lotes/downloader.ts` | Baixa os 3 artefatos; 400 = ausente → faltante |
 | `backend/simcar-lotes/zip-builder.ts` | Pasta por lote + `RELATORIO.txt` |
 | `backend/simcar-lotes/session-queue.ts` | Fila serial por conta (sessão única da SEMA) |
+| `backend/simcar-lotes/monitor.ts` | Lê o Monitor SIMCAR (RTDB) — **só GET**, nunca escreve |
+| `backend/simcar-lotes/aguardar.ts` | Espera cancelável até o SIMCAR ficar livre |
 | `client/src/components/SimcarLotesPanel.tsx` | Painel (credenciais, dropzone, progresso) |
 
 ## Rotas
 
 | Rota | Método | Corpo / retorno |
 |---|---|---|
+| `/api/simcar-lotes/monitor-status` | GET | `{ok, monitor:{ocupado, por?, conexoes, erro?}}` — badge do painel (cache 5 s) |
 | `/api/simcar-lotes/parse-recibos` | POST | `{zipBase64, filename}` → `{lotes: ReciboParseado[]}` — **não toca na SEMA** |
 | `/api/simcar-lotes/process` | POST | `{zipBase64, filename, cpf, senha, carsManuais?}` → `202 {jobId}` |
 | `/api/simcar-lotes/jobs/:jobId/status` | GET | `{ok, job}` |
@@ -111,6 +114,40 @@ um `Map` de sessões **por credencial** (`getSimcarTokenFor`, `withSimcarAuthRet
 com single-flight por chave, e `session-queue.ts` serializa as chamadas da mesma
 conta dentro do processo. Contas diferentes (oráculo × usuário) não se bloqueiam.
 
+Dentro do job, **cada chamada pega o token na hora** (`withSimcarAuthRetryFor`).
+Reaproveitar um token capturado antes do laço quebrava do 2º lote em diante
+(`ListarRasc 401` — job `4e7fdb05`, 1 lote no ZIP de 4 recibos); o login antes do
+laço serve só para falhar cedo quando a credencial está errada.
+
+## Integração com o Monitor SIMCAR
+
+A conta técnica também é usada **por pessoas**, no navegador. O
+[monitor-car](https://monitor-car.web.app) mostra quem está logado: um userscript
+Tampermonkey grava presença no Realtime Database
+`monitor-car-default-rtdb`, nó `presence/simcar/clients`.
+
+O GeoForest **apenas lê** esse nó (`monitor.ts`, só `GET`; um teste de superfície
+garante que não existe escrita — o bot é invisível para os outros usuários).
+
+| Momento | Comportamento |
+|---|---|
+| Início do job, SIMCAR EM USO | Fase `aguardando_simcar`; espera **fora** da fila da conta, para não segurar a vez de outro job; recheca ao chegar a vez |
+| Alguém loga no meio de um lote (401/403 após o retry do client) | Fase `sessao_interrompida`; limpa a sessão, espera liberar e **refaz o mesmo lote** — os anteriores continuam no ZIP |
+| Monitor fora do ar | Fail-open: `console.warn` e o download segue |
+| Monitor LIVRE e mesmo assim 401 | Não é o login compartilhado: no máximo 2 tentativas cegas, depois vira erro do lote |
+| Usuário cancela durante a espera | Sai na hora (a espera é ilimitada, mas cancelável) |
+| Usuário fecha a página | O job continua no servidor; ao voltar, o painel reabre o job e reconecta o SSE |
+
+Variáveis de ambiente (todas opcionais):
+
+| Var | Default | Uso |
+|---|---|---|
+| `SIMCAR_MONITOR_ENABLED` | `1` | `0` desliga o gate (escape de emergência) |
+| `SIMCAR_MONITOR_RTDB_URL` | `https://monitor-car-default-rtdb.firebaseio.com` | trocar o banco do monitor |
+| `SIMCAR_MONITOR_STALE_MS` | `40000` | janela de "cliente vivo" (espelha o site) |
+| `SIMCAR_MONITOR_POLL_MS` | `15000` | intervalo de verificação durante a espera |
+| `SIMCAR_MONITOR_MAX_RETRY` | `0` (ilimitado) | teto de retomadas por lote após interrupção |
+
 ## Limites conhecidos
 
 - O envio vai em base64 no corpo JSON; `express.json` está em **25 MB** — na prática
@@ -141,7 +178,7 @@ o recibo federal, `LOTE RURAL 81` e `Querência`.
 
 ```bash
 pnpm run check
-pnpm run test          # 56 testes só de backend/simcar-lotes/
+pnpm run test          # 85 testes só de backend/simcar-lotes/
 pnpm run build
 ```
 
@@ -149,3 +186,9 @@ Cobertura: parser (layout real), resolver (mock de fetch, filtro exato, fallback
 federal), downloader (400/401/magic bytes/fallback do recibo), zip-builder
 (estrutura, sanitização, desambiguação), fila por conta e um end-to-end de rota com
 SEMA falsa (recibo → ZIP com as 3 pastas + `RELATORIO.txt`).
+
+`job.test.ts` cobre a sessão entre lotes: o 401 do `ListarRasc` (regressão do job
+`4e7fdb05` — falha se o token voltar a ser capturado antes do laço), o gate do
+monitor antes do login e a retomada do mesmo lote após interrupção, inclusive com
+`SIMCAR_MONITOR_MAX_RETRY`. `monitor.test.ts` cobre a regra de ocupação, o
+fail-open e a garantia de que o módulo nunca escreve no RTDB.
