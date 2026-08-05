@@ -5,6 +5,7 @@ import {
   Download,
   FileText,
   FolderArchive,
+  Hourglass,
   KeyRound,
   Loader2,
   Trash2,
@@ -53,19 +54,34 @@ type JobLotes = {
   outputFilename?: string | null;
   error?: string | null;
   cancelado?: boolean;
+  /** Quem está logado no SIMCAR quando o job está esperando (vem do monitor). */
+  por?: string | null;
+};
+
+/** Ocupação do SIMCAR segundo o monitor-car (quem está logado no navegador). */
+type MonitorStatus = {
+  ocupado: boolean;
+  por?: string | null;
+  conexoes?: number;
+  erro?: string | null;
 };
 
 const FASE_LABEL: Record<string, string> = {
   queued: 'Na fila',
   lendo: 'Lendo recibos',
+  aguardando_simcar: 'Aguardando SIMCAR ficar livre',
   login: 'Autenticando no SIMCAR',
   resolvendo: 'Localizando CARs',
   baixando: 'Baixando documentos',
+  sessao_interrompida: 'Sessão interrompida — aguardando SIMCAR',
   zipando: 'Gerando ZIP',
   concluido: 'Concluído',
   cancelado: 'Cancelado',
   erro: 'Falhou',
 };
+
+/** Fases em que a barra congela: o job está parado esperando, não travado. */
+const FASES_DE_ESPERA = new Set(['aguardando_simcar', 'sessao_interrompida']);
 
 function lerCredenciais(): { cpf: string; senha: string; lembrar: boolean } {
   try {
@@ -180,6 +196,35 @@ function zipStore(entradas: Array<{ nome: string; dados: Uint8Array }>): string 
   return btoa(binario);
 }
 
+/** Bolinha + rótulo do monitor-car: LIVRE, EM USO por <quem> ou indisponível. */
+function MonitorBadge({ monitor }: { monitor: MonitorStatus | null }) {
+  if (!monitor || monitor.erro) {
+    return (
+      <span
+        className="flex items-center gap-1.5 rounded-full border border-white/10 bg-slate-800/60 px-2.5 py-1 text-[11px] text-slate-500"
+        title="Não foi possível ler o monitor do SIMCAR — o download segue normalmente."
+      >
+        <span className="h-2 w-2 rounded-full bg-slate-500" />
+        Monitor indisponível
+      </span>
+    );
+  }
+  if (monitor.ocupado) {
+    return (
+      <span className="flex items-center gap-1.5 rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-[11px] text-red-300">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-red-400" />
+        SIMCAR: EM USO por {monitor.por || 'outro usuário'}
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-300">
+      <span className="h-2 w-2 rounded-full bg-emerald-400" />
+      SIMCAR: LIVRE
+    </span>
+  );
+}
+
 export type SimcarLotesPanelProps = {
   /** Espelha cada snapshot do job para o histórico do Dashboard (cards laterais). */
   onJobSnapshot?: (job: Record<string, unknown>) => void;
@@ -208,7 +253,37 @@ export default function SimcarLotesPanel({ onJobSnapshot, jobParaAbrir }: Simcar
   const onJobSnapshotRef = useRef(onJobSnapshot);
   onJobSnapshotRef.current = onJobSnapshot;
 
+  const [monitor, setMonitor] = useState<MonitorStatus | null>(null);
+  const monitorRef = useRef<MonitorStatus | null>(null);
+
   useEffect(() => () => eventsRef.current?.abort(), []);
+
+  /**
+   * Badge do monitor: a conta do SIMCAR é compartilhada e de sessão única, então
+   * saber que alguém está logado explica por que o download pode ficar esperando.
+   * Poll de 15 s (o servidor ainda tem cache de 5 s), encerrado no unmount.
+   */
+  useEffect(() => {
+    let vivo = true;
+    const ler = async () => {
+      try {
+        const resp = await apiFetch('/api/simcar-lotes/monitor-status');
+        if (!resp.ok || !vivo) return;
+        const payload = await resp.json();
+        const atual = (payload?.monitor || null) as MonitorStatus | null;
+        monitorRef.current = atual;
+        setMonitor(atual);
+      } catch {
+        // Sem rede/monitor: o badge fica cinza, sem alarme.
+      }
+    };
+    void ler();
+    const timer = window.setInterval(() => void ler(), 15000);
+    return () => {
+      vivo = false;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const salvarCredenciais = useCallback(() => {
     try {
@@ -345,6 +420,14 @@ export default function SimcarLotesPanel({ onJobSnapshot, jobParaAbrir }: Simcar
     }
     setErro('');
     salvarCredenciais();
+
+    // Aviso, não bloqueio: o job entra na fila e começa sozinho quando liberar.
+    if (monitorRef.current?.ocupado) {
+      toast.info(
+        `O SIMCAR está em uso por ${monitorRef.current.por || 'outro usuário'}. O download vai aguardar ficar livre e começar sozinho.`,
+      );
+    }
+
     setJob({ status: 'processing', fase: 'queued', percent: 1, message: 'Enviando ao servidor...' });
     try {
       const carsManuais: Record<string, string> = {};
@@ -411,15 +494,19 @@ export default function SimcarLotesPanel({ onJobSnapshot, jobParaAbrir }: Simcar
 
   const processando = job?.status === 'processing';
   const concluido = job?.status === 'completed' || job?.status === 'cancelled';
+  const esperandoSimcar = processando && FASES_DE_ESPERA.has(job?.fase || '');
   const lotesValidos = lotes.filter((lote) => lote.carEstadual || lote.reciboFederal);
 
   return (
     <div className="flex flex-col gap-6 p-6">
       <div>
-        <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
-          <FolderArchive size={18} className="text-cyan-400" />
-          Lotes SIMCAR
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
+            <FolderArchive size={18} className="text-cyan-400" />
+            Lotes SIMCAR
+          </h2>
+          <MonitorBadge monitor={monitor} />
+        </div>
         <p className="mt-1 text-sm text-slate-400">
           Arraste os recibos de inscrição do CAR (PDF ou ZIP). O servidor entra no SIMCAR com as
           suas credenciais e devolve um ZIP com uma pasta por lote — Arquivo Enviado, Arquivo
@@ -620,7 +707,9 @@ export default function SimcarLotesPanel({ onJobSnapshot, jobParaAbrir }: Simcar
         {(processando || concluido) && job && (
           <div className="space-y-3">
             <div className="flex items-center gap-3">
-              {processando ? (
+              {esperandoSimcar ? (
+                <Hourglass size={16} className="animate-pulse text-amber-400" />
+              ) : processando ? (
                 <Loader2 size={16} className="animate-spin text-cyan-400" />
               ) : job.status === 'cancelled' ? (
                 <AlertTriangle size={16} className="text-orange-400" />
@@ -642,12 +731,42 @@ export default function SimcarLotesPanel({ onJobSnapshot, jobParaAbrir }: Simcar
               )}
             </div>
 
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-700/60">
+            {esperandoSimcar && (
               <div
-                className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all"
-                style={{ width: `${Math.min(100, Math.max(2, Number(job.percent || 0)))}%` }}
-              />
-            </div>
+                className={`flex items-start gap-2 rounded-lg border p-3 text-xs ${
+                  job.fase === 'sessao_interrompida'
+                    ? 'border-red-500/30 bg-red-500/10 text-red-200'
+                    : 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                }`}
+              >
+                <Hourglass size={14} className="mt-0.5 shrink-0 animate-pulse" />
+                <div className="space-y-1">
+                  <p>
+                    {job.fase === 'sessao_interrompida'
+                      ? `Sessão interrompida${job.por ? ` por ${job.por}` : ''} — o download recomeça neste lote assim que o SIMCAR ficar livre.`
+                      : `SIMCAR em uso${job.por ? ` por ${job.por}` : ''} — aguardando ficar livre para entrar com as suas credenciais.`}
+                  </p>
+                  <p className="text-[11px] opacity-80">
+                    O download continua em segundo plano mesmo se você fechar esta página.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {esperandoSimcar ? (
+              // Barra congelada viraria "travou". Aqui a faixa desliza para deixar
+              // claro que o job está vivo, só esperando a vez.
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-700/60">
+                <div className="h-full w-1/3 animate-pulse rounded-full bg-gradient-to-r from-amber-500/40 via-amber-400 to-amber-500/40" />
+              </div>
+            ) : (
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-700/60">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all"
+                  style={{ width: `${Math.min(100, Math.max(2, Number(job.percent || 0)))}%` }}
+                />
+              </div>
+            )}
 
             {job.status === 'completed' || job.status === 'cancelled' ? (
               <button

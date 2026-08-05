@@ -38,6 +38,7 @@ import {
   Lightbulb,
   AlertTriangle,
   FolderArchive,
+  Hourglass,
   Clock,
   MousePointerClick,
   CheckCircle2,
@@ -4642,6 +4643,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         ? `${lote.lotesConcluidos ?? 0} lote${(lote.lotesConcluidos ?? 0) === 1 ? '' : 's'} no ZIP`
                         : lote.message || 'Processando...'}
                       {lote.timestamp ? ` • ${new Date(lote.timestamp).toLocaleString('pt-BR')}` : ''}
+                      {(lote.fase === 'aguardando_simcar' || lote.fase === 'sessao_interrompida') && (
+                        <span className="mt-0.5 flex items-center gap-1 text-amber-300">
+                          <Hourglass size={10} className="animate-pulse" />
+                          {lote.fase === 'sessao_interrompida'
+                            ? 'sessão interrompida — retoma sozinho'
+                            : 'aguardando o SIMCAR ficar livre'}
+                        </span>
+                      )}
                       {(lote.relatorio || []).some((linha: LotesRelatorioRow) => linha.faltantes.length > 0) && (
                         <span className="mt-0.5 flex items-center gap-1 text-amber-300">
                           <AlertTriangle size={10} /> algum artefato faltou na SEMA
@@ -6596,6 +6605,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       return [item, ...prev];
                     });
                     setLotesJobId(item.jobId);
+                    // Marca o job ativo uma única vez (o nonce só muda ao trocar de job):
+                    // sair da aba e voltar remonta o painel, que então reabre este job e
+                    // reconecta o SSE em vez de mostrar tela vazia com o job rodando.
+                    setLotesJobParaAbrir((prev) =>
+                      prev?.jobId === item.jobId ? prev : { jobId: item.jobId, nonce: Date.now() },
+                    );
                     // Espelha no disco do servidor (users/<uid>/simcar_lotes_jobs/<jobId>.json)
                     if (lotesJobsRef) {
                       void setDoc(doc(lotesJobsRef, item.jobId), {
