@@ -24,6 +24,8 @@ export type {
   VerticesHistoryItem,
   ContainmentHistoryItem,
   GeometryHistoryItem,
+  LotesHistoryItem,
+  LotesRelatorioRow,
   ReceiptHistoryItem,
 } from './types/history';
 

@@ -37,6 +37,7 @@ import {
   HelpCircle,
   Lightbulb,
   AlertTriangle,
+  FolderArchive,
   Clock,
   MousePointerClick,
   CheckCircle2,
@@ -86,6 +87,7 @@ import {
   mapVerticesDocToHistoryItem,
   mapContainmentDocToHistoryItem,
   mapGeometryDocToHistoryItem,
+  mapLotesDocToHistoryItem,
   normalizeSimcarClipSummary,
   normalizeSimcarReportPatch,
   inferSimcarStageFromEndpoint,
@@ -114,6 +116,8 @@ import {
   type VerticesHistoryItem,
   type ContainmentHistoryItem,
   type GeometryHistoryItem,
+  type LotesHistoryItem,
+  type LotesRelatorioRow,
   type ReceiptHistoryItem,
 } from '@/dashboard';
 import {
@@ -597,6 +601,11 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   const [verticesJobsRef, setVerticesJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [containmentJobsRef, setContainmentJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [geometryJobsRef, setGeometryJobsRef] = useState<ReturnType<typeof collection> | null>(null);
+  // Aba "Lotes SIMCAR": histórico persistido em users/<uid>/simcar_lotes_jobs
+  const [lotesHistory, setLotesHistory] = useState<LotesHistoryItem[]>([]);
+  const [lotesJobId, setLotesJobId] = useState<string | null>(null);
+  const [lotesJobParaAbrir, setLotesJobParaAbrir] = useState<{ jobId: string; nonce: number } | null>(null);
+  const [lotesJobsRef, setLotesJobsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [receiptHistory, setReceiptHistory] = useState<ReceiptHistoryItem[]>([]);
   const [receiptsRef, setReceiptsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
@@ -1624,6 +1633,10 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
           setVerticesJobsRef(null);
           setContainmentJobsRef(null);
           setGeometryJobsRef(null);
+          setLotesJobsRef(null);
+          setLotesHistory([]);
+          setLotesJobId(null);
+          setLotesJobParaAbrir(null);
           setReceiptsRef(null);
           setCbersHistory([]);
           setLandsatHistory([]);
@@ -1661,6 +1674,8 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
         setContainmentJobsRef(containmentRef);
         const geometryRef = collection(db, 'users', currentUser.uid, 'geometry_errors_jobs');
         setGeometryJobsRef(geometryRef);
+        const lotesRef = collection(db, 'users', currentUser.uid, 'simcar_lotes_jobs');
+        setLotesJobsRef(lotesRef);
         const receiptsColRef = collection(db, 'users', currentUser.uid, 'receipts');
         setReceiptsRef(receiptsColRef);
         const cbersRef = collection(db, 'users', currentUser.uid, 'cbers_wpm_jobs');
@@ -1866,6 +1881,25 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
           }
         } catch (error) {
           console.warn('Falha ao carregar histórico de erros de geometria salvo:', error);
+        }
+
+        try {
+          const lotesSnap = await getDocs(query(lotesRef, orderBy('updatedAtMs', 'desc')));
+          const lotesEntries: LotesHistoryItem[] = [];
+          lotesSnap.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            const item = mapLotesDocToHistoryItem(docSnap.id, data);
+            if (item.status !== 'deleted') lotesEntries.push(item);
+          });
+          setLotesHistory(lotesEntries);
+          // Job que ficou rodando (F5 no meio do download) volta a ser acompanhado.
+          const rodandoLotes = lotesEntries.find((entry) => entry.status === 'processing');
+          if (rodandoLotes) {
+            setLotesJobId(rodandoLotes.jobId);
+            setLotesJobParaAbrir({ jobId: rodandoLotes.jobId, nonce: Date.now() });
+          }
+        } catch (error) {
+          console.warn('Falha ao carregar histórico de Lotes SIMCAR salvo:', error);
         }
 
         try {
@@ -4581,6 +4615,83 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 hint={'Clique em "Novo Recorte" para começar'}
               />
             )
+          ) : activeView === 'simcar-lotes' ? (
+            /* ─── Lotes SIMCAR: cards do histórico (padrão do recorte) ─── */
+            lotesHistory.length > 0 ? (
+              lotesHistory.map((lote) => (
+                <HistoryCard
+                  key={lote.id}
+                  theme={{
+                    Icon: FolderArchive,
+                    activeBg: 'bg-cyan-500/10 border-cyan-500/20',
+                    inactiveBg: 'bg-white/5 hover:bg-white/10',
+                    iconActive: 'bg-gradient-to-br from-emerald-500 to-cyan-500 text-white shadow-md shadow-cyan-900/40',
+                    iconInactive: 'bg-cyan-500/10 text-cyan-400',
+                    titleActive: 'text-cyan-100',
+                    titleInactive: 'text-slate-200',
+                    percentText: 'text-cyan-300',
+                  }}
+                  active={lotesJobId === lote.jobId}
+                  title={lote.filename}
+                  percent={lote.percent}
+                  status={lote.status}
+                  className="mb-1"
+                  subtitle={
+                    <span>
+                      {lote.status === 'completed' || lote.status === 'cancelled'
+                        ? `${lote.lotesConcluidos ?? 0} lote${(lote.lotesConcluidos ?? 0) === 1 ? '' : 's'} no ZIP`
+                        : lote.message || 'Processando...'}
+                      {lote.timestamp ? ` • ${new Date(lote.timestamp).toLocaleString('pt-BR')}` : ''}
+                      {(lote.relatorio || []).some((linha: LotesRelatorioRow) => linha.faltantes.length > 0) && (
+                        <span className="mt-0.5 flex items-center gap-1 text-amber-300">
+                          <AlertTriangle size={10} /> algum artefato faltou na SEMA
+                        </span>
+                      )}
+                    </span>
+                  }
+                  onSelect={() => {
+                    setLotesJobId(lote.jobId);
+                    setLotesJobParaAbrir({ jobId: lote.jobId, nonce: Date.now() });
+                    navigateView('simcar-lotes');
+                  }}
+                  extraActions={
+                    lote.downloadUrl && (lote.status === 'completed' || lote.status === 'cancelled') ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void downloadSimcarZip(lote.downloadUrl, lote.outputFilename || 'lotes_simcar.zip');
+                        }}
+                        className="p-2 rounded-lg text-emerald-300 hover:text-white hover:bg-emerald-500/20 transition-colors opacity-0 group-hover:opacity-100"
+                        title="Baixar ZIP dos lotes"
+                      >
+                        <Download size={14} />
+                      </button>
+                    ) : undefined
+                  }
+                  onDelete={async () => {
+                    // Cancela job em andamento e apaga o ZIP do disco do servidor.
+                    try {
+                      await apiFetch(`/api/simcar-lotes/jobs/${lote.jobId}`, { method: 'DELETE' });
+                    } catch {
+                      // Segue removendo o card mesmo se o backend não responder.
+                    }
+                    if (lotesJobsRef) void deleteDoc(doc(lotesJobsRef, lote.jobId)).catch(() => {});
+                    setLotesHistory((prev) => prev.filter((item) => item.jobId !== lote.jobId));
+                    if (lotesJobId === lote.jobId) {
+                      setLotesJobId(null);
+                      setLotesJobParaAbrir(null);
+                    }
+                  }}
+                />
+              ))
+            ) : (
+              <HistoryEmptyState
+                Icon={FolderArchive}
+                title="Nenhum lote baixado"
+                hint="Arraste os recibos do CAR para começar"
+              />
+            )
           ) : activeView === 'simcar-receipts' ? (
             receiptHistory.length > 0 ? (
               receiptHistory.map((receipt) => (
@@ -6470,7 +6581,30 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           }>
             <div className="flex-1 overflow-y-auto custom-scrollbar">
               <div className="max-w-6xl mx-auto">
-                <SimcarLotesPanel />
+                <SimcarLotesPanel
+                  jobParaAbrir={lotesJobParaAbrir}
+                  onJobSnapshot={(job) => {
+                    const item = mapLotesDocToHistoryItem(String(job?.jobId || job?.id || ''), job);
+                    if (!item.jobId) return;
+                    setLotesHistory((prev) => {
+                      const idx = prev.findIndex((entry) => entry.jobId === item.jobId);
+                      if (idx >= 0) {
+                        const copy = [...prev];
+                        copy[idx] = item;
+                        return copy;
+                      }
+                      return [item, ...prev];
+                    });
+                    setLotesJobId(item.jobId);
+                    // Espelha no disco do servidor (users/<uid>/simcar_lotes_jobs/<jobId>.json)
+                    if (lotesJobsRef) {
+                      void setDoc(doc(lotesJobsRef, item.jobId), {
+                        ...job,
+                        updatedAtMs: Date.now(),
+                      }, { merge: true }).catch(() => {});
+                    }
+                  }}
+                />
               </div>
             </div>
           </Suspense>

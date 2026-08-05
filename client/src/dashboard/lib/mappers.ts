@@ -6,6 +6,8 @@ import { resolveBackendUrl } from '@/lib/api';
 import type {
   ContainmentHistoryItem,
   GeometryHistoryItem,
+  LotesHistoryItem,
+  LotesRelatorioRow,
   VerticesHistoryItem,
   VerticesResultRow,
 } from '@/dashboard/types/history';
@@ -82,6 +84,47 @@ export const mapContainmentDocToHistoryItem = (docId: string, data: any): Contai
     warnings: Array.isArray(data?.warnings) ? data.warnings.map((item: any) => String(item)) : undefined,
     targetLayerName: data?.targetLayerName ? String(data.targetLayerName) : undefined,
     containerCount: Number.isFinite(Number(data?.containerCount)) ? Number(data.containerCount) : undefined,
+  };
+};
+
+export const mapLotesDocToHistoryItem = (docId: string, data: any): LotesHistoryItem => {
+  const rawStatus = String(data?.status || '').trim().toLowerCase();
+  const status: LotesHistoryItem['status'] =
+    rawStatus === 'completed' || rawStatus === 'failed' || rawStatus === 'cancelled' || rawStatus === 'deleted' || rawStatus === 'queued'
+      ? rawStatus
+      : 'processing';
+  const relatorio: LotesRelatorioRow[] = Array.isArray(data?.relatorio)
+    ? data.relatorio.map((row: any) => ({
+        filename: String(row?.filename || ''),
+        car: row?.car ? String(row.car) : null,
+        propriedade: row?.propriedade ? String(row.propriedade) : null,
+        municipio: row?.municipio ? String(row.municipio) : null,
+        pasta: row?.pasta ? String(row.pasta) : null,
+        baixados: Array.isArray(row?.baixados) ? row.baixados.map((v: any) => String(v)) : [],
+        faltantes: Array.isArray(row?.faltantes) ? row.faltantes.map((v: any) => String(v)) : [],
+        erro: row?.erro ? String(row.erro) : null,
+      }))
+    : [];
+  return {
+    id: String(data?.id || docId),
+    jobId: String(data?.jobId || docId),
+    filename: String(data?.filename || 'Lotes SIMCAR'),
+    timestamp: toIsoDateFromUnknown(data?.completedAt || data?.updatedAt || data?.createdAt),
+    status,
+    fase: data?.fase ? String(data.fase) : undefined,
+    percent: Math.max(0, Math.min(100, Math.round(Number(data?.percent || (status === 'completed' ? 100 : 0))))),
+    message: data?.message ? String(data.message) : undefined,
+    error: data?.error ? String(data.error) : undefined,
+    downloadUrl: data?.downloadUrl ? resolveBackendUrl(String(data.downloadUrl)) : undefined,
+    outputFilename: data?.outputFilename ? String(data.outputFilename) : undefined,
+    outputBytes: Number.isFinite(Number(data?.outputBytes)) ? Number(data.outputBytes) : undefined,
+    // Concluídos = lotes que entraram no ZIP; cai para o relatório sem erro quando ausente.
+    lotesConcluidos: Number.isFinite(Number(data?.lotesConcluidos))
+      ? Number(data.lotesConcluidos)
+      : relatorio.filter((row) => !row.erro).length,
+    totalLotes: Number.isFinite(Number(data?.totalLotes)) ? Number(data.totalLotes) : relatorio.length || undefined,
+    relatorio: relatorio.length ? relatorio : undefined,
+    cancelado: Boolean(data?.cancelado),
   };
 };
 

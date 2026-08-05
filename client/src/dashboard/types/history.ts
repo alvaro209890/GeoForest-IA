@@ -320,6 +320,38 @@ export type ContainmentHistoryItem = {
   containerCount?: number;
 };
 
+/** Uma linha do relatório da aba "Lotes SIMCAR" (um recibo enviado). */
+export type LotesRelatorioRow = {
+  filename: string;
+  car: string | null;
+  propriedade: string | null;
+  municipio: string | null;
+  pasta: string | null;
+  baixados: string[];
+  faltantes: string[];
+  erro: string | null;
+};
+
+export type LotesHistoryItem = {
+  id: string;
+  jobId: string;
+  filename: string;
+  timestamp: string;
+  status: 'processing' | 'completed' | 'failed' | 'cancelled' | 'deleted' | 'queued';
+  fase?: string;
+  percent: number;
+  message?: string;
+  error?: string;
+  downloadUrl?: string;
+  outputFilename?: string;
+  outputBytes?: number;
+  /** Lotes efetivamente incluídos no ZIP. */
+  lotesConcluidos?: number;
+  totalLotes?: number;
+  relatorio?: LotesRelatorioRow[];
+  cancelado?: boolean;
+};
+
 export type GeometryHistoryItem = {
   id: string;
   jobId: string;

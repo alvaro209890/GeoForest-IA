@@ -180,7 +180,18 @@ function zipStore(entradas: Array<{ nome: string; dados: Uint8Array }>): string 
   return btoa(binario);
 }
 
-export default function SimcarLotesPanel() {
+export type SimcarLotesPanelProps = {
+  /** Espelha cada snapshot do job para o histórico do Dashboard (cards laterais). */
+  onJobSnapshot?: (job: Record<string, unknown>) => void;
+  /**
+   * Job escolhido num card do histórico — o painel carrega e exibe o resultado dele.
+   * O `nonce` muda a cada clique para que reabrir o MESMO card depois de rodar outra
+   * análise volte a carregá-lo (só o jobId não mudaria e o efeito não dispararia).
+   */
+  jobParaAbrir?: { jobId: string; nonce: number } | null;
+};
+
+export default function SimcarLotesPanel({ onJobSnapshot, jobParaAbrir }: SimcarLotesPanelProps = {}) {
   const salvas = useMemo(lerCredenciais, []);
   const [cpf, setCpf] = useState(() => formatarCpf(salvas.cpf));
   const [senha, setSenha] = useState(salvas.senha);
@@ -193,6 +204,9 @@ export default function SimcarLotesPanel() {
   const [erro, setErro] = useState('');
   const envioRef = useRef<{ base64: string; filename: string } | null>(null);
   const eventsRef = useRef<AbortController | null>(null);
+  // Ref para o callback não recriar `aplicarPatch` (que é dependência do SSE).
+  const onJobSnapshotRef = useRef(onJobSnapshot);
+  onJobSnapshotRef.current = onJobSnapshot;
 
   useEffect(() => () => eventsRef.current?.abort(), []);
 
@@ -241,6 +255,21 @@ export default function SimcarLotesPanel() {
     }
   }, [files]);
 
+  /**
+   * Aplica um patch do job no estado e espelha o snapshot completo para o
+   * Dashboard (card do histórico + persistência em `simcar_lotes_jobs`).
+   */
+  const aplicarPatch = useCallback(
+    (jobId: string, patch: Record<string, unknown>) => {
+      setJob((atual) => {
+        const proximo = { ...(atual || {}), ...patch, jobId } as JobLotes;
+        onJobSnapshotRef.current?.({ ...proximo, jobId });
+        return proximo;
+      });
+    },
+    [],
+  );
+
   const acompanhar = useCallback(async (jobId: string) => {
     const controller = new AbortController();
     eventsRef.current?.abort();
@@ -263,7 +292,7 @@ export default function SimcarLotesPanel() {
             const evento = JSON.parse(linha.slice(6));
             if (evento.type === 'heartbeat') continue;
             const patch = evento.type === 'snapshot' ? evento.job : evento;
-            setJob((atual) => ({ ...(atual || {}), ...patch, jobId }));
+            aplicarPatch(jobId, patch);
           } catch {
             // Evento malformado — ignora.
           }
@@ -274,13 +303,38 @@ export default function SimcarLotesPanel() {
         // Sem SSE (proxy/rede): cai para uma leitura final do status.
         try {
           const resp = await apiFetch(`/api/simcar-lotes/jobs/${jobId}/status`);
-          if (resp.ok) setJob({ ...(await resp.json()).job, jobId });
+          if (resp.ok) aplicarPatch(jobId, (await resp.json()).job || {});
         } catch {
           // Mantém o último estado conhecido.
         }
       }
     }
-  }, []);
+  }, [aplicarPatch]);
+
+  /** Card do histórico clicado: carrega o job salvo e reconecta se ainda estiver rodando. */
+  const abrirJobId = jobParaAbrir?.jobId || '';
+  const abrirNonce = jobParaAbrir?.nonce ?? 0;
+  useEffect(() => {
+    const jobId = abrirJobId.trim();
+    if (!jobId) return;
+    let cancelado = false;
+    void (async () => {
+      try {
+        const resp = await apiFetch(`/api/simcar-lotes/jobs/${jobId}/status`);
+        if (!resp.ok || cancelado) return;
+        const salvo = (await resp.json()).job || {};
+        setJob({ ...salvo, jobId });
+        setErro('');
+        if (String(salvo.status || '') === 'processing') void acompanhar(jobId);
+      } catch {
+        // Job sumiu do disco — mantém a tela como está.
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- nonce é o gatilho intencional
+  }, [abrirJobId, abrirNonce, acompanhar]);
 
   const baixarDocumentos = useCallback(async () => {
     const envio = envioRef.current;
@@ -309,13 +363,14 @@ export default function SimcarLotesPanel() {
       });
       if (!resp.ok) throw new Error((await readApiError(resp)).error || 'Falha ao iniciar o download.');
       const { jobId } = await resp.json();
-      setJob((atual) => ({ ...(atual || {}), jobId }));
+      // Emite já aqui para o card aparecer no histórico antes do primeiro evento SSE.
+      aplicarPatch(jobId, { filename: envio.filename, totalLotes: lotes.length });
       void acompanhar(jobId);
     } catch (error: any) {
       setJob(null);
       setErro(error?.message || 'Falha ao iniciar o download dos lotes.');
     }
-  }, [acompanhar, cpf, lotes, salvarCredenciais, senha]);
+  }, [acompanhar, aplicarPatch, cpf, lotes, salvarCredenciais, senha]);
 
   const cancelar = useCallback(async () => {
     if (!job?.jobId) return;

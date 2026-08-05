@@ -22,6 +22,8 @@ export {
   type VerticesHistoryItem,
   type ContainmentHistoryItem,
   type GeometryHistoryItem,
+  type LotesHistoryItem,
+  type LotesRelatorioRow,
   type ReceiptHistoryItem,
 } from './types';
 export {
@@ -44,6 +46,7 @@ export {
   mapVerticesDocToHistoryItem,
   mapContainmentDocToHistoryItem,
   mapGeometryDocToHistoryItem,
+  mapLotesDocToHistoryItem,
 } from './lib/mappers';
 export {
   normalizeSimcarClipSummary,
