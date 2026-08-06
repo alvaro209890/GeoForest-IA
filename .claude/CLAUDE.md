@@ -94,6 +94,30 @@ principal (`ia-florestal.web.app`). **Não recriar.** Ver
 `backend/firebase-admin.ts` / `adminAuth` / `adminDb` são o SDK Admin do Firebase
 (verificação de token dos usuários) — nada a ver com o painel.
 
+## Oráculo SIMCAR (ZIP → SIMCAR do Álvaro → GeoForest): DESATIVADO PARA SEMPRE (05/08/2026)
+
+O fluxo em que o usuário subia um ZIP e o GeoForest **importava/processava no SIMCAR real
+com a conta técnica do Álvaro**, devolvendo o veredito oficial, está **desligado e não
+será reativado** (decisão do Álvaro). A aba "Análise de Erros → Processar projeto" foi
+removida em 21/07/2026.
+
+- **Não recriar** a aba nem importar `client/src/components/ProcessarProjetoAnalysis.tsx`.
+- **Não usar** `/api/simcar-oraculo/pipeline|importar|processar` — as rotas ainda estão
+  registradas, mas são inalcançáveis pelo app e não devem ser religadas.
+- **Não apagar `backend/simcar-oraculo/client.ts`** — a aba **Lotes SIMCAR** depende dele
+  (lá quem loga é o **usuário com a própria credencial**; isso não é o fluxo desativado).
+- Docs do oráculo (`docs/SIMCAR_ORACULO.md`, `docs/PROCESSAR_PROJETO_SIMCAR.md`,
+  `docs/planos/simcar-oraculo-proxy/`) são **histórico técnico**, não instrução.
+
+Regras completas: `docs/FLUXO_ORACULO_SIMCAR_DESATIVADO.md`.
+
+## IA: Groq para visão, DeepSeek para texto
+
+Chaves, modelos disponíveis, limites medidos ao vivo e gotchas: `docs/IA_PROVEDORES.md`.
+Resumo: `GROQ_API_KEY` do backend tem **250k TPM** (a de `~/.hermes/.env` é a gratuita, 8k);
+`qwen/qwen3.6-27b` aceita **no máximo 3 imagens por chamada — limite do modelo, não do
+plano**; a `DEEPSEEK_API_KEY` do `backend.env` do server está **inválida (401)**.
+
 ## Important Notes
 
 - CORS permite PUT, PATCH, GET, POST, DELETE, OPTIONS para `ia-florestal.web.app`

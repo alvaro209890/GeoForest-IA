@@ -69,8 +69,14 @@ Detalhes tecnicos: [`../docs/CHANGELOG_2026-07-09_SIMCAR_RECIBOS_FIREBASE.md`](.
 
 Detalhes técnicos: [`../docs/VERTICES_PROXIMAS.md`](../docs/VERTICES_PROXIMAS.md).
 
-### Processar projeto (Oráculo SIMCAR real)
-O veredito da aba vem exclusivamente da SEMA: prepara o CAR de teste, importa, executa
+### Processar projeto (Oráculo SIMCAR real) — 🚫 DESATIVADO PARA SEMPRE
+
+> Rotas ainda registradas, mas **inalcançáveis pelo app e proibidas de religar**
+> (decisão do Álvaro, 05/08/2026). A aba foi removida em 21/07/2026. Ver
+> [`../docs/FLUXO_ORACULO_SIMCAR_DESATIVADO.md`](../docs/FLUXO_ORACULO_SIMCAR_DESATIVADO.md).
+> ⚠️ `simcar-oraculo/client.ts` **não pode ser apagado** — a aba Lotes SIMCAR usa.
+
+O veredito da aba vinha exclusivamente da SEMA: prepara o CAR de teste, importa, executa
 ProcessarGeo e guarda os artefatos oficiais por rodada.
 
 - `POST /api/processar-projeto/upload` — Upload + preview consumido pelo Oráculo

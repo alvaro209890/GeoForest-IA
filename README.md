@@ -376,7 +376,14 @@ Diagnostica o erro do validador da SEMA *"Geometria deve ser completamente conti
 
 ---
 
-## Processar projeto (fluxo SIMCAR Importar → Processar)
+## Processar projeto (fluxo SIMCAR Importar → Processar) — 🚫 DESATIVADO PARA SEMPRE
+
+> **Removido do produto.** A sub-aba saiu do Dashboard em 21/07/2026 e o fluxo de enviar
+> o ZIP ao SIMCAR real com a conta técnica do Álvaro está **desativado em definitivo**
+> (decisão do Álvaro, 05/08/2026). **Não recriar.** Regras:
+> [`docs/FLUXO_ORACULO_SIMCAR_DESATIVADO.md`](docs/FLUXO_ORACULO_SIMCAR_DESATIVADO.md).
+> O texto abaixo é histórico. A checagem de geometria que continua viva é a aba
+> **Erros de geometria** (`backend/geometry/`, 100% local).
 
 Fluxo completo **Importar → ProcessarGeo** no espírito do Importador GEO da SEMA:
 

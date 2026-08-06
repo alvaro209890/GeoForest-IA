@@ -167,7 +167,26 @@ Ambos são configuráveis por env (`SIMCAR_AUAS_VISION_MODEL` / `SIMCAR_AUAS_TEX
 — trocar de modelo dentro do mesmo provedor é mudança de variável, não de código. Trocar
 de **provedor** exigiria revisar este plano.
 
-### O que o plano gratuito da Groq impõe ao desenho
+### ⚠️ Correção de premissa (medição ao vivo em 2026-08-05)
+
+O quadro abaixo foi escrito supondo **8k TPM**. A medição real mostrou **duas chaves**:
+
+| Chave | Onde | TPM | Papel |
+|---|---|---|---|
+| `gsk_ZhZd…sEDf` | `~/.hermes/.env` (acer) | **8.000** | plano gratuito — desenvolvimento/teste |
+| `gsk_KBMX…788R` | `backend.env` (server) | **250.000** | é a que o backend usa em produção |
+
+Ou seja: **o teto de 8k só vale para desenvolver neste PC.** Em produção o ritmo é ~31×
+maior e o gargalo passa a ser o WMS da SEMA, não a Groq. O que **não** muda com tier
+melhor: o teto de **3 imagens por chamada**, que é limite do modelo (`qwen/qwen3.6-27b`
+devolve HTTP 400 "This model supports up to 3 images" mesmo na conta grande).
+
+Portanto, mantenha do desenho: janelas de 3 cenas, checkpoint por janela, cancelamento e
+retomada. **Ajuste:** o ETA mostrado ao usuário deve sair dos headers de rate limit da
+chave em uso, não de uma constante de 8k. Detalhes e como reproduzir os testes:
+[`docs/IA_PROVEDORES.md`](../../IA_PROVEDORES.md).
+
+### O que o plano gratuito da Groq impõe ao desenho (cenário de desenvolvimento)
 
 Não é detalhe de configuração — é o que define a arquitetura de fila e de UX:
 

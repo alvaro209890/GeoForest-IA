@@ -1,5 +1,19 @@
 # Oráculo SIMCAR — backend no PC servidor
 
+> # 🚫 FLUXO DESATIVADO PARA SEMPRE (decisão do Álvaro, 2026-08-05)
+>
+> **Este documento é histórico técnico.** O fluxo que ele descreve — GeoForest importa o
+> ZIP do usuário no SIMCAR real com a **conta técnica do Álvaro** e devolve o resultado —
+> está **desativado e não será reativado**. A interface saiu em 2026-07-21; as rotas
+> `/api/simcar-oraculo/*` seguem registradas mas **não devem ser usadas nem religadas**.
+>
+> Motivo, estado do código e regras permanentes:
+> [`FLUXO_ORACULO_SIMCAR_DESATIVADO.md`](FLUXO_ORACULO_SIMCAR_DESATIVADO.md).
+>
+> ⚠️ **Não apagar `backend/simcar-oraculo/client.ts`** — a aba **Lotes SIMCAR** (viva, e
+> que usa a credencial do próprio usuário) depende dele. Leia como referência de
+> endpoints da SEMA, não como instrução do que construir.
+
 Módulo `backend/simcar-oraculo/`. O produto é **100% oráculo** (D2 — validação local removida):
 o ZIP do usuário vai ao SIMCAR real (CAR-teste), importa/processa e devolve os artefatos
 oficiais; reprova → autofix mecânico + DeepSeek em até 3 rodadas. **Não há mais modo LOCAL/HYBRID**

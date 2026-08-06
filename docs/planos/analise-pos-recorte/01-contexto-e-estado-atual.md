@@ -89,6 +89,15 @@ Pendências herdadas para ligar a Fase 1 (memória do projeto + STATUS do plano-
 - `computeAcAvnAuasContext` (mesmo arquivo) já calcula relações AC × AVN × AUAS e
   alimenta o veredito global exibido no Dashboard (ex.: "AVN fora em AUAS").
 
+## 4.1 O que este plano NÃO é (para não confundir com o oráculo)
+
+Nenhuma das três fases fala com o SIMCAR da SEMA. Elas leem **imagens do WMS público** e
+as **camadas do próprio recorte**. O fluxo em que o GeoForest importava o ZIP do usuário
+no SIMCAR real com a **conta técnica do Álvaro** (oráculo / aba "Processar projeto") está
+**desativado para sempre** desde 2026-08-05 — ver
+[`docs/FLUXO_ORACULO_SIMCAR_DESATIVADO.md`](../../FLUXO_ORACULO_SIMCAR_DESATIVADO.md).
+Nenhuma tarefa deste plano pode reintroduzir esse comportamento.
+
 ## 5. Restrições operacionais medidas (herdadas, valem para as 3 fases)
 
 | Limite | Valor medido | Origem |

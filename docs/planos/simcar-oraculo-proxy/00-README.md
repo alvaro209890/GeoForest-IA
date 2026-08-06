@@ -1,5 +1,15 @@
 # Plano v2: Processar Projeto = SIMCAR real (oráculo), sem validação local
 
+> # 🚫 PLANO ARQUIVADO — o fluxo que ele entregou foi DESATIVADO PARA SEMPRE
+>
+> Decisão do Álvaro, **2026-08-05**: o GeoForest não envia mais ZIP do usuário ao SIMCAR
+> real com a conta técnica do Álvaro. A aba saiu em 2026-07-21 e **não volta**.
+> Este plano fica como **histórico técnico** — em especial
+> `11-endpoints-sema-descobertos.md`, útil como referência dos endpoints da SEMA.
+>
+> **Não executar as tarefas deste plano.** Regras permanentes em
+> [`docs/FLUXO_ORACULO_SIMCAR_DESATIVADO.md`](../../FLUXO_ORACULO_SIMCAR_DESATIVADO.md).
+
 > **For Hermes:** use subagent-driven-development; uma task de `07-tarefas-implementacao.md`
 > por vez; commit ao fim de cada task. **Ler `11-endpoints-sema-descobertos.md` antes de
 > qualquer código que fale com a SEMA.**

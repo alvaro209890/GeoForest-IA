@@ -1,5 +1,11 @@
 # STATUS do plano — Oráculo SIMCAR (v2)
 
+> 🚫 **ARQUIVADO — fluxo desativado para sempre (Álvaro, 2026-08-05).** O plano foi
+> concluído tecnicamente em julho, mas o produto que ele entregou (ZIP → SIMCAR real com
+> a conta técnica do Álvaro → resultado no GeoForest) está **desligado e não será
+> reativado**. Nada aqui deve ser retomado. Ver
+> [`docs/FLUXO_ORACULO_SIMCAR_DESATIVADO.md`](../../FLUXO_ORACULO_SIMCAR_DESATIVADO.md).
+
 **Atualizado:** 2026-07-17 (manhã) — consolidação pós-P5 e WIP T17 (Codex + Hermes).
 Plano v2 e descoberta de endpoints SEMA (16/07) permanecem válidos.
 

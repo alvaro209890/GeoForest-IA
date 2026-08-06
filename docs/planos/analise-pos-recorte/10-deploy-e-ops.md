@@ -23,6 +23,23 @@ systemctl --user restart geoforest-backend.service
 
 Frontend: `npx firebase deploy --only hosting` (site `ia-florestal`).
 
+## 1.1 Chaves de IA — estado verificado em 2026-08-05
+
+Detalhe completo em [`docs/IA_PROVEDORES.md`](../../IA_PROVEDORES.md). Resumo do que
+importa para este plano:
+
+| Chave | Estado | Efeito nas 3 fases |
+|---|---|---|
+| `GROQ_API_KEY` do server (`gsk_KBMX…788R`) | ✅ **250.000 TPM** | Visão liberada; ETA muito melhor que o estimado nos docs 05/10 |
+| `GROQ_API_KEY` do acer (`gsk_ZhZd…sEDf`, `~/.hermes/.env`) | ✅ gratuita, 8.000 TPM | Suficiente para desenvolver e rodar os testes live |
+| `DEEPSEEK_API_KEY` do server (`sk-1c9…5027`) | 🔴 **401 inválida** | O laudo cairia no **fallback determinístico** — resultado correto, texto pobre |
+| `DEEPSEEK_API_KEY` do acer (`sk-5bb…6959`, `~/.hermes/.env`) | ✅ válida, saldo US$ 13,21 | É a que deve substituir a do server |
+
+**Ação de ops pendente (não executada — depende do Álvaro):** copiar a `DEEPSEEK_API_KEY`
+válida de `~/.hermes/.env` (acer) para `~/.config/geoforest/backend.env` (server), com
+backup do arquivo, e reiniciar `geoforest-backend.service`. Sem isso, a Fase 1 já ligaria
+sem o DeepSeek de verdade.
+
 ## 2. Variáveis a criar no servidor
 
 Hoje o `backend.env` tem `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `SEMA_WMS_BASE_URL` e

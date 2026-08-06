@@ -1,5 +1,18 @@
 # Processar projeto — Oráculo SIMCAR real
 
+> # 🚫 ABA REMOVIDA E FLUXO DESATIVADO PARA SEMPRE
+>
+> A sub-aba **"Análise de Erros → Processar projeto"** foi removida do Dashboard em
+> **2026-07-21** e o fluxo por trás dela (ZIP → SIMCAR real com a conta técnica do
+> Álvaro → resultado de volta no GeoForest) está **desativado em definitivo**
+> (decisão do Álvaro, 2026-08-05). **Não recriar a aba, não reimportar
+> `ProcessarProjetoAnalysis.tsx`.**
+>
+> Regras permanentes: [`FLUXO_ORACULO_SIMCAR_DESATIVADO.md`](FLUXO_ORACULO_SIMCAR_DESATIVADO.md).
+>
+> O que continua vivo: a validação **local** de erros de geometria (`backend/geometry/`,
+> aba "Erros de geometria"). O texto abaixo é histórico.
+
 Desde 2026-07-16, a sub-aba **Análise de Erros → Processar projeto** usa o próprio
 **Importador GEO / Projeto Geográfico do SIMCAR** (SEMA-MT):
 

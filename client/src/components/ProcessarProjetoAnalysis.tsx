@@ -1,3 +1,16 @@
+/**
+ * ============================================================================
+ * 🚫 COMPONENTE MORTO — NÃO IMPORTAR (decisão do Álvaro, 2026-08-05)
+ * ============================================================================
+ * Tela da antiga sub-aba "Análise de Erros → Processar projeto", removida do
+ * Dashboard em 2026-07-21. O fluxo por trás dela (ZIP → SIMCAR real com a conta
+ * técnica do Álvaro → resultado de volta no GeoForest) está DESATIVADO PARA
+ * SEMPRE e não será reativado.
+ *
+ * Mantido apenas como referência histórica. Não importar, não rotear, não
+ * "restaurar". Regras: docs/FLUXO_ORACULO_SIMCAR_DESATIVADO.md
+ * ============================================================================
+ */
 import React, {
   useCallback,
   useEffect,

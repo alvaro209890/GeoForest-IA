@@ -5,7 +5,12 @@ os erros que o **Importador GEO / processamento do Projeto Geográfico do SIMCAR
 reprova ao receber os shapefiles do CAR estadual de Mato Grosso.
 
 Construída em 2026-07-11 com base em pesquisa das regras oficiais.
-> **Relacionado — fluxo completo SIMCAR:** a sub-aba **Processar projeto** recria
+> 🚫 **A sub-aba "Processar projeto" foi REMOVIDA e o fluxo está desativado para sempre**
+> (Álvaro, 05/08/2026) — ver [`FLUXO_ORACULO_SIMCAR_DESATIVADO.md`](FLUXO_ORACULO_SIMCAR_DESATIVADO.md).
+> **Esta aba (Erros de Geometria) é o caminho vivo** para checagem de shapefiles: roda
+> 100% local, sem falar com o SIMCAR. O parágrafo abaixo é histórico.
+>
+> **Histórico — fluxo completo SIMCAR:** a sub-aba **Processar projeto** recriava
 > Importar → ProcessarGeo (inclui **APP / APPP / APPD / APPRL / AURD / ARLDR** e
 > pacotes `arquivo_processado` / `erros_processamento_app`).  
 > Manual: [`docs/PROCESSAR_PROJETO_SIMCAR.md`](PROCESSAR_PROJETO_SIMCAR.md) ·  
