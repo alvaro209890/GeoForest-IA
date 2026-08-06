@@ -53,7 +53,9 @@ linhas com testes, entregue em 2026-07-30/31 conforme
 Integração já pronta: `processAuasAnalysisV2` e `handleAuasAnalyzeV2Route`
 (`backend/simcar/analysis.ts:4530` e `:4579`) fazem billing, SSE, persistência e PDF.
 O componente [`client/src/components/AuasPre2008Summary.tsx`](../../../client/src/components/AuasPre2008Summary.tsx)
-existe (173 linhas) mas **não é renderizado por ninguém** — `grep` não acha uso.
+existe (173 linhas) e **é renderizado** no card de resultado do recorte
+(`Dashboard.tsx`, bloco `SimcarAuasPre2008PanelV2`) — a afirmação de que estava órfão,
+escrita quando o plano nasceu, foi corrigida em 2026-08-05 ao implementar a F0.6.
 
 **Porta de entrada:** `SIMCAR_AUAS_V2_ENABLED` (default `false` em
 `backend/analise-pos-recorte/config.ts`). A variável **não está** no

@@ -1,7 +1,7 @@
-import crypto from "crypto";
 import type { Geometry } from "geojson";
 
 import { extractAuasPolygons } from "./auas-polygons";
+import { buildPhaseCheckpointKey } from "./checkpoint-store";
 import { AUAS_REQUIRED_SOURCES, AUAS_RULES_VERSION, AUAS_VISION_WINDOWS, getAuasV2Config, resolveAuasLayerName } from "./config";
 import { reduceAuasAggregate, reduceAuasPolygon, type ReducerWindowInput } from "./evidence-reducer";
 import { requestGroqVisionWindow, type GroqVisionDeps } from "./groq-vision-client";
@@ -65,6 +65,10 @@ export type OrchestratorDeps = {
   acAvnContext?: { source: string; summary: string };
 };
 
+/**
+ * Chave de checkpoint da Fase 1. Delega em `buildPhaseCheckpointKey` para que as
+ * três fases compartilhem o mesmo formato namespaced (tarefa F0.4 do plano).
+ */
 export function buildCheckpointKey(
   jobId: string,
   geometryHash: string,
@@ -72,8 +76,14 @@ export function buildCheckpointKey(
   rulesVersion: string,
   imageSha256s: string[]
 ): string {
-  const payload = JSON.stringify({ jobId, geometryHash, windowId, rulesVersion, images: [...imageSha256s].sort() });
-  return crypto.createHash("sha256").update(payload).digest("hex");
+  return buildPhaseCheckpointKey({
+    jobId,
+    phase: "PRE_2008",
+    rulesVersion,
+    geometryHash,
+    windowId,
+    imageSha256s,
+  });
 }
 
 function throwIfCancelled(signal: AbortSignal | undefined): void {

@@ -39,6 +39,13 @@ Resposta que o painel usa para montar os três cards sem baixar os laudos inteir
 
 `state` ∈ `BLOCKED` | `AVAILABLE` | `RUNNING` | `COMPLETED` | `FAILED` | `STALE`.
 
+> **Implementado em 2026-08-05** (`backend/simcar/phases.ts`): cada fase devolve, além
+> do acima, `blockedMessage` (o motivo já em pt-BR, para o botão), `rulesVersion` e
+> `stale`. `blockedReason` é um código estável: `layer_empty_AUAS`,
+> `layer_empty_AREA_CONSOLIDADA`, `requires_PRE_2008`, `requires_POS_2008`,
+> `phase_not_implemented`, `phase_running`, `other_phase_running`. Enquanto as fases 2 e
+> 3 não existirem, elas respondem `phase_not_implemented`.
+
 ## 2. Códigos de erro
 
 | Código | HTTP | Quando |

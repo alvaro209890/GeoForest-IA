@@ -2,9 +2,9 @@
 
 | Campo | Valor |
 |---|---|
-| Status | **📋 PLANEJADO** — nenhuma implementação nesta rodada |
+| Status | **🚧 EM IMPLEMENTAÇÃO** — fundação F0.3–F0.6 no `main`; fases 2 e 3 ainda não existem |
 | Criado em | 2026-08-05 |
-| Atualizado em | 2026-08-05 |
+| Atualizado em | 2026-08-05 (rodada de código F0) |
 | Autor | Claude (plano), com Álvaro |
 | Repo | `alvaro209890/GeoForest-IA` — branch `main` |
 | Pasta | `docs/planos/analise-pos-recorte/` |
@@ -33,7 +33,10 @@ Cada fase destrava a seguinte; a regra de desbloqueio é do backend, não só da
       detalhada em [02 §9](02-arquitetura.md)
 - [ ] **A1–A4 respondidas pelo Álvaro** — bloqueiam o desenho final
 - [ ] F0.1 — levantamento WMS ao vivo 2009→2019 (bloqueia F2 e F3)
-- [ ] F0.3–F0.6 — fundação (polygons genérico, checkpoints com fase, rota de fases, painel)
+- [x] **F0.3 — `polygons.ts` genérico** (`extractPolygonsFromLayer`, `countLayerPolygons`); `extractAuasPolygons` virou wrapper
+- [x] **F0.4 — checkpoint com namespace de fase + `catalogVersion`** (`buildPhaseCheckpointKey`)
+- [x] **F0.5 — `GET /api/simcar/clip/phases/:jobId`** + `backend/simcar/phases.ts` + allowlist em `backend/auth-required-paths.ts`
+- [x] **F0.6 — painel `AnalisePosRecortePanel`** com os 3 cards (só a Fase 1 ligada); Dashboard perdeu o botão solto
 - [ ] F1 — ligar a Fase 1 (conjunto dourado + live DeepSeek + flag no servidor)
 - [ ] F2 — datação 2008–2019
 - [ ] F3 — vegetação na Área Consolidada
@@ -45,7 +48,7 @@ Cada fase destrava a seguinte; a regra de desbloqueio é do backend, não só da
 | Conjunto dourado humano da Fase 1 | Bloqueia `SIMCAR_AUAS_V2_ENABLED=true` |
 | Validação live do DeepSeek no fluxo real | Idem |
 | `SIMCAR_AUAS_V2_ENABLED` ausente no `backend.env` do servidor | Em produção o botão AUAS ainda roda o V1 (2008–2024) |
-| `AuasPre2008Summary.tsx` sem uso no front | O resultado da Fase 1 não teria onde aparecer |
+| ~~`AuasPre2008Summary.tsx` sem uso no front~~ | **Não procede:** `SimcarAuasPre2008PanelV2` já é renderizado no card de resultado do recorte (conferido em 2026-08-05) |
 
 ## Decisões pendentes que mudam o desenho
 
@@ -59,3 +62,4 @@ As demais (A5–A10) têm default e não bloqueiam. Detalhe em
 | Data | Evento |
 |---|---|
 | 2026-08-05 | Plano criado (status PLANEJADO) — 15 documentos em `docs/planos/analise-pos-recorte/` |
+| 2026-08-05 | **Fundação F0.3–F0.6 implementada e testada** (+46 testes; `pnpm test`/`check`/`build` verdes). Ver [`docs/CHANGELOG_2026-08-05_ANALISE_POS_RECORTE_F0.md`](../../CHANGELOG_2026-08-05_ANALISE_POS_RECORTE_F0.md). Fases 2 e 3 seguem não implementadas; `SIMCAR_AUAS_V2_ENABLED` continua `false` |

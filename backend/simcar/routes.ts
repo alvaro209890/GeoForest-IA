@@ -34,6 +34,8 @@ import {
 } from "../processing-jobs";
 import { getAuasV2Config, runAuasPre2008Analysis } from "../analise-pos-recorte";
 import { createFileCheckpointStore } from "../analise-pos-recorte/checkpoint-store";
+import { countLayerPolygons } from "../analise-pos-recorte/polygons";
+import { derivePhases } from "./phases";
 import {
     ClientAbortError,
     isSseConnectionClosed,
@@ -753,6 +755,44 @@ export function registerSimcarClipRoutes(app: Express) {
         res.setHeader("Content-Disposition", `attachment; filename="${cached.filename}"`);
         res.setHeader("Content-Length", cached.buffer.length.toString());
         res.send(cached.buffer);
+    });
+
+    // Estado das 3 fases da análise pós-recorte (plano analise-pos-recorte, F0.5).
+    // O painel do front monta os cards a partir daqui, sem baixar os laudos inteiros.
+    app.get("/api/simcar/clip/phases/:jobId", async (req: Request, res: Response) => {
+        const jobId = String(req.params.jobId || "").trim();
+        if (!jobId) {
+            res.status(400).json({ error: "jobId é obrigatório." });
+            return;
+        }
+        try {
+            const uid = String(req.authUid || "");
+            const persisted =
+                (uid ? readPersistedSimcarClipForUid(uid, jobId) : null) || readPersistedSimcarClip(jobId) || {};
+            const contextUrl = typeof req.query.contextUrl === "string" ? req.query.contextUrl : undefined;
+            const outputZipUrl = typeof req.query.outputZipUrl === "string" ? req.query.outputZipUrl : undefined;
+            const job = await hydrateCachedJob(jobId, contextUrl, outputZipUrl);
+            if (!job) {
+                res.status(404).json({
+                    error: "Job de recorte não encontrado. O servidor não localizou contexto ou ZIP persistido para reidratar o recorte.",
+                    code: "JOB_NOT_FOUND",
+                });
+                return;
+            }
+            res.json(
+                derivePhases({
+                    jobId,
+                    auasPolygonCount: countLayerPolygons(job.clippedGeometries, "AUAS"),
+                    acPolygonCount: countLayerPolygons(job.clippedGeometries, "AREA_CONSOLIDADA"),
+                    auasMeta: (persisted as Record<string, unknown>).auasMeta,
+                    auasPos2008Meta: (persisted as Record<string, unknown>).auasPos2008Meta,
+                    acVegetacaoMeta: (persisted as Record<string, unknown>).acVegetacaoMeta,
+                }),
+            );
+        } catch (err: any) {
+            console.error("[SIMCAR PHASES] erro ao montar estado das fases:", err?.message || err);
+            res.status(500).json({ error: "Erro ao consultar o estado das fases do recorte." });
+        }
     });
 
     // AUAS analysis endpoint (SSE stream)

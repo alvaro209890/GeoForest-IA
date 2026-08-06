@@ -184,6 +184,7 @@ import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog'
 import type { ContainmentRow, ContainmentSummary } from '@/components/ContainmentAnalysis';
 import type { GeometryErrorRow, GeometrySummary } from '@/components/GeometryErrorsAnalysis';
 import { SimcarAuasPre2008PanelV2, type SimcarAuasMetaV2 } from '@/components/AuasPre2008Summary';
+import { AnalisePosRecortePanel } from '@/dashboard/panels/analise-pos-recorte/AnalisePosRecortePanel';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
 const ReceiptsHub = lazy(() => import('@/components/ReceiptsHub'));
@@ -5891,48 +5892,38 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </section>
                     )}
 
-                    {/* ── Análise de AUAS Button (shown after AC/AVN analysis is done) ── */}
-                    {simcarClipMode === 'auto-clip' && simcarAnalysisMessages.length > 0 && !simcarAuasProcessing && !simcarAuasMessages.length && (
-                      <section className="px-4">
-                        <button
-                          onClick={async () => {
-                            if (!simcarClipJobId) return;
-                            const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
+                    {/* ── Painel "Análise pós-recorte": 3 fases encadeadas (substitui o botão
+                         solto de AUAS). Só a Fase 1 está ligada; as demais aparecem
+                         desabilitadas com motivo. Ver docs/planos/analise-pos-recorte/. ── */}
+                    {simcarClipMode === 'auto-clip' && simcarClipJobId && (() => {
+                      const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
+                      return (
+                        <AnalisePosRecortePanel
+                          jobId={simcarClipJobId}
+                          contextUrl={historyEntry?.contextUrl}
+                          outputZipUrl={historyEntry?.outputZipUrl}
+                          auasMeta={historyEntry?.auasMeta}
+                          runningPhase={simcarAuasProcessing ? 'PRE_2008' : null}
+                          progress={
+                            simcarAuasProgress
+                              ? { percent: simcarAuasProgress.percent, message: simcarAuasProgress.message }
+                              : null
+                          }
+                          onRunPhase1={() => {
                             const previousAnalysis = simcarAnalysisMessages
                               .filter((m) => m.role === 'ai')
                               .map((m) => m.text)
                               .join('\n\n---\n\n');
-                            await runAuasAnalysis({
+                            void runAuasAnalysis({
                               jobId: simcarClipJobId,
                               historyEntry,
                               previousAnalysis,
                               acAvnMeta: historyEntry?.analysisMeta,
                             });
                           }}
-                          disabled={!simcarClipJobId}
-                          className="w-full py-3 rounded-xl font-medium text-sm bg-gradient-to-r from-white/10 to-slate-500/20 hover:from-white/15 hover:to-slate-400/25 text-white border border-white/15 shadow-lg shadow-black/20 transition-all duration-300 flex items-center justify-center gap-2"
-                        >
-                          <Layers size={16} />
-                          Análise de AUAS
-                        </button>
-                      </section>
-                    )}
-
-                    {/* ── AUAS Processing Progress ── */}
-                    {simcarClipMode === 'auto-clip' && simcarAuasProcessing && simcarAuasProgress && (
-                      <section className="mx-4 rounded-xl border border-white/10 bg-[#0c1018]/90 p-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className="p-1 rounded-md bg-white/10">
-                            <Layers size={12} className="text-white animate-pulse" />
-                          </div>
-                          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Análise AUAS em progresso</p>
-                        </div>
-                        <div className="w-full bg-white/5 rounded-full h-1.5 mb-2">
-                          <div className="bg-gradient-to-r from-white/60 to-slate-300 h-full rounded-full transition-all duration-500" style={{ width: `${simcarAuasProgress.percent}%` }} />
-                        </div>
-                        <p className="text-[10px] text-slate-500">{simcarAuasProgress.message}</p>
-                      </section>
-                    )}
+                        />
+                      );
+                    })()}
 
                     {/* ── Balão de Agente IA (durante a análise) ── */}
                     {simcarClipMode === 'auto-clip' && simcarAnalysisProcessing && (() => {

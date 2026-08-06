@@ -1,6 +1,7 @@
 # Plano — Análise pós-recorte SIMCAR em 3 fases encadeadas
 
-> **Status:** 📋 PLANEJADO — nenhuma linha de código desta rodada foi escrita.
+> **Status:** 🚧 EM IMPLEMENTAÇÃO — a fundação (F0.3–F0.6) já está no `main`; as fases 2
+> e 3 ainda não existem. Ver [`docs/CHANGELOG_2026-08-05_ANALISE_POS_RECORTE_F0.md`](../../CHANGELOG_2026-08-05_ANALISE_POS_RECORTE_F0.md).
 > **Data:** 2026-08-05
 > **Autor:** Claude (plano), com Álvaro
 > **Repo:** `alvaro209890/GeoForest-IA` — branch `main`

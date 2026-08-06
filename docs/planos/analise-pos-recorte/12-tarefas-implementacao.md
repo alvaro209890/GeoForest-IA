@@ -4,7 +4,8 @@ Ordem obrigatória: **F0 → F1 → F2 → F3**. Cada tarefa é um commit no `ma
 push direto, sem PR) e o gate é sempre: `pnpm test` inteiro verde + `pnpm run check` +
 `pnpm run build`.
 
-Nenhuma tarefa desta lista foi executada — esta rodada produziu **apenas o plano**.
+**Executadas até agora:** F0.3, F0.4, F0.5 e F0.6 (rodada de 2026-08-05 — ver
+`docs/CHANGELOG_2026-08-05_ANALISE_POS_RECORTE_F0.md`). O resto continua pendente.
 
 ## F0 — Descoberta e fundação (sem IA, sem UI)
 
@@ -12,16 +13,16 @@ Nenhuma tarefa desta lista foi executada — esta rodada produziu **apenas o pla
 |---|---|---|
 | F0.1 | **Levantamento WMS ao vivo**: `GetCapabilities` + `GetMap` real para 2009→2019 e para as cenas da Fase 3 (2024, NIR, SPOT) | Relatório em `docs/` com layer por ano, ausências, dimensões e tempo de resposta. **Bloqueia F2 e F3** |
 | F0.2 | Responder decisões **A1–A4** do doc 11 | Registradas no STATUS |
-| F0.3 | `polygons.ts` genérico + `extractAuasPolygons` como wrapper | U-01, U-02 verdes; testes atuais de `auas-polygons` intactos |
-| F0.4 | `checkpoint-store` com namespace de fase e `catalogVersion` | U-13 verde; chaves antigas continuam legíveis |
-| F0.5 | `GET /api/simcar/clip/phases/:jobId` + allowlist de auth | R-01, R-03 verdes |
-| F0.6 | Painel `AnalisePosRecortePanel` com os 3 cards, **ligado só à Fase 1** | F-01 verde; Dashboard perde o botão solto |
+| F0.3 ✅ | `polygons.ts` genérico + `extractAuasPolygons` como wrapper | U-01, U-02 verdes; testes atuais de `auas-polygons` intactos |
+| F0.4 ✅ | `checkpoint-store` com namespace de fase e `catalogVersion` | U-13 verde; chaves antigas continuam legíveis |
+| F0.5 ✅ | `GET /api/simcar/clip/phases/:jobId` + allowlist de auth | R-01, R-03 verdes |
+| F0.6 ✅ | Painel `AnalisePosRecortePanel` com os 3 cards, **ligado só à Fase 1** | F-01 verde; Dashboard perde o botão solto |
 
 ## F1 — Ligar a Fase 1 (código já existe)
 
 | # | Tarefa | Entrega / gate |
 |---|---|---|
-| F1.1 | Renderizar `AuasPre2008Summary.tsx` dentro do card da Fase 1 | F-02 verde; componente deixa de ser órfão |
+| F1.1 ✅ | ~~Renderizar `AuasPre2008Summary.tsx`~~ — já era renderizado no card de resultado do recorte (verificado em 2026-08-05); o painel novo não duplica a tabela | — |
 | F1.2 | Rótulo "Análise de AUAS (2003–2008)" + prévia (nº de polígonos, cenas, ETA) | Revisão visual |
 | F1.3 | **Conjunto dourado da Fase 1** (≥12 polígonos conferidos por humano) | Manifesto versionado, sem chaves |
 | F1.4 | **Live do DeepSeek** no fluxo real (`SIMCAR_LIVE=1`) | L-01, L-05 verdes |
