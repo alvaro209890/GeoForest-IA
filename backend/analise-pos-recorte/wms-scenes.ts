@@ -22,14 +22,19 @@ export function buildWmsGetMapUrl(
   width = 1200,
   height = 800,
   format = "image/png",
-  crs = "EPSG:4326"
+  crs = "EPSG:4326",
+  /** Estilos por camada. Necessário para as cenas NIR, que na SEMA são estilo, não camada. */
+  styles?: string[]
 ): string {
   const url = new URL(SEMA_WMS_BASE);
   url.searchParams.set("service", "WMS");
   url.searchParams.set("request", "GetMap");
   url.searchParams.set("version", "1.1.1");
   url.searchParams.set("layers", layers.join(","));
-  url.searchParams.set("styles", layers.map(() => "").join(","));
+  url.searchParams.set(
+    "styles",
+    styles && styles.length === layers.length ? styles.join(",") : layers.map(() => "").join(",")
+  );
   url.searchParams.set("format", format);
   url.searchParams.set("transparent", "false");
   url.searchParams.set("srs", crs);

@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "eval:atp": "node scripts/evaluate-atp-analyses.mjs",
+    "wms:levantamento": "tsx scripts/levantamento-wms-pos-recorte.ts",
     "format": "prettier --write ."
   },
   "dependencies": {

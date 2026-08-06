@@ -1,5 +1,14 @@
 # 03 — Catálogo WMS da SEMA-MT e a série temporal
 
+> **Levantamento ao vivo executado em 2026-08-05 (tarefa F0.1)** — resultado com
+> layer por ano, dimensões e tempo de resposta em
+> [`docs/LEVANTAMENTO_WMS_ANALISE_POS_RECORTE.md`](../../LEVANTAMENTO_WMS_ANALISE_POS_RECORTE.md).
+> Os 11 anos de 2009 a 2019 existem no `GetCapabilities` **e** devolveram `GetMap`
+> válido (PNG 800×800, não uniforme, 0,7–1,4 s). Duas correções à tabela abaixo:
+> **(a)** 2018 também tem `Mosaicos:LANDSAT_8_2018`, então a troca L8→S2 acontece em
+> **2019**, não entre 2016 e 2018; **(b)** os "`..._NIR`" **não são camadas, são
+> estilos** — ver §5.
+
 ## 1. O que o repo já sabe hoje
 
 A lista curada de camadas de imagem está em
@@ -32,13 +41,16 @@ Endpoint: `SEMA_WMS_BASE_URL` (default `https://geo.sema.mt.gov.br/geoserver/ows
 | 2015 | `Mosaicos:LANDSAT_8_2015` | Landsat 8 | **2** |
 | 2016 | `Mosaicos:LANDSAT_8_2016` **ou** `Mosaicos:SENTINEL_2_2016` (+ `..._NIR`) | L8 / S2 | **2** ⚠️ dois candidatos |
 | 2017 | `Mosaicos:LANDSAT_8_2017` **ou** `Mosaicos:SENTINEL_2_2017` (+ `..._NIR`) | L8 / S2 | **2** ⚠️ dois candidatos |
-| 2018 | `Mosaicos:SENTINEL_2_2018` (+ `..._NIR`) | Sentinel-2 | **2** |
+| 2018 | `Mosaicos:LANDSAT_8_2018` **ou** `Mosaicos:SENTINEL_2_2018` | L8 / S2 | **2** ⚠️ dois candidatos (corrigido em 2026-08-05) |
 | 2019 | `Mosaicos:SENTINEL_2_2019` | Sentinel-2 | **2** (fim da série) |
 | 2020–2024 | `Mosaicos:SENTINEL_2_<ano>` (2020/2021 com `..._NIR`) | Sentinel-2 | **3** |
 
-Notar: **não há lacuna de ano entre 2009 e 2019** — mas há **três trocas de sensor**
-(L5→ResourceSat em 2012, ResourceSat→L8 em 2013, L8→S2 entre 2016 e 2018) e é aí que
-mora o risco de falso positivo.
+Notar: **não há lacuna de ano entre 2009 e 2019** (confirmado ao vivo em 2026-08-05) —
+mas há **três trocas de sensor**. Mantendo Landsat 8 enquanto ele existe, as fronteiras
+ficam em **2012** (L5→ResourceSat), **2013** (ResourceSat→L8) e **2019** (L8→S2), e é aí
+que mora o risco de falso positivo. Escolher Sentinel-2 em 2016/2017 (decisão A2)
+antecipa a terceira fronteira para 2016 e cria uma quarta — motivo pelo qual
+`buildYearCatalog` prefere L8 por padrão e deixa o S2 como alternativo.
 
 ## 3. Descoberta obrigatória em runtime (não hardcodar)
 
@@ -102,3 +114,18 @@ Uma rota de leitura (`GET /api/simcar/imagery/catalog`, autenticada) devolve o c
 resolvido: anos habilitados, layer escolhida por ano, alternativas, anos ausentes,
 `catalogVersion` e `expiresAt`. Serve para a prévia da UI (doc 07) e para depurar sem
 abrir o GeoServer.
+
+## 5. NIR é estilo, não camada (achado do levantamento F0.1)
+
+`Mosaicos:Geoportal_Sentinel_2_2021_NIR` **não é uma camada**: é um `<Style>` do mosaico
+`Mosaicos:SENTINEL_2_2021`. Pedir `layers=Mosaicos:Geoportal_Sentinel_2_2021_NIR`
+devolve `ServiceException code="LayerNotDefined"`.
+
+A forma correta é `layers=<mosaico RGB do ano>&styles=<estilo NIR>` — validada ao vivo
+com `Mosaicos:SENTINEL_2_2025` + `Geoportal_Sentinel_2_2025_NIR` (PNG 800×800, 1,6 s).
+`buildWmsGetMapUrl` passou a aceitar `styles` por isso.
+
+Existem estilos NIR de **2016 a 2025** (a lista completa está no relatório). Atenção ao
+prefixo: os de 2016–2018, 2020 e 2021 vêm como `Mosaicos:Geoportal_...`; os de 2019 e
+2022–2025 vêm **sem** o prefixo do workspace. Nunca montar esse nome por concatenação —
+ler do `GetCapabilities`.

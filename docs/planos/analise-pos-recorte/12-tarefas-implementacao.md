@@ -4,14 +4,14 @@ Ordem obrigatória: **F0 → F1 → F2 → F3**. Cada tarefa é um commit no `ma
 push direto, sem PR) e o gate é sempre: `pnpm test` inteiro verde + `pnpm run check` +
 `pnpm run build`.
 
-**Executadas até agora:** F0.3, F0.4, F0.5 e F0.6 (rodada de 2026-08-05 — ver
+**Executadas até agora:** F0.1, F0.3, F0.4, F0.5 e F0.6 (rodada de 2026-08-05 — ver
 `docs/CHANGELOG_2026-08-05_ANALISE_POS_RECORTE_F0.md`). O resto continua pendente.
 
 ## F0 — Descoberta e fundação (sem IA, sem UI)
 
 | # | Tarefa | Entrega / gate |
 |---|---|---|
-| F0.1 | **Levantamento WMS ao vivo**: `GetCapabilities` + `GetMap` real para 2009→2019 e para as cenas da Fase 3 (2024, NIR, SPOT) | Relatório em `docs/` com layer por ano, ausências, dimensões e tempo de resposta. **Bloqueia F2 e F3** |
+| F0.1 ✅ | **Levantamento WMS ao vivo**: `GetCapabilities` + `GetMap` real para 2009→2019 e para as cenas da Fase 3 (2024, NIR, SPOT) | Relatório em `docs/` com layer por ano, ausências, dimensões e tempo de resposta. **Bloqueia F2 e F3** |
 | F0.2 | Responder decisões **A1–A4** do doc 11 | Registradas no STATUS |
 | F0.3 ✅ | `polygons.ts` genérico + `extractAuasPolygons` como wrapper | U-01, U-02 verdes; testes atuais de `auas-polygons` intactos |
 | F0.4 ✅ | `checkpoint-store` com namespace de fase e `catalogVersion` | U-13 verde; chaves antigas continuam legíveis |

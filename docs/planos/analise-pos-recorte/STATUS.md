@@ -32,7 +32,7 @@ Cada fase destrava a seguinte; a regra de desbloqueio é do backend, não só da
       gratuito, `qwen/qwen3.6-27b`) · texto = **DeepSeek** (`deepseek-v4-pro`) — decisão D11,
       detalhada em [02 §9](02-arquitetura.md)
 - [ ] **A1–A4 respondidas pelo Álvaro** — bloqueiam o desenho final
-- [ ] F0.1 — levantamento WMS ao vivo 2009→2019 (bloqueia F2 e F3)
+- [x] **F0.1 — levantamento WMS ao vivo 2009→2019 concluído (2026-08-05)**: 11/11 anos com `GetMap` válido; NIR é estilo, não camada. Relatório: [`docs/LEVANTAMENTO_WMS_ANALISE_POS_RECORTE.md`](../../LEVANTAMENTO_WMS_ANALISE_POS_RECORTE.md)
 - [x] **F0.3 — `polygons.ts` genérico** (`extractPolygonsFromLayer`, `countLayerPolygons`); `extractAuasPolygons` virou wrapper
 - [x] **F0.4 — checkpoint com namespace de fase + `catalogVersion`** (`buildPhaseCheckpointKey`)
 - [x] **F0.5 — `GET /api/simcar/clip/phases/:jobId`** + `backend/simcar/phases.ts` + allowlist em `backend/auth-required-paths.ts`
@@ -62,4 +62,5 @@ As demais (A5–A10) têm default e não bloqueiam. Detalhe em
 | Data | Evento |
 |---|---|
 | 2026-08-05 | Plano criado (status PLANEJADO) — 15 documentos em `docs/planos/analise-pos-recorte/` |
+| 2026-08-05 | **F0.1 — levantamento WMS ao vivo** feito: série 2009–2019 completa e validada, NIR corrigido de camada para estilo. Ver [`docs/CHANGELOG_2026-08-05_LEVANTAMENTO_WMS_F0_1.md`](../../CHANGELOG_2026-08-05_LEVANTAMENTO_WMS_F0_1.md) |
 | 2026-08-05 | **Fundação F0.3–F0.6 implementada e testada** (+46 testes; `pnpm test`/`check`/`build` verdes). Ver [`docs/CHANGELOG_2026-08-05_ANALISE_POS_RECORTE_F0.md`](../../CHANGELOG_2026-08-05_ANALISE_POS_RECORTE_F0.md). Fases 2 e 3 seguem não implementadas; `SIMCAR_AUAS_V2_ENABLED` continua `false` |
