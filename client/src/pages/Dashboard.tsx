@@ -3073,6 +3073,12 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     runAcAvnAnalysis,
     runAuasAnalysis,
     runVectorizedCompleteAnalysis,
+    runPos2008Phase,
+    runAcVegetacaoPhase,
+    pos2008PhaseState,
+    acVegetacaoPhaseState,
+    cancelPos2008Phase,
+    cancelAcVegetacaoPhase,
   } = useSimcarAnalysisFlow({
     analysis: simcarAnalysisState,
     apiFetch,
@@ -5903,12 +5909,34 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                           contextUrl={historyEntry?.contextUrl}
                           outputZipUrl={historyEntry?.outputZipUrl}
                           auasMeta={historyEntry?.auasMeta}
-                          runningPhase={simcarAuasProcessing ? 'PRE_2008' : null}
-                          progress={
-                            simcarAuasProgress
-                              ? { percent: simcarAuasProgress.percent, message: simcarAuasProgress.message }
-                              : null
+                          auasPos2008Meta={
+                            historyEntry?.auasPos2008Meta
+                              ? (historyEntry.auasPos2008Meta as any)
+                              : undefined
                           }
+                          acVegetacaoMeta={
+                            historyEntry?.acVegetacaoMeta
+                              ? (historyEntry.acVegetacaoMeta as any)
+                              : undefined
+                          }
+                          runningPhase={
+                            simcarAuasProcessing
+                              ? 'PRE_2008'
+                              : pos2008PhaseState.running
+                                ? 'POS_2008'
+                                : acVegetacaoPhaseState.running
+                                  ? 'AC_VEG'
+                                  : null
+                          }
+progress={
+  simcarAuasProgress
+    ? { percent: simcarAuasProgress.percent, message: simcarAuasProgress.message }
+    : pos2008PhaseState.progress
+      ? pos2008PhaseState.progress
+      : acVegetacaoPhaseState.progress
+        ? acVegetacaoPhaseState.progress
+        : null
+}
                           onRunPhase1={() => {
                             const previousAnalysis = simcarAnalysisMessages
                               .filter((m) => m.role === 'ai')
@@ -5921,6 +5949,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               acAvnMeta: historyEntry?.analysisMeta,
                             });
                           }}
+                          onRunPhase2={() => {
+                            void runPos2008Phase({ jobId: simcarClipJobId, historyEntry });
+                          }}
+                          onRunPhase3={() => {
+                            void runAcVegetacaoPhase({ jobId: simcarClipJobId, historyEntry });
+                          }}
+                          onCancelPhase2={cancelPos2008Phase}
+                          onCancelPhase3={cancelAcVegetacaoPhase}
                         />
                       );
                     })()}

@@ -173,6 +173,48 @@ export type SimcarAuasMetaV1 = {
 
 export type SimcarAuasMeta = SimcarAuasMetaV1 | SimcarAuasMetaV2;
 
+/** Resultado da Fase 2 — datação 2009–2019 (tipo conservador, só o que o front lê). */
+export type SimcarPos2008Meta = {
+  schemaVersion?: number;
+  rulesVersion?: string;
+  startedAt?: string;
+  completedAt?: string;
+  phase?: string;
+  catalog?: { version?: string; years?: number[]; missingYears?: number[] };
+  summary?: {
+    polygonCount?: number;
+    confirmedYearCount?: number;
+    intervalCount?: number;
+    alreadyAnthropizedCount?: number;
+    noChangeCount?: number;
+    inconclusiveCount?: number;
+    totalAuasAreaHa?: number;
+    yearHistogram?: Record<string, { count?: number; areaHa?: number }>;
+  };
+  report?: { model?: string; markdown?: string; evidenceRefs?: string[] };
+  limitations?: string[];
+};
+
+/** Resultado da Fase 3 — vegetação na AC. */
+export type SimcarAcVegetacaoMeta = {
+  schemaVersion?: number;
+  rulesVersion?: string;
+  startedAt?: string;
+  completedAt?: string;
+  phase?: string;
+  summary?: {
+    polygonCount?: number;
+    totalAcAreaHa?: number;
+    declaredVegetationCount?: number;
+    declaredVegetationAreaHa?: number;
+    apparentVegetationCount?: number;
+    cleanCount?: number;
+    inconclusiveCount?: number;
+  };
+  report?: { model?: string; markdown?: string; evidenceRefs?: string[] };
+  limitations?: string[];
+};
+
 export type SimcarConversationEntry = {
   role: 'ai' | 'user';
   text: string;
@@ -221,6 +263,10 @@ export type SimcarClipHistoryItem = {
   auasAnalysisImages?: Array<{ url: string; caption: string }>;
   auasAnalysisMessages?: SimcarAnalysisMessage[];
   auasMeta?: SimcarAuasMeta;
+  /** Fase 2 — datação 2009–2019 (`/api/simcar/clip/analyze-auas-pos2008`). */
+  auasPos2008Meta?: SimcarPos2008Meta;
+  /** Fase 3 — vegetação na Área Consolidada (`/api/simcar/clip/analyze-ac-vegetacao`). */
+  acVegetacaoMeta?: SimcarAcVegetacaoMeta;
   reportPdfUrl?: string;
   reportPdfDownloadUrl?: string;
   reportPdfFilename?: string;

@@ -79,6 +79,7 @@ import {
     getSimcarAiRuntimeConfig,
     runAcAvnSatelliteAnalysis,
 } from "./analysis";
+import { handlePos2008Route, handleAcVegetacaoRoute, handleImageryCatalogRoute } from "./phase2-3-handlers";
 import {
     ANALYSIS_VISION_MODELS,
     GROQ_TEXT_MODELS,
@@ -1077,6 +1078,21 @@ export function registerSimcarClipRoutes(app: Express) {
             if (sseHeartbeat) clearInterval(sseHeartbeat);
             if (!res.writableEnded) res.end();
         }
+    });
+
+    // Fase 2 — datação 2009–2019 das AUAS (SSE stream, padrão V2 da Fase 1).
+    app.post("/api/simcar/clip/analyze-auas-pos2008", async (req: Request, res: Response) => {
+        await handlePos2008Route(req, res, sendSseHeaders);
+    });
+
+    // Fase 3 — vegetação na Área Consolidada (SSE stream).
+    app.post("/api/simcar/clip/analyze-ac-vegetacao", async (req: Request, res: Response) => {
+        await handleAcVegetacaoRoute(req, res, sendSseHeaders);
+    });
+
+    // Catálogo de imagens WMS resolvido (prévia/diagnóstico para o painel).
+    app.get("/api/simcar/imagery/catalog", async (req: Request, res: Response) => {
+        await handleImageryCatalogRoute(req, res);
     });
 
     // AI analysis endpoint (SSE stream)

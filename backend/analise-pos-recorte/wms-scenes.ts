@@ -139,6 +139,8 @@ export type WmsFetchDeps = {
   sleep?: (ms: number) => Promise<void>;
   retryAttempts?: number;
   retryBaseDelayMs?: number;
+  /** Estilos por camada (ex.: NIR na SEMA é estilo, não camada). */
+  styles?: string[];
 };
 
 async function fetchWmsImageBufferOnce(
@@ -146,9 +148,10 @@ async function fetchWmsImageBufferOnce(
   bbox: [number, number, number, number],
   width: number,
   height: number,
-  fetchImpl: typeof fetch
+  fetchImpl: typeof fetch,
+  styles?: string[]
 ): Promise<Buffer> {
-  const mapUrl = buildWmsGetMapUrl(layers, bbox, width, height);
+  const mapUrl = buildWmsGetMapUrl(layers, bbox, width, height, "image/png", "EPSG:4326", styles);
   const controller = new AbortController();
   const dynamicTimeout = calculateWmsTimeout(width, height);
   const timeout = setTimeout(() => controller.abort(), dynamicTimeout);
@@ -208,7 +211,7 @@ export async function fetchWmsImageBuffer(
   for (const [tryW, tryH] of resolutions) {
     for (let attempt = 1; attempt <= retryAttempts; attempt++) {
       try {
-        const buf = await fetchWmsImageBufferOnce(layers, bbox, tryW, tryH, fetchImpl);
+        const buf = await fetchWmsImageBufferOnce(layers, bbox, tryW, tryH, fetchImpl, deps.styles);
         if (tryW === width && tryH === height) {
           return { buffer: buf, usedResolutionFallback: false };
         }

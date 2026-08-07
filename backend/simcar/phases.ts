@@ -68,6 +68,19 @@ export const PHASE1_SCENES_PER_POLYGON = 6;
 /** ~2–3 min por polígono medidos na validação live de 2026-07-30 (doc 01 §5). */
 export const PHASE1_SECONDS_PER_POLYGON = 150;
 
+/** Fase 2: 5 janelas de visão + até 1 janela-ponte por polígono, 2 cenas cada. */
+export const PHASE2_WINDOWS_PER_POLYGON = 5;
+export const PHASE2_BRIDGE_WINDOWS_PER_POLYGON = 1;
+export const PHASE2_SCENES_PER_POLYGON = 12;
+/** ~4–5 min por polígono (5 janelas + ponte, 2 cenas por janela). */
+export const PHASE2_SECONDS_PER_POLYGON = 280;
+
+/** Fase 3: 1 janela (WAVAC_ATUAL) com 3 cenas por polígono AC pós-2008. */
+export const PHASE3_WINDOWS_PER_POLYGON = 1;
+export const PHASE3_SCENES_PER_POLYGON = 3;
+/** ~1 min por polígono (1 janela de 3 cenas + geometria determinística). */
+export const PHASE3_SECONDS_PER_POLYGON = 60;
+
 const BLOCKED_MESSAGES: Record<PhaseBlockedReason, string> = {
   layer_empty_AUAS: "Este recorte não tem camada AUAS com polígonos.",
   layer_empty_AREA_CONSOLIDADA: "Este recorte não tem Área Consolidada.",
@@ -134,6 +147,72 @@ export function estimatePhase1(polygons: number): PhaseEstimate {
   };
 }
 
+export function estimatePhase2(polygons: number): PhaseEstimate {
+  return {
+    polygons,
+    scenesPerPolygon: PHASE2_SCENES_PER_POLYGON,
+    windowsPerPolygon: PHASE2_WINDOWS_PER_POLYGON + PHASE2_BRIDGE_WINDOWS_PER_POLYGON,
+    etaSeconds: polygons * PHASE2_SECONDS_PER_POLYGON,
+  };
+}
+
+export function estimatePhase3(polygons: number): PhaseEstimate {
+  return {
+    polygons,
+    scenesPerPolygon: PHASE3_SCENES_PER_POLYGON,
+    windowsPerPolygon: PHASE3_WINDOWS_PER_POLYGON,
+    etaSeconds: polygons * PHASE3_SECONDS_PER_POLYGON,
+  };
+}
+
+function phase2Summary(meta: Record<string, unknown>): PhaseStatus["summary"] {
+  const summary = isPlainObject(meta.summary) ? (meta.summary as Record<string, unknown>) : {};
+  const areaByStatus = isPlainObject(summary.areaByStatusHa)
+    ? (summary.areaByStatusHa as Record<string, unknown>)
+    : {};
+  const yearHistogram = isPlainObject(summary.yearHistogram)
+    ? (summary.yearHistogram as Record<string, unknown>)
+    : {};
+  const topYears = Object.entries(yearHistogram)
+    .map(([year, v]) => ({
+      year: Number(year),
+      count: readNumber(isPlainObject(v) ? v.count : v),
+    }))
+    .filter((y) => y.year >= 2009 && y.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 4)
+    .map((y) => `${y.year}(${y.count})`)
+    .join(", ");
+  const catalogVersion = readString(
+    meta.catalog && typeof meta.catalog === "object" ? (meta.catalog as Record<string, unknown>).version : null
+  );
+  return {
+    polygonCount: readNumber(summary.polygonCount),
+    confirmedYearCount: readNumber(summary.confirmedYearCount),
+    intervalCount: readNumber(summary.intervalCount),
+    alreadyAnthropizedCount: readNumber(summary.alreadyAnthropizedCount),
+    noChangeCount: readNumber(summary.noChangeCount),
+    inconclusiveCount: readNumber(summary.inconclusiveCount),
+    totalAuasAreaHa: readNumber(summary.totalAuasAreaHa),
+    areaByStatusHa: JSON.stringify(areaByStatus),
+    catalogVersion: catalogVersion || "",
+    topYears,
+  };
+}
+
+function acSummary(meta: Record<string, unknown>): PhaseStatus["summary"] {
+  const summary = isPlainObject(meta.summary) ? (meta.summary as Record<string, unknown>) : {};
+  return {
+    polygonCount: readNumber(summary.polygonCount),
+    declaredVegetationCount: readNumber(summary.declaredVegetationCount),
+    declaredVegetationAreaHa: readNumber(summary.declaredVegetationAreaHa),
+    apparentVegetationCount: readNumber(summary.apparentVegetationCount),
+    cleanCount: readNumber(summary.cleanCount),
+    inconclusiveCount: readNumber(summary.inconclusiveCount),
+    totalAcAreaHa: readNumber(summary.totalAcAreaHa),
+  };
+}
+
 function derivePhase1(input: DerivePhasesInput): PhaseStatus {
   if (input.runningPhase === "PRE_2008") {
     return {
@@ -170,27 +249,105 @@ function derivePhase1(input: DerivePhasesInput): PhaseStatus {
 }
 
 /**
- * Fases 2 e 3: por enquanto só a pré-condição encadeada e o aviso de que ainda
- * não existem. Quando forem implementadas, o `phase_not_implemented` sai daqui.
+ * Fase 2 — datação 2009–2019 das AUAS. Estados reais a partir do bloco
+ * `auasPos2008Meta` persistido. O gate via rota ainda é o que manda.
  */
 function derivePhase2(input: DerivePhasesInput): PhaseStatus {
   if (input.auasPolygonCount <= 0) return blocked("layer_empty_AUAS");
   if (!isPhase1Completed(input.auasMeta)) return blocked("requires_PRE_2008");
-  const stale = isPlainObject(input.auasPos2008Meta);
-  return blocked("phase_not_implemented", {
-    stale,
-    completedAt: stale ? readString((input.auasPos2008Meta as Record<string, unknown>).completedAt) : null,
-  });
+
+  const meta = isPlainObject(input.auasPos2008Meta) ? (input.auasPos2008Meta as Record<string, unknown>) : null;
+  const completedAt = meta ? readString(meta.completedAt) : null;
+
+  if (input.runningPhase === "POS_2008") {
+    return {
+      ...blocked("phase_running"),
+      state: "RUNNING",
+      estimate: estimatePhase2(input.auasPolygonCount),
+    };
+  }
+
+  if (meta && completedAt) {
+    const summary = phase2Summary(meta);
+    return {
+      state: "COMPLETED",
+      blockedReason: null,
+      blockedMessage: null,
+      rulesVersion: readString(meta.rulesVersion),
+      completedAt,
+      stale: isStaleAfter(input.auasPos2008Meta, input.auasMeta),
+      summary,
+      estimate: estimatePhase2(input.auasPolygonCount),
+    };
+  }
+
+  if (input.runningPhase) return blocked("other_phase_running");
+  return {
+    state: "AVAILABLE",
+    blockedReason: null,
+    blockedMessage: null,
+    rulesVersion: null,
+    completedAt: null,
+    stale: false,
+    summary: null,
+    estimate: estimatePhase2(input.auasPolygonCount),
+  };
 }
 
 function derivePhase3(input: DerivePhasesInput): PhaseStatus {
   if (input.acPolygonCount <= 0) return blocked("layer_empty_AREA_CONSOLIDADA");
   if (!isPhase1Completed(input.auasMeta)) return blocked("requires_PRE_2008");
-  if (!isPlainObject(input.auasPos2008Meta) || !readString((input.auasPos2008Meta as Record<string, unknown>).completedAt)) {
-    return blocked("requires_POS_2008");
+
+  const pos2008Meta = isPlainObject(input.auasPos2008Meta) ? (input.auasPos2008Meta as Record<string, unknown>) : null;
+  if (!pos2008Meta || !readString(pos2008Meta.completedAt)) return blocked("requires_POS_2008");
+
+  const meta = isPlainObject(input.acVegetacaoMeta) ? (input.acVegetacaoMeta as Record<string, unknown>) : null;
+  const hasAcCompleted = meta && readString(meta.completedAt);
+
+  if (input.runningPhase === "AC_VEG") {
+    return {
+      ...blocked("phase_running"),
+      state: "RUNNING",
+      estimate: estimatePhase3(input.acPolygonCount),
+    };
   }
-  const stale = isPlainObject(input.acVegetacaoMeta);
-  return blocked("phase_not_implemented", { stale });
+
+  if (meta && hasAcCompleted) {
+    return {
+      state: "COMPLETED",
+      blockedReason: null,
+      blockedMessage: null,
+      rulesVersion: readString(meta.rulesVersion),
+      completedAt: hasAcCompleted,
+      stale: isStaleAfter(input.acVegetacaoMeta, input.auasPos2008Meta),
+      summary: acSummary(meta),
+      estimate: estimatePhase3(input.acPolygonCount),
+    };
+  }
+
+  if (input.runningPhase) return blocked("other_phase_running");
+  return {
+    state: "AVAILABLE",
+    blockedReason: null,
+    blockedMessage: null,
+    rulesVersion: null,
+    completedAt: null,
+    stale: false,
+    summary: null,
+    estimate: estimatePhase3(input.acPolygonCount),
+  };
+}
+
+/**
+ * Bloco desta fase existe mas a fase anterior foi refeita (completedAt mais
+ * recente) ⇒ resultado já não reflete o recorte atual.
+ */
+function isStaleAfter(meta: unknown, previousMeta: unknown): boolean {
+  if (!isPlainObject(meta) || !isPlainObject(previousMeta)) return false;
+  const thisCompleted = readString(meta.completedAt);
+  const prevCompleted = readString(previousMeta.completedAt);
+  if (!thisCompleted || !prevCompleted) return false;
+  return new Date(prevCompleted).getTime() > new Date(thisCompleted).getTime();
 }
 
 export function derivePhases(input: DerivePhasesInput): PhasesResponse {

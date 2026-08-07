@@ -13,7 +13,7 @@
  *
  * Corpo dos callbacks 100% verbatim (zero mudança funcional) — extraído em 01/08.
  */
-import { useCallback } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 import type { BillingResult } from '@/dashboard/types';
@@ -25,6 +25,8 @@ import type {
   SimcarClipHistoryItem,
   SimcarClipSummary,
   SimcarConversationEntry,
+  SimcarPos2008Meta,
+  SimcarAcVegetacaoMeta,
 } from '@/dashboard/types/history';
 import { useSimcarAnalysis } from './useSimcarAnalysis';
 import {
@@ -1135,10 +1137,172 @@ if (!imageOnly && !silentOutput) {
     patchPersistedSimcarClip,
   ]);
 
+  const [pos2008PhaseState, setPos2008PhaseState] = useState<{
+    running: boolean;
+    progress: { percent: number; message: string } | null;
+  }>({ running: false, progress: null });
+  const [acVegetacaoPhaseState, setAcVegetacaoPhaseState] = useState<{
+    running: boolean;
+    progress: { percent: number; message: string } | null;
+  }>({ running: false, progress: null });
+  const pos2008AbortRef = useRef<AbortController | null>(null);
+  const acVegetacaoAbortRef = useRef<AbortController | null>(null);
+
+  const runPhase = useCallback(
+    async (params: {
+      jobId: string;
+      endpoint: string;
+      phase: 'pos2008' | 'ac-vegetacao';
+      historyEntry?: SimcarClipHistoryItem;
+    }): Promise<{
+      ok: boolean;
+      meta?: SimcarPos2008Meta | SimcarAcVegetacaoMeta;
+      error?: string;
+    }> => {
+      const { jobId, endpoint, phase } = params;
+      const historyEntry = params.historyEntry || simcarClipHistory.find((c) => c.jobId === jobId);
+      const setPhaseState = phase === 'pos2008' ? setPos2008PhaseState : setAcVegetacaoPhaseState;
+      const abortRef = phase === 'pos2008' ? pos2008AbortRef : acVegetacaoAbortRef;
+      const metaKey: 'auasPos2008Meta' | 'acVegetacaoMeta' =
+        phase === 'pos2008' ? 'auasPos2008Meta' : 'acVegetacaoMeta';
+      const phaseLabel = phase === 'pos2008' ? 'datação 2009–2019' : 'vegetação na AC';
+
+      setPhaseState({ running: true, progress: { percent: 0, message: `Iniciando análise de ${phaseLabel}...` } });
+
+      try {
+        const controller = new AbortController();
+        abortRef.current = controller;
+        const response = await apiFetch(endpoint, {
+          method: 'POST',
+          body: JSON.stringify({
+            jobId,
+            contextUrl: historyEntry?.contextUrl,
+            outputZipUrl: historyEntry?.outputZipUrl,
+          }),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const payload = await readApiError(response);
+          if (response.status === 402 || payload?.code === 'INSUFFICIENT_CREDITS') {
+            handleInsufficientCredits(payload?.error);
+            return { ok: false, error: payload?.error || 'Saldo insuficiente.' };
+          }
+          throw new Error(payload?.error || `HTTP ${response.status}`);
+        }
+
+        const reader = response.body?.getReader();
+        let streamError = '';
+        let meta: SimcarPos2008Meta | SimcarAcVegetacaoMeta | undefined;
+        let pdfStatus: Partial<SimcarClipHistoryItem> = {};
+
+        if (reader) {
+          await readSseEvents(reader, (event) => {
+            if (event.type === 'progress') {
+              setPhaseState({
+                running: true,
+                progress: {
+                  percent: Number(event.percent) || 0,
+                  message: normalizeBackendText(String(event.message || '')),
+                },
+              });
+            } else if (event.type === 'complete') {
+              const rawMeta = isPlainObject(event.auasPos2008Meta)
+                ? event.auasPos2008Meta
+                : isPlainObject(event.acVegetacaoMeta)
+                  ? event.acVegetacaoMeta
+                  : isPlainObject(event.meta)
+                    ? event.meta
+                    : isPlainObject(event.auasMeta)
+                      ? event.auasMeta
+                      : undefined;
+              if (rawMeta) {
+                meta = rawMeta as SimcarPos2008Meta | SimcarAcVegetacaoMeta;
+              }
+              const pdfUrl = String(event.reportPdfUrl || event.pdfUrl || '').trim();
+              if (pdfUrl) {
+                pdfStatus = {
+                  reportPdfUrl: pdfUrl,
+                  reportPdfDownloadUrl: String(event.reportPdfDownloadUrl || pdfUrl),
+                  reportPdfStatus: 'ready',
+                  reportPdfGeneratedAt: String(event.reportPdfGeneratedAt || event.generatedAt || new Date().toISOString()),
+                  reportPdfVersion: String(event.reportPdfVersion || event.version || ''),
+                };
+              }
+            } else if (event.type === 'billing' && event.billing) {
+              applyBillingToWallet(event.billing as BillingResult);
+            } else if (event.type === 'error') {
+              if (event?.code === 'INSUFFICIENT_CREDITS') {
+                handleInsufficientCredits(String(event.message || 'Saldo insuficiente.'));
+                throw new SseStopError();
+              }
+              streamError = normalizeBackendText(String(event.message || 'Erro inesperado.'));
+              throw new SseStopError();
+            }
+          });
+        }
+
+        if (streamError) throw new Error(streamError);
+        if (meta) {
+          const patch: Partial<SimcarClipHistoryItem> = {
+            [metaKey]: meta,
+            ...pdfStatus,
+          };
+          setSimcarClipHistory((prev) =>
+            prev.map((c) => (c.jobId === jobId ? { ...c, ...patch } : c))
+          );
+          void patchPersistedSimcarClip(jobId, patch);
+          toast.success(`Análise de ${phaseLabel} concluída.`);
+        }
+        setPhaseState({ running: false, progress: null });
+        return { ok: true, meta };
+      } catch (err: any) {
+        const message = String(err?.message || 'Erro inesperado.');
+        setPhaseState({ running: false, progress: null });
+        toast.error(message);
+        return { ok: false, error: message };
+      } finally {
+        abortRef.current = null;
+      }
+    },
+    [
+      apiFetch,
+      readApiError,
+      handleInsufficientCredits,
+      applyBillingToWallet,
+      setSimcarClipHistory,
+      patchPersistedSimcarClip,
+      simcarClipHistory,
+    ]
+  );
+
+  const runPos2008Phase = useCallback(
+    (params: { jobId: string; historyEntry?: SimcarClipHistoryItem }) =>
+      runPhase({ ...params, endpoint: '/api/simcar/clip/analyze-auas-pos2008', phase: 'pos2008' }),
+    [runPhase]
+  );
+
+  const runAcVegetacaoPhase = useCallback(
+    (params: { jobId: string; historyEntry?: SimcarClipHistoryItem }) =>
+      runPhase({ ...params, endpoint: '/api/simcar/clip/analyze-ac-vegetacao', phase: 'ac-vegetacao' }),
+    [runPhase]
+  );
+
   return {
     sendSimcarFollowUpMessage,
     runAcAvnAnalysis,
     runAuasAnalysis,
     runVectorizedCompleteAnalysis,
+    runPos2008Phase,
+    runAcVegetacaoPhase,
+    pos2008PhaseState,
+    acVegetacaoPhaseState,
+    cancelPos2008Phase: useCallback(() => {
+      pos2008AbortRef.current?.abort();
+      setPos2008PhaseState({ running: false, progress: null });
+    }, []),
+    cancelAcVegetacaoPhase: useCallback(() => {
+      acVegetacaoAbortRef.current?.abort();
+      setAcVegetacaoPhaseState({ running: false, progress: null });
+    }, []),
   };
 }

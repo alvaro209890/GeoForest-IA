@@ -99,27 +99,58 @@ function previewFor(id: PhaseId, status: PhaseStatus | undefined, layers: Phases
     return `${polygons} polígono(s) AUAS · ${scenes} imagens cada${eta}`;
   }
   if (id === 'POS_2008') {
-    const polygons = layers?.auasPolygonCount ?? 0;
-    return polygons > 0 ? `${polygons} polígono(s) AUAS · série anual 2009–2019` : 'Nenhum polígono AUAS neste recorte.';
+    const est = status?.estimate;
+    const polygons = est?.polygons ?? layers?.auasPolygonCount ?? 0;
+    if (polygons <= 0) return 'Nenhum polígono AUAS neste recorte.';
+    const janelas = est?.windowsPerPolygon ?? 6;
+    const eta = est ? ` · ${formatEta(est.etaSeconds)}` : '';
+    return `${polygons} polígono(s) AUAS · ${janelas} janelas cada${eta}`;
   }
-  const polygons = layers?.acPolygonCount ?? 0;
-  return polygons > 0
-    ? `${polygons} polígono(s) de Área Consolidada · cruzamento com AVN + imagem atual`
-    : 'Este recorte não tem Área Consolidada.';
+  const est3 = status?.estimate;
+  const polygonsAc = est3?.polygons ?? layers?.acPolygonCount ?? 0;
+  if (polygonsAc <= 0) return 'Este recorte não tem Área Consolidada.';
+  const cenas3 = est3?.scenesPerPolygon ?? 3;
+  const eta3 = est3 ? ` · ${formatEta(est3.etaSeconds)}` : '';
+  return `${polygonsAc} Área(s) Consolidada(s) · cruzamento com AVN + ${cenas3} imagens${eta3}`;
 }
 
 function resultLineFor(id: PhaseId, status: PhaseStatus | undefined): string | null {
   if (!status || status.state !== 'COMPLETED') return null;
   const quando = formatCompletedAt(status.completedAt);
   const prefixo = quando ? `Concluída em ${quando}` : 'Concluída';
-  if (id !== 'PRE_2008' || !status.summary) return prefixo;
-  const alertas = Number(status.summary.alertCount || 0);
-  const inconclusivos = Number(status.summary.inconclusiveCount || 0);
+  const summary = status.summary;
+  if (id === 'PRE_2008') {
+    if (!summary) return prefixo;
+    const alertas = Number(summary.alertCount || 0);
+    const inconclusivos = Number(summary.inconclusiveCount || 0);
+    const partes = [
+      alertas > 0 ? `${alertas} com evidência pré-2008` : 'nenhuma evidência pré-2008',
+      inconclusivos > 0 ? `${inconclusivos} inconclusivo(s)` : '',
+    ].filter(Boolean);
+    return `${prefixo} — ${partes.join(' · ')}`;
+  }
+  if (id === 'POS_2008') {
+    if (!summary) return prefixo;
+    const confirmados = Number(summary.confirmedYearCount || 0);
+    const intervalos = Number(summary.intervalCount || 0);
+    const jaAntrop = Number(summary.alreadyAnthropizedCount || 0);
+    const partes = [
+      confirmados > 0 ? `${confirmados} ano confirmado` : '',
+      intervalos > 0 ? `${intervalos} intervalo` : '',
+      jaAntrop > 0 ? `${jaAntrop} já antropizado em 2009` : '',
+    ].filter(Boolean);
+    return `${prefixo} — ${partes.join(' · ') || 'sem datação'}`;
+  }
+  if (!summary) return prefixo;
+  const declaradas = Number(summary.declaredVegetationCount || 0);
+  const aparentes = Number(summary.apparentVegetationCount || 0);
+  const limpas = Number(summary.cleanCount || 0);
   const partes = [
-    alertas > 0 ? `${alertas} com evidência pré-2008` : 'nenhuma evidência pré-2008',
-    inconclusivos > 0 ? `${inconclusivos} inconclusivo(s)` : '',
+    declaradas > 0 ? `${declaradas} declaradas` : '',
+    aparentes > 0 ? `${aparentes} aparentes` : '',
+    limpas > 0 ? `${limpas} limpas` : '',
   ].filter(Boolean);
-  return `${prefixo} — ${partes.join(' · ')}`;
+  return `${prefixo} — ${partes.join(' · ') || 'sem vegetação aparente'}`;
 }
 
 /** Bloco V2 da Fase 1 já concluído? Card antigo (V1) não conta — outra janela. */
@@ -156,7 +187,7 @@ export function buildPhaseCards(
     let state: PhaseState = status?.state ?? 'BLOCKED';
     let blockedMessage = status?.blockedMessage ?? null;
     let actionEnabled = state === 'AVAILABLE' || state === 'COMPLETED';
-    const notImplemented = status?.blockedReason === 'phase_not_implemented';
+    const notImplemented = status?.blockedReason === 'phase_not_implemented' || false;
 
     if (!payload) {
       if (options.loading) {

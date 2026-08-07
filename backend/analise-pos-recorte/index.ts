@@ -24,3 +24,29 @@ export type {
   PolygonPre2008Status,
   PropertyPre2008Status,
 } from "./types";
+
+export {
+  runPos2008Analysis,
+  type Pos2008CheckpointStore,
+  type Pos2008OrchestratorDeps,
+  type Pos2008RunInput,
+} from "./pos2008/orchestrator";
+export {
+  resolvePos2008Catalog,
+  clearPos2008CatalogCache,
+  type PosCatalog,
+} from "./pos2008/catalog";
+export type {
+  AuasPos2008Analysis,
+  AuasPos2008PolygonResult,
+  Pos2008WindowId,
+  Pos2008Scene,
+  Pos2008WindowRun,
+  Pos2008WindowObservation,
+} from "./pos2008/types";
+export {
+  runAcVegetacaoAnalysis,
+  type AcVegetacaoOrchestratorDeps,
+  type AcVegetacaoRunInput,
+} from "./ac-vegetacao/orchestrator";
+export type { AcVegetacaoAnalysis, AcPolygonResult, AcPotentialPolygon, AcVegetacaoWindowRun } from "./ac-vegetacao/types";

@@ -12,6 +12,9 @@ export const AUTH_REQUIRED_PATHS: (string | RegExp)[] = [
   "/api/simcar/clip/import-vectorized",
   "/api/simcar/clip/analyze",
   "/api/simcar/clip/analyze-auas",
+  "/api/simcar/clip/analyze-auas-pos2008",
+  "/api/simcar/clip/analyze-ac-vegetacao",
+  "/api/simcar/imagery/catalog",
   // Estado das 3 fases da análise pós-recorte (lê o laudo persistido do job).
   /^\/api\/simcar\/clip\/phases\/[^/]+$/,
   "/api/simcar/clip/analyze/chat",

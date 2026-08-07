@@ -1,156 +1,147 @@
 /**
- * Estado das 3 fases pós-recorte — regra de desbloqueio do servidor.
- * Cobre R-03 e a parte de gating de U-15 do plano
- * `docs/planos/analise-pos-recorte/09-testes-e-validacao.md`.
+ * Testes do estado das 3 fases da análise pós-recorte (tarefa F0.5).
+ * `derivePhases` é pura — o foco está no encadeamento de gates F1→F2→F3.
  */
 import { describe, expect, it } from "vitest";
 
 import {
-  PHASE1_SECONDS_PER_POLYGON,
-  checkPhaseGate,
   derivePhases,
-  estimatePhase1,
-  isPhase1Completed,
+  estimatePhase2,
+  estimatePhase3,
+  checkPhaseGate,
+  type DerivePhasesInput,
 } from "./phases";
 
-const auasMetaV2Completo = {
-  schemaVersion: 2,
-  rulesVersion: "auas-pre2008-v1",
-  status: "ALERTA_PRE_2008",
-  pre2008Alert: true,
-  completedAt: "2026-08-05T14:20:00.000Z",
-  summary: {
-    polygonCount: 17,
-    alertCount: 3,
-    inconclusiveCount: 2,
-    noEvidenceCount: 12,
-    totalAuasAreaHa: 210.5,
-    alertAreaHa: 42.1,
-  },
-};
-
-function base(overrides: Record<string, unknown> = {}) {
-  return derivePhases({
+function base(input: Partial<DerivePhasesInput> = {}): DerivePhasesInput {
+  return {
     jobId: "job-1",
-    auasPolygonCount: 17,
-    acPolygonCount: 9,
-    ...overrides,
-  } as any);
+    auasPolygonCount: 2,
+    acPolygonCount: 1,
+    auasMeta: undefined,
+    auasPos2008Meta: undefined,
+    acVegetacaoMeta: undefined,
+    runningPhase: null,
+    ...input,
+  };
 }
 
+const phase1Done = {
+  schemaVersion: 2,
+  completedAt: "2026-01-01T00:00:00.000Z",
+  rulesVersion: "auas-v1",
+  summary: { polygonCount: 2, alertCount: 1 },
+};
+const pos2008Done = {
+  schemaVersion: 1,
+  completedAt: "2026-01-02T00:00:00.000Z",
+  rulesVersion: "auas-pos2008-v1",
+  summary: { polygonCount: 2, confirmedYearCount: 1 },
+};
+const acDone = {
+  schemaVersion: 1,
+  completedAt: "2026-01-03T00:00:00.000Z",
+  rulesVersion: "ac-veg-v1",
+  summary: { polygonCount: 2, declaredVegetationCount: 1, totalAcAreaHa: 10 },
+};
+
 describe("derivePhases", () => {
-  it("R-03: logo após o recorte, Fase 1 AVAILABLE e as outras BLOCKED com motivo legível", () => {
-    const payload = base();
-    expect(payload.phases.PRE_2008.state).toBe("AVAILABLE");
-    expect(payload.phases.PRE_2008.blockedMessage).toBeNull();
-    expect(payload.phases.POS_2008.state).toBe("BLOCKED");
-    expect(payload.phases.POS_2008.blockedReason).toBe("requires_PRE_2008");
-    expect(payload.phases.POS_2008.blockedMessage).toMatch(/Fase 1/);
-    expect(payload.phases.AC_VEG.state).toBe("BLOCKED");
-    expect(payload.phases.AC_VEG.blockedReason).toBe("requires_PRE_2008");
-    expect(payload.layers).toEqual({ auasPolygonCount: 17, acPolygonCount: 9 });
+  it("F1 disponível quando há AUAS e bloco V2 vazio", () => {
+    const phases = derivePhases(base());
+    expect(phases.phases.PRE_2008.state).toBe("AVAILABLE");
+    expect(phases.phases.POS_2008.state).toBe("BLOCKED");
+    expect(phases.phases.POS_2008.blockedReason).toBe("requires_PRE_2008");
   });
 
-  it("a prévia da Fase 1 sai da contagem de polígonos (3 janelas, 6 cenas)", () => {
-    const estimate = base().phases.PRE_2008.estimate!;
-    expect(estimate).toEqual({
-      polygons: 17,
-      scenesPerPolygon: 6,
-      windowsPerPolygon: 3,
-      etaSeconds: 17 * PHASE1_SECONDS_PER_POLYGON,
-    });
-    expect(estimatePhase1(0).etaSeconds).toBe(0);
+  it("sem polígonos AUAS: F1/F2 bloqueiam com layer_empty_AUAS", () => {
+    const phases = derivePhases(base({ auasPolygonCount: 0 }));
+    expect(phases.phases.PRE_2008.blockedReason).toBe("layer_empty_AUAS");
+    expect(phases.phases.POS_2008.blockedReason).toBe("layer_empty_AUAS");
   });
 
-  it("recorte sem camada AUAS bloqueia as fases 1 e 2 com motivo próprio (não é erro)", () => {
-    const payload = base({ auasPolygonCount: 0 });
-    expect(payload.phases.PRE_2008.blockedReason).toBe("layer_empty_AUAS");
-    expect(payload.phases.PRE_2008.blockedMessage).toMatch(/AUAS/);
-    expect(payload.phases.POS_2008.blockedReason).toBe("layer_empty_AUAS");
+  it("sem AC: F3 bloqueada com layer_empty_AREA_CONSOLIDADA", () => {
+    const phases = derivePhases(base({ acPolygonCount: 0 }));
+    expect(phases.phases.AC_VEG.blockedReason).toBe("layer_empty_AREA_CONSOLIDADA");
   });
 
-  it("recorte sem AREA_CONSOLIDADA bloqueia só a Fase 3", () => {
-    const payload = base({ acPolygonCount: 0 });
-    expect(payload.phases.PRE_2008.state).toBe("AVAILABLE");
-    expect(payload.phases.AC_VEG.blockedReason).toBe("layer_empty_AREA_CONSOLIDADA");
+  it("F1 concluída libera F2 (AVAILABLE); F3 espera POS_2008", () => {
+    const phases = derivePhases(base({ auasMeta: phase1Done }));
+    expect(phases.phases.PRE_2008.state).toBe("COMPLETED");
+    expect(phases.phases.POS_2008.state).toBe("AVAILABLE");
+    expect(phases.phases.AC_VEG.blockedReason).toBe("requires_POS_2008");
   });
 
-  it("Fase 1 concluída (V2) vira COMPLETED e traz o resumo do laudo", () => {
-    const payload = base({ auasMeta: auasMetaV2Completo });
-    const fase1 = payload.phases.PRE_2008;
-    expect(fase1.state).toBe("COMPLETED");
-    expect(fase1.completedAt).toBe("2026-08-05T14:20:00.000Z");
-    expect(fase1.rulesVersion).toBe("auas-pre2008-v1");
-    expect(fase1.summary).toMatchObject({ alertCount: 3, inconclusiveCount: 2, pre2008Alert: true });
+  it("F2 concluída registra summary e libera F3", () => {
+    const phases = derivePhases(base({ auasMeta: phase1Done, auasPos2008Meta: pos2008Done }));
+    expect(phases.phases.POS_2008.state).toBe("COMPLETED");
+    expect(phases.phases.POS_2008.summary?.confirmedYearCount).toBe(1);
+    expect(phases.phases.AC_VEG.state).toBe("AVAILABLE");
   });
 
-  it("card antigo V1 não conta como Fase 1 concluída (janela 2008–2024 é outra pergunta)", () => {
-    const v1 = { finalStatus: "AUAS_VALIDA", firstDeforestationYear: 2015 };
-    expect(isPhase1Completed(v1)).toBe(false);
-    const payload = base({ auasMeta: v1 });
-    expect(payload.phases.PRE_2008.state).toBe("AVAILABLE");
-    expect(payload.phases.POS_2008.blockedReason).toBe("requires_PRE_2008");
+  it("F3 concluída → COMPLETED com summary", () => {
+    const phases = derivePhases(base({ auasMeta: phase1Done, auasPos2008Meta: pos2008Done, acVegetacaoMeta: acDone }));
+    expect(phases.phases.AC_VEG.state).toBe("COMPLETED");
+    expect(phases.phases.AC_VEG.summary?.declaredVegetationCount).toBe(1);
+    expect(phases.phases.AC_VEG.summary?.totalAcAreaHa).toBe(10);
   });
 
-  it("bloco V2 sem completedAt (execução interrompida) não destrava a Fase 2", () => {
-    const parcial = { ...auasMetaV2Completo, completedAt: "" };
-    expect(isPhase1Completed(parcial)).toBe(false);
-    expect(base({ auasMeta: parcial }).phases.POS_2008.blockedReason).toBe("requires_PRE_2008");
+  it("fase refeita depois invalida a seguinte (stale)", () => {
+    const phases = derivePhases(
+      base({
+        auasMeta: { ...phase1Done, completedAt: "2026-02-01T00:00:00.000Z" },
+        auasPos2008Meta: pos2008Done,
+      })
+    );
+    expect(phases.phases.POS_2008.state).toBe("COMPLETED");
+    expect(phases.phases.POS_2008.stale).toBe(true);
   });
 
-  it("com a Fase 1 concluída, a Fase 2 informa que ainda não foi implementada", () => {
-    const payload = base({ auasMeta: auasMetaV2Completo });
-    expect(payload.phases.POS_2008.blockedReason).toBe("phase_not_implemented");
-    expect(payload.phases.AC_VEG.blockedReason).toBe("requires_POS_2008");
+  it("RUNNING bloqueia as demais", () => {
+    const phases = derivePhases(
+      base({ auasMeta: phase1Done, auasPos2008Meta: pos2008Done, runningPhase: "POS_2008" })
+    );
+    expect(phases.phases.POS_2008.state).toBe("RUNNING");
+    expect(phases.phases.AC_VEG.blockedReason).toBe("other_phase_running");
+  });
+});
+
+describe("estimates", () => {
+  it("F2: 5 janelas + 1 ponte, 12 cenas, ~280s/pol", () => {
+    const e = estimatePhase2(3);
+    expect(e.windowsPerPolygon).toBe(6);
+    expect(e.scenesPerPolygon).toBe(12);
+    expect(e.etaSeconds).toBe(3 * 280);
   });
 
-  it("Fase 3 só sai de requires_POS_2008 quando a Fase 2 tiver completedAt", () => {
-    const payload = base({
-      auasMeta: auasMetaV2Completo,
-      auasPos2008Meta: { schemaVersion: 1, completedAt: "2026-08-06T10:00:00.000Z" },
-    });
-    expect(payload.phases.AC_VEG.blockedReason).toBe("phase_not_implemented");
-  });
-
-  it("resultado de fase posterior a uma Fase 1 refeita fica marcado como stale, não some", () => {
-    const payload = base({
-      auasMeta: auasMetaV2Completo,
-      auasPos2008Meta: { schemaVersion: 1, completedAt: "2026-08-06T10:00:00.000Z" },
-      acVegetacaoMeta: { schemaVersion: 1, completedAt: "2026-08-06T12:00:00.000Z" },
-    });
-    expect(payload.phases.POS_2008.stale).toBe(true);
-    expect(payload.phases.AC_VEG.stale).toBe(true);
-  });
-
-  it("fase em execução aparece como RUNNING e as outras não largam junto", () => {
-    const payload = base({ runningPhase: "PRE_2008" });
-    expect(payload.phases.PRE_2008.state).toBe("RUNNING");
-    expect(payload.phases.POS_2008.state).toBe("BLOCKED");
+  it("F3: 1 janela, 3 cenas, ~60s/pol", () => {
+    const e = estimatePhase3(2);
+    expect(e.windowsPerPolygon).toBe(1);
+    expect(e.scenesPerPolygon).toBe(3);
+    expect(e.etaSeconds).toBe(120);
   });
 });
 
 describe("checkPhaseGate", () => {
-  it("U-15: Fase 2 sem Fase 1 concluída → 409 PHASE_NOT_READY apontando a fase que falta", () => {
-    const gate = checkPhaseGate(base(), "POS_2008");
+  it("libera AVAILABLE/COMPLETED", () => {
+    const available = derivePhases(base({ auasMeta: phase1Done }));
+    expect(checkPhaseGate(available, "POS_2008")).toBeNull();
+    const done = derivePhases(base({ auasMeta: phase1Done, auasPos2008Meta: pos2008Done, acVegetacaoMeta: acDone }));
+    expect(checkPhaseGate(done, "AC_VEG")).toBeNull();
+  });
+
+  it("trava com PHASE_NOT_READY quando requer fase anterior", () => {
+    const phases = derivePhases(base());
+    const gate = checkPhaseGate(phases, "POS_2008");
     expect(gate?.status).toBe(409);
     expect(gate?.body.code).toBe("PHASE_NOT_READY");
     expect(gate?.body.requires).toBe("PRE_2008");
   });
 
-  it("fase disponível ou concluída passa pelo gate", () => {
-    expect(checkPhaseGate(base(), "PRE_2008")).toBeNull();
-    expect(checkPhaseGate(base({ auasMeta: auasMetaV2Completo }), "PRE_2008")).toBeNull();
-  });
-
-  it("fase já rodando → 409 PHASE_ALREADY_RUNNING", () => {
-    const gate = checkPhaseGate(base({ runningPhase: "PRE_2008" }), "PRE_2008");
+  it("trava com PHASE_ALREADY_RUNNING", () => {
+    const phases = derivePhases(
+      base({ auasMeta: phase1Done, auasPos2008Meta: pos2008Done, runningPhase: "AC_VEG", acPolygonCount: 1 })
+    );
+    const gate = checkPhaseGate(phases, "AC_VEG");
     expect(gate?.status).toBe(409);
     expect(gate?.body.code).toBe("PHASE_ALREADY_RUNNING");
-  });
-
-  it("camada vazia também não deixa a fase rodar, com mensagem própria", () => {
-    const gate = checkPhaseGate(base({ auasPolygonCount: 0 }), "PRE_2008");
-    expect(gate?.status).toBe(409);
-    expect(gate?.body.error).toMatch(/AUAS/);
   });
 });

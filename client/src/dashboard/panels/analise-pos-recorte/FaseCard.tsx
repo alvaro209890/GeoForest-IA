@@ -1,4 +1,4 @@
-import { Layers, Lock, Loader2, CheckCircle2 } from 'lucide-react';
+import { Layers, Lock, Loader2, CheckCircle2, X } from 'lucide-react';
 
 import type { PhaseCard } from './phase-state';
 
@@ -7,11 +7,12 @@ type FaseCardProps = {
   onRun?: () => void;
   /** Progresso da fase em execução (percentual + mensagem do SSE). */
   progress?: { percent: number; message: string } | null;
+  onCancel?: () => void;
   children?: React.ReactNode;
 };
 
 /** Um card de fase: cabeçalho, prévia, estado e botão. Bloqueio sempre com motivo. */
-export function FaseCard({ card, onRun, progress, children }: FaseCardProps) {
+export function FaseCard({ card, onRun, progress, onCancel, children }: FaseCardProps) {
   const running = card.state === 'RUNNING';
   const completed = card.state === 'COMPLETED';
   const clickable = card.actionEnabled && !!onRun;
@@ -78,7 +79,20 @@ export function FaseCard({ card, onRun, progress, children }: FaseCardProps) {
               style={{ width: `${Math.max(0, Math.min(100, progress.percent))}%` }}
             />
           </div>
-          <p className="text-[10px] text-slate-500">{progress.message}</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] text-slate-500 truncate">{progress.message}</p>
+            {onCancel && (
+              <button
+                type="button"
+                onClick={onCancel}
+                title="Cancelar esta fase"
+                className="shrink-0 flex items-center gap-1 rounded-md bg-white/5 px-2 py-0.5 text-[10px] text-slate-400 hover:bg-white/10 hover:text-slate-200 transition-colors"
+              >
+                <X size={10} />
+                cancelar
+              </button>
+            )}
+          </div>
         </div>
       )}
 
