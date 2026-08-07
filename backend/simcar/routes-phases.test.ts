@@ -47,7 +47,7 @@ beforeAll(async () => {
     post() {},
     delete() {},
   } as any);
-});
+}, 120_000);
 
 async function callPhases(jobId: string, authUid = "uid-1") {
   const handler = getHandlers.get("/api/simcar/clip/phases/:jobId");

@@ -155,7 +155,7 @@ export function parseCachedContextFromOutputZip(
     };
 }
 
-async function hydrateJobFromOutputZipUrl(jobId: string, outputZipUrl?: string): Promise<CachedJob | null> {
+async function hydrateJobFromOutputZipUrl(jobId: string, outputZipUrl?: string, uid?: string): Promise<CachedJob | null> {
     if (!outputZipUrl) return null;
     const zipUrl = toPublicApiUrl(outputZipUrl);
     try {
@@ -173,6 +173,7 @@ async function hydrateJobFromOutputZipUrl(jobId: string, outputZipUrl?: string):
         if (!hydrated) {
             throw new Error("Não foi possível reconstruir contexto pelo ZIP");
         }
+        hydrated.uid = uid || undefined;
         jobCache.set(jobId, hydrated);
         return hydrated;
     } catch (err: any) {
@@ -184,6 +185,7 @@ async function hydrateJobFromOutputZipUrl(jobId: string, outputZipUrl?: string):
 async function hydrateJobFromPersistedContext(
     jobId: string,
     contextUrl?: string,
+    uid?: string,
 ): Promise<CachedJob | null> {
     if (!contextUrl) return null;
     const contextFetchUrl = toPublicApiUrl(contextUrl);
@@ -196,8 +198,12 @@ async function hydrateJobFromPersistedContext(
         if (!parsed) {
             throw new Error("Formato de contexto inválido");
         }
+        if (parsed.jobId && parsed.jobId !== jobId) {
+            throw new Error("Contexto não pertence ao job solicitado");
+        }
         const clipMap = objectToMapGeometry(parsed.clippedGeometries);
         const hydrated: CachedJob = {
+            uid: uid || undefined,
             expiresAt: Date.now() + CACHE_TTL_MS,
             filename: parsed.filename,
             bbox: parsed.bbox,
@@ -219,24 +225,26 @@ async function hydrateJobFromPersistedContext(
     }
 }
 
-function getPersistedHydrationUrls(jobId: string, contextUrl?: string, outputZipUrl?: string): {
+function getPersistedHydrationUrls(jobId: string, contextUrl?: string, outputZipUrl?: string, uid?: string): {
     contextUrl?: string;
     outputZipUrl?: string;
 } {
-    const persisted = readPersistedSimcarClip(jobId);
+    const persisted = uid ? readPersistedSimcarClipForUid(uid, jobId) : readPersistedSimcarClip(jobId);
     const persistedDownloadUrl = String(persisted?.downloadUrl || "").trim();
     const safeDownloadUrl =
         persistedDownloadUrl && !persistedDownloadUrl.includes(`/api/simcar/clip/download/${jobId}`)
             ? persistedDownloadUrl
             : "";
+    // When ownership is known, client-supplied URLs are not trusted. The URLs
+    // must come from the owner's persisted document to prevent SSRF/IDOR.
     const resolvedContextUrl = String(
-        contextUrl ||
+        (uid ? undefined : contextUrl) ||
         persisted?.contextUrl ||
         persisted?.files?.contextUrl ||
         "",
     ).trim();
     const resolvedOutputZipUrl = String(
-        outputZipUrl ||
+        (uid ? undefined : outputZipUrl) ||
         persisted?.outputZipUrl ||
         persisted?.files?.outputZipUrl ||
         safeDownloadUrl ||
@@ -252,17 +260,18 @@ export async function hydrateCachedJob(
     jobId: string,
     contextUrl?: string,
     outputZipUrl?: string,
+    uid?: string,
 ): Promise<CachedJob | undefined> {
     let job = jobCache.get(jobId);
-    if (job?.bbox && job.polygon && job.layerSummaries) return job;
+    if (job?.bbox && job.polygon && job.layerSummaries && (!uid || job.uid === uid)) return job;
 
-    const urls = getPersistedHydrationUrls(jobId, contextUrl, outputZipUrl);
+    const urls = getPersistedHydrationUrls(jobId, contextUrl, outputZipUrl, uid);
     if (urls.contextUrl) {
-        job = (await hydrateJobFromPersistedContext(jobId, urls.contextUrl)) ?? undefined;
+        job = (await hydrateJobFromPersistedContext(jobId, urls.contextUrl, uid)) ?? undefined;
         if (job?.bbox && job.polygon && job.layerSummaries) return job;
     }
     if (urls.outputZipUrl) {
-        job = (await hydrateJobFromOutputZipUrl(jobId, urls.outputZipUrl)) ?? undefined;
+        job = (await hydrateJobFromOutputZipUrl(jobId, urls.outputZipUrl, uid)) ?? undefined;
         if (job?.bbox && job.polygon && job.layerSummaries) return job;
     }
     return undefined;
@@ -355,13 +364,15 @@ export async function persistSimcarClipArtifacts(args: {
     uid: string;
     jobId: string;
     patch: Record<string, unknown>;
-}): Promise<void> {
+}): Promise<boolean> {
     const uid = String(args.uid || "").trim();
     const jobId = String(args.jobId || "").trim();
-    if (!uid || !jobId || !args.patch || typeof args.patch !== "object") return;
+    if (!uid || !jobId || !args.patch || typeof args.patch !== "object") return false;
     try {
         writeDocBySegments(["users", uid, "simcar_clips", jobId], stripUndefinedDeep(args.patch), { merge: true });
+        return true;
     } catch (error) {
         console.warn("[SIMCAR CLIP] failed to persist analysis artifacts:", error);
+        return false;
     }
 }

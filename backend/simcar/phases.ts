@@ -23,7 +23,8 @@ export type PhaseBlockedReason =
   | "requires_POS_2008"
   | "phase_not_implemented"
   | "phase_running"
-  | "other_phase_running";
+  | "other_phase_running"
+  | "phase_stale";
 
 export type PhaseEstimate = {
   polygons: number;
@@ -60,6 +61,9 @@ export type DerivePhasesInput = {
   acVegetacaoMeta?: unknown;
   /** Fase em execução agora para este job, quando conhecida. */
   runningPhase?: PhaseId | null;
+  /** Flags de disponibilidade; ausentes preservam o comportamento puro/offline. */
+  pos2008Enabled?: boolean;
+  acVegetacaoEnabled?: boolean;
 };
 
 /** Fase 1: 3 janelas de visão por polígono sobre 6 cenas (2003–2007 + SPOT 2008). */
@@ -89,6 +93,7 @@ const BLOCKED_MESSAGES: Record<PhaseBlockedReason, string> = {
   phase_not_implemented: "Fase ainda não disponível nesta versão do GeoForest.",
   phase_running: "Análise desta fase em andamento.",
   other_phase_running: "Aguardando a fase em execução terminar.",
+  phase_stale: "O resultado anterior ficou desatualizado. Refaça esta fase.",
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -269,19 +274,31 @@ function derivePhase2(input: DerivePhasesInput): PhaseStatus {
 
   if (meta && completedAt) {
     const summary = phase2Summary(meta);
+    const stale = isStaleAfter(meta, input.auasMeta, "pre2008JobRef");
+    if (stale) {
+      return blocked("phase_stale", {
+        state: "STALE",
+        stale: true,
+        rulesVersion: readString(meta.rulesVersion),
+        completedAt,
+        summary,
+        estimate: estimatePhase2(input.auasPolygonCount),
+      });
+    }
     return {
       state: "COMPLETED",
       blockedReason: null,
       blockedMessage: null,
       rulesVersion: readString(meta.rulesVersion),
       completedAt,
-      stale: isStaleAfter(input.auasPos2008Meta, input.auasMeta),
+      stale: false,
       summary,
       estimate: estimatePhase2(input.auasPolygonCount),
     };
   }
 
   if (input.runningPhase) return blocked("other_phase_running");
+  if (input.pos2008Enabled === false) return blocked("phase_not_implemented");
   return {
     state: "AVAILABLE",
     blockedReason: null,
@@ -301,6 +318,15 @@ function derivePhase3(input: DerivePhasesInput): PhaseStatus {
   const pos2008Meta = isPlainObject(input.auasPos2008Meta) ? (input.auasPos2008Meta as Record<string, unknown>) : null;
   if (!pos2008Meta || !readString(pos2008Meta.completedAt)) return blocked("requires_POS_2008");
 
+  if (input.runningPhase && input.runningPhase !== "AC_VEG") return blocked("other_phase_running");
+  if (isStaleAfter(pos2008Meta, input.auasMeta, "pre2008JobRef")) {
+    return blocked("phase_stale", {
+      state: "STALE",
+      stale: true,
+      estimate: estimatePhase3(input.acPolygonCount),
+    });
+  }
+
   const meta = isPlainObject(input.acVegetacaoMeta) ? (input.acVegetacaoMeta as Record<string, unknown>) : null;
   const hasAcCompleted = meta && readString(meta.completedAt);
 
@@ -313,19 +339,31 @@ function derivePhase3(input: DerivePhasesInput): PhaseStatus {
   }
 
   if (meta && hasAcCompleted) {
+    const stale = isStaleAfter(meta, pos2008Meta, "pos2008JobRef");
+    if (stale) {
+      return blocked("phase_stale", {
+        state: "STALE",
+        stale: true,
+        rulesVersion: readString(meta.rulesVersion),
+        completedAt: hasAcCompleted,
+        summary: acSummary(meta),
+        estimate: estimatePhase3(input.acPolygonCount),
+      });
+    }
     return {
       state: "COMPLETED",
       blockedReason: null,
       blockedMessage: null,
       rulesVersion: readString(meta.rulesVersion),
       completedAt: hasAcCompleted,
-      stale: isStaleAfter(input.acVegetacaoMeta, input.auasPos2008Meta),
+      stale: false,
       summary: acSummary(meta),
       estimate: estimatePhase3(input.acPolygonCount),
     };
   }
 
   if (input.runningPhase) return blocked("other_phase_running");
+  if (input.acVegetacaoEnabled === false) return blocked("phase_not_implemented");
   return {
     state: "AVAILABLE",
     blockedReason: null,
@@ -342,11 +380,18 @@ function derivePhase3(input: DerivePhasesInput): PhaseStatus {
  * Bloco desta fase existe mas a fase anterior foi refeita (completedAt mais
  * recente) ⇒ resultado já não reflete o recorte atual.
  */
-function isStaleAfter(meta: unknown, previousMeta: unknown): boolean {
+function isStaleAfter(
+  meta: unknown,
+  previousMeta: unknown,
+  referenceKey: "pre2008JobRef" | "pos2008JobRef",
+): boolean {
   if (!isPlainObject(meta) || !isPlainObject(previousMeta)) return false;
   const thisCompleted = readString(meta.completedAt);
   const prevCompleted = readString(previousMeta.completedAt);
   if (!thisCompleted || !prevCompleted) return false;
+  const reference = isPlainObject(meta[referenceKey]) ? meta[referenceKey] : null;
+  const referencedCompleted = reference ? readString(reference.completedAt) : null;
+  if (referencedCompleted) return referencedCompleted !== prevCompleted;
   return new Date(prevCompleted).getTime() > new Date(thisCompleted).getTime();
 }
 

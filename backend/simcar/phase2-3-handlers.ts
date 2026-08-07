@@ -20,7 +20,7 @@ import {
 } from "../billing";
 import { finishJob, markDisconnected, startJob } from "../processing-jobs";
 import { ClientAbortError, isSseConnectionClosed, sendSSE, startSseHeartbeat } from "./clip-pipeline";
-import { readPersistedSimcarClip, hydrateCachedJob, persistSimcarClipArtifacts } from "./hydration";
+import { readPersistedSimcarClipForUid, hydrateCachedJob, persistSimcarClipArtifacts } from "./hydration";
 import { generateAndPersistSimcarReport, type SimcarReportArtifact } from "./report";
 import { derivePhases, checkPhaseGate, type PhaseId } from "./phases";
 import { createFileCheckpointStore } from "../analise-pos-recorte/checkpoint-store";
@@ -39,6 +39,7 @@ import {
 const EP_POS2008 = "/api/simcar/clip/analyze-auas-pos2008";
 const EP_AC_VEG = "/api/simcar/clip/analyze-ac-vegetacao";
 const EP_CATALOG = "/api/simcar/imagery/catalog";
+const phaseLocks = new Set<string>();
 
 type PhaseContext = {
     uid: string;
@@ -59,7 +60,12 @@ function authUidOf(req: Request): string {
  * Valida auth + jobId + gate da fase e hidrata o recorte. Devolve null quando
  * respondeu erro (401/400/404/409).
  */
-async function resolvePhaseContext(req: Request, res: Response, phase: PhaseId): Promise<PhaseContext | null> {
+async function resolvePhaseContext(
+    req: Request,
+    res: Response,
+    phase: PhaseId,
+    availability: { phase2Enabled: boolean; phase3Enabled: boolean },
+): Promise<PhaseContext | null> {
     const uid = authUidOf(req);
     if (!uid) {
         res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
@@ -71,21 +77,11 @@ async function resolvePhaseContext(req: Request, res: Response, phase: PhaseId):
         return null;
     }
 
-    const persisted = (readPersistedSimcarClip(jobId) || {}) as Record<string, unknown>;
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const contextUrl =
-        typeof body.contextUrl === "string"
-            ? body.contextUrl
-            : typeof req.query.contextUrl === "string"
-              ? req.query.contextUrl
-              : undefined;
-    const outputZipUrl =
-        typeof body.outputZipUrl === "string"
-            ? body.outputZipUrl
-            : typeof req.query.outputZipUrl === "string"
-              ? req.query.outputZipUrl
-              : undefined;
-    const job = await hydrateCachedJob(jobId, contextUrl, outputZipUrl);
+    const persisted = (readPersistedSimcarClipForUid(uid, jobId) || {}) as Record<string, unknown>;
+    // The job's persisted URLs are the only trusted hydration source. URLs from
+    // the request body/query would let an authenticated user turn this route
+    // into an SSRF primitive or attach another user's context to the job ID.
+    const job = await hydrateCachedJob(jobId, undefined, undefined, uid);
     if (!job || !job.clippedGeometries) {
         res.status(404).json({ error: "Job de recorte não encontrado.", code: "JOB_NOT_FOUND" });
         return null;
@@ -100,6 +96,8 @@ async function resolvePhaseContext(req: Request, res: Response, phase: PhaseId):
         auasMeta: persisted.auasMeta,
         auasPos2008Meta: persisted.auasPos2008Meta,
         acVegetacaoMeta: persisted.acVegetacaoMeta,
+        pos2008Enabled: availability.phase2Enabled,
+        acVegetacaoEnabled: availability.phase3Enabled,
     });
     const gate = checkPhaseGate(phases, phase);
     if (gate) {
@@ -107,6 +105,20 @@ async function resolvePhaseContext(req: Request, res: Response, phase: PhaseId):
         return null;
     }
     return { uid, jobId, persisted, clippedGeometries, bbox: job.bbox ?? null, auasCount, acCount };
+}
+
+function acquirePhaseLock(req: Request): string | null {
+    const uid = authUidOf(req);
+    const jobId = String((req.body as any)?.jobId || "").trim();
+    if (!uid || !jobId) return null;
+    const key = `${uid}:${jobId}`;
+    if (phaseLocks.has(key)) return "";
+    phaseLocks.add(key);
+    return key;
+}
+
+function releasePhaseLock(key: string | null): void {
+    if (key) phaseLocks.delete(key);
 }
 
 /** Preço estimado por fase: poucos polígonos → reserva leve; muitos → teto. */
@@ -146,6 +158,7 @@ async function refundRemaining(state: BillingState): Promise<void> {
                 endpoint: state.endpoint,
                 reason: "analysis_failed_before_usage",
             });
+            state.reservedBrl = 0;
         } catch (refundErr) {
             console.error(`[${state.endpoint}] refund error:`, refundErr);
         }
@@ -183,15 +196,28 @@ export async function handlePos2008Route(
         phase: "POS_2008",
     };
     let sseHeartbeat: ReturnType<typeof setInterval> | null = null;
+    let phaseLock: string | null = null;
     try {
-        const ctx = await resolvePhaseContext(req, res, "POS_2008");
+        phaseLock = acquirePhaseLock(req);
+        if (phaseLock === "") {
+            res.status(409).json({ error: "Análise deste recorte já está em andamento.", code: "PHASE_ALREADY_RUNNING" });
+            return;
+        }
+        const cfg = getAuasV2Config();
+        const ctx = await resolvePhaseContext(req, res, "POS_2008", cfg);
         if (!ctx) return;
         state.uid = ctx.uid;
         state.jobId = ctx.jobId;
 
-        const cfg = getAuasV2Config();
-        if (!cfg.enabled) {
+        if (!cfg.phase2Enabled) {
             res.status(409).json({ error: "Fase 2 não habilitada nesta versão do GeoForest.", code: "PHASE_NOT_READY" });
+            return;
+        }
+        if (cfg.maxPolygonsPerJob > 0 && ctx.auasCount > cfg.maxPolygonsPerJob) {
+            res.status(400).json({
+                error: `O recorte possui ${ctx.auasCount} polígonos AUAS; o limite configurado é ${cfg.maxPolygonsPerJob}.`,
+                code: "TOO_MANY_POLYGONS",
+            });
             return;
         }
 
@@ -254,11 +280,12 @@ export async function handlePos2008Route(
             return;
         }
 
-        await persistSimcarClipArtifacts({
+        const persisted = await persistSimcarClipArtifacts({
             uid: ctx.uid,
             jobId: ctx.jobId,
             patch: { auasPos2008Meta: result },
         });
+        if (!persisted) throw new Error("Não foi possível persistir o resultado da Fase 2.");
         await finalizeBilling(state, usageInputs);
         sendSSE(res, { type: "billing", billing: { chargedBrl: Number(state.chargedBrl.toFixed(4)) } });
 
@@ -293,6 +320,7 @@ export async function handlePos2008Route(
         await routeErrorFallback(res, err, state);
     } finally {
         if (sseHeartbeat) clearInterval(sseHeartbeat);
+        releasePhaseLock(phaseLock);
         if (!res.writableEnded) res.end();
     }
 }
@@ -316,15 +344,28 @@ export async function handleAcVegetacaoRoute(
         phase: "AC_VEG",
     };
     let sseHeartbeat: ReturnType<typeof setInterval> | null = null;
+    let phaseLock: string | null = null;
     try {
-        const ctx = await resolvePhaseContext(req, res, "AC_VEG");
+        phaseLock = acquirePhaseLock(req);
+        if (phaseLock === "") {
+            res.status(409).json({ error: "Análise deste recorte já está em andamento.", code: "PHASE_ALREADY_RUNNING" });
+            return;
+        }
+        const cfg = getAuasV2Config();
+        const ctx = await resolvePhaseContext(req, res, "AC_VEG", cfg);
         if (!ctx) return;
         state.uid = ctx.uid;
         state.jobId = ctx.jobId;
 
-        const cfg = getAuasV2Config();
-        if (!cfg.enabled) {
+        if (!cfg.phase3Enabled) {
             res.status(409).json({ error: "Fase 3 não habilitada nesta versão do GeoForest.", code: "PHASE_NOT_READY" });
+            return;
+        }
+        if (cfg.maxPolygonsPerJob > 0 && ctx.acCount > cfg.maxPolygonsPerJob) {
+            res.status(400).json({
+                error: `O recorte possui ${ctx.acCount} polígonos de Área Consolidada; o limite configurado é ${cfg.maxPolygonsPerJob}.`,
+                code: "TOO_MANY_POLYGONS",
+            });
             return;
         }
 
@@ -376,11 +417,12 @@ export async function handleAcVegetacaoRoute(
             return;
         }
 
-        await persistSimcarClipArtifacts({
+        const persisted = await persistSimcarClipArtifacts({
             uid: ctx.uid,
             jobId: ctx.jobId,
             patch: { acVegetacaoMeta: result },
         });
+        if (!persisted) throw new Error("Não foi possível persistir o resultado da Fase 3.");
         await finalizeBilling(state, usageInputs);
         sendSSE(res, { type: "billing", billing: { chargedBrl: Number(state.chargedBrl.toFixed(4)) } });
 
@@ -415,6 +457,7 @@ export async function handleAcVegetacaoRoute(
         await routeErrorFallback(res, err, state);
     } finally {
         if (sseHeartbeat) clearInterval(sseHeartbeat);
+        releasePhaseLock(phaseLock);
         if (!res.writableEnded) res.end();
     }
 }

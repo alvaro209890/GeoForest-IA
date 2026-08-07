@@ -186,7 +186,7 @@ export function buildPhaseCards(
 
     let state: PhaseState = status?.state ?? 'BLOCKED';
     let blockedMessage = status?.blockedMessage ?? null;
-    let actionEnabled = state === 'AVAILABLE' || state === 'COMPLETED';
+    let actionEnabled = state === 'AVAILABLE' || state === 'COMPLETED' || state === 'STALE';
     const notImplemented = status?.blockedReason === 'phase_not_implemented' || false;
 
     if (!payload) {
@@ -221,7 +221,7 @@ export function buildPhaseCards(
 
     let actionLabel = 'Analisar';
     if (running) actionLabel = 'Analisando…';
-    else if (state === 'COMPLETED') actionLabel = 'Refazer';
+    else if (state === 'COMPLETED' || state === 'STALE') actionLabel = 'Refazer';
     else if (id !== 'PRE_2008') actionLabel = 'Continuar';
 
     return {

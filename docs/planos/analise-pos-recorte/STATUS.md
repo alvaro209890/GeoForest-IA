@@ -2,9 +2,9 @@
 
 | Campo | Valor |
 |---|---|
-| Status | **🚧 EM IMPLEMENTAÇÃO** — F2 (datação 2009–2019) e F3 (vegetação na AC) implementadas e no `main`; aguardando rollout por flag |
+| Status | **🚧 EM IMPLEMENTAÇÃO** — F2 (datação 2009–2019) e F3 (vegetação na AC) implementadas, auditadas e no `main`; aguardando rollout por flag |
 | Criado em | 2026-08-05 |
-| Atualizado em | 2026-08-07 (F2/F3 entregues + deploy do código) |
+| Atualizado em | 2026-08-07 (F2/F3 entregues + auditoria de bugs + deploy do código) |
 | Autor | Claude (plano), com Álvaro |
 | Repo | `alvaro209890/GeoForest-IA` — branch `main` |
 | Pasta | `docs/planos/analise-pos-recorte/` |
@@ -40,6 +40,7 @@ Cada fase destrava a seguinte; a regra de desbloqueio é do backend, não só da
 - [x] **F2 — datação 2008–2019 implementada (2026-08-07)**: `backend/analise-pos-recorte/pos2008/` (timeline 5 janelas + ponte, catálogo com cache/TTL, redutor determinístico, cenas anuais, Groq vision, laudo DeepSeek, orchestrator); rota `POST /api/simcar/clip/analyze-auas-pos2008`; front com runner SSE, progresso e cancelamento
 - [x] **F3 — vegetação na Área Consolidada implementada (2026-08-07)**: `backend/analise-pos-recorte/ac-vegetacao/` (evidência geométrica turf com filtro de slivers < 500 m², redutor com precedência geométrica, 3 cenas S2 RGB/NIR + SPOT 2008, orchestrator); rota `POST /api/simcar/clip/analyze-ac-vegetacao` + `GET /api/simcar/imagery/catalog`
 - [x] **Deploy do código (2026-08-07)**: commit `7097fb84` no `main`, auto-sync buildado/reiniciado, Firebase hosting no ar — flags continuam desligadas (F2/F3 respondem 409 `PHASE_NOT_READY`)
+- [x] **Auditoria de bugs F2/F3 (2026-08-07)**: ownership/SSRF nas rotas de fase, flags independentes (`SIMCAR_AUAS_POS2008_ENABLED`/`SIMCAR_AC_VEG_ENABLED`), lock por `uid:jobId`, estado `STALE` transitivo, janela-ponte da F2 casada com a fronteira certa, validação de ano por `sceneId`, cenas WMS reais da F3, redutor visual (≥2 cenas positivas, sem falso alerta) e geométrico (buracos preservados), cache do catálogo por bbox. Changelog: [`docs/CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_BUGS.md`](../../CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_BUGS.md)
 - [ ] F1 — ligar a Fase 1 (conjunto dourado + live DeepSeek + flag no servidor)
 - [ ] F2 rollout — `SIMCAR_AUAS_POS2008_ENABLED=true` (pré-requisito: F1 estável ≥1 semana + dourado F2)
 - [ ] F3 rollout — `SIMCAR_AC_VEG_ENABLED=true` (pré-requisito: F2 estável + conferência GIS ≥3 imóveis)
@@ -68,3 +69,4 @@ As demais (A5–A10) têm default e não bloqueiam. Detalhe em
 | 2026-08-05 | **F0.1 — levantamento WMS ao vivo** feito: série 2009–2019 completa e validada, NIR corrigido de camada para estilo. Ver [`docs/CHANGELOG_2026-08-05_LEVANTAMENTO_WMS_F0_1.md`](../../CHANGELOG_2026-08-05_LEVANTAMENTO_WMS_F0_1.md) |
 | 2026-08-05 | **Fundação F0.3–F0.6 implementada e testada** (+46 testes; `pnpm test`/`check`/`build` verdes). Ver [`docs/CHANGELOG_2026-08-05_ANALISE_POS_RECORTE_F0.md`](../../CHANGELOG_2026-08-05_ANALISE_POS_RECORTE_F0.md). Fases 2 e 3 seguem não implementadas; `SIMCAR_AUAS_V2_ENABLED` continua `false` |
 | 2026-08-07 | **Fases 2 e 3 implementadas e testadas** (commit `7097fb84`, +33 testes novos; `pnpm test` 579 passed/8 skipped, `check`/`build` verdes). Ver [`docs/CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_F2_F3.md`](../../CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_F2_F3.md). Push + auto-sync + Firebase hosting concluídos; flags permanecem `false` |
+| 2026-08-07 | **Auditoria de bugs F2/F3 corrigida** (ownership/SSRF, flags independentes, lock de fase, invalidação `STALE` transitiva, janela-ponte da F2, validação de ano por `sceneId`, cenas WMS reais da F3, redutor visual e geométrico, cache do catálogo por bbox; +8 arquivos de teste novos; `pnpm test` 591 passed/8 skipped, `check`/`build` verdes). Ver [`docs/CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_BUGS.md`](../../CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_BUGS.md) |

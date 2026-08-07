@@ -12,6 +12,7 @@
 import type { Geometry } from "geojson";
 
 import type { WmsFetchDeps } from "../wms-scenes";
+import { getAcVegetacaoConfig, type AcVegetacaoConfig } from "../config";
 import { buildAcVegetacaoScene, type AcSceneSpec } from "./scenes";
 import { computeAcGeometricEvidence } from "./geometry-evidence";
 import { reduceAcVegetacao } from "./evidence-reducer";
@@ -22,9 +23,6 @@ import type { AcVegetacaoWindowRun, AcPolygonResult, AcPotentialPolygon, AcVeget
 
 export { AC_VEGETATION_RULES_VERSION } from "./types";
 import { AC_VEGETATION_RULES_VERSION } from "./types";
-
-const AC_LAYER_CURRENT = "Cenas_Geral";
-const AC_LAYER_2008 = "Cenas_2008";
 
 export type AcVegetacaoRunInput = {
   jobId: string;
@@ -42,6 +40,7 @@ export type AcVegetacaoProgress = {
 };
 
 export type AcVegetacaoOrchestratorDeps = {
+  config?: AcVegetacaoConfig;
   sceneDeps?: WmsFetchDeps;
   visionDeps?: AcVegetacaoVisionDeps;
   persistAcVegetacaoMeta?: (
@@ -100,11 +99,18 @@ export async function runAcVegetacaoAnalysis(
   if (targets.length === 0) return emptyAcAnalysis(input.jobId, startedAt, now());
 
   const layers = input.clippedGeometries ?? new Map<string, Geometry[]>();
+  const config = deps.config || getAcVegetacaoConfig();
 
   const sceneSpecs: AcSceneSpec[] = [
-    { sceneId: "S2_2024", year: 2024, sensor: "SENTINEL_2", layer: AC_LAYER_CURRENT },
-    { sceneId: "S2_2021_NIR", year: 2021, sensor: "SENTINEL_2", layer: AC_LAYER_CURRENT, style: "NIR" },
-    { sceneId: "SPOT_2008", year: 2008, sensor: "SPOT", layer: AC_LAYER_2008 },
+    { sceneId: "S2_2024", year: 2024, sensor: "SENTINEL_2", layer: config.currentLayer },
+    {
+      sceneId: `S2_${config.nirYear}_NIR`,
+      year: config.nirYear,
+      sensor: "SENTINEL_2",
+      layer: config.nirLayer,
+      style: config.nirStyle,
+    },
+    { sceneId: "SPOT_2008", year: 2008, sensor: "SPOT", layer: config.referenceLayer },
   ];
 
   const windows: AcVegetacaoWindowRun[] = [];
@@ -123,7 +129,7 @@ export async function runAcVegetacaoAnalysis(
       polygonTotal: targets.length,
     });
 
-    const { geometric, flags } = computeGeometric(polygon.geometry, layers);
+    const { geometric, flags } = computeGeometric(polygon.geometry, layers, config);
 
     const builtScenes = [];
     const usedScenes = [];
@@ -184,15 +190,21 @@ export async function runAcVegetacaoAnalysis(
     }
 
     const windowRun = windows[windows.length - 1];
-    const result = reduceAcVegetacao({
-      polygonId: polygon.polygonId,
-      geometryHash: polygon.geometryHash,
-      areaHa: polygon.areaHa,
-      geometric,
-      window: windowRun?.observation ? { observation: windowRun.observation } : null,
-      flags,
-      pos2008CompletedAt: input.pos2008CompletedAt,
-    });
+    const result = reduceAcVegetacao(
+      {
+        polygonId: polygon.polygonId,
+        geometryHash: polygon.geometryHash,
+        areaHa: polygon.areaHa,
+        geometric,
+        window: windowRun?.observation ? { observation: windowRun.observation } : null,
+        flags,
+        pos2008CompletedAt: input.pos2008CompletedAt,
+      },
+      {
+        declaredFractionThreshold: config.minDeclaredFraction,
+        declaredAreaHaThreshold: config.minDeclaredAreaHa,
+      },
+    );
     polygons.push(result);
   }
 
@@ -227,7 +239,8 @@ export async function runAcVegetacaoAnalysis(
 
 function computeGeometric(
   acGeometry: Geometry,
-  layers: Map<string, Geometry[]>
+  layers: Map<string, Geometry[]>,
+  config: AcVegetacaoConfig,
 ): { geometric: AcPolygonResult["geometric"]; flags: string[] } {
   const { geometric } = computeAcGeometricEvidence(
     {
@@ -240,7 +253,7 @@ function computeGeometric(
         AUAS: layers.get("AUAS"),
       },
     },
-    {}
+    { sliverThresholdM2: config.minSliverM2 }
   );
   const flags: string[] = [];
   if (geometric.arlAreaHa > 0) flags.push("AC_SOBREPOE_ARL");

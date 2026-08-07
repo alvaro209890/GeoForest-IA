@@ -91,8 +91,42 @@ describe("derivePhases", () => {
         auasPos2008Meta: pos2008Done,
       })
     );
-    expect(phases.phases.POS_2008.state).toBe("COMPLETED");
+    expect(phases.phases.POS_2008.state).toBe("STALE");
     expect(phases.phases.POS_2008.stale).toBe(true);
+  });
+
+  it("a invalidação é transitiva até a Fase 3", () => {
+    const phases = derivePhases(
+      base({
+        auasMeta: { ...phase1Done, completedAt: "2026-02-01T00:00:00.000Z" },
+        auasPos2008Meta: {
+          ...pos2008Done,
+          pre2008JobRef: { completedAt: phase1Done.completedAt, rulesVersion: phase1Done.rulesVersion },
+        },
+        acVegetacaoMeta: {
+          ...acDone,
+          pos2008JobRef: { completedAt: pos2008Done.completedAt, rulesVersion: pos2008Done.rulesVersion },
+        },
+      }),
+    );
+    expect(phases.phases.POS_2008.state).toBe("STALE");
+    expect(phases.phases.AC_VEG.state).toBe("STALE");
+    expect(checkPhaseGate(phases, "AC_VEG")?.body.code).toBe("PHASE_NOT_READY");
+  });
+
+  it("flags independentes mantêm F2 e F3 bloqueadas sem apagar resultados concluídos", () => {
+    const before = derivePhases(base({ auasMeta: phase1Done, pos2008Enabled: false }));
+    expect(before.phases.POS_2008.blockedReason).toBe("phase_not_implemented");
+
+    const after = derivePhases(
+      base({
+        auasMeta: phase1Done,
+        auasPos2008Meta: pos2008Done,
+        acVegetacaoEnabled: false,
+      }),
+    );
+    expect(after.phases.POS_2008.state).toBe("COMPLETED");
+    expect(after.phases.AC_VEG.blockedReason).toBe("phase_not_implemented");
   });
 
   it("RUNNING bloqueia as demais", () => {

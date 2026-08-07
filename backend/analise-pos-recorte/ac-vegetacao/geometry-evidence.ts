@@ -167,34 +167,36 @@ function intersectWithSliverFilter(
   }
   if (!inter) return { feature: null, areaM2: 0, areaHa: 0, parts: 0, sliversDiscardedM2: 0 };
 
-  const rings = collectRings(inter.geometry);
-  const keptRings: number[][][] = [];
+  const polygons = collectPolygons(inter.geometry);
+  const keptPolygons: number[][][][] = [];
   let sliversDiscardedM2 = 0;
 
-  for (const ring of rings) {
-    const ringFeature: Feature<Polygon> = {
+  for (const coordinates of polygons) {
+    const polygonFeature: Feature<Polygon> = {
       type: "Feature",
       properties: {},
-      geometry: { type: "Polygon", coordinates: [ring] },
+      geometry: { type: "Polygon", coordinates },
     };
-    const ringArea = turfArea(ringFeature);
-    if (ringArea < sliverThresholdM2) {
-      sliversDiscardedM2 += ringArea;
+    const polygonArea = turfArea(polygonFeature);
+    if (polygonArea < sliverThresholdM2) {
+      sliversDiscardedM2 += polygonArea;
     } else {
-      keptRings.push(ring);
+      // Keep the complete polygon coordinates, including interior rings. A
+      // hole is not an independent positive fragment of vegetation.
+      keptPolygons.push(coordinates);
     }
   }
 
-  if (keptRings.length === 0) {
+  if (keptPolygons.length === 0) {
     return { feature: null, areaM2: 0, areaHa: 0, parts: 0, sliversDiscardedM2 };
   }
 
   const filtered: Feature<Polygon | MultiPolygon> = {
     type: "Feature",
     properties: {},
-    geometry: keptRings.length === 1
-      ? { type: "Polygon", coordinates: [keptRings[0]] }
-      : { type: "MultiPolygon", coordinates: keptRings.map((r) => [r]) },
+    geometry: keptPolygons.length === 1
+      ? { type: "Polygon", coordinates: keptPolygons[0] }
+      : { type: "MultiPolygon", coordinates: keptPolygons },
   };
 
   const areaM2 = turfArea(filtered);
@@ -202,13 +204,13 @@ function intersectWithSliverFilter(
     feature: filtered,
     areaM2,
     areaHa: areaM2 / SQ_METERS_PER_HECTARE,
-    parts: keptRings.length,
+    parts: keptPolygons.length,
     sliversDiscardedM2,
   };
 }
 
-/** Coleta anéis externos (sem buracos) de Polygon/MultiPolygon. */
-function collectRings(geom: Polygon | MultiPolygon): number[][][] {
-  if (geom.type === "Polygon") return [geom.coordinates[0]];
-  return geom.coordinates.map((poly) => poly[0]);
+/** Coleta polígonos completos, preservando anéis internos (buracos). */
+function collectPolygons(geom: Polygon | MultiPolygon): number[][][][] {
+  if (geom.type === "Polygon") return [geom.coordinates];
+  return geom.coordinates;
 }

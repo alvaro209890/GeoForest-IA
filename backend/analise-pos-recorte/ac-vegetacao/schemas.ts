@@ -62,7 +62,12 @@ export type AcVegetacaoWindowObservationParsed = z.infer<typeof acVegetacaoWindo
 
 export function validateAcVegetacaoWindowObservation(
   raw: unknown,
-  expected: { polygonId: string; windowId: string; sentSceneIds: string[] }
+  expected: {
+    polygonId: string;
+    windowId: string;
+    sentSceneIds: string[];
+    sentSceneMetadata?: Record<string, { year: number; sensor: string }>;
+  }
 ): { ok: true; data: AcVegetacaoWindowObservationParsed } | { ok: false; reason: string } {
   const parsed = acVegetacaoWindowObservationSchema.safeParse(raw);
   if (!parsed.success) {
@@ -87,6 +92,10 @@ export function validateAcVegetacaoWindowObservation(
   for (const obs of data.observations) {
     if (!sentSet.has(obs.sceneId)) {
       return { ok: false, reason: `observação cita sceneId não enviado: ${obs.sceneId}` };
+    }
+    const metadata = expected.sentSceneMetadata?.[obs.sceneId];
+    if (metadata && metadata.year !== obs.year) {
+      return { ok: false, reason: `ano incompatível com a cena ${obs.sceneId}: ${obs.year}` };
     }
   }
   return { ok: true, data };

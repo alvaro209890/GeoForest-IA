@@ -106,6 +106,8 @@ import {
   type SimcarAcAvnAnalysisMeta,
   type SimcarAuasMetaV1,
   type SimcarAuasMeta,
+  type SimcarPos2008Meta,
+  type SimcarAcVegetacaoMeta,
   type SimcarConversationEntry,
   type SimcarLayerSummary,
   type SimcarClipSummary,
@@ -1768,6 +1770,12 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
               auasAnalysisImages: Array.isArray(data?.auasAnalysisImages) ? data.auasAnalysisImages : [],
               auasAnalysisMessages: Array.isArray(data?.auasAnalysisMessages) ? data.auasAnalysisMessages : [],
               auasMeta: isPlainObject(data?.auasMeta) ? (data.auasMeta as SimcarAuasMeta) : undefined,
+              auasPos2008Meta: isPlainObject(data?.auasPos2008Meta)
+                ? (data.auasPos2008Meta as SimcarPos2008Meta)
+                : undefined,
+              acVegetacaoMeta: isPlainObject(data?.acVegetacaoMeta)
+                ? (data.acVegetacaoMeta as SimcarAcVegetacaoMeta)
+                : undefined,
               ...normalizeSimcarReportPatch(data),
               summary:
                 summary
@@ -5901,7 +5909,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     {/* ── Painel "Análise pós-recorte": 3 fases encadeadas (substitui o botão
                          solto de AUAS). Só a Fase 1 está ligada; as demais aparecem
                          desabilitadas com motivo. Ver docs/planos/analise-pos-recorte/. ── */}
-                    {simcarClipMode === 'auto-clip' && simcarClipJobId && (() => {
+                    {(simcarClipMode === 'auto-clip' || simcarClipMode === 'vectorized-analysis') && simcarClipJobId && (() => {
                       const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
                       return (
                         <AnalisePosRecortePanel

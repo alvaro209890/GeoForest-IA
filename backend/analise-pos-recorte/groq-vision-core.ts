@@ -27,6 +27,11 @@ export type GroqVisionImageInput = {
   dataUrl: string;
 };
 
+export type GroqVisionSceneMetadata = {
+  year: number;
+  sensor: string;
+};
+
 export type GroqVisionGenericRequest = {
   polygonId: string;
   windowId: string;
@@ -214,7 +219,12 @@ export type RequestGroqVisionCoreOptions = GroqVisionGenericDeps & {
   /** Valida a resposta bruta contra o schema da fase. Devolve `{ok:true,data}` ou `{ok:false,reason}`. */
   validate: (
     raw: unknown,
-    expected: { polygonId: string; windowId: string; sentSceneIds: string[] }
+    expected: {
+      polygonId: string;
+      windowId: string;
+      sentSceneIds: string[];
+      sentSceneMetadata?: Record<string, GroqVisionSceneMetadata>;
+    }
   ) => { ok: true; data: any } | { ok: false; reason: string };
 };
 
@@ -278,6 +288,9 @@ export async function requestGroqVisionGeneric(
           polygonId: request.polygonId,
           windowId: request.windowId,
           sentSceneIds,
+          sentSceneMetadata: Object.fromEntries(
+            request.images.map((image) => [image.sceneId, { year: image.year, sensor: image.sensor }]),
+          ),
         });
         if (!validation.ok) {
           lastError = new GroqVisionError("INVALID_SCHEMA", validation.reason, true);

@@ -1,4 +1,10 @@
-export { getAuasV2Config, AUAS_RULES_VERSION, AUAS_REQUIRED_SOURCES } from "./config";
+export {
+  getAuasV2Config,
+  getAcVegetacaoConfig,
+  AUAS_RULES_VERSION,
+  AUAS_REQUIRED_SOURCES,
+  type AcVegetacaoConfig,
+} from "./config";
 export { extractAuasPolygons, computeGeometryHash } from "./auas-polygons";
 export { reduceAuasPolygon, reduceAuasAggregate } from "./evidence-reducer";
 export { buildAuasScene } from "./wms-scenes";

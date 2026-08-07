@@ -37,7 +37,7 @@ Modulos:
 
 Híbrida (geometria no turf + IA):
 
-- `geometry-evidence.ts` — cruza `AREA_CONSOLIDADA` × `AVN`/`ARL`/`TIPOLOGIA_VEGETAL`;
+- `geometry-evidence.ts` — cruza `AREA_CONSOLIDADA` com `AVN`/`ARL`/`TIPOLOGIA_VEGETAL`;
   considera slivers < 500 m² como ruído;
 - 3 cenas: S2 RGB (2024), S2 NIR (`featureType`), SPOT 2008;
 - `evidence-reducer.ts` — precedência da evidência geométrica sobre a leitura visual;
@@ -61,9 +61,9 @@ SSE com progresso, cancelamento, toast; painéis novos com a prévia (`auasPos20
 
 ## Qualidade
 
-* `pnpm test` → **579 passed / 8 skipped** (33 testes novos)
-* `pnpm check` (tsc) → sem erros
-* `pnpm build` → ok (backend esbuild + front Vite)
+* `pnpm test` — **579 passed / 8 skipped** (33 testes novos)
+* `pnpm check` (tsc) — sem erros
+* `pnpm build` — ok (backend esbuild + front Vite)
 
 ## Pendências (não fechadas por design)
 

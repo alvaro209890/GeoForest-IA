@@ -52,7 +52,6 @@ import {
     clipFeaturesToPolygon,
 } from "./clip-pipeline";
 import {
-    readPersistedSimcarClip,
     readPersistedSimcarClipForUid,
     storagePathBelongsToUid,
     hydrateCachedJob,
@@ -721,11 +720,17 @@ export function registerSimcarClipRoutes(app: Express) {
     // Download endpoint
     app.get("/api/simcar/clip/download/:jobId", (req: Request, res: Response) => {
         const { jobId } = req.params;
-        const cached = jobCache.get(jobId);
+        const uid = String(req.authUid || "").trim();
+        if (!uid) {
+            res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+            return;
+        }
+        const cachedCandidate = jobCache.get(jobId);
+        const cached = cachedCandidate && cachedCandidate.uid === uid ? cachedCandidate : undefined;
 
         if (!cached || cached.expiresAt <= Date.now()) {
             if (cached) jobCache.delete(jobId);
-            const persisted = readPersistedSimcarClip(jobId);
+            const persisted = readPersistedSimcarClipForUid(uid, jobId);
             const persistedOutputUrl = String(
                 persisted?.outputZipUrl ||
                 persisted?.files?.outputZipUrl ||
@@ -768,11 +773,12 @@ export function registerSimcarClipRoutes(app: Express) {
         }
         try {
             const uid = String(req.authUid || "");
-            const persisted =
-                (uid ? readPersistedSimcarClipForUid(uid, jobId) : null) || readPersistedSimcarClip(jobId) || {};
-            const contextUrl = typeof req.query.contextUrl === "string" ? req.query.contextUrl : undefined;
-            const outputZipUrl = typeof req.query.outputZipUrl === "string" ? req.query.outputZipUrl : undefined;
-            const job = await hydrateCachedJob(jobId, contextUrl, outputZipUrl);
+            if (!uid) {
+                res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+                return;
+            }
+            const persisted = (readPersistedSimcarClipForUid(uid, jobId) || {}) as Record<string, unknown>;
+            const job = await hydrateCachedJob(jobId, undefined, undefined, uid);
             if (!job) {
                 res.status(404).json({
                     error: "Job de recorte não encontrado. O servidor não localizou contexto ou ZIP persistido para reidratar o recorte.",
@@ -780,6 +786,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 });
                 return;
             }
+            const phaseConfig = getAuasV2Config();
             res.json(
                 derivePhases({
                     jobId,
@@ -788,6 +795,8 @@ export function registerSimcarClipRoutes(app: Express) {
                     auasMeta: (persisted as Record<string, unknown>).auasMeta,
                     auasPos2008Meta: (persisted as Record<string, unknown>).auasPos2008Meta,
                     acVegetacaoMeta: (persisted as Record<string, unknown>).acVegetacaoMeta,
+                    pos2008Enabled: phaseConfig.phase2Enabled,
+                    acVegetacaoEnabled: phaseConfig.phase3Enabled,
                 }),
             );
         } catch (err: any) {
@@ -867,7 +876,7 @@ export function registerSimcarClipRoutes(app: Express) {
             console.log(`[AUAS ANALYSIS] Starting AUAS analysis for job: ${jobId}`);
             const auasOutcome = await runWithBillingUsageSession(async () => {
                 try {
-                    return await processAuasAnalysis(res, jobId, previousAnalysis, contextUrl, outputZipUrl, acAvnMeta);
+                    return await processAuasAnalysis(res, jobId, previousAnalysis, contextUrl, outputZipUrl, acAvnMeta, uid);
                 } finally {
                     usageInputs = getBillingUsageSessionRecords();
                 }
@@ -1181,7 +1190,7 @@ export function registerSimcarClipRoutes(app: Express) {
             if (aiAnalysis) {
                 const analysisOutcome = await runWithBillingUsageSession(async () => {
                     try {
-                        return await processAnalysis(res, jobId, layers, true, contextUrl, outputZipUrl);
+                        return await processAnalysis(res, jobId, layers, true, contextUrl, outputZipUrl, uid);
                     } finally {
                         usageInputs = getBillingUsageSessionRecords();
                     }
@@ -1297,7 +1306,7 @@ export function registerSimcarClipRoutes(app: Express) {
                     }
                 }
             } else {
-                const imageOnlyOutcome = await processAnalysis(res, jobId, layers, false, contextUrl, outputZipUrl);
+                const imageOnlyOutcome = await processAnalysis(res, jobId, layers, false, contextUrl, outputZipUrl, uid);
                 if (!imageOnlyOutcome) {
                     finishJob({
                         jobId: processingJobId,

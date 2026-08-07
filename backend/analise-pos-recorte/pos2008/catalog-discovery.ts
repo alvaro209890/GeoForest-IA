@@ -197,6 +197,8 @@ export function listNirStyles(xml: string): WmsStyleRef[] {
  * invalida checkpoint entre execuções (ver `buildPhaseCheckpointKey`).
  */
 export function computeCatalogVersion(entries: YearCatalogEntry[]): string {
-  const payload = entries.map((entry) => `${entry.year}:${entry.preferred?.layer || "-"}`).join("|");
+  const payload = entries
+    .map((entry) => `${entry.year}:${entry.preferred?.layer || "-"}:${(entry.alternates || []).map((alt) => alt.layer).sort().join(",")}`)
+    .join("|");
   return `wms-${crypto.createHash("sha256").update(payload).digest("hex").slice(0, 12)}`;
 }

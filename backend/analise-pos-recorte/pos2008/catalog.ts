@@ -33,7 +33,7 @@ export type PosCatalog = {
 
 const CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
 
-let cachedCatalog: { expiresAt: number; payload: PosCatalog } | null = null;
+let cachedCatalog: { expiresAt: number; payload: PosCatalog; bboxKey: string | null } | null = null;
 
 export type CatalogDeps = {
   now?: () => number;
@@ -59,8 +59,13 @@ async function defaultIsLayerUsable(
     try {
       const res = await fetch(url, { signal: controller.signal });
       if (!res.ok) return false;
+      const contentType = (res.headers.get("content-type") || "").toLowerCase();
+      if (contentType.includes("xml") || contentType.includes("html") || contentType.startsWith("text/")) return false;
       const buf = Buffer.from(await res.arrayBuffer());
       if (buf.length < 64) return false;
+      const isPng = buf.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      const isJpeg = buf.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
+      if (!isPng && !isJpeg) return false;
       const uniform = await detectUniformImage(buf);
       return !uniform.isUniform;
     } finally {
@@ -122,7 +127,10 @@ async function discoverEntries(deps: CatalogDeps): Promise<YearCatalogEntry[]> {
 export async function resolvePos2008Catalog(deps: CatalogDeps = {}): Promise<PosCatalog> {
   const now = deps.now || defaultNow;
   const nowMs = now();
-  if (cachedCatalog && cachedCatalog.expiresAt > nowMs) return cachedCatalog.payload;
+  const bboxKey = deps.sampleBbox ? deps.sampleBbox.map((value) => Number(value).toFixed(8)).join(",") : null;
+  if (cachedCatalog && cachedCatalog.expiresAt > nowMs && cachedCatalog.bboxKey === bboxKey) {
+    return cachedCatalog.payload;
+  }
 
   const entries = await discoverEntries(deps);
   const isUsable = deps.isLayerUsable || defaultIsLayerUsable;
@@ -155,7 +163,7 @@ export async function resolvePos2008Catalog(deps: CatalogDeps = {}): Promise<Pos
   const payload = entriesToCatalog(entries, nowMs);
   payload.limitations = payload.limitations.concat(limitations);
   payload.version = computeDiscoveryCatalogVersion(entries);
-  cachedCatalog = { expiresAt: nowMs + CATALOG_TTL_MS, payload };
+  cachedCatalog = { expiresAt: nowMs + CATALOG_TTL_MS, payload, bboxKey };
   return payload;
 }
 

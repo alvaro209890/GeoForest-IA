@@ -244,24 +244,35 @@ export async function runPos2008Analysis(
     let bridgeRun: Pos2008WindowRun | null = null;
     const bridgeInput = { available: !!plan.bridgeWindow, executed: false, windowId: null as string | null };
     if (plan.bridgeWindow && plan.bridgeCandidates.length > 0) {
-      const candidate = plan.bridgeCandidates[0];
       const years = plan.bridgeWindow.years;
+      const candidate = plan.bridgeCandidates.find(
+        (entry) => entry.boundary.fromYear === years[0] && entry.boundary.toYear === years[1],
+      );
       const bridgeScenes: Pos2008Scene[] = [];
       for (const year of years) {
+        if (!candidate) break;
         const altLayers = candidate.alternateLayers[year] || [];
         const altLayer = altLayers[0];
-        if (!altLayer) continue;
+        if (!altLayer) {
+          const preferredScene = scenesByYear.get(year);
+          if (preferredScene && preferredScene.imageBuffer && sceneUsableForVision(preferredScene)) {
+            bridgeScenes.push({ ...preferredScene, bridge: true });
+          }
+          continue;
+        }
         const altSensor = classifySensorFromLayer(altLayer);
         const scene = await buildPos2008Scene(
           polygon,
           { year, sensor: altSensor, layer: altLayer, bridge: true },
           deps.sceneDeps
         );
-        scenesByYear.set(year, scene);
-        allScenes.push(sceneToPublic(scene));
-        sceneUsabilityByYear[year] = scene.usability;
-        sceneIdByYear[year] = scene.sceneId;
-        bridgeScenes.push(scene);
+        if (scene.imageBuffer && sceneUsableForVision(scene)) {
+          // Keep bridge scenes separate. Normal windows must continue to use the
+          // preferred RGB series, otherwise a calibration image silently changes
+          // the provenance of the temporal series.
+          allScenes.push(sceneToPublic(scene));
+          bridgeScenes.push(scene);
+        }
       }
       if (bridgeScenes.length === years.length) {
         bridgeInput.executed = true;

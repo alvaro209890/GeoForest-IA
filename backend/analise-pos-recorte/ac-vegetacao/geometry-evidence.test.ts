@@ -86,6 +86,21 @@ describe("computeAcGeometricEvidence", () => {
     expect(result.geometric.sliversDiscardedM2).toBeGreaterThan(0);
   });
 
+  it("preserva buracos do polígono na interseção", () => {
+    const outer = box(0, 0, S);
+    const hole = box(S * 0.25, S * 0.25, S * 0.5);
+    const donut: Geometry = {
+      type: "Polygon",
+      coordinates: [
+        outer.coordinates[0] as number[][],
+        (hole.coordinates[0] as number[][]).slice().reverse(),
+      ],
+    };
+    const result = computeAcGeometricEvidence({ acGeometry: ac, layers: { AVN: [donut] } });
+    expect(result.geometric.avnFraction).toBeCloseTo(0.75, 2);
+    expect(result.geometric.declaredVegetationFraction).toBeCloseTo(0.75, 2);
+  });
+
   it("ARL e AUAS são medidos à parte e não disparam alerta", () => {
     const arl = [box(0, S / 2, S / 2)];
     const auas = [box(0, 0, S / 2)];

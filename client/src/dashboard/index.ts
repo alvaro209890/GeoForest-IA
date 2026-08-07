@@ -11,6 +11,8 @@ export {
   type SimcarAcAvnAnalysisMeta,
   type SimcarAuasMetaV1,
   type SimcarAuasMeta,
+  type SimcarPos2008Meta,
+  type SimcarAcVegetacaoMeta,
   type SimcarConversationEntry,
   type SimcarLayerSummary,
   type SimcarClipSummary,

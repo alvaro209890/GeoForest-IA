@@ -125,6 +125,12 @@ describe("runAcVegetacaoAnalysis", () => {
     expect(groq.calls()).toBe(2);
     expect(result.summary.polygonCount).toBe(2);
     expect(result.windows.filter((w) => w.status === "COMPLETED")).toHaveLength(2);
+    expect(result.scenes.find((scene) => scene.sceneId.endsWith(":S2_2024"))?.layer).toBe("Mosaicos:SENTINEL_2_2024");
+    expect(result.scenes.find((scene) => scene.sceneId.endsWith(":S2_2025_NIR"))).toMatchObject({
+      layer: "Mosaicos:SENTINEL_2_2025",
+      style: "Geoportal_Sentinel_2_2025_NIR",
+    });
+    expect(result.scenes.find((scene) => scene.sceneId.endsWith(":SPOT_2008"))?.layer).toBe("Mosaicos:MOSAICO_SPOT_SEPLAN");
   });
 
   it("sem AC → retorno vazio sem chamadas de IA", async () => {

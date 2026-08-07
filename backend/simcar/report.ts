@@ -7,7 +7,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import PDFDocument from "pdfkit";
-import { readPersistedSimcarClip, hydrateCachedJob, persistSimcarClipArtifacts } from "./hydration";
+import { readPersistedSimcarClipForUid, hydrateCachedJob, persistSimcarClipArtifacts } from "./hydration";
 import { uploadRawBufferToCloudinary } from "./cloudinary";
 import { toPublicApiUrl } from "./constants";
 import type { CachedJob, LayerSummary, PersistedClipContextV1 } from "./types";
@@ -562,11 +562,12 @@ export async function generateAndPersistSimcarReport(args: {
     });
 
     try {
-        const persisted = readPersistedSimcarClip(jobId) || {};
+        const persisted = readPersistedSimcarClipForUid(uid, jobId) || {};
         const job = await hydrateCachedJob(
             jobId,
             args.contextUrl || persisted.contextUrl || persisted.files?.contextUrl,
             args.outputZipUrl || persisted.outputZipUrl || persisted.files?.outputZipUrl,
+            uid,
         );
         const summary = persisted.summary || (job?.layerSummaries ? {
             propertyAreaHa: job.areaHa || 0,

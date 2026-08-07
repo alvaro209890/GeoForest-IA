@@ -4163,6 +4163,7 @@ export async function processAuasAnalysis(
     contextUrl?: string,
     outputZipUrl?: string,
     acAvnMeta?: any,
+    uid?: string,
 ): Promise<{
     analysisText: string;
     images: Array<{ url: string; caption: string }>;
@@ -4171,7 +4172,7 @@ export async function processAuasAnalysis(
     cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
 } | null> {
     throwIfClientDisconnected(res);
-    const job = await hydrateCachedJob(jobId, contextUrl, outputZipUrl);
+    const job = await hydrateCachedJob(jobId, contextUrl, outputZipUrl, uid);
     if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
         sendSSE(res, {
             type: "error",
@@ -4533,9 +4534,10 @@ export async function processAuasAnalysisV2(
     contextUrl?: string,
     outputZipUrl?: string,
     acAvnMeta?: any,
+    uid?: string,
 ): Promise<{ auasMeta: AuasPre2008AnalysisV2; layerSummaries: LayerSummary[] } | null> {
     throwIfClientDisconnected(res);
-    const job = await hydrateCachedJob(jobId, contextUrl, outputZipUrl);
+    const job = await hydrateCachedJob(jobId, contextUrl, outputZipUrl, uid);
     if (!job || !job.layerSummaries) {
         sendSSE(res, {
             type: "error",
@@ -4636,7 +4638,7 @@ export async function handleAuasAnalyzeV2Route(
 
         let usageInputs: Array<any> = [];
         const result = await runWithBillingUsageSession(async () => {
-            const outcome = await processAuasAnalysisV2(res, jobId, contextUrl, outputZipUrl, acAvnMeta);
+            const outcome = await processAuasAnalysisV2(res, jobId, contextUrl, outputZipUrl, acAvnMeta, String(req.authUid || ""));
             if (outcome) {
                 usageInputs = outcome.auasMeta.windows
                     .filter((w) => w.status === "COMPLETED")
@@ -5189,9 +5191,10 @@ export async function processAnalysis(
     aiAnalysis = true,
     contextUrl?: string,
     outputZipUrl?: string,
+    uid?: string,
 ): Promise<AcAvnAnalysisResult | null> {
     throwIfClientDisconnected(res);
-    const job = await hydrateCachedJob(jobId, contextUrl, outputZipUrl);
+    const job = await hydrateCachedJob(jobId, contextUrl, outputZipUrl, uid);
     if (!job || !job.bbox || !job.polygon || !job.layerSummaries) {
         sendSSE(res, {
             type: "error",

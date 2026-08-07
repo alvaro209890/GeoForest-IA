@@ -105,6 +105,7 @@ export function reduceAcVegetacao(input: AcReducerInput, config: AcReducerConfig
   const obs = input.window?.observation?.observations;
   const conflicts = input.window?.observation?.conflicts ?? [];
   const usable = (obs || []).filter((o) => o.vegetationInside !== "NOT_OBSERVABLE" && o.confidence !== "INCONCLUSIVE");
+  const reliable = usable.filter((o) => CONFIDENCE_RANK[o.confidence] >= CONFIDENCE_RANK.MEDIUM);
   const visual = aggregateVisual(obs, input.areaHa);
 
   // 1. Declarada geométrica dentro da AC → ALTO.
@@ -130,7 +131,14 @@ export function reduceAcVegetacao(input: AcReducerInput, config: AcReducerConfig
 
   // 2) Visão confiável (≥ minUsable cenas) e alguma indica vegetação → veredito por presença.
   const visualVerdict = visual.verdict;
-  const hasVisualVerdictSignal = usable.length >= minUsable && (visualVerdict === "LARGE_BLOCK" || visualVerdict === "PATCHES" || visualVerdict === "SPARSE");
+  const positive = reliable.filter((o) => o.vegetationInside === "LARGE_BLOCK" || o.vegetationInside === "PATCHES");
+  const negative = reliable.filter((o) => o.vegetationInside === "NONE" || o.vegetationInside === "SPARSE");
+  const hasVisualConflict = positive.length > 0 && negative.length > 0;
+  const hasVisualVerdictSignal =
+    conflicts.length === 0 &&
+    !hasVisualConflict &&
+    positive.length >= minUsable &&
+    (visualVerdict === "LARGE_BLOCK" || visualVerdict === "PATCHES");
 
   if (hasVisualVerdictSignal) {
     const isLargeBlock = visualVerdict === "LARGE_BLOCK";
@@ -153,7 +161,11 @@ export function reduceAcVegetacao(input: AcReducerInput, config: AcReducerConfig
   }
 
   // 3) Visão confiável concordando com ausência (≥2 cenas, todas NONE).
-  const allNone = usable.length >= minUsable && usable.every((o) => o.vegetationInside === "NONE");
+  const allNone =
+    conflicts.length === 0 &&
+    reliable.length >= minUsable &&
+    reliable.every((o) => o.vegetationInside === "NONE" || o.vegetationInside === "SPARSE") &&
+    !hasVisualConflict;
   if (allNone) {
     return {
       polygonId: input.polygonId,

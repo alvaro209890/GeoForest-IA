@@ -140,6 +140,51 @@ describe("reduceAcVegetacao", () => {
     expect(result.alertLevel).toBe("INDETERMINADO");
   });
 
+  it("não alerta por uma única cena PATCHES nem por SPARSE", () => {
+    const input = baseInput({
+      window: {
+        observation: {
+          observations: [
+            { sceneId: "S2_2024", vegetationInside: "PATCHES", confidence: "MEDIUM", estimatedFraction: 0.3, distribution: "INTERIOR" },
+            { sceneId: "S2_2021", vegetationInside: "NONE", confidence: "MEDIUM", estimatedFraction: 0, distribution: null },
+          ],
+          conflicts: [],
+        },
+      },
+    });
+    expect(reduceAcVegetacao(input).status).toBe("INCONCLUSIVO");
+
+    const sparse = baseInput({
+      window: {
+        observation: {
+          observations: [
+            { sceneId: "S2_2024", vegetationInside: "SPARSE", confidence: "HIGH", estimatedFraction: 0.02, distribution: "SCATTERED" },
+            { sceneId: "S2_2021", vegetationInside: "SPARSE", confidence: "HIGH", estimatedFraction: 0.01, distribution: "SCATTERED" },
+          ],
+          conflicts: [],
+        },
+      },
+    });
+    expect(reduceAcVegetacao(sparse).status).toBe("SEM_VEGETACAO_APARENTE");
+  });
+
+  it("conflito explícito entre cenas não vira alerta visual", () => {
+    const result = reduceAcVegetacao(
+      baseInput({
+        window: {
+          observation: {
+            observations: [
+              { sceneId: "S2_2024", vegetationInside: "PATCHES", confidence: "HIGH", estimatedFraction: 0.3, distribution: "INTERIOR" },
+              { sceneId: "S2_2021", vegetationInside: "PATCHES", confidence: "HIGH", estimatedFraction: 0.3, distribution: "INTERIOR" },
+            ],
+            conflicts: ["Cenas discordantes"],
+          },
+        },
+      }),
+    );
+    expect(result.status).toBe("INCONCLUSIVO");
+  });
+
   it("flags AC_SOBREPOE_* entram na evidência da declaração", () => {
     const input = baseInput({
       geometric: geometric({ declaredVegetationAreaHa: 0.6, declaredVegetationFraction: 0.06 }),

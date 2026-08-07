@@ -83,7 +83,12 @@ export type GroqPos2008WindowObservationParsed = z.infer<typeof groqPos2008Windo
  */
 export function validateGroqPos2008WindowObservation(
   raw: unknown,
-  expected: { polygonId: string; windowId: string; sentSceneIds: string[] }
+  expected: {
+    polygonId: string;
+    windowId: string;
+    sentSceneIds: string[];
+    sentSceneMetadata?: Record<string, { year: number; sensor: string }>;
+  }
 ): { ok: true; data: GroqPos2008WindowObservationParsed } | { ok: false; reason: string } {
   const parsed = groqPos2008WindowObservationSchema.safeParse(raw);
   if (!parsed.success) {
@@ -101,6 +106,7 @@ export function validateGroqPos2008WindowObservation(
     return { ok: false, reason: `windowId inesperado: ${data.windowId}` };
   }
   const sentSet = new Set(expected.sentSceneIds);
+  const sceneOrder = new Map(expected.sentSceneIds.map((id, index) => [id, index]));
   const invented = data.inspectedSceneIds.filter((id) => !sentSet.has(id));
   if (invented.length > 0) {
     return { ok: false, reason: `sceneId(s) inventado(s): ${invented.join(", ")}` };
@@ -109,10 +115,27 @@ export function validateGroqPos2008WindowObservation(
     if (!sentSet.has(obs.sceneId)) {
       return { ok: false, reason: `observação cita sceneId não enviado: ${obs.sceneId}` };
     }
+    const metadata = expected.sentSceneMetadata?.[obs.sceneId];
+    if (metadata && metadata.year !== obs.year) {
+      return { ok: false, reason: `ano incompatível com a cena ${obs.sceneId}: ${obs.year}` };
+    }
   }
   for (const tr of data.transitions) {
     if (!sentSet.has(tr.fromSceneId) || !sentSet.has(tr.toSceneId)) {
       return { ok: false, reason: `transição cita sceneId não enviado` };
+    }
+    const fromMetadata = expected.sentSceneMetadata?.[tr.fromSceneId];
+    const toMetadata = expected.sentSceneMetadata?.[tr.toSceneId];
+    if (fromMetadata && fromMetadata.year !== tr.fromYear) {
+      return { ok: false, reason: `ano inicial incompatível com a cena ${tr.fromSceneId}` };
+    }
+    if (toMetadata && toMetadata.year !== tr.toYear) {
+      return { ok: false, reason: `ano final incompatível com a cena ${tr.toSceneId}` };
+    }
+    const fromIndex = sceneOrder.get(tr.fromSceneId);
+    const toIndex = sceneOrder.get(tr.toSceneId);
+    if (fromIndex !== undefined && toIndex !== undefined && toIndex !== fromIndex + 1) {
+      return { ok: false, reason: "transição deve ligar cenas consecutivas" };
     }
   }
   return { ok: true, data };

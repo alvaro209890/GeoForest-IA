@@ -13,6 +13,8 @@ export type {
   SimcarAcAvnAnalysisMeta,
   SimcarAuasMetaV1,
   SimcarAuasMeta,
+  SimcarPos2008Meta,
+  SimcarAcVegetacaoMeta,
   SimcarConversationEntry,
   SimcarLayerSummary,
   SimcarClipSummary,
