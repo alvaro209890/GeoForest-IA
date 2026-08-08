@@ -55,6 +55,7 @@ npx firebase deploy --only hosting   # site único: ia-florestal
 | `backend/simcar-oraculo/client.ts` | Cliente SEMA; sessão **por credencial** (`getSimcarTokenFor`) — oráculo e Lotes não se derrubam |
 | `backend/auas-analysis.ts` | AUAS land use classification |
 | `backend/auas-sccon.ts` | AUAS × SCCON: data ABERTURA via alertas de desmate + pontos sem alerta (ver `docs/AUAS_SCCON.md`) |
+| `backend/analise-pos-recorte/` | **3 fases pós-recorte** (F1 pré-2008, `pos2008/` datação 2009–2019, `ac-vegetacao/` vegetação na AC). Gate em `backend/simcar/phases.ts`, rotas em `backend/simcar/phase2-3-handlers.ts`. **Atrás de flag — ver abaixo** |
 | `backend/geometry/` | Erros de geometria SIMCAR — detectores em `detectors/` (plano 04); `geometry-errors.ts` é só o barrel |
 | `backend/cbers/` | Pipeline CBERS-4A WPM + acervo (`archive.ts`) (planos 05/07); `cbers-wpm.ts` é só o barrel |
 | `backend/landsat/` | Pipeline Landsat 8/9 (plano 06) — não existe mais `landsat.ts` |
@@ -69,7 +70,7 @@ npx firebase deploy --only hosting   # site único: ia-florestal
 ## Environment Variables
 
 Critical:
-- `GROQ_API_KEY` - único provedor de IA: chat, visão (análise de imagens) e síntese de laudos
+- `GROQ_API_KEY` - visão (análise de imagens) e chat. Texto/laudo usa DeepSeek — ver seção de IA abaixo
 - `FIREBASE_SERVICE_ACCOUNT_PATH` - path to service account JSON
 
 
@@ -110,6 +111,43 @@ removida em 21/07/2026.
   `docs/planos/simcar-oraculo-proxy/`) são **histórico técnico**, não instrução.
 
 Regras completas: `docs/FLUXO_ORACULO_SIMCAR_DESATIVADO.md`.
+
+## Análise pós-recorte SIMCAR: 3 fases atrás de flag
+
+Depois do recorte, três botões encadeados (o gate é do **backend**, não da UI):
+Fase 1 AUAS 2003–2008 → Fase 2 datação 2009–2019 → Fase 3 vegetação na `AREA_CONSOLIDADA`.
+
+| Flag | Fase | Default |
+|---|---|---|
+| `SIMCAR_AUAS_V2_ENABLED` | 1 | `false` |
+| `SIMCAR_AUAS_POS2008_ENABLED` | 2 | `false` |
+| `SIMCAR_AC_VEG_ENABLED` | 3 | `false` |
+
+As três são **independentes** e nenhuma existe no `backend.env` do server — em produção o
+botão de AUAS ainda roda o **V1** (`processAuasAnalysis`, janela 2008–2024). Ligar cada
+uma é decisão consciente do Álvaro (pré-requisitos no plano). Enquanto desligadas, as
+rotas respondem `409 PHASE_NOT_READY`.
+
+Plano: `docs/planos/analise-pos-recorte/` (STATUS.md primeiro).
+Changelogs: `CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_F2_F3.md`, `..._BUGS.md` (segurança)
+e `CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md` (bugs de código).
+
+**Dois gotchas que custaram caro (2026-08-07):**
+
+1. **`TIPOLOGIA_VEGETAL` não é declaração de vegetação nativa.** Ela é o mapa de tipologia
+   do imóvel inteiro e cobre ~100% de **toda** AC; somá-la à "área declarada" fazia 100%
+   dos polígonos saírem com alerta ALTO. O default agora é só `AVN`
+   (`SIMCAR_AC_VEG_DECLARED_SOURCES` reverte). Antes de tratar qualquer camada do CAR como
+   declaração, conferir o que ela significa.
+2. **Teste sintético não valida código geométrico.** Os bugs acima passaram por toda a
+   suíte e só caíram com shapefile real. Há dado real versionado:
+   `.oraculo-scratch/santa_clara/v24/*.shp` (28 camadas do CAR 270069) e
+   `backend/fixtures/teste_1/*.zip`. Ler com `readFullShapefile`/`parseUserShapefile` de
+   `backend/simcar/shapefile-io.ts`, rodar com `npx tsx`.
+
+Terceiro, sobre a suíte: um teste que falha em `pnpm test` mas passa isolado é quase sempre
+**timeout sob carga** (o default do vitest é 5 s e `processar-projeto.test.ts` leva ~108 s),
+não bug de lógica.
 
 ## IA: Groq para visão, DeepSeek para texto
 

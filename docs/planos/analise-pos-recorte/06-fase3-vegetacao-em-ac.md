@@ -24,7 +24,7 @@ O recorte **já entrega** as camadas necessárias no mesmo job:
 |---|---|
 | `AREA_CONSOLIDADA` | unidade de análise |
 | `AVN` | vegetação nativa **declarada** pelo próprio projeto |
-| `TIPOLOGIA_VEGETAL` | tipologia mapeada pela SEMA |
+| `TIPOLOGIA_VEGETAL` | tipologia mapeada pela SEMA — **cobertura do imóvel inteiro, não declaração de nativa** (medido 2026-08-07); entra como contexto, não como gatilho de alerta |
 | `ARL`, `ARLREM` | reserva legal — sobreposição com AC é inconsistência grave |
 | `AUAS` | uso alternativo — sobreposição com AC também é inconsistência |
 
@@ -78,7 +78,7 @@ final deve destacar quando a vegetação acompanha as camadas de rio do próprio
 Entrada: evidência geométrica (fração declarada) + evidência visual (fração aparente)
 
 VEGETACAO_DECLARADA_DENTRO_DA_AC
-    fração geométrica (AVN ∪ TIPOLOGIA_VEGETAL) ≥ limiar_geom (sugestão 1% ou 0,5 ha)
+    fração geométrica declarada ≥ limiar_geom (sugestão 1% ou 0,5 ha)
     → alerta ALTO, independe do que a visão disse (é o próprio projeto se contradizendo)
 
 VEGETACAO_APARENTE_DENTRO_DA_AC
@@ -94,6 +94,16 @@ INCONCLUSIVO
     cenas ausentes/nubladas, conflito entre cenas, ou polígono menor que a
     resolução efetiva do sensor
 ```
+
+> ⚠️ **CORREÇÃO PELA MEDIÇÃO (2026-08-07).** Esta seção dizia `AVN ∪ TIPOLOGIA_VEGETAL`.
+> Rodando contra o recorte real da Santa Clara (33 ACs), a `TIPOLOGIA_VEGETAL` cobre
+> **~100% de toda AC** — ela é o mapa de tipologia do imóvel inteiro, incluindo classes
+> antrópicas, não uma declaração de vegetação nativa. Com a união, **100% dos polígonos**
+> batiam o limiar e saíam com alerta ALTO; a `AVN` no mesmo recorte deu **0 ha** dentro das
+> ACs, que é o resultado correto. A implementação usa **só `AVN`** por padrão
+> (`SIMCAR_AC_VEG_DECLARED_SOURCES=AVN,TIPOLOGIA_VEGETAL` restaura o texto original desta
+> seção). Usar a tipologia como declaração exigiria filtrar pela **classe** no `.dbf`, que o
+> pipeline geométrico atual não lê. Ver `docs/CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md`.
 
 Bandas de área reportadas (nunca um número falsamente preciso da visão):
 `< 0,5 ha` · `0,5–2 ha` · `2–10 ha` · `> 10 ha`. A área **declarada** (geométrica) sai
