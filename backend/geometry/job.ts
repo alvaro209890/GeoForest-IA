@@ -7,9 +7,9 @@ import { getAbsoluteStoragePath, saveUserBuffer } from "../local-storage";
 import { finishJob, isCancelRequested } from "../processing-jobs";
 import { checkSimcarConformity } from "../simcar-rules";
 import { detectAirAtpAreaConsistency } from "./detectors/air";
-import { detectSimcarContainment } from "./detectors/containment";
+import { CONTAINMENT_SLIVER_TOLERANCE_M2, detectSimcarContainment } from "./detectors/containment";
 import { detectSimcarForbiddenOverlaps } from "./detectors/forbidden-overlap";
-import { detectGaps } from "./detectors/gaps";
+import { detectGaps, MIN_GAP_M2 } from "./detectors/gaps";
 import { detectOverlaps } from "./detectors/overlaps";
 import { fixLayerGeometry } from "./detectors/self-intersection";
 import { buildResultZip } from "./report";
@@ -89,12 +89,20 @@ export async function runGeometryJob(args: {
           name: group.name,
           records: parsePolygonRecords(group.shp!.data),
           crs: detectCrs(group.prj?.data.toString("utf8")),
+          // Sem o .dbf as regras que dependem de atributo ficam mudas:
+          // ARL/SITUACAO na contenção e BARRAMENTO/SITUACAO no reservatório.
+          dbf: group.dbf?.data,
         }));
       if (checks.simcarContainment !== false) {
         try {
           const containmentResult = detectSimcarContainment({
             layers: ruleLayers,
-            minAreaM2: settings.minOverlapM2,
+            // `minOverlapM2` é o limiar de SOBREPOSIÇÃO (default 1 m² na UI) e
+            // não serve para contenção: resíduo de vetorização entre camadas
+            // vizinhas é da ordem de metros quadrados e virava validação
+            // impeditiva. Aqui vale o piso de sliver, ou o valor do usuário se
+            // for maior.
+            minAreaM2: Math.max(Number(settings.minOverlapM2) || 0, CONTAINMENT_SLIVER_TOLERANCE_M2),
           });
           allRows.push(...containmentResult.rows);
           allRuleViolations.push(...containmentResult.violations);
@@ -166,7 +174,8 @@ export async function runGeometryJob(args: {
             layerName: group.name,
             records,
             crs,
-            minGapM2: settings.minOverlapM2,
+            // Mesmo motivo da contenção: 1 m² é ruído de arredondamento.
+            minGapM2: Math.max(Number(settings.minOverlapM2) || 0, MIN_GAP_M2),
           });
           rows.push(...gapResult.rows);
           allGaps.push(...gapResult.gapPolygons);

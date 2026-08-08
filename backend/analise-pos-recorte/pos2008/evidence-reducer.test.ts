@@ -223,3 +223,69 @@ describe("reducePos2008Polygon — série incompleta", () => {
     expect(result.status).toBe("SEM_MUDANCA_OBSERVADA");
   });
 });
+
+describe("reducePos2008Polygon — persistência da conversão (CAR 6816)", () => {
+  it("descarta transição que o ano seguinte desmente", () => {
+    // O caso real: 2012 é o único ano ResourceSat da série e aparece antropizado
+    // entre 2011 e 2013 nativos. Sem exigir persistência, os quatro polígonos do
+    // CAR 6816 saíam como "2011→2012, confiança HIGH" — e as datas declaradas
+    // no .dbf são 2016, 2016, 2019 e 2021.
+    const result = reducePos2008Polygon(
+      input({
+        windows: [
+          { windowId: "W2009_2011", observation: observation("W2009_2011", [[2009, "NATIVE_VEGETATION"], [2010, "NATIVE_VEGETATION"], [2011, "NATIVE_VEGETATION"]]) },
+          {
+            windowId: "W2011_2013",
+            observation: observation(
+              "W2011_2013",
+              [[2011, "NATIVE_VEGETATION"], [2012, "ANTHROPIZED"], [2013, "NATIVE_VEGETATION"]],
+              { fromYear: 2011, toYear: 2012 },
+            ),
+          },
+        ],
+        sensorBoundaries: [{ fromYear: 2011, toYear: 2012 }],
+      }),
+    );
+    expect(result.status).not.toBe("CONFIRMADO_ANO");
+    expect(result.observedInterval).toBeNull();
+    expect(result.limitations.join(" ")).toMatch(/não persistiu/);
+  });
+
+  it("mantém a conversão quando ela persiste no ano seguinte", () => {
+    const result = reducePos2008Polygon(
+      input({
+        windows: [
+          {
+            windowId: "W2015_2017",
+            observation: observation(
+              "W2015_2017",
+              [[2015, "NATIVE_VEGETATION"], [2016, "ANTHROPIZED"], [2017, "ANTHROPIZED"]],
+              { fromYear: 2015, toYear: 2016 },
+            ),
+          },
+        ],
+      }),
+    );
+    expect(result.status).toBe("CONFIRMADO_ANO");
+    expect(result.firstDetectedYear).toBe(2016);
+  });
+
+  it("aceita conversão no último ano da série, que nada pode desmentir", () => {
+    const result = reducePos2008Polygon(
+      input({
+        windows: [
+          {
+            windowId: "W2017_2019",
+            observation: observation(
+              "W2017_2019",
+              [[2017, "NATIVE_VEGETATION"], [2018, "NATIVE_VEGETATION"], [2019, "ANTHROPIZED"]],
+              { fromYear: 2018, toYear: 2019 },
+            ),
+          },
+        ],
+      }),
+    );
+    expect(result.status).toBe("CONFIRMADO_ANO");
+    expect(result.firstDetectedYear).toBe(2019);
+  });
+});

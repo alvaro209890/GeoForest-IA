@@ -6,7 +6,7 @@
  * conclusão por tonalidade global (risco R1 do doc 11 — troca de sensor).
  * O modelo nunca recebe o resultado da Fase 1 nem escolhe o ano final.
  */
-import { requestGroqVisionGeneric, type GroqVisionImageInput } from "../groq-vision-core";
+import { FALSE_COLOR_PROMPT_NOTE, requestGroqVisionGeneric, type GroqVisionImageInput } from "../groq-vision-core";
 import { validateGroqPos2008WindowObservation, type GroqPos2008WindowObservationParsed } from "./schemas";
 import type { Pos2008WindowId } from "./types";
 
@@ -44,6 +44,7 @@ function buildSystemPrompt(): string {
     "Cada cena lista seu sensor: resolucao, paleta e textura diferem entre sensores; cor global NUNCA e evidencia de mudanca de uso.",
     "Você NÃO decide se há infração, passivo ambiental ou regularidade jurídica — isso é proibido.",
     "Você NÃO deve inventar IDs de cena, ano ou polígono que não foram enviados.",
+    FALSE_COLOR_PROMPT_NOTE,
     "Se uma cena estiver nublada, ocluída, cortada ou ilegível, diga isso explicitamente; não adivinhe.",
     "Relate transições apenas entre cenas CONSECUTIVAS com mudança visualmente clara; regeneração (antrópico→nativo) também deve ser relatada.",
     "Responda apenas com um objeto JSON estrito no schema pedido, em português do Brasil, sem markdown.",

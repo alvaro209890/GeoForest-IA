@@ -11,6 +11,10 @@ import type { Geometry } from "geojson";
 import {
   buildAuasPolygonOverlaySvg,
   calculateDynamicResolution,
+  expandBboxForContext,
+  polygonSensorPixels,
+  sensorGroundResolutionM,
+  MIN_POLYGON_SENSOR_PIXELS,
   compositeOverlay,
   computeImageSha256,
   fetchWmsImageBuffer,
@@ -48,7 +52,10 @@ export async function buildPos2008Scene(
   spec: Pos2008SceneSpec,
   deps: BuildPos2008SceneDeps = {}
 ): Promise<Pos2008Scene> {
-  const { width, height } = calculateDynamicResolution(polygon.areaHa, polygon.bbox);
+  const groundResolutionM = sensorGroundResolutionM(spec.sensor);
+  const sceneBbox = expandBboxForContext(polygon.bbox, groundResolutionM);
+  const { width, height } = calculateDynamicResolution(polygon.areaHa, sceneBbox, groundResolutionM);
+  const native = polygonSensorPixels(polygon.bbox, groundResolutionM);
   const now = deps.now || (() => new Date().toISOString());
 
   let usability: Pos2008Scene["usability"] = "MISSING";
@@ -57,22 +64,45 @@ export async function buildPos2008Scene(
   let imageBuffer: Buffer | undefined;
   let storedImageUrl: string | undefined;
 
+  // Polígono abaixo da resolução do sensor: não gera cena nem paga visão.
+  if (native.shortSidePx < MIN_POLYGON_SENSOR_PIXELS) {
+    return {
+      sceneId: `${polygon.polygonId}:${sensorKey(spec.sensor)}:${spec.year}`,
+      polygonId: polygon.polygonId,
+      geometryHash: polygon.geometryHash,
+      year: spec.year,
+      sensor: spec.sensor,
+      layer: spec.layer,
+      imageSha256: "",
+      width,
+      height,
+      bbox: sceneBbox,
+      usability: "BELOW_MIN_RESOLUTION",
+      qualityScore: 0,
+      qualityFlags: [
+        `below_sensor_resolution: lado menor ≈ ${native.shortSidePx.toFixed(1)} px de ${groundResolutionM} m (mínimo ${MIN_POLYGON_SENSOR_PIXELS})`,
+      ],
+      fetchedAt: now(),
+      bridge: spec.bridge,
+    };
+  }
+
   try {
     const { buffer: baseImage, usedResolutionFallback } = await fetchWmsImageBuffer(
       [spec.layer],
-      polygon.bbox,
+      sceneBbox,
       width,
       height,
       deps
     );
-    const overlaySvg = buildAuasPolygonOverlaySvg(width, height, polygon.bbox, polygon.geometry);
+    const overlaySvg = buildAuasPolygonOverlaySvg(width, height, sceneBbox, polygon.geometry);
     const composited = await compositeOverlay(baseImage, overlaySvg);
     const classification = await classifySceneUsability(composited, { usedResolutionFallback });
     usability = classification.usability;
     qualityScore = classification.qualityScore;
     qualityFlags = classification.qualityFlags;
     imageBuffer = composited;
-    storedImageUrl = sanitizeWmsUrl(buildWmsGetMapUrl([spec.layer], polygon.bbox, width, height));
+    storedImageUrl = sanitizeWmsUrl(buildWmsGetMapUrl([spec.layer], sceneBbox, width, height));
   } catch (err) {
     usability = "MISSING";
     qualityFlags = [`fetch_error: ${String((err as any)?.message || err).slice(0, 200)}`];
@@ -88,7 +118,7 @@ export async function buildPos2008Scene(
     imageSha256: imageBuffer ? computeImageSha256(imageBuffer) : "",
     width,
     height,
-    bbox: polygon.bbox,
+    bbox: sceneBbox,
     usability,
     qualityScore,
     qualityFlags,

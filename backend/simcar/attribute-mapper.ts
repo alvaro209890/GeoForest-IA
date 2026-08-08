@@ -32,6 +32,19 @@ export function readTemplateSchemas(
 
 /* ─── Attribute Translation ──────────────────────────────── */
 
+/**
+ * Nomes que o WFS da SEMA usa para campos que o modelo do SIMCAR chama de outro
+ * jeito. Sem isso, `SITUACAO`/`AVERBACAO` da ARL chegavam sempre nulos e eram
+ * preenchidos com um valor fixo — apagando a distinção entre reserva
+ * preservada ("P") e a recuperar ("A"), que é justamente o que o Anexo 01 usa
+ * para decidir se a ARL precisa coincidir com a AVN.
+ */
+const SOURCE_FIELD_ALIASES: Record<string, string[]> = {
+    situacao: ["situacao_vegetal", "situacao_veg", "sit_vegeta"],
+    averbacao: ["situacao_averbacao", "sit_averba"],
+    identific: ["identificacao", "identifica"],
+};
+
 /** Map source properties to target DBF fields (case-insensitive). */
 export function mapAttributes(
     properties: Record<string, unknown>,
@@ -43,7 +56,17 @@ export function mapAttributes(
     );
 
     for (const field of targetFields) {
-        const value = propsLower.get(field.name.toLowerCase());
+        const lowerName = field.name.toLowerCase();
+        let value = propsLower.get(lowerName);
+        if (value === undefined || value === null) {
+            for (const alias of SOURCE_FIELD_ALIASES[lowerName] || []) {
+                const aliasValue = propsLower.get(alias);
+                if (aliasValue !== undefined && aliasValue !== null) {
+                    value = aliasValue;
+                    break;
+                }
+            }
+        }
         if (value === undefined || value === null) {
             mapped[field.name] = null;
         } else if (field.type === "N" || field.type === "F") {
@@ -71,6 +94,24 @@ export function setMappedAttribute(
     attributes[field.name] = value;
 }
 
+/**
+ * Preenche o campo só quando a origem não trouxe valor. Usado nas regras por
+ * camada, que antes sobrescreviam o atributo real vindo do WFS.
+ */
+function setMappedAttributeIfEmpty(
+    attributes: Record<string, string | number | null>,
+    targetFields: DbfFieldDef[],
+    fieldName: string,
+    value: string | number | null,
+): void {
+    const field = targetFields.find((item) => item.name.toLowerCase() === fieldName.toLowerCase());
+    if (!field) return;
+    const current = attributes[field.name];
+    if (current === null || current === undefined || String(current).trim() === "") {
+        attributes[field.name] = value;
+    }
+}
+
 /* ─── Layer-Specific Attribute Rules ─────────────────────── */
 
 /** Apply SIMCAR-specific attribute rules based on layer name. */
@@ -80,14 +121,17 @@ export function applyLayerAttributeRules(
     targetFields: DbfFieldDef[],
     recordNumber: number,
 ): Record<string, string | number | null> {
+    // Os defaults abaixo são preenchimento de lacuna, não sobrescrita: quando o
+    // WFS traz o atributo real (SITUACAO_VEGETAL="A" numa reserva a recuperar,
+    // por exemplo), é ele que vale.
     if (layerName === "AVN") {
-        setMappedAttribute(attributes, targetFields, "SITUACAO", "P");
+        setMappedAttributeIfEmpty(attributes, targetFields, "SITUACAO", "P");
     }
 
     if (layerName === "ARL") {
-        setMappedAttribute(attributes, targetFields, "AVERBACAO", "NA");
-        setMappedAttribute(attributes, targetFields, "SITUACAO", "P");
-        setMappedAttribute(attributes, targetFields, "IDENTIFIC", recordNumber);
+        setMappedAttributeIfEmpty(attributes, targetFields, "AVERBACAO", "NA");
+        setMappedAttributeIfEmpty(attributes, targetFields, "SITUACAO", "P");
+        setMappedAttributeIfEmpty(attributes, targetFields, "IDENTIFIC", recordNumber);
     }
 
     if (layerName === "RESERVATORIO_ARTIFICIAL") {

@@ -22,7 +22,7 @@ export type AcVegetacaoScene = {
   width: number;
   height: number;
   bbox: [number, number, number, number];
-  usability: "USABLE" | "CLOUD_OR_OCCLUSION" | "LOW_RESOLUTION" | "MISSING" | "INVALID";
+  usability: "USABLE" | "CLOUD_OR_OCCLUSION" | "LOW_RESOLUTION" | "BELOW_MIN_RESOLUTION" | "MISSING" | "INVALID";
   qualityScore: number | null;
   qualityFlags: string[];
   fetchedAt: string;

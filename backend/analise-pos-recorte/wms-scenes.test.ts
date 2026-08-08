@@ -6,7 +6,13 @@ import {
   buildAuasScene,
   buildWmsGetMapUrl,
   buildWmsResolutionFallbacks,
+  bboxSidesMeters,
   calculateDynamicResolution,
+  expandBboxForContext,
+  MIN_CONTEXT_SENSOR_PIXELS,
+  MIN_POLYGON_SENSOR_PIXELS,
+  polygonSensorPixels,
+  sensorGroundResolutionM,
   calculateWmsTimeout,
   fetchWmsImageBuffer,
   isRetryableWmsError,
@@ -215,5 +221,71 @@ describe("buildAuasScene", () => {
     expect(s1.bbox).toEqual(s2.bbox);
     expect(s1.width).toBe(s2.width);
     expect(s1.height).toBe(s2.height);
+  });
+});
+
+/* ── enquadramento por resolução do sensor (CAR 6816, 2026-08-08) ── */
+
+describe("enquadramento da cena pela resolução do sensor", () => {
+  // AUAS-0004 do CAR 6816: 437 m × 106 m — 1,39 ha reais.
+  const auas0004: [number, number, number, number] = [-52.341166, -12.568692, -52.337156, -12.56774];
+
+  it("mede o polígono em pixels nativos do sensor", () => {
+    const landsat = polygonSensorPixels(auas0004, sensorGroundResolutionM("LANDSAT_5"));
+    // 106 m de lado menor em pixels de 30 m: nem 4 pixels.
+    expect(landsat.shortSidePx).toBeLessThan(MIN_POLYGON_SENSOR_PIXELS);
+
+    const spot = polygonSensorPixels(auas0004, sensorGroundResolutionM("SPOT"));
+    // O mesmo polígono é resolvido pelo SPOT (5 m).
+    expect(spot.shortSidePx).toBeGreaterThan(MIN_POLYGON_SENSOR_PIXELS);
+  });
+
+  it("expande o bbox para dar contexto e nunca encolhe", () => {
+    const expanded = expandBboxForContext(auas0004, sensorGroundResolutionM("LANDSAT_5"));
+    expect(expanded[0]).toBeLessThan(auas0004[0]);
+    expect(expanded[1]).toBeLessThan(auas0004[1]);
+    expect(expanded[2]).toBeGreaterThan(auas0004[2]);
+    expect(expanded[3]).toBeGreaterThan(auas0004[3]);
+
+    const before = bboxSidesMeters(auas0004);
+    const after = bboxSidesMeters(expanded);
+    // O lado menor sai de 106 m para pelo menos MIN_CONTEXT_SENSOR_PIXELS × 30 m.
+    expect(Math.min(after.widthM, after.heightM)).toBeGreaterThanOrEqual(
+      Math.min(before.widthM, before.heightM),
+    );
+    expect(Math.min(after.widthM, after.heightM)).toBeGreaterThanOrEqual(
+      MIN_CONTEXT_SENSOR_PIXELS * sensorGroundResolutionM("LANDSAT_5") - 1,
+    );
+  });
+
+  it("não pede ao WMS muito mais pixels do que o mosaico tem", () => {
+    const semCap = calculateDynamicResolution(1.39, auas0004);
+    const comCap = calculateDynamicResolution(1.39, auas0004, sensorGroundResolutionM("LANDSAT_5"));
+    // Sem teto, 437 m de Landsat viravam ~2000 px de largura (interpolação pura).
+    expect(semCap.width).toBeGreaterThan(comCap.width);
+    const native = polygonSensorPixels(auas0004, sensorGroundResolutionM("LANDSAT_5"));
+    expect(comCap.width).toBeLessThanOrEqual(Math.round(native.widthPx * 4) + 1);
+    // Aspect ratio preservado (a diferença é só o arredondamento para pixel).
+    const ratioSemCap = semCap.width / semCap.height;
+    const ratioComCap = comCap.width / comCap.height;
+    expect(Math.abs(ratioComCap - ratioSemCap) / ratioSemCap).toBeLessThan(0.05);
+  });
+
+  it("marca como BELOW_MIN_RESOLUTION sem chamar o WMS", async () => {
+    const fetchImpl = vi.fn();
+    const scene = await buildAuasScene(
+      {
+        polygonId: "AUAS-0004",
+        geometryHash: "hash",
+        areaHa: 1.39,
+        bbox: auas0004,
+        geometry: { type: "Polygon", coordinates: [[[-52.341166, -12.568692], [-52.337156, -12.568692], [-52.337156, -12.56774], [-52.341166, -12.56774], [-52.341166, -12.568692]]] },
+      } as any,
+      2007,
+      { fetchImpl: fetchImpl as any },
+    );
+    expect(scene.usability).toBe("BELOW_MIN_RESOLUTION");
+    expect(scene.qualityFlags[0]).toMatch(/below_sensor_resolution/);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

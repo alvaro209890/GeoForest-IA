@@ -4,6 +4,8 @@ export type SceneUsability =
   | "USABLE"
   | "CLOUD_OR_OCCLUSION"
   | "LOW_RESOLUTION"
+  /** Polígono menor que a resolução do sensor — cena não gerada, sem custo de IA. */
+  | "BELOW_MIN_RESOLUTION"
   | "MISSING"
   | "INVALID";
 

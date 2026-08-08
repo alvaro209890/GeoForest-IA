@@ -4,39 +4,12 @@
  * `docs/planos/analise-pos-recorte/05-fase2-2008-2019.md` §5.
  */
 import { z } from "zod";
+import { sanitizeVisionPayload, type SanitizeCounters } from "../text-sanitizer";
 
 const limitationsArray = z.array(z.string().trim().min(1).max(280)).max(8);
 
-const FORBIDDEN_LEGAL_TERMS = [
-  "infração",
-  "infracao",
-  "passivo",
-  "regular",
-  "irregular",
-  "ilegal",
-  "legal",
-  "multa",
-  "embargo",
-];
-
-function rejectLegalLanguage(value: string, ctx: z.RefinementCtx) {
-  const normalized = value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-  const hit = FORBIDDEN_LEGAL_TERMS.find((term) => {
-    const normalizedTerm = term.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    return normalized.includes(normalizedTerm);
-  });
-  if (hit) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `Termo jurídico não permitido na observação visual: "${hit}".`,
-    });
-  }
-}
-
-const evidenceTextArray = z.array(z.string().trim().min(1).max(280).superRefine(rejectLegalLanguage)).max(8);
+// Texto já saneado por `sanitizeVisionPayload`; o schema só confere formato.
+const evidenceTextArray = z.array(z.string().trim().min(1).max(280)).max(8);
 
 const windowIdSchema = z.enum(["W2009_2011", "W2011_2013", "W2013_2015", "W2015_2017", "W2017_2019", "WBRIDGE"]);
 
@@ -89,8 +62,11 @@ export function validateGroqPos2008WindowObservation(
     sentSceneIds: string[];
     sentSceneMetadata?: Record<string, { year: number; sensor: string }>;
   }
-): { ok: true; data: GroqPos2008WindowObservationParsed } | { ok: false; reason: string } {
-  const parsed = groqPos2008WindowObservationSchema.safeParse(raw);
+):
+  | { ok: true; data: GroqPos2008WindowObservationParsed; sanitize: SanitizeCounters }
+  | { ok: false; reason: string } {
+  const { value, counters } = sanitizeVisionPayload(raw);
+  const parsed = groqPos2008WindowObservationSchema.safeParse(value);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .slice(0, 6)
@@ -138,5 +114,5 @@ export function validateGroqPos2008WindowObservation(
       return { ok: false, reason: "transição deve ligar cenas consecutivas" };
     }
   }
-  return { ok: true, data };
+  return { ok: true, data, sanitize: counters };
 }

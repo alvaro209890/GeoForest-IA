@@ -193,9 +193,29 @@ export function reducePos2008Polygon(input: Pos2008ReducerInput): AuasPos2008Pol
   }
 
   // ── Transições decisivas (N→A), da mais antiga para a mais recente ──
-  const nativeToAnthropized = transitions
+  const nativeToAnthropizedRaw = transitions
     .filter((t) => t.transition === "NATIVE_TO_ANTHROPIZED" && t.confidence !== "INCONCLUSIVE")
     .sort((a, b) => a.fromYear - b.fromYear);
+
+  // Conversão para uso antrópico não se desfaz no ano seguinte. Quando o ano
+  // seguinte observável volta a ser NATIVE_VEGETATION, o que houve foi variação
+  // de aparência (paleta do sensor, fenologia, queimada sazonal), não conversão.
+  //
+  // Sem esta checagem, o CAR 6816 datava TODOS os polígonos em "2011→2012 com
+  // confiança HIGH": 2012 é o único ano ResourceSat da série, lido como
+  // antropizado entre 2011 e 2013 nativos. As datas declaradas são 2016, 2016,
+  // 2019 e 2021 — ou seja, quatro laudos confiantes e errados.
+  const nativeToAnthropized = nativeToAnthropizedRaw.filter((t) => {
+    const nextYear = sortedYears.find((year) => year > t.toYear);
+    if (nextYear === undefined) return true; // fim da série: nada contradiz
+    const nextState = definiteByYear.get(nextYear)?.state;
+    if (nextState !== "NATIVE_VEGETATION") return true;
+    limitations.push(
+      `Transição ${t.fromYear}→${t.toYear} descartada: ${nextYear} volta a aparecer como vegetação nativa, ` +
+        `logo a mudança não persistiu (provável diferença de sensor ou de estação, não conversão).`
+    );
+    return false;
+  });
 
   if (nativeToAnthropized.length > 0) {
     const t = nativeToAnthropized[0];

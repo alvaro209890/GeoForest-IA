@@ -246,3 +246,31 @@ describe("areaToBand", () => {
     expect(areaToBand(30)).toBe(">10ha");
   });
 });
+
+describe("contexto geométrico no laudo (CAR 6816)", () => {
+  it("registra a sobreposição com ARL mesmo quando não há vegetação aparente", () => {
+    // A AC do CAR 6816 está 100% dentro da Reserva Legal declarada. Antes esse
+    // fato só aparecia no ramo de alerta ALTO; nos demais a evidência saía vazia.
+    const result = reduceAcVegetacao(
+      baseInput({
+        areaHa: 9.82,
+        flags: ["AC_SOBREPOE_ARL"],
+        geometric: geometric({ arlAreaHa: 9.82 }),
+        window: {
+          observation: {
+            observations: [
+              { sceneId: "S2_2024", vegetationInside: "NONE", confidence: "HIGH", estimatedFraction: 0, distribution: null },
+              { sceneId: "S2_2025", vegetationInside: "NONE", confidence: "HIGH", estimatedFraction: 0, distribution: null },
+            ],
+            conflicts: [],
+          },
+        },
+      }),
+    );
+    expect(result.status).toBe("SEM_VEGETACAO_APARENTE");
+    const texto = result.evidence.join(" ");
+    expect(texto).toMatch(/Reserva Legal/);
+    expect(texto).toMatch(/9\.82 ha/);
+    expect(texto).not.toMatch(/preservação permanente/);
+  });
+});

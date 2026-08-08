@@ -240,60 +240,10 @@ export async function runPos2008Analysis(
       sceneIdByYear[year] = scene.sceneId;
     }
 
-    // Janela-ponte: cenas dos dois anos da fronteira com o sensor alternativo.
+    // Janela-ponte: roda DEPOIS das janelas normais, porque precisa saber qual
+    // fronteira a transição observada atravessa.
     let bridgeRun: Pos2008WindowRun | null = null;
     const bridgeInput = { available: !!plan.bridgeWindow, executed: false, windowId: null as string | null };
-    if (plan.bridgeWindow && plan.bridgeCandidates.length > 0) {
-      const years = plan.bridgeWindow.years;
-      const candidate = plan.bridgeCandidates.find(
-        (entry) => entry.boundary.fromYear === years[0] && entry.boundary.toYear === years[1],
-      );
-      const bridgeScenes: Pos2008Scene[] = [];
-      for (const year of years) {
-        if (!candidate) break;
-        const altLayers = candidate.alternateLayers[year] || [];
-        const altLayer = altLayers[0];
-        if (!altLayer) {
-          const preferredScene = scenesByYear.get(year);
-          if (preferredScene && preferredScene.imageBuffer && sceneUsableForVision(preferredScene)) {
-            bridgeScenes.push({ ...preferredScene, bridge: true });
-          }
-          continue;
-        }
-        const altSensor = classifySensorFromLayer(altLayer);
-        const scene = await buildPos2008Scene(
-          polygon,
-          { year, sensor: altSensor, layer: altLayer, bridge: true },
-          deps.sceneDeps
-        );
-        if (scene.imageBuffer && sceneUsableForVision(scene)) {
-          // Keep bridge scenes separate. Normal windows must continue to use the
-          // preferred RGB series, otherwise a calibration image silently changes
-          // the provenance of the temporal series.
-          allScenes.push(sceneToPublic(scene));
-          bridgeScenes.push(scene);
-        }
-      }
-      if (bridgeScenes.length === years.length) {
-        bridgeInput.executed = true;
-        bridgeInput.windowId = "WBRIDGE";
-        bridgeRun = await runWindow(
-          input.jobId,
-          polygon,
-          "WBRIDGE",
-          bridgeScenes,
-          catalog.version,
-          checkpointStore,
-          onProgress,
-          signal,
-          visionModel,
-          visionMaxImages,
-          visionTimeoutMs,
-          deps
-        );
-        allWindowRuns.push(bridgeRun);
-      }
-    }
 
     const reducerWindows: Pos2008ReducerWindowInput[] = [];
     for (const windowDef of plan.windows) {
@@ -344,6 +294,80 @@ export async function runPos2008Analysis(
       allWindowRuns.push(run);
       reducerWindows.push({ windowId: windowDef.windowId, observation: run.observation ?? null });
     }
+
+    if (plan.bridgeWindow && plan.bridgeCandidates.length > 0) {
+      // A ponte tem de olhar a fronteira que a transição observada atravessa.
+      // `plan.bridgeWindow` é fixo — a primeira fronteira do catálogo que tem
+      // candidato alternativo — e no CAR 6816 isso deu WBRIDGE=[2018,2019] para
+      // confirmar uma transição em 2011→2012: a ponte nunca podia confirmar, e
+      // toda transição em troca de sensor era rebaixada com a limitação errada
+      // ("a janela-ponte não confirmou").
+      const observedTransitions = reducerWindows
+        .flatMap((run) => run.observation?.transitions ?? [])
+        .filter((t) => t.transition === "NATIVE_TO_ANTHROPIZED" && t.confidence !== "INCONCLUSIVE")
+        .sort((a, b) => a.fromYear - b.fromYear);
+      const crossingCandidate = plan.bridgeCandidates.find((entry) =>
+        observedTransitions.some(
+          (t) => t.fromYear === entry.boundary.fromYear && t.toYear === entry.boundary.toYear,
+        ) && Object.keys(entry.alternateLayers).length > 0,
+      );
+      const candidate =
+        crossingCandidate ??
+        plan.bridgeCandidates.find(
+          (entry) =>
+            entry.boundary.fromYear === plan.bridgeWindow!.years[0] &&
+            entry.boundary.toYear === plan.bridgeWindow!.years[1],
+        );
+      const years = candidate
+        ? [candidate.boundary.fromYear, candidate.boundary.toYear]
+        : plan.bridgeWindow.years;
+      const bridgeScenes: Pos2008Scene[] = [];
+      for (const year of years) {
+        if (!candidate) break;
+        const altLayers = candidate.alternateLayers[year] || [];
+        const altLayer = altLayers[0];
+        if (!altLayer) {
+          const preferredScene = scenesByYear.get(year);
+          if (preferredScene && preferredScene.imageBuffer && sceneUsableForVision(preferredScene)) {
+            bridgeScenes.push({ ...preferredScene, bridge: true });
+          }
+          continue;
+        }
+        const altSensor = classifySensorFromLayer(altLayer);
+        const scene = await buildPos2008Scene(
+          polygon,
+          { year, sensor: altSensor, layer: altLayer, bridge: true },
+          deps.sceneDeps
+        );
+        if (scene.imageBuffer && sceneUsableForVision(scene)) {
+          // Keep bridge scenes separate. Normal windows must continue to use the
+          // preferred RGB series, otherwise a calibration image silently changes
+          // the provenance of the temporal series.
+          allScenes.push(sceneToPublic(scene));
+          bridgeScenes.push(scene);
+        }
+      }
+      if (bridgeScenes.length === years.length) {
+        bridgeInput.executed = true;
+        bridgeInput.windowId = "WBRIDGE";
+        bridgeRun = await runWindow(
+          input.jobId,
+          polygon,
+          "WBRIDGE",
+          bridgeScenes,
+          catalog.version,
+          checkpointStore,
+          onProgress,
+          signal,
+          visionModel,
+          visionMaxImages,
+          visionTimeoutMs,
+          deps
+        );
+        allWindowRuns.push(bridgeRun);
+      }
+    }
+
 
     const pre2008 = pre2008ByPolygon.get(polygon.polygonId);
     const polygonResult = reducePos2008Polygon({

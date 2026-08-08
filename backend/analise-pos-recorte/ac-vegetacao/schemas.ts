@@ -4,36 +4,7 @@
  * redutor determinístico.
  */
 import { z } from "zod";
-import type { z as zNS } from "zod";
-
-const FORBIDDEN_LEGAL_TERMS = [
-  "infração",
-  "infracao",
-  "passivo",
-  "regular",
-  "irregular",
-  "ilegal",
-  "legal",
-  "multa",
-  "embargo",
-];
-
-function rejectLegalLanguage(value: string, ctx: zNS.RefinementCtx): void {
-  const normalized = value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-  const hit = FORBIDDEN_LEGAL_TERMS.find((term) => {
-    const normalizedTerm = term.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    return normalized.includes(normalizedTerm);
-  });
-  if (hit) {
-    ctx.addIssue({
-      code: "custom" as const,
-      message: `Termo jurídico não permitido na observação visual: "${hit}".`,
-    });
-  }
-}
+import { sanitizeVisionPayload, type SanitizeCounters } from "../text-sanitizer";
 
 export const acVegetacaoWindowObservationSchema = z.object({
   schemaVersion: z.literal(1),
@@ -49,7 +20,8 @@ export const acVegetacaoWindowObservationSchema = z.object({
         estimatedFraction: z.number().min(0).max(1).nullable(),
         distribution: z.enum(["EDGE", "INTERIOR", "RIPARIAN", "SCATTERED"]).nullable(),
         confidence: z.enum(["HIGH", "MEDIUM", "LOW", "INCONCLUSIVE"]),
-        evidence: z.array(z.string().trim().min(1).max(280).superRefine(rejectLegalLanguage)).max(8),
+        // Texto já saneado por `sanitizeVisionPayload`; o schema só confere formato.
+        evidence: z.array(z.string().trim().min(1).max(280)).max(8),
         limitations: z.array(z.string().trim().min(1).max(280)).max(8),
       })
     )
@@ -68,8 +40,11 @@ export function validateAcVegetacaoWindowObservation(
     sentSceneIds: string[];
     sentSceneMetadata?: Record<string, { year: number; sensor: string }>;
   }
-): { ok: true; data: AcVegetacaoWindowObservationParsed } | { ok: false; reason: string } {
-  const parsed = acVegetacaoWindowObservationSchema.safeParse(raw);
+):
+  | { ok: true; data: AcVegetacaoWindowObservationParsed; sanitize: SanitizeCounters }
+  | { ok: false; reason: string } {
+  const { value, counters } = sanitizeVisionPayload(raw);
+  const parsed = acVegetacaoWindowObservationSchema.safeParse(value);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .slice(0, 6)
@@ -98,5 +73,5 @@ export function validateAcVegetacaoWindowObservation(
       return { ok: false, reason: `ano incompatível com a cena ${obs.sceneId}: ${obs.year}` };
     }
   }
-  return { ok: true, data };
+  return { ok: true, data, sanitize: counters };
 }

@@ -129,8 +129,9 @@ uma é decisão consciente do Álvaro (pré-requisitos no plano). Enquanto desli
 rotas respondem `409 PHASE_NOT_READY`.
 
 Plano: `docs/planos/analise-pos-recorte/` (STATUS.md primeiro).
-Changelogs: `CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_F2_F3.md`, `..._BUGS.md` (segurança)
-e `CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md` (bugs de código).
+Changelogs: `CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_F2_F3.md`, `..._BUGS.md` (segurança),
+`CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md` (bugs de código) e
+`CHANGELOG_2026-08-08_CAR_APROVADO_6816.md` (bugs achados com um CAR aprovado real).
 
 **Dois gotchas que custaram caro (2026-08-07):**
 
@@ -144,6 +145,17 @@ e `CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md` (bugs de código).
    `.oraculo-scratch/santa_clara/v24/*.shp` (28 camadas do CAR 270069) e
    `backend/fixtures/teste_1/*.zip`. Ler com `readFullShapefile`/`parseUserShapefile` de
    `backend/simcar/shapefile-io.ts`, rodar com `npx tsx`.
+
+3. **Um CAR aprovado é o melhor detector de falso positivo.** Rodar o projeto do imóvel
+   6816 (`docs/CHANGELOG_2026-08-08_CAR_APROVADO_6816.md`) achou 9 erros de geometria
+   falsos — dois "impeditivos" — e mostrou que 19 de 46 janelas de visão eram descartadas
+   por texto ("padrão regular" e "Área de Reserva **Legal**" batiam na lista de termos
+   jurídicos por substring). O `.dbf` da AUAS traz `ABERTURA` por polígono: é gabarito
+   pronto para medir a Fase 2 contra a verdade declarada.
+4. **Os mosaicos da SEMA são falsa-cor.** Não existe estilo em cor natural publicado para
+   Landsat/ResourceSat/Sentinel-2 — só o SPOT 2008 é cor natural. Vegetação sai verde-neon,
+   solo exposto sai magenta. O prompt de visão precisa dizer isso, senão o modelo trata a
+   cena como corrompida.
 
 Terceiro, sobre a suíte: um teste que falha em `pnpm test` mas passa isolado é quase sempre
 **timeout sob carga** (o default do vitest é 5 s e `processar-projeto.test.ts` leva ~108 s),

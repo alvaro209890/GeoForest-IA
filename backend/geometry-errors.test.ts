@@ -923,3 +923,96 @@ describe("detectUmidaContainment (oráculo SEMA process)", () => {
     expect(result.rows).toHaveLength(0);
   });
 });
+
+/* ───────── regressões do CAR 6816 (aprovado pela SEMA, 2026-08-08) ───────── */
+
+import { CONTAINMENT_SLIVER_TOLERANCE_M2 } from "./geometry/detectors/containment";
+
+describe("falsos positivos do CAR aprovado", () => {
+  const crs = detectCrs(undefined, "EPSG:31981");
+
+  function rectRec(feature: number, x0: number, y0: number, w: number, h: number): ParsedPolygonRecord {
+    return {
+      feature,
+      rings: [[[x0, y0], [x0, y0 + h], [x0 + w, y0 + h], [x0 + w, y0], [x0, y0]]],
+    };
+  }
+
+  it("não reporta vazio entre feições distantes da mesma camada", () => {
+    // Duas manchas de AVN a 300 m uma da outra: o fecho convexo cobria o vão
+    // inteiro e acusava um "vazio" maior que a própria camada.
+    const result = detectGaps({
+      layerName: "AVN",
+      records: [rectRec(1, 0, 0, 50, 50), rectRec(2, 350, 0, 50, 50)],
+      crs,
+    });
+    expect(result.rows).toHaveLength(0);
+    expect(result.gapPolygons).toHaveLength(0);
+  });
+
+  it("continua reportando fresta estreita entre feições que deveriam encostar", () => {
+    const result = detectGaps({
+      layerName: "AIR",
+      records: [rectRec(1, 0, 0, 100, 100), rectRec(2, 103, 0, 100, 100)],
+      crs,
+    });
+    expect(result.rows.length).toBeGreaterThanOrEqual(1);
+    expect(result.rows[0].tipo).toBe("vazio");
+  });
+
+  it("não reprova ARL a recuperar (SITUACAO=A) por estar fora da AVN", () => {
+    const arlDbf = buildDbfBuffer(
+      [
+        { IDENTIFIC: "1", AVERBACAO: "NA", SITUACAO: "P" },
+        { IDENTIFIC: "2", AVERBACAO: "NA", SITUACAO: "A" },
+      ],
+      [
+        { name: "IDENTIFIC", type: "C", length: 10, decimals: 0 },
+        { name: "AVERBACAO", type: "C", length: 4, decimals: 0 },
+        { name: "SITUACAO", type: "C", length: 2, decimals: 0 },
+      ],
+    );
+    const result = detectSimcarContainment({
+      layers: [
+        // feição 1 coincide com a AVN; feição 2 (a recuperar) fica fora dela.
+        { name: "ARL", records: [rectRec(1, 0, 0, 10, 10), rectRec(2, 200, 200, 100, 100)], crs, dbf: arlDbf },
+        { name: "AVN", records: [rectRec(1, 0, 0, 10, 10)], crs },
+        { name: "AIR", records: [rectRec(1, -10, -10, 400, 400)], crs },
+      ],
+    });
+    const arlForaDaAvn = result.rows.filter((row) => row.detalhe.includes("ARL vetorizada fora da AVN"));
+    expect(arlForaDaAvn).toHaveLength(0);
+  });
+
+  it("ainda reprova ARL preservada (SITUACAO=P) vetorizada fora da AVN", () => {
+    const arlDbf = buildDbfBuffer(
+      [{ IDENTIFIC: "1", AVERBACAO: "NA", SITUACAO: "P" }],
+      [
+        { name: "IDENTIFIC", type: "C", length: 10, decimals: 0 },
+        { name: "AVERBACAO", type: "C", length: 4, decimals: 0 },
+        { name: "SITUACAO", type: "C", length: 2, decimals: 0 },
+      ],
+    );
+    const result = detectSimcarContainment({
+      layers: [
+        { name: "ARL", records: [rectRec(1, 200, 200, 100, 100)], crs, dbf: arlDbf },
+        { name: "AVN", records: [rectRec(1, 0, 0, 10, 10)], crs },
+        { name: "AIR", records: [rectRec(1, -10, -10, 400, 400)], crs },
+      ],
+    });
+    const arlForaDaAvn = result.rows.filter((row) => row.detalhe.includes("ARL vetorizada fora da AVN"));
+    expect(arlForaDaAvn).toHaveLength(1);
+  });
+
+  it("tolera resíduo de topologia abaixo do limiar de sliver", () => {
+    // 2 m² de AVN fora da AIR — o CAR aprovado era reprovado por isto.
+    const result = detectSimcarContainment({
+      layers: [
+        { name: "AVN", records: [rectRec(1, 0, 0, 100, 100)], crs },
+        { name: "AIR", records: [rectRec(1, 0, 0, 100, 99.98)], crs },
+      ],
+    });
+    expect(result.rows).toHaveLength(0);
+    expect(CONTAINMENT_SLIVER_TOLERANCE_M2).toBeGreaterThan(2);
+  });
+});

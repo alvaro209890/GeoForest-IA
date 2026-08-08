@@ -52,12 +52,141 @@ export function sanitizeWmsUrl(url: string): string {
   return parsed.toString();
 }
 
+/* ─── Resolução do sensor e enquadramento da cena ────────────── */
+
+/**
+ * Resolução nominal no terreno (m/pixel) das fontes publicadas pela SEMA-MT.
+ * Serve para duas coisas: não pedir ao GeoServer mais pixels do que o mosaico
+ * tem, e saber quando o polígono é pequeno demais para o sensor enxergar.
+ */
+export const SENSOR_GROUND_RESOLUTION_M: Record<string, number> = {
+  LANDSAT_5: 30,
+  LANDSAT_7: 30,
+  LANDSAT_8: 30,
+  LANDSAT_9: 30,
+  RESOURCESAT: 24,
+  RESOURCESAT_2: 24,
+  SENTINEL_2: 10,
+  SPOT: 5,
+  CBERS_4A: 2,
+  UNKNOWN: 30,
+};
+
+/** Metros por grau — aproximação suficiente para dimensionar uma cena. */
+const METERS_PER_DEGREE = 111_320;
+
+export function sensorGroundResolutionM(sensor: string): number {
+  const key = String(sensor || "").toUpperCase();
+  return SENSOR_GROUND_RESOLUTION_M[key] ?? SENSOR_GROUND_RESOLUTION_M.UNKNOWN;
+}
+
+/** Lados do bbox em metros (latitude média corrige a compressão em longitude). */
+export function bboxSidesMeters(bbox: [number, number, number, number]): {
+  widthM: number;
+  heightM: number;
+} {
+  const midLat = (bbox[1] + bbox[3]) / 2;
+  const cosLat = Math.max(0.05, Math.cos((midLat * Math.PI) / 180));
+  return {
+    widthM: Math.abs(bbox[2] - bbox[0]) * METERS_PER_DEGREE * cosLat,
+    heightM: Math.abs(bbox[3] - bbox[1]) * METERS_PER_DEGREE,
+  };
+}
+
+/**
+ * Quantos pixels **nativos** do sensor o polígono ocupa. Um polígono de 1,4 ha
+ * e 106 m de lado menor tem 3,5 pixels Landsat: qualquer imagem gerada dele é
+ * interpolação, não informação.
+ */
+export function polygonSensorPixels(
+  bbox: [number, number, number, number],
+  groundResolutionM: number
+): { widthPx: number; heightPx: number; shortSidePx: number } {
+  const { widthM, heightM } = bboxSidesMeters(bbox);
+  const gsd = Math.max(0.1, groundResolutionM);
+  const widthPx = widthM / gsd;
+  const heightPx = heightM / gsd;
+  return { widthPx, heightPx, shortSidePx: Math.min(widthPx, heightPx) };
+}
+
+/**
+ * Mínimo de pixels nativos no lado menor para a cena valer uma chamada de
+ * visão. Abaixo disso o polígono não é resolvido pelo sensor e a cena vira
+ * limitação declarada, sem custo de IA.
+ */
+export const MIN_POLYGON_SENSOR_PIXELS = Math.max(
+  1,
+  Number(process.env.SIMCAR_SCENE_MIN_SENSOR_PIXELS || 4)
+);
+
+/** Pixels nativos que a cena inteira (com margem) deve ter no lado menor. */
+export const MIN_CONTEXT_SENSOR_PIXELS = Math.max(
+  MIN_POLYGON_SENSOR_PIXELS,
+  Number(process.env.SIMCAR_SCENE_MIN_CONTEXT_PIXELS || 24)
+);
+
+/** Margem relativa mínima, para o polígono nunca encostar na borda do quadro. */
+const CONTEXT_MARGIN_FRACTION = 0.15;
+
+/** Teto da expansão, para um polígono minúsculo não virar uma cena regional. */
+const MAX_CONTEXT_SIDE_M = 5_000;
+
+/**
+ * Expande o bbox do polígono para dar contexto ao intérprete.
+ *
+ * Antes as cenas usavam exatamente o bbox do polígono: o overlay vermelho
+ * cobria o quadro inteiro, não sobrava paisagem para comparar, e polígonos
+ * pequenos viravam um gradiente liso (o modelo respondia "gradiente de cor sem
+ * dados visuais"). A margem resolve os dois problemas de uma vez.
+ */
+export function expandBboxForContext(
+  bbox: [number, number, number, number],
+  groundResolutionM: number
+): [number, number, number, number] {
+  const { widthM, heightM } = bboxSidesMeters(bbox);
+  const gsd = Math.max(0.1, groundResolutionM);
+  const minSideM = Math.min(MIN_CONTEXT_SENSOR_PIXELS * gsd, MAX_CONTEXT_SIDE_M);
+
+  const targetWidthM = Math.min(
+    MAX_CONTEXT_SIDE_M,
+    Math.max(widthM * (1 + 2 * CONTEXT_MARGIN_FRACTION), minSideM)
+  );
+  const targetHeightM = Math.min(
+    MAX_CONTEXT_SIDE_M,
+    Math.max(heightM * (1 + 2 * CONTEXT_MARGIN_FRACTION), minSideM)
+  );
+
+  const padXM = Math.max(0, (targetWidthM - widthM) / 2);
+  const padYM = Math.max(0, (targetHeightM - heightM) / 2);
+
+  const midLat = (bbox[1] + bbox[3]) / 2;
+  const cosLat = Math.max(0.05, Math.cos((midLat * Math.PI) / 180));
+  const padLon = padXM / (METERS_PER_DEGREE * cosLat);
+  const padLat = padYM / METERS_PER_DEGREE;
+
+  return [
+    Math.max(-180, bbox[0] - padLon),
+    Math.max(-90, bbox[1] - padLat),
+    Math.min(180, bbox[2] + padLon),
+    Math.min(90, bbox[3] + padLat),
+  ];
+}
+
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
 
+/**
+ * Fator máximo de reamostragem sobre a resolução nativa do sensor. Acima disso
+ * o GeoServer só interpola: 2 kpx para 437 m de Landsat 5 (≈140×) devolve um
+ * borrão liso, custa banda e ainda atrapalha a leitura.
+ */
+const MAX_UPSAMPLE_FACTOR = 4;
+
 export function calculateDynamicResolution(
   areaHa: number,
-  bbox: [number, number, number, number]
+  bbox: [number, number, number, number],
+  /** Resolução do sensor (m/pixel). Quando informada, limita a reamostragem. */
+  groundResolutionM?: number
 ): { width: number; height: number } {
   const bboxWidth = Math.abs(bbox[2] - bbox[0]);
   const bboxHeight = Math.abs(bbox[3] - bbox[1]);
@@ -92,6 +221,18 @@ export function calculateDynamicResolution(
   const scaleDown = Math.min(2400 / Math.max(width, 1), 1800 / Math.max(height, 1), 1);
   width = Math.max(1, Math.round(width * scaleDown));
   height = Math.max(1, Math.round(height * scaleDown));
+
+  if (Number.isFinite(groundResolutionM) && (groundResolutionM as number) > 0) {
+    const native = polygonSensorPixels(bbox, groundResolutionM as number);
+    const capW = Math.max(1, Math.round(native.widthPx * MAX_UPSAMPLE_FACTOR));
+    const capH = Math.max(1, Math.round(native.heightPx * MAX_UPSAMPLE_FACTOR));
+    const cap = Math.min(capW / Math.max(width, 1), capH / Math.max(height, 1), 1);
+    if (cap < 1) {
+      // Mantém o aspect ratio: reduz os dois lados pelo mesmo fator.
+      width = Math.max(1, Math.round(width * cap));
+      height = Math.max(1, Math.round(height * cap));
+    }
+  }
 
   return { width, height };
 }
@@ -324,7 +465,14 @@ export async function buildAuasScene(
 ): Promise<AuasScene> {
   const layer = resolveAuasLayerName(year);
   const sensor = year === 2008 ? "SPOT" : "LANDSAT_5";
-  const { width, height } = calculateDynamicResolution(polygon.areaHa, polygon.bbox);
+  const groundResolutionM = sensorGroundResolutionM(sensor);
+  const sceneBbox = expandBboxForContext(polygon.bbox, groundResolutionM);
+  const { width, height } = calculateDynamicResolution(
+    polygon.areaHa,
+    sceneBbox,
+    groundResolutionM
+  );
+  const native = polygonSensorPixels(polygon.bbox, groundResolutionM);
   const now = deps.now || (() => new Date().toISOString());
 
   let usability: AuasScene["usability"] = "MISSING";
@@ -333,22 +481,46 @@ export async function buildAuasScene(
   let imageBuffer: Buffer | undefined;
   let storedImageUrl: string | undefined;
 
+  // O polígono menor que alguns pixels do sensor não é resolvido por ele: gerar
+  // a cena e mandar para a visão só gasta GetMap + IA para receber
+  // "NOT_OBSERVABLE". Vira limitação declarada, antes de qualquer custo.
+  if (native.shortSidePx < MIN_POLYGON_SENSOR_PIXELS) {
+    return {
+      sceneId: `${polygon.polygonId}:${sensor === "SPOT" ? "spot" : "landsat5"}:${year}`,
+      polygonId: polygon.polygonId,
+      geometryHash: polygon.geometryHash,
+      year,
+      sensor,
+      layer,
+      imageSha256: "",
+      width,
+      height,
+      bbox: sceneBbox,
+      usability: "BELOW_MIN_RESOLUTION",
+      qualityScore: 0,
+      qualityFlags: [
+        `below_sensor_resolution: lado menor ≈ ${native.shortSidePx.toFixed(1)} px de ${groundResolutionM} m (mínimo ${MIN_POLYGON_SENSOR_PIXELS})`,
+      ],
+      fetchedAt: now(),
+    };
+  }
+
   try {
     const { buffer: baseImage, usedResolutionFallback } = await fetchWmsImageBuffer(
       [layer],
-      polygon.bbox,
+      sceneBbox,
       width,
       height,
       deps
     );
-    const overlaySvg = buildAuasPolygonOverlaySvg(width, height, polygon.bbox, polygon.geometry);
+    const overlaySvg = buildAuasPolygonOverlaySvg(width, height, sceneBbox, polygon.geometry);
     const composited = await compositeOverlay(baseImage, overlaySvg);
     const classification = await classifySceneUsability(composited, { usedResolutionFallback });
     usability = classification.usability;
     qualityScore = classification.qualityScore;
     qualityFlags = classification.qualityFlags;
     imageBuffer = composited;
-    storedImageUrl = sanitizeWmsUrl(buildWmsGetMapUrl([layer], polygon.bbox, width, height));
+    storedImageUrl = sanitizeWmsUrl(buildWmsGetMapUrl([layer], sceneBbox, width, height));
   } catch (err) {
     usability = "MISSING";
     qualityFlags = [`fetch_error: ${String((err as any)?.message || err).slice(0, 200)}`];
@@ -365,7 +537,7 @@ export async function buildAuasScene(
     imageSha256: imageBuffer ? computeImageSha256(imageBuffer) : "",
     width,
     height,
-    bbox: polygon.bbox,
+    bbox: sceneBbox,
     usability,
     qualityScore,
     qualityFlags,

@@ -8,6 +8,30 @@
  */
 export const GROQ_VISION_URL = "https://api.groq.com/openai/v1/chat/completions";
 
+/**
+ * Os mosaicos anuais publicados pela SEMA-MT **não têm estilo em cor natural**:
+ * o GetCapabilities mostra `semamt:LANDSAT_5`, `Mosaicos:LANDSAT_8`,
+ * `RESOURCESAT_2012_432` e `Geoportal_Sentinel_2_<ano>_NIR` como estilo padrão
+ * (e único) — todos composições em falsa-cor com o infravermelho próximo no
+ * canal verde. Só o `MOSAICO_SPOT_SEPLAN` sai em cor natural.
+ *
+ * A chave de leitura abaixo foi medida, não suposta: cruzando o SPOT 2008 (cor
+ * natural) com o Landsat 5 2007 sobre o mesmo recorte, os pixels de floresta
+ * dão RGB≈(33,168,51) no Landsat e os de solo exposto RGB≈(117,119,176).
+ *
+ * Sem esse aviso o modelo trata a cena como corrompida ("gradiente de cor sem
+ * dados visuais") e devolve NOT_OBSERVABLE.
+ */
+export const FALSE_COLOR_PROMPT_NOTE =
+  "COMPOSICAO COLORIDA: os mosaicos Landsat 5, Landsat 8, ResourceSat e Sentinel-2 da SEMA-MT " +
+  "sao publicados em FALSA-COR (infravermelho proximo no canal verde), nunca em cor natural. " +
+  "Nessas cenas a vegetacao densa aparece VERDE FORTE/NEON e o solo exposto, pastagem seca ou " +
+  "area antropizada aparece MAGENTA, ROXO, ROSA ou AZUL-ACINZENTADO. Essa e a aparencia CORRETA " +
+  "e esperada: nunca classifique a cena como ilegivel, corrompida ou 'gradiente sem dados' por " +
+  "causa dessas cores. Apenas o mosaico SPOT 2008 esta em cor natural (vegetacao verde-escuro, " +
+  "solo claro).";
+
+
 export class GroqVisionError extends Error {
   constructor(
     public readonly code: string,
@@ -132,6 +156,25 @@ function extractJsonPayload(content: string): unknown {
   return JSON.parse(candidate.slice(start, end + 1));
 }
 
+/**
+ * Extrai `error.code`/`error.message` de um 400 da Groq, mais um trecho curto
+ * de `failed_generation`. Nunca devolve imagem nem o corpo inteiro.
+ */
+async function readGroqErrorDetail(response: Response): Promise<string> {
+  try {
+    const payload: any = await response.json();
+    const code = String(payload?.error?.code || "").trim();
+    const message = String(payload?.error?.message || "").trim();
+    const failed = String(payload?.error?.failed_generation ?? "").trim();
+    const parts = [code, message].filter(Boolean);
+    if (failed) parts.push(`failed_generation="${failed.slice(0, 160)}"`);
+    else if (payload?.error?.failed_generation !== undefined) parts.push("failed_generation vazio");
+    return parts.join(" — ").slice(0, 400);
+  } catch {
+    return "";
+  }
+}
+
 async function performAttempt(
   request: GroqVisionGenericRequest,
   prompts: GroqVisionPrompts,
@@ -184,7 +227,16 @@ async function performAttempt(
       throw new GroqVisionError("HTTP_401", "Groq recusou autenticação (verifique GROQ_API_KEY).", false);
     }
     if (response.status === 400) {
-      throw new GroqVisionError("HTTP_400", "Groq rejeitou o payload (HTTP 400).", false);
+      // O 400 mais comum aqui é `json_validate_failed`: com `response_format`
+      // json_object a Groq devolve `failed_generation` (às vezes vazio, quando
+      // o modelo não produziu JSON algum). Sem esse detalhe no erro, a janela
+      // aparece como HTTP_400 puro e não há como saber o que corrigir.
+      const detail = await readGroqErrorDetail(response);
+      throw new GroqVisionError(
+        "HTTP_400",
+        `Groq rejeitou o payload (HTTP 400)${detail ? `: ${detail}` : "."}`,
+        false
+      );
     }
     if (!response.ok) {
       throw new GroqVisionError(`HTTP_${response.status}`, `Groq respondeu HTTP ${response.status}.`, response.status >= 500);

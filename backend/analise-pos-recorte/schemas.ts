@@ -1,39 +1,11 @@
 import { z } from "zod";
+import { sanitizeVisionPayload, type SanitizeCounters } from "./text-sanitizer";
 
 const limitationsArray = z.array(z.string().trim().min(1).max(280)).max(8);
 
-const FORBIDDEN_LEGAL_TERMS = [
-  "infração",
-  "infracao",
-  "passivo",
-  "regular",
-  "irregular",
-  "ilegal",
-  "legal",
-  "multa",
-  "embargo",
-];
-
-function rejectLegalLanguage(value: string, ctx: z.RefinementCtx) {
-  const normalized = value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-  const hit = FORBIDDEN_LEGAL_TERMS.find((term) => {
-    const normalizedTerm = term.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    return normalized.includes(normalizedTerm);
-  });
-  if (hit) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `Termo jurídico não permitido na observação visual: "${hit}".`,
-    });
-  }
-}
-
-const evidenceTextArray = z.array(
-  z.string().trim().min(1).max(280).superRefine(rejectLegalLanguage)
-).max(8);
+// O texto já chega saneado por `sanitizeVisionPayload` (fronteira de palavra
+// para conclusão jurídica + truncamento); aqui o schema só confere o formato.
+const evidenceTextArray = z.array(z.string().trim().min(1).max(280)).max(8);
 
 const windowIdSchema = z.enum(["W2003_2005", "W2005_2007", "W2007_2008"]);
 
@@ -87,8 +59,11 @@ export type GroqWindowObservationParsed = z.infer<typeof groqWindowObservationSc
 export function validateGroqWindowObservation(
   raw: unknown,
   expected: { polygonId: string; windowId: string; sentSceneIds: string[] }
-): { ok: true; data: GroqWindowObservationParsed } | { ok: false; reason: string } {
-  const parsed = groqWindowObservationSchema.safeParse(raw);
+):
+  | { ok: true; data: GroqWindowObservationParsed; sanitize: SanitizeCounters }
+  | { ok: false; reason: string } {
+  const { value, counters } = sanitizeVisionPayload(raw);
+  const parsed = groqWindowObservationSchema.safeParse(value);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .slice(0, 6)
@@ -118,7 +93,7 @@ export function validateGroqWindowObservation(
       return { ok: false, reason: `transição cita sceneId não enviado` };
     }
   }
-  return { ok: true, data };
+  return { ok: true, data, sanitize: counters };
 }
 
 const polygonRefSchema = z.object({

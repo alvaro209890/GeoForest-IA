@@ -3,7 +3,7 @@
  * e delega o transporte/retry/mutex no núcleo compartilhado
  * (`groq-vision-core.ts`). Escreve só o prompt e a validação específicos da fase.
  */
-import { requestGroqVisionGeneric, type GroqVisionImageInput } from "./groq-vision-core";
+import { FALSE_COLOR_PROMPT_NOTE, requestGroqVisionGeneric, type GroqVisionImageInput } from "./groq-vision-core";
 import { validateGroqWindowObservation, type GroqWindowObservationParsed } from "./schemas";
 import type { AuasWindowId, AuasYear } from "./types";
 
@@ -42,6 +42,7 @@ function buildSystemPrompt(): string {
     "Sua única tarefa é descrever o que é visualmente observável em cada cena e comparar cenas entre si.",
     "Você NÃO decide se há infração, passivo ambiental ou regularidade jurídica — isso é proibido.",
     "Você NÃO deve inventar IDs de cena, ano ou polígono que não foram enviados.",
+    FALSE_COLOR_PROMPT_NOTE,
     "Se uma cena estiver nublada, ocluída, cortada ou ilegível, diga isso explicitamente; não adivinhe.",
     "Responda apenas com um objeto JSON estrito no schema pedido, em português do Brasil, sem markdown.",
   ].join(" ");

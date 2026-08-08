@@ -2,7 +2,7 @@
  * Cliente de visão da Fase 3 (vegetação na AC) — mesmo núcleo HTTP das fases 1 e 2.
  * Prompt proíbe conclusão jurídica (risco R1 do doc 11); o modelo apenas descreve.
  */
-import { requestGroqVisionGeneric, type GroqVisionGenericRequest, type GroqVisionImageInput } from "../groq-vision-core";
+import { FALSE_COLOR_PROMPT_NOTE, requestGroqVisionGeneric, type GroqVisionGenericRequest, type GroqVisionImageInput } from "../groq-vision-core";
 import { validateAcVegetacaoWindowObservation, type AcVegetacaoWindowObservationParsed } from "./schemas";
 import { AC_VEGETATION_WINDOW_ID } from "./types";
 
@@ -38,6 +38,7 @@ function buildSystemPrompt(): string {
     "Sua única tarefa é descrever a vegetação de aparência nativa visível DENTRO do polígono destacado em vermelho.",
     "Você NÃO decide se há infração, passivo ambiental ou regularidade jurídica — isso é proibido.",
     "Você NÃO deve inventar IDs de cena, ano ou polígono que não foram enviados.",
+    FALSE_COLOR_PROMPT_NOTE,
     "Se uma cena estiver nublada, ocluída, cortada ou ilegível, diga explicitamente; não adivinhe.",
     "Responda apenas com um objeto JSON estrito no schema pedido, em português do Brasil, sem markdown.",
   ].join(" ");

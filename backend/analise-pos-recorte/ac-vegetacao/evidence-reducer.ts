@@ -121,6 +121,26 @@ export function reduceAcVegetacao(input: AcReducerInput, config: AcReducerConfig
         `área declarada considerada apenas de: ${input.geometric.declaredSources.join(", ")}.`
     );
   }
+  // A sobreposição com ARL/AUAS vale para QUALQUER veredito: uma AC inteira
+  // dentro da Reserva Legal é o fato mais relevante do laudo daquele polígono, e
+  // antes só aparecia no ramo de alerta ALTO — nos demais o `flags` ficava mudo
+  // e a evidência saía vazia.
+  const overlapEvidence: string[] = [];
+  if (flags.includes("AC_SOBREPOE_ARL")) {
+    const arl = input.geometric.arlAreaHa;
+    const share = input.areaHa > 0 ? (arl / input.areaHa) * 100 : 0;
+    overlapEvidence.push(
+      `A AC sobrepõe Área de Reserva Legal (ARL/ARLREM) declarada: ${arl.toFixed(2)} ha (${share.toFixed(1)}% da AC).`
+    );
+  }
+  if (flags.includes("AC_SOBREPOE_AUAS")) {
+    const auas = input.geometric.auasAreaHa;
+    const share = input.areaHa > 0 ? (auas / input.areaHa) * 100 : 0;
+    overlapEvidence.push(
+      `A AC sobrepõe Área de Uso Alternativo do Solo (AUAS) declarada: ${auas.toFixed(2)} ha (${share.toFixed(1)}% da AC).`
+    );
+  }
+
   const obs = input.window?.observation?.observations;
   const conflicts = input.window?.observation?.conflicts ?? [];
   const usable = (obs || []).filter((o) => o.vegetationInside !== "NOT_OBSERVABLE" && o.confidence !== "INCONCLUSIVE");
@@ -141,8 +161,7 @@ export function reduceAcVegetacao(input: AcReducerInput, config: AcReducerConfig
       confidence: "HIGH",
       evidence: [
         `O próprio projeto declara vegetação dentro da Área Consolidada: ${declaredAreaHa.toFixed(2)} ha (${(declaredFraction * 100).toFixed(1)}% da AC).`,
-        ...(flags.includes("AC_SOBREPOE_ARL") ? ["A AC sobrepõe Área de Reserva Legal (ARL/ARLREM) declarada."] : []),
-        ...(flags.includes("AC_SOBREPOE_AUAS") ? ["A AC sobrepõe Área de Uso Alternativo do Solo (AUAS) declarada."] : []),
+        ...overlapEvidence,
       ],
       limitations: contextLimitations,
     };
@@ -198,7 +217,10 @@ export function reduceAcVegetacao(input: AcReducerInput, config: AcReducerConfig
       // A pior confiança entre as cenas que sustentam a ausência. Fixar "HIGH"
       // aqui carimbava certeza alta num laudo apoiado em cenas MEDIUM.
       confidence: worstConfidenceOf(reliable),
-      evidence: [],
+      evidence: [
+        `Nenhuma vegetação de aparência nativa observada dentro da AC (${input.areaHa.toFixed(2)} ha) nas cenas utilizáveis.`,
+        ...overlapEvidence,
+      ],
       limitations: contextLimitations,
     };
   }
@@ -214,7 +236,8 @@ export function reduceAcVegetacao(input: AcReducerInput, config: AcReducerConfig
     visual,
     flags,
     confidence: "INCONCLUSIVE",
-    evidence: [],
+    // Mesmo sem veredito visual, a evidência geométrica é medida e vale no laudo.
+    evidence: overlapEvidence,
     limitations: [
       "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente.",
       ...conflicts,
