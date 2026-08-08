@@ -152,4 +152,53 @@ describe("runAcVegetacaoAnalysis", () => {
     expect(result.polygons).toHaveLength(0);
     expect(result.report.markdown).toContain("Nenhuma Área Consolidada");
   });
+  it("AC menor que o mínimo analisável não gasta cena nem visão", async () => {
+    // O recorte real da Santa Clara tem 5 ACs de ~0,00 ha; cada uma custava
+    // 3 GetMap + 1 chamada de visão para um polígono que o sensor não resolve.
+    const groq = groqFetchImpl();
+    let wmsCalls = 0;
+    const countingWms = (async (input: any) => {
+      wmsCalls += 1;
+      return wmsFetchImpl()(input);
+    }) as unknown as typeof fetch;
+
+    const tiny = { ...acPolygon("AC-0001", squarePolygon(-56.1, -12.1)), areaHa: 0.004 };
+    const result = await runAcVegetacaoAnalysis(
+      {
+        jobId: "job-tiny",
+        clippedGeometries: new Map<string, Geometry[]>([["AREA_CONSOLIDADA", [tiny.geometry]]]),
+        pos2008CompletedAt: "2026-01-02T00:00:00.000Z",
+        polygons: [tiny],
+      },
+      {
+        sceneDeps: { fetchImpl: countingWms },
+        visionDeps: { apiKey: "k", fetchImpl: groq.fetchImpl },
+      },
+    );
+
+    expect(groq.calls()).toBe(0);
+    expect(wmsCalls).toBe(0);
+    expect(result.windows[0]).toMatchObject({ status: "SKIPPED", errorCode: "POLYGON_TOO_SMALL" });
+    expect(result.polygons[0].status).toBe("INCONCLUSIVO");
+    expect(result.polygons[0].limitations.join(" ")).toContain("mínimo analisável");
+  });
+
+  it("sem Fase 2 concluída não inventa referência de datação", async () => {
+    const groq = groqFetchImpl();
+    const polygon = acPolygon("AC-0001", squarePolygon(-56.1, -12.1));
+    const result = await runAcVegetacaoAnalysis(
+      {
+        jobId: "job-noref",
+        clippedGeometries: new Map<string, Geometry[]>([["AREA_CONSOLIDADA", [polygon.geometry]]]),
+        pos2008CompletedAt: null,
+        polygons: [polygon],
+      },
+      {
+        sceneDeps: { fetchImpl: wmsFetchImpl() },
+        visionDeps: { apiKey: "k", fetchImpl: groq.fetchImpl },
+      },
+    );
+
+    expect(result.pos2008JobRef).toBeNull();
+  });
 });

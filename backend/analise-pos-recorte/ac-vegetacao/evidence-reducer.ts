@@ -43,6 +43,15 @@ export function areaToBand(areaHa: number | null | undefined): AcPolygonResult["
 
 const CONFIDENCE_RANK: Record<Confidence, number> = { HIGH: 3, MEDIUM: 2, LOW: 1, INCONCLUSIVE: 0 };
 
+function worstConfidenceOf(obs: AcVegetacaoWindowObservation["observations"]): Confidence {
+  if (obs.length === 0) return "INCONCLUSIVE";
+  let worst: Confidence = "HIGH";
+  for (const o of obs) {
+    if (CONFIDENCE_RANK[o.confidence] < CONFIDENCE_RANK[worst]) worst = o.confidence;
+  }
+  return worst;
+}
+
 function bestConfidenceOf(obs: AcVegetacaoWindowObservation["observations"]): Confidence {
   let best: Confidence = "INCONCLUSIVE";
   for (const o of obs) {
@@ -102,6 +111,16 @@ export function reduceAcVegetacao(input: AcReducerInput, config: AcReducerConfig
   const declaredAlarm = declaredAreaHa >= areaThreshold || declaredFraction >= fractionThreshold;
 
   const flags = [...input.flags];
+  const contextLimitations: string[] = [];
+  // A tipologia da SEMA cobrindo a AC inteira é mapa de cobertura, não declaração
+  // de vegetação nativa: registra-se para quem lê o laudo não confundir os números.
+  if (input.geometric.tipologiaCoversWholeAc) {
+    contextLimitations.push(
+      `TIPOLOGIA_VEGETAL cobre ${(input.geometric.tipologiaFraction * 100).toFixed(0)}% desta AC — ` +
+        "camada de cobertura do imóvel, não mancha declarada; " +
+        `área declarada considerada apenas de: ${input.geometric.declaredSources.join(", ")}.`
+    );
+  }
   const obs = input.window?.observation?.observations;
   const conflicts = input.window?.observation?.conflicts ?? [];
   const usable = (obs || []).filter((o) => o.vegetationInside !== "NOT_OBSERVABLE" && o.confidence !== "INCONCLUSIVE");
@@ -122,10 +141,10 @@ export function reduceAcVegetacao(input: AcReducerInput, config: AcReducerConfig
       confidence: "HIGH",
       evidence: [
         `O próprio projeto declara vegetação dentro da Área Consolidada: ${declaredAreaHa.toFixed(2)} ha (${(declaredFraction * 100).toFixed(1)}% da AC).`,
-        ...(flags.includes("AC_SOBREPOE_ARL") ? ["A AC sobrepõe área de preservação permanente declarada."] : []),
-        ...(flags.includes("AC_SOBREPOE_AUAS") ? ["A AC corta área de uso restrito declarada."] : []),
+        ...(flags.includes("AC_SOBREPOE_ARL") ? ["A AC sobrepõe Área de Reserva Legal (ARL/ARLREM) declarada."] : []),
+        ...(flags.includes("AC_SOBREPOE_AUAS") ? ["A AC sobrepõe Área de Uso Alternativo do Solo (AUAS) declarada."] : []),
       ],
-      limitations: [],
+      limitations: contextLimitations,
     };
   }
 
@@ -156,7 +175,7 @@ export function reduceAcVegetacao(input: AcReducerInput, config: AcReducerConfig
         `Visão registrou vegetação de aparência nativa dentro da AC em ${usable.filter((o) => o.vegetationInside !== "NONE").length} de ${usable.length} cenas utilizáveis (${visualVerdict}).`,
         "Evidências geométricas não declararam vegetação; conferir em campo.",
       ],
-      limitations: [],
+      limitations: contextLimitations,
     };
   }
 
@@ -176,9 +195,11 @@ export function reduceAcVegetacao(input: AcReducerInput, config: AcReducerConfig
       geometric: input.geometric,
       visual,
       flags,
-      confidence: "HIGH",
+      // A pior confiança entre as cenas que sustentam a ausência. Fixar "HIGH"
+      // aqui carimbava certeza alta num laudo apoiado em cenas MEDIUM.
+      confidence: worstConfidenceOf(reliable),
       evidence: [],
-      limitations: [],
+      limitations: contextLimitations,
     };
   }
 
@@ -197,6 +218,7 @@ export function reduceAcVegetacao(input: AcReducerInput, config: AcReducerConfig
     limitations: [
       "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente.",
       ...conflicts,
+      ...contextLimitations,
     ],
   };
 }

@@ -24,7 +24,10 @@ export type PhaseBlockedReason =
   | "phase_not_implemented"
   | "phase_running"
   | "other_phase_running"
-  | "phase_stale";
+  /** O resultado DESTA fase envelheceu — pode ser refeita agora. */
+  | "phase_stale"
+  /** A fase ANTERIOR envelheceu — refazer aquela primeiro; esta continua trancada. */
+  | "previous_phase_stale";
 
 export type PhaseEstimate = {
   polygons: number;
@@ -94,6 +97,7 @@ const BLOCKED_MESSAGES: Record<PhaseBlockedReason, string> = {
   phase_running: "Análise desta fase em andamento.",
   other_phase_running: "Aguardando a fase em execução terminar.",
   phase_stale: "O resultado anterior ficou desatualizado. Refaça esta fase.",
+  previous_phase_stale: "A fase anterior ficou desatualizada. Refaça a fase anterior para liberar esta.",
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -319,8 +323,11 @@ function derivePhase3(input: DerivePhasesInput): PhaseStatus {
   if (!pos2008Meta || !readString(pos2008Meta.completedAt)) return blocked("requires_POS_2008");
 
   if (input.runningPhase && input.runningPhase !== "AC_VEG") return blocked("other_phase_running");
+  // Fase 2 envelhecida: a Fase 3 consumiria uma datação que já não corresponde ao
+  // recorte. Motivo próprio (`previous_phase_stale`) porque, ao contrário do
+  // `phase_stale`, refazer ESTA fase não resolve — quem tem de rodar é a Fase 2.
   if (isStaleAfter(pos2008Meta, input.auasMeta, "pre2008JobRef")) {
-    return blocked("phase_stale", {
+    return blocked("previous_phase_stale", {
       state: "STALE",
       stale: true,
       estimate: estimatePhase3(input.acPolygonCount),
@@ -420,6 +427,11 @@ export function checkPhaseGate(
 ): { status: number; body: { error: string; code: string; requires?: PhaseId } } | null {
   const status = phases.phases[phase];
   if (status.state === "AVAILABLE" || status.state === "COMPLETED") return null;
+  // STALE do próprio resultado libera: o estado diz "Refaça esta fase", então a
+  // rota tem de aceitar a re-execução. Recusar trancava a fase para sempre —
+  // refazer a fase anterior só deixava esta ainda mais velha. Já o STALE herdado
+  // (`previous_phase_stale`) continua barrado: quem precisa rodar é a fase de trás.
+  if (status.state === "STALE" && status.blockedReason === "phase_stale") return null;
   if (status.blockedReason === "phase_running") {
     return {
       status: 409,

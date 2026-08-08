@@ -44,3 +44,33 @@ describe("buildTimelinePlan", () => {
     expect(bridge?.alternateLayers[2018]).toEqual(["Mosaicos:SENTINEL_2_2018"]);
   });
 });
+
+describe("knownSensorBoundaries com ano reprovado", () => {
+  it("mantém a fronteira quando o ano da troca de sensor sai da série", () => {
+    // 2012 (ResourceSat) reprovado no GetMap vira `preferred: null` no meio do
+    // catálogo. A fronteira real passa a ser 2011 (L5) → 2013 (L8): comparar só
+    // vizinhos de array fazia a troca de sensor desaparecer com o ano.
+    const catalog = [
+      entry(2009, "LANDSAT_5"),
+      entry(2010, "LANDSAT_5"),
+      entry(2011, "LANDSAT_5"),
+      { ...entry(2012, "RESOURCESAT"), preferred: null, alternates: [], missing: true },
+      entry(2013, "LANDSAT_8"),
+      entry(2014, "LANDSAT_8"),
+    ];
+
+    const plan = buildTimelinePlan(catalog);
+    expect(plan.boundaries).toContainEqual({ fromYear: 2011, toYear: 2013 });
+    expect(plan.missingYears).toEqual([2012]);
+    expect(plan.windows.find((w) => w.windowId === "W2011_2013")?.years).toEqual([2011, 2013]);
+  });
+
+  it("não inventa fronteira quando o ano removido não trocava de sensor", () => {
+    const catalog = [
+      entry(2009, "LANDSAT_5"),
+      { ...entry(2010, "LANDSAT_5"), preferred: null, alternates: [], missing: true },
+      entry(2011, "LANDSAT_5"),
+    ];
+    expect(buildTimelinePlan(catalog).boundaries).toEqual([]);
+  });
+});

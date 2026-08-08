@@ -22,6 +22,8 @@ function geometric(overrides: Partial<AcPolygonResult["geometric"]> = {}): AcPol
     sliversDiscardedM2: 0,
     declaredVegetationAreaHa: 0,
     declaredVegetationFraction: 0,
+    declaredSources: ["AVN"],
+    tipologiaCoversWholeAc: false,
     ...overrides,
   };
 }
@@ -185,13 +187,53 @@ describe("reduceAcVegetacao", () => {
     expect(result.status).toBe("INCONCLUSIVO");
   });
 
-  it("flags AC_SOBREPOE_* entram na evidência da declaração", () => {
+  it("flags AC_SOBREPOE_* entram na evidência com a nomenclatura correta", () => {
+    // O texto antigo chamava ARL de "área de preservação permanente" e AUAS de
+    // "área de uso restrito". ARL é Área de Reserva Legal e AUAS é Área de Uso
+    // Alternativo do Solo — nomes errados num laudo técnico do SIMCAR.
     const input = baseInput({
       geometric: geometric({ declaredVegetationAreaHa: 0.6, declaredVegetationFraction: 0.06 }),
-      flags: ["AC_SOBREPOE_ARL"],
+      flags: ["AC_SOBREPOE_ARL", "AC_SOBREPOE_AUAS"],
     });
     const result = reduceAcVegetacao(input);
-    expect(result.evidence.join(" ")).toContain("sobrepõe área de preservação permanente");
+    const evidence = result.evidence.join(" ");
+    expect(evidence).toContain("Área de Reserva Legal (ARL/ARLREM)");
+    expect(evidence).toContain("Área de Uso Alternativo do Solo (AUAS)");
+    expect(evidence).not.toContain("preservação permanente");
+    expect(evidence).not.toContain("uso restrito");
+  });
+
+  it("ausência de vegetação não carimba confiança HIGH sobre cenas MEDIUM", () => {
+    const input = baseInput({
+      window: {
+        observation: {
+          schemaVersion: 1,
+          polygonId: "AC-0001",
+          windowId: "WAVAC_ATUAL",
+          inspectedSceneIds: ["S2_2024", "S2_2021"],
+          observations: [
+            { sceneId: "S2_2024", year: 2024, vegetationInside: "NONE", confidence: "MEDIUM", estimatedFraction: 0, distribution: null, evidence: [], limitations: [] },
+            { sceneId: "S2_2021", year: 2021, vegetationInside: "NONE", confidence: "HIGH", estimatedFraction: 0, distribution: null, evidence: [], limitations: [] },
+          ],
+          conflicts: [],
+        },
+      },
+    });
+    const result = reduceAcVegetacao(input);
+    expect(result.status).toBe("SEM_VEGETACAO_APARENTE");
+    expect(result.confidence).toBe("MEDIUM");
+  });
+
+  it("tipologia de cobertura total vira limitação explícita no resultado", () => {
+    const input = baseInput({
+      geometric: geometric({
+        tipologiaFraction: 1,
+        tipologiaAreaHa: 10,
+        tipologiaCoversWholeAc: true,
+      }),
+    });
+    const result = reduceAcVegetacao(input);
+    expect(result.limitations.join(" ")).toContain("camada de cobertura do imóvel");
   });
 });
 

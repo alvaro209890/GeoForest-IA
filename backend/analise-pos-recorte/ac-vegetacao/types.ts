@@ -82,6 +82,10 @@ export type AcPolygonResult = {
     sliversDiscardedM2: number;
     declaredVegetationAreaHa: number;
     declaredVegetationFraction: number;
+    /** Camadas somadas na área declarada (default: só AVN). */
+    declaredSources: string[];
+    /** TIPOLOGIA_VEGETAL cobre ~toda a AC (camada de cobertura, não declaração). */
+    tipologiaCoversWholeAc: boolean;
   };
   visual: {
     verdict: "NONE" | "SPARSE" | "PATCHES" | "LARGE_BLOCK" | "NOT_OBSERVABLE";

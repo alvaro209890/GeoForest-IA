@@ -48,16 +48,25 @@ export type BridgePairSpec = {
 export function knownSensorBoundaries(catalog?: YearCatalogEntry[]): SensorBoundary[] {
   const dynamic: SensorBoundary[] = [];
   if (catalog && catalog.length > 0) {
-    for (let i = 1; i < catalog.length; i++) {
-      const prev = catalog[i - 1];
-      const curr = catalog[i];
-      if (!prev.preferred || !curr.preferred) continue;
-      if (prev.preferred.sensor !== curr.preferred.sensor) {
-        dynamic.push({ fromYear: prev.year, toYear: curr.year });
+    // Compara anos HABILITADOS consecutivos, não posições vizinhas no array: um
+    // ano reprovado no GetMap vira `preferred: null` no meio da série, e comparar
+    // só vizinhos de array fazia a fronteira sumir junto com ele. Ex.: 2012
+    // (ResourceSat) cai → 2011 (L5) e 2013 (L8) deixavam de acusar troca de
+    // sensor, e o redutor confirmava ano exato atravessando a troca sem ponte.
+    let previous: YearCatalogEntry | null = null;
+    for (const entry of catalog) {
+      if (!entry.preferred) continue;
+      if (previous?.preferred && previous.preferred.sensor !== entry.preferred.sensor) {
+        dynamic.push({ fromYear: previous.year, toYear: entry.year });
       }
+      previous = entry;
     }
+    // Catálogo presente manda, inclusive quando a resposta é "nenhuma fronteira".
+    // Cair na lista estática aqui inventava trocas de sensor que aquele catálogo
+    // não tem (ex.: série curta, toda Landsat 5), e fronteira falsa rebaixa
+    // CONFIRMADO_ANO para CONFIRMADO_INTERVALO sem motivo.
+    return dynamic;
   }
-  if (dynamic.length > 0) return dynamic;
   return POS2008_SENSOR_BOUNDARIES.filter(
     (b) => b.fromYear >= POS2008_SERIES_START && b.toYear <= POS2008_SERIES_END
   );

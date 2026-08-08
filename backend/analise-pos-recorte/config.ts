@@ -1,3 +1,5 @@
+import { DEFAULT_DECLARED_SOURCES, type DeclaredSource } from "./ac-vegetacao/geometry-evidence";
+
 const TRUE_VALUES = new Set(["1", "true", "TRUE", "True"]);
 const FALSE_VALUES = new Set(["0", "false", "FALSE", "False"]);
 
@@ -95,11 +97,35 @@ export type AcVegetacaoConfig = {
   minSliverM2: number;
   minDeclaredFraction: number;
   minDeclaredAreaHa: number;
+  /** Camadas que contam como "vegetação declarada" no alerta ALTO. */
+  declaredSources: DeclaredSource[];
+  /** AC menor que isto não paga cena/visão: vira INCONCLUSIVO por área mínima. */
+  minAnalysableAreaHa: number;
 };
+
+function readDeclaredSources(): DeclaredSource[] {
+  const raw = readString("SIMCAR_AC_VEG_DECLARED_SOURCES", "");
+  if (!raw) return [...DEFAULT_DECLARED_SOURCES];
+  const parsed = raw
+    .split(",")
+    .map((part) => part.trim().toUpperCase())
+    .filter(Boolean);
+  const invalid = parsed.filter((part) => part !== "AVN" && part !== "TIPOLOGIA_VEGETAL");
+  if (invalid.length > 0 || parsed.length === 0) {
+    throw new Error(
+      `SIMCAR_AC_VEG_DECLARED_SOURCES inválida: "${raw}". Use AVN e/ou TIPOLOGIA_VEGETAL separadas por vírgula.`
+    );
+  }
+  return [...new Set(parsed)] as DeclaredSource[];
+}
 
 /** Fontes da Fase 3 descobertas no GetCapabilities da SEMA (F0.1). */
 export function getAcVegetacaoConfig(): AcVegetacaoConfig {
   return {
+    declaredSources: readDeclaredSources(),
+    // 0,05 ha = 500 m² = ~5 pixels do Sentinel-2. Abaixo disso a visão não tem o
+    // que ver e o doc 06 §3 já manda classificar como INCONCLUSIVO.
+    minAnalysableAreaHa: readNumber("SIMCAR_AC_VEG_MIN_ANALYSABLE_AREA_HA", 0.05, { min: 0 }),
     currentLayer: readString("SIMCAR_AC_VEG_SCENE_CURRENT", "Mosaicos:SENTINEL_2_2024"),
     nirLayer: readString("SIMCAR_AC_VEG_SCENE_NIR_LAYER", "Mosaicos:SENTINEL_2_2025"),
     nirStyle: readString("SIMCAR_AC_VEG_SCENE_NIR_STYLE", "Geoportal_Sentinel_2_2025_NIR"),

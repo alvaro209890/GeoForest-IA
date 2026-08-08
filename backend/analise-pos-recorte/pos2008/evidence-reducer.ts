@@ -13,7 +13,7 @@ import type {
   Pos2008WindowObservation,
 } from "./types";
 import type { SceneUsability } from "../types";
-import type { SensorBoundary } from "./timeline";
+import { POS2008_SERIES_END, POS2008_SERIES_START, type SensorBoundary } from "./timeline";
 
 const CONFIDENCE_RANK: Record<Confidence, number> = {
   HIGH: 3,
@@ -166,23 +166,23 @@ export function reducePos2008Polygon(input: Pos2008ReducerInput): AuasPos2008Pol
   const firstYear = sortedYears[0];
   const firstObs = firstYear !== undefined ? definiteByYear.get(firstYear) : undefined;
   if (
-    firstYear === 2009 &&
+    firstYear === POS2008_SERIES_START &&
     firstObs &&
     firstObs.state === "ANTHROPIZED" &&
-    isUsableYear(input.sceneUsabilityByYear[2009])
+    isUsableYear(input.sceneUsabilityByYear[POS2008_SERIES_START])
   ) {
     const evidence: string[] = [];
     if (input.pre2008.pre2008Alert) {
       evidence.push(
-        "Polígono já antropizado no mosaico de 2009; coerente com o alerta pré-2008 da Fase 1 (evento anterior ao marco)."
+        `Polígono já antropizado no mosaico de ${POS2008_SERIES_START}; coerente com o alerta pré-2008 da Fase 1 (evento anterior ao marco).`
       );
     } else {
-      evidence.push("Polígono já antropizado no mosaico de 2009 — primeiro ano observável da série.");
+      evidence.push(`Polígono já antropizado no mosaico de ${POS2008_SERIES_START} — primeiro ano observável da série.`);
     }
     return {
       ...base,
       status: "JA_ANTROPIZADO_NO_INICIO_DA_SERIE",
-      firstDetectedYear: 2009,
+      firstDetectedYear: POS2008_SERIES_START,
       observedInterval: null,
       confidence: firstObs.confidence,
       crossedSensorBoundary: false,
@@ -207,8 +207,15 @@ export function reducePos2008Polygon(input: Pos2008ReducerInput): AuasPos2008Pol
     const prevUsable = isUsableYear(input.sceneUsabilityByYear[yPrev]);
     const curUsable = isUsableYear(input.sceneUsabilityByYear[y]);
 
-    // ── Regra 2: ano exato exige dois anos consecutivos utilizáveis concordando ──
-    if (prevUsable && curUsable && prevState === "NATIVE_VEGETATION" && curState === "ANTHROPIZED") {
+    const endpointsAgree =
+      prevUsable && curUsable && prevState === "NATIVE_VEGETATION" && curState === "ANTHROPIZED";
+
+    // ── Regra 2: ano exato exige dois anos CONSECUTIVOS utilizáveis concordando ──
+    // Sem o teste de consecutividade, uma transição relatada como 2010→2015 (anos
+    // não vizinhos, porque os intermediários caíram do catálogo) virava
+    // "CONFIRMADO_ANO 2015" — precisão que a série não sustenta. Não-consecutivo
+    // é intervalo, tratado na regra 3.
+    if (endpointsAgree && y === yPrev + 1) {
       const crossed = crossesSensorBoundary(yPrev, y, input.sensorBoundaries);
       const bridgeConfirmed =
         input.bridge.executed &&
@@ -257,16 +264,19 @@ export function reducePos2008Polygon(input: Pos2008ReducerInput): AuasPos2008Pol
     }
 
     // ── Regra 3: nativo em A + antrópico em B, B > A+1 (intermediários não utilizáveis) ──
+    // Os DOIS extremos precisam ser observáveis e concordantes; sem isso o
+    // intervalo se apoiaria numa transição que nenhuma cena utilizável sustenta,
+    // e um par nublado virava "CONFIRMADO_INTERVALO".
     const yA = yPrev;
     const yB = y;
-    if (yB > yA + 1) {
+    if (endpointsAgree && yB > yA + 1) {
       return {
         ...base,
         status: "CONFIRMADO_INTERVALO",
         firstDetectedYear: null,
         observedInterval: { fromYear: yA, toYear: yB },
         confidence: t.confidence,
-        crossedSensorBoundary: false,
+        crossedSensorBoundary: crossesSensorBoundary(yA, yB, input.sensorBoundaries),
         bridgeWindowUsed: null,
         evidence: [
           `Vegetação nativa observável em ${yA} e uso antrópico em ${yB}; anos intermediários não utilizáveis.`,
@@ -285,7 +295,12 @@ export function reducePos2008Polygon(input: Pos2008ReducerInput): AuasPos2008Pol
   }
 
   // ── Lacunas críticas: série exigida com algum ano não utilizável ──
-  const seriesYears = Array.from({ length: 11 }, (_, i) => 2009 + i);
+  // A série cobrada é a INTEIRA (constantes do plano), não só os anos que vieram
+  // no catálogo: ano que sequer foi olhado não pode virar "sem mudança".
+  const seriesYears = Array.from(
+    { length: POS2008_SERIES_END - POS2008_SERIES_START + 1 },
+    (_, i) => POS2008_SERIES_START + i
+  );
   const missingUsable = seriesYears.filter(
     (y) => !isUsableYear(input.sceneUsabilityByYear[y]) || !definiteByYear.has(y)
   );
@@ -320,7 +335,7 @@ export function reducePos2008Polygon(input: Pos2008ReducerInput): AuasPos2008Pol
     confidence: worstConfidence,
     crossedSensorBoundary: false,
     bridgeWindowUsed: null,
-    evidence: ["Nenhuma conversão de vegetação nativa observada na série 2009–2019 analisada."],
+    evidence: [`Nenhuma conversão de vegetação nativa observada na série ${POS2008_SERIES_START}–${POS2008_SERIES_END} analisada.`],
     limitations: [
       ...limitations,
       "Ausência de mudança observada nesta série não certifica ausência de desmate; para eventos a partir de 2019, consultar a aba AUAS × SCCON (datação por alerta oficial).",

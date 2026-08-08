@@ -10,7 +10,9 @@ export type Pos2008Sensor =
   | "LANDSAT_8"
   | "RESOURCESAT"
   | "SENTINEL_2"
-  | "SPOT";
+  | "SPOT"
+  /** Camada forçada por env cujo nome não casa com nenhum padrão conhecido. */
+  | "UNKNOWN";
 
 export type Pos2008WindowId = "W2009_2011"
   | "W2011_2013"
@@ -19,7 +21,7 @@ export type Pos2008WindowId = "W2009_2011"
   | "W2017_2019"
   | "WBRIDGE";
 
-/** Fazendas de sensor conhecidas entre anos consecutivos da série 2009–2019. */
+/** Fronteiras de sensor conhecidas entre anos consecutivos da série 2009–2019. */
 export const POS2008_SENSOR_BOUNDARIES: Array<{ fromYear: number; toYear: number }> = [
   { fromYear: 2011, toYear: 2012 },
   { fromYear: 2012, toYear: 2013 },

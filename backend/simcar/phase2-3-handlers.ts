@@ -389,7 +389,9 @@ export async function handleAcVegetacaoRoute(
                 {
                     jobId: ctx.jobId,
                     clippedGeometries: ctx.clippedGeometries,
-                    pos2008CompletedAt: pos2008Meta?.completedAt || new Date().toISOString(),
+                    // Sem Fase 2 concluída vai `null`: usar "agora" carimbava no
+                    // laudo uma referência de datação que nunca existiu.
+                    pos2008CompletedAt: pos2008Meta?.completedAt || null,
                     polygons: acPolygons,
                 },
                 {

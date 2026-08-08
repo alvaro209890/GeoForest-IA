@@ -57,7 +57,10 @@ function catalog(): PosCatalog {
 }
 
 describe("runPos2008Analysis", () => {
-  it("executa a ponte com alternativa de apenas um lado sem trocar a série normal", async () => {
+  // Gera e redimensiona 12 PNGs com sharp: ~1 s sozinho, mas o default de 5 s do
+  // vitest estourava quando este arquivo dividia CPU com `processar-projeto.test.ts`
+  // (~108 s) na suíte completa — o `main` ficava vermelho de forma intermitente.
+  it("executa a ponte com alternativa de apenas um lado sem trocar a série normal", { timeout: 60_000 }, async () => {
     const raw = Buffer.alloc(800 * 600 * 3);
     for (let i = 0; i < raw.length; i += 3) {
       const pixel = i / 3;

@@ -13,7 +13,7 @@
  */
 import crypto from "crypto";
 
-export type SensorId = "LANDSAT_5" | "LANDSAT_7" | "LANDSAT_8" | "RESOURCESAT" | "SENTINEL_2" | "SPOT";
+export type SensorId = "LANDSAT_5" | "LANDSAT_7" | "LANDSAT_8" | "RESOURCESAT" | "SENTINEL_2" | "SPOT" | "UNKNOWN";
 
 export type WmsLayerRef = {
   layer: string;
@@ -162,12 +162,16 @@ export function buildYearCatalog(layerNames: string[], options: BuildYearCatalog
     const candidates = (byYear.get(year) || []).slice().sort(bySensorPreference);
     const override = options.overrides?.[year];
     const overridden = override ? candidates.find((c) => c.layer === override) : undefined;
-    const preferred =
-      overridden ||
-      (override && !overridden
-        ? ({ layer: override, sensor: "SENTINEL_2", year, nir: false } as WmsLayerRef)
-        : candidates[0]) ||
-      null;
+    // Override de camada não publicada: classificar o NOME para descobrir o sensor.
+    // Assumir SENTINEL_2 fixo (como antes) inventava uma troca de sensor onde não
+    // havia — ou escondia a real —, e é a troca de sensor que exige janela-ponte.
+    // `year` é sempre o ano da SÉRIE, não o do nome da camada: um override
+    // apontando para outro ano não pode reetiquetar a cena.
+    const overrideRef: WmsLayerRef | null =
+      override && !overridden
+        ? { ...(classifyMosaicLayer(override) || { layer: override, sensor: "UNKNOWN" as const, nir: false }), year }
+        : null;
+    const preferred = overridden || overrideRef || candidates[0] || null;
     const alternates = candidates.filter((c) => c.layer !== preferred?.layer);
     const sensorBoundary = !!preferred && previousSensor !== null && preferred.sensor !== previousSensor;
     entries.push({

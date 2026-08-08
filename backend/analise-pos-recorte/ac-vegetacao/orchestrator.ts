@@ -14,11 +14,12 @@ import type { Geometry } from "geojson";
 import type { WmsFetchDeps } from "../wms-scenes";
 import { getAcVegetacaoConfig, type AcVegetacaoConfig } from "../config";
 import { buildAcVegetacaoScene, type AcSceneSpec } from "./scenes";
-import { computeAcGeometricEvidence } from "./geometry-evidence";
+import { computeAcGeometricEvidence, prepareLayerUnions, type PreparedLayerUnions } from "./geometry-evidence";
 import { reduceAcVegetacao } from "./evidence-reducer";
 import { buildAcVegetacaoReport } from "./report-builder";
 import { requestAcVegetacaoVisionWindow, type AcVegetacaoVisionDeps } from "./groq-vision-client";
 import { AC_VEGETATION_WINDOW_ID } from "./types";
+import { POS2008_RULES_VERSION } from "../pos2008/orchestrator";
 import type { AcVegetacaoWindowRun, AcPolygonResult, AcPotentialPolygon, AcVegetacaoAnalysis } from "./types";
 
 export { AC_VEGETATION_RULES_VERSION } from "./types";
@@ -27,7 +28,8 @@ import { AC_VEGETATION_RULES_VERSION } from "./types";
 export type AcVegetacaoRunInput = {
   jobId: string;
   clippedGeometries: Map<string, Geometry[]> | undefined;
-  pos2008CompletedAt: string;
+  /** `null` quando a Fase 2 não foi concluída — não se inventa a referência. */
+  pos2008CompletedAt: string | null;
   polygons: AcPotentialPolygon[];
 };
 
@@ -80,6 +82,14 @@ function emptyAcAnalysis(jobId: string, startedAt: string, completedAt: string):
   };
 }
 
+/** Ano no fim do nome do mosaico (`Mosaicos:SENTINEL_2_2024` → 2024). */
+function yearFromLayerName(layer: string): number | null {
+  const match = /_(\d{4})$/.exec(layer);
+  if (!match) return null;
+  const year = Number(match[1]);
+  return Number.isInteger(year) ? year : null;
+}
+
 function toDataUrl(buffer: Buffer): string {
   return `data:image/png;base64,${buffer.toString("base64")}`;
 }
@@ -101,8 +111,21 @@ export async function runAcVegetacaoAnalysis(
   const layers = input.clippedGeometries ?? new Map<string, Geometry[]>();
   const config = deps.config || getAcVegetacaoConfig();
 
+  // Uniões das camadas do recorte: uma vez só, reaproveitadas por todas as ACs.
+  const preparedUnions = prepareLayerUnions({
+    AVN: layers.get("AVN"),
+    TIPOLOGIA_VEGETAL: layers.get("TIPOLOGIA_VEGETAL"),
+    ARL: layers.get("ARL"),
+    ARLREM: layers.get("ARLREM"),
+    AUAS: layers.get("AUAS"),
+  });
+
+  // O ano da cena atual sai do NOME da camada: fixar 2024 aqui fazia um override
+  // por env (`SIMCAR_AC_VEG_SCENE_CURRENT`) rotular a cena com o ano errado, e o
+  // validador do JSON compara o ano declarado com o da cena enviada.
+  const currentYear = yearFromLayerName(config.currentLayer) ?? 2024;
   const sceneSpecs: AcSceneSpec[] = [
-    { sceneId: "S2_2024", year: 2024, sensor: "SENTINEL_2", layer: config.currentLayer },
+    { sceneId: `S2_${currentYear}`, year: currentYear, sensor: "SENTINEL_2", layer: config.currentLayer },
     {
       sceneId: `S2_${config.nirYear}_NIR`,
       year: config.nirYear,
@@ -119,8 +142,9 @@ export async function runAcVegetacaoAnalysis(
   const limitations: string[] = [];
   const onProgress = deps.onProgress || (() => {});
 
-  for (const polygon of targets) {
-    const idx = targets.indexOf(polygon) + 1;
+  for (let index = 0; index < targets.length; index++) {
+    const polygon = targets[index];
+    const idx = index + 1;
     onProgress({
       step: "analyzing_polygon",
       percent: Math.round((idx / targets.length) * 90),
@@ -129,7 +153,42 @@ export async function runAcVegetacaoAnalysis(
       polygonTotal: targets.length,
     });
 
-    const { geometric, flags } = computeGeometric(polygon.geometry, layers, config);
+    const { geometric, flags } = computeGeometric(polygon.geometry, layers, config, preparedUnions);
+
+    // AC menor que a resolução efetiva do sensor: o doc 06 §3 já manda dar
+    // INCONCLUSIVO. Fazer isso ANTES das cenas evita 3 GetMap + 1 chamada de visão
+    // por polígono inútil — o recorte real da Santa Clara tem 5 ACs de ~0,00 ha.
+    if (polygon.areaHa < config.minAnalysableAreaHa) {
+      windows.push({
+        polygonId: polygon.polygonId,
+        windowId: AC_VEGETATION_WINDOW_ID,
+        status: "SKIPPED",
+        model: AC_VEGETATION_RULES_VERSION,
+        errorCode: "POLYGON_TOO_SMALL",
+      });
+      const tooSmall = reduceAcVegetacao(
+        {
+          polygonId: polygon.polygonId,
+          geometryHash: polygon.geometryHash,
+          areaHa: polygon.areaHa,
+          geometric,
+          window: null,
+          flags,
+          pos2008CompletedAt: input.pos2008CompletedAt,
+        },
+        {
+          declaredFractionThreshold: config.minDeclaredFraction,
+          declaredAreaHaThreshold: config.minDeclaredAreaHa,
+        },
+      );
+      tooSmall.limitations = [
+        `Área de ${polygon.areaHa.toFixed(4)} ha abaixo do mínimo analisável (${config.minAnalysableAreaHa} ha): sem leitura visual.`,
+        ...tooSmall.limitations,
+      ];
+      polygons.push(tooSmall);
+      limitations.push(`${polygon.polygonId}: AC menor que o mínimo analisável; apenas evidência geométrica.`);
+      continue;
+    }
 
     const builtScenes = [];
     const usedScenes = [];
@@ -225,7 +284,11 @@ export async function runAcVegetacaoAnalysis(
     rulesVersion: AC_VEGETATION_RULES_VERSION,
     phase: "AC_VEG",
     jobId: input.jobId,
-    pos2008JobRef: { rulesVersion: "auas-pos2008-v1", completedAt: input.pos2008CompletedAt },
+    // Sem Fase 2 concluída não se inventa referência: `null` é honesto, e
+    // `POS2008_RULES_VERSION` importado evita a string solta envelhecer sozinha.
+    pos2008JobRef: input.pos2008CompletedAt
+      ? { rulesVersion: POS2008_RULES_VERSION, completedAt: input.pos2008CompletedAt }
+      : null,
     summary,
     polygons,
     scenes,
@@ -241,6 +304,7 @@ function computeGeometric(
   acGeometry: Geometry,
   layers: Map<string, Geometry[]>,
   config: AcVegetacaoConfig,
+  prepared?: PreparedLayerUnions,
 ): { geometric: AcPolygonResult["geometric"]; flags: string[] } {
   const { geometric } = computeAcGeometricEvidence(
     {
@@ -253,7 +317,7 @@ function computeGeometric(
         AUAS: layers.get("AUAS"),
       },
     },
-    { sliverThresholdM2: config.minSliverM2 }
+    { sliverThresholdM2: config.minSliverM2, declaredSources: config.declaredSources, prepared }
   );
   const flags: string[] = [];
   if (geometric.arlAreaHa > 0) flags.push("AC_SOBREPOE_ARL");

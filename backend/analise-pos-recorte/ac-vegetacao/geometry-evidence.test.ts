@@ -10,6 +10,7 @@ import type { Geometry } from "geojson";
 
 import {
   computeAcGeometricEvidence,
+  prepareLayerUnions,
   unionLayerGeometries,
 } from "./geometry-evidence";
 
@@ -108,5 +109,83 @@ describe("computeAcGeometricEvidence", () => {
     expect(result.geometric.arlAreaHa).toBeGreaterThan(0);
     expect(result.geometric.auasAreaHa).toBeGreaterThan(0);
     expect(result.geometric.declaredVegetationAreaHa).toBe(0);
+  });
+});
+
+describe("área declarada: fonte das camadas", () => {
+  /**
+   * Cenário medido no recorte real da Santa Clara (2026-08-07): a
+   * `TIPOLOGIA_VEGETAL` da SEMA cobre a AC inteira — é o mapa de tipologia do
+   * imóvel, não uma declaração de vegetação nativa. Somá-la à área declarada
+   * fazia 100% das ACs baterem o limiar e saírem como alerta ALTO.
+   */
+  const ac = box(0, 0, 0.05);
+  const tipologiaTotal = box(-0.01, -0.01, 0.09); // engloba a AC inteira
+
+  it("por padrão a tipologia de cobertura total NÃO entra na área declarada", () => {
+    const { geometric } = computeAcGeometricEvidence({
+      acGeometry: ac,
+      layers: { TIPOLOGIA_VEGETAL: [tipologiaTotal] },
+    });
+
+    expect(geometric.tipologiaFraction).toBeCloseTo(1, 2);
+    expect(geometric.tipologiaCoversWholeAc).toBe(true);
+    expect(geometric.declaredVegetationAreaHa).toBe(0);
+    expect(geometric.declaredSources).toEqual(["AVN"]);
+  });
+
+  it("AVN dentro da AC entra na área declarada", () => {
+    const avn = box(0.01, 0.01, 0.02);
+    const { geometric } = computeAcGeometricEvidence({
+      acGeometry: ac,
+      layers: { AVN: [avn] },
+    });
+
+    expect(geometric.avnAreaHa).toBeGreaterThan(0);
+    expect(geometric.declaredVegetationAreaHa).toBeCloseTo(geometric.avnAreaHa, 6);
+  });
+
+  it("com TIPOLOGIA_VEGETAL habilitada por env, ela volta a somar", () => {
+    const { geometric } = computeAcGeometricEvidence(
+      { acGeometry: ac, layers: { TIPOLOGIA_VEGETAL: [tipologiaTotal] } },
+      { declaredSources: ["AVN", "TIPOLOGIA_VEGETAL"] },
+    );
+
+    expect(geometric.declaredVegetationFraction).toBeCloseTo(1, 2);
+  });
+
+  it("sem interseção, `tipologias` fica vazio", () => {
+    // Antes saía "camada TIPOLOGIA_VEGETAL presente" só porque a chave existia
+    // (`[]` é truthy), mesmo para AC que não encosta na camada.
+    const distante = box(10, 10, 0.02);
+    const { geometric } = computeAcGeometricEvidence({
+      acGeometry: ac,
+      layers: { TIPOLOGIA_VEGETAL: [distante] },
+    });
+
+    expect(geometric.tipologiaAreaHa).toBe(0);
+    expect(geometric.tipologias).toEqual([]);
+    expect(geometric.tipologiaCoversWholeAc).toBe(false);
+  });
+});
+
+describe("prepareLayerUnions", () => {
+  it("dá exatamente o mesmo resultado do caminho sem pré-cálculo", () => {
+    const ac = box(0, 0, 0.05);
+    const layers = {
+      AVN: [box(0.01, 0.01, 0.01), box(0.03, 0.03, 0.01), box(30, 30, 0.01)],
+      ARL: [box(0.02, 0.02, 0.005)],
+      AUAS: [box(0.04, 0.0, 0.01)],
+    };
+
+    const direto = computeAcGeometricEvidence({ acGeometry: ac, layers });
+    const comIndice = computeAcGeometricEvidence(
+      { acGeometry: ac, layers },
+      { prepared: prepareLayerUnions(layers) },
+    );
+
+    expect(comIndice.geometric).toEqual(direto.geometric);
+    expect(comIndice.areaHa).toBeCloseTo(direto.areaHa, 9);
+    expect(comIndice.geometric.avnAreaHa).toBeGreaterThan(0);
   });
 });

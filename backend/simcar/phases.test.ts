@@ -179,3 +179,44 @@ describe("checkPhaseGate", () => {
     expect(gate?.body.code).toBe("PHASE_ALREADY_RUNNING");
   });
 });
+
+describe("STALE não pode virar deadlock", () => {
+  /** F1 refeita depois da F2 ⇒ o resultado da F2 envelheceu. */
+  const staleF2 = base({
+    auasMeta: { ...phase1Done, completedAt: "2026-02-01T00:00:00.000Z" },
+    auasPos2008Meta: pos2008Done,
+  });
+
+  it("STALE do próprio resultado libera a re-execução da fase", () => {
+    // Regressão: o estado dizia "Refaça esta fase" e o gate respondia 409
+    // PHASE_NOT_READY. Refazer a F1 só deixava a F2 ainda mais velha — a fase
+    // ficava trancada para sempre.
+    const phases = derivePhases(staleF2);
+    expect(phases.phases.POS_2008.state).toBe("STALE");
+    expect(phases.phases.POS_2008.blockedReason).toBe("phase_stale");
+    expect(checkPhaseGate(phases, "POS_2008")).toBeNull();
+  });
+
+  it("STALE herdado da fase anterior continua barrado, com motivo próprio", () => {
+    const phases = derivePhases(staleF2);
+    expect(phases.phases.AC_VEG.state).toBe("STALE");
+    expect(phases.phases.AC_VEG.blockedReason).toBe("previous_phase_stale");
+    expect(checkPhaseGate(phases, "AC_VEG")?.body.code).toBe("PHASE_NOT_READY");
+  });
+
+  it("refeita a F2, a F3 volta a liberar", () => {
+    const phases = derivePhases(
+      base({
+        auasMeta: { ...phase1Done, completedAt: "2026-02-01T00:00:00.000Z" },
+        auasPos2008Meta: {
+          ...pos2008Done,
+          completedAt: "2026-02-02T00:00:00.000Z",
+          pre2008JobRef: { completedAt: "2026-02-01T00:00:00.000Z", rulesVersion: phase1Done.rulesVersion },
+        },
+      }),
+    );
+    expect(phases.phases.POS_2008.state).toBe("COMPLETED");
+    expect(phases.phases.AC_VEG.state).toBe("AVAILABLE");
+    expect(checkPhaseGate(phases, "AC_VEG")).toBeNull();
+  });
+});
