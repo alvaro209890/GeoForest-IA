@@ -13,6 +13,65 @@ seguinte. Nada aqui toca em segurança.
 
 ---
 
+## ✅ Status da correção (2026-08-09, rodada de correção)
+
+Os **6 bugs críticos/altos foram corrigidos** na sequência (um commit por bug):
+
+| # | Bug | Commit | Suíte |
+|---|---|---|---|
+| 1 | Download recorte SIMCAR 401 | `09fb80d5` `fix(simcar): download do recorte exigia authUid nunca populado (401 sempre) — rota entra na allowlist de auth` | 632 passed |
+| 2 | Reprovação SIMCAR vira "importação OK" | `17a68315` `fix(simcar-oraculo): reprovação FINALIZADO…REPROVADO saía como importação ok — autofix nunca disparava` | 636 passed (+4 testes) |
+| 3 | Job de geometria trava com UTM | `c93d3c6d` `fix(geometry): job travava com camada UTM — sampleRingEveryMeters reprojetava metros como lon/lat e explodia os passos` | 638 passed (+2 testes) |
+| 4 | Race de conversa no chat | `705275d3` `fix(chat): race corrompia conversas — trocar de conversa no meio do stream gravava a lista da conversa errada no Firestore` | 631 passed |
+| 5 | CRS UTM sem "ZONE" | `e8bb4bbe` `fix(geo): .prj ESRI SIRGAS_2000_UTM_21S sem a palavra Zone era tratado como EPSG:4674 — áreas em metros viravam graus` | 631 passed |
+| 6 | `minOverlapM2` vaza | `ab1503ac` `fix(geometry): minOverlapM2 vazava para contenção, vazios e AIR×ATP — subir o limiar de sobreposição na UI mudava 3 validações em silêncio` | 632 passed |
+
+Detalhes de cada correção nas seções abaixo. **Pendentes (médios/baixos):** itens 7–27
+e os baixos — seguir em rodadas seguintes, um bug por commit.
+
+### Como cada um foi corrigido
+
+**1. Download do recorte (rota fora da allowlist).** A regex
+`^\/api\/simcar\/clip\/[^/]+$` não cobria 2 segmentos (`download/:jobId`), então
+`requireAuth` nunca rodava e o `authUid` exigido pela rota nunca era populado.
+Adicionada a entrada `^\/api\/simcar\/clip\/download\/[^/]+$` em
+`backend/auth-required-paths.ts` (mesmo padrão dos outros endpoints de download) +
+regressão no `routes-phases.test.ts`.
+
+**2. Reprovação SIMCAR.** `ok: reallyOk || ok` ≡ `ok`. Extraída a regra única
+`isImportOk(resultado)` (`FINALIZADO` e não `COM_PENDENCIA`/`REPROV`) em
+`import-shape.ts`, agora usada também em `process-geo.ts` (era cópia inline
+divergente). Teste novo `import-shape.test.ts` com os 4 casos (FINALIZADO,
+COM_PENDENCIA, REPROVADO, outros).
+
+**3. Job UTM travado.** `sampleRingEveryMeters` projetava sempre de WGS84.
+Agora recebe o `crs` da camada e só projeta se `crs.kind === "geographic"`
+(mesma regra de `candidateWidthM` em gaps.ts). Chamador
+(`umida-containment.ts`) passa `umida.crs`. Teste novo `sample-ring.test.ts`:
+anel UTM de 1 km amostrado em ~201 pontos (antes ~953k) e caso geográfico.
+
+**4. Race de conversa.** O `handleSend` agora captura o **escopo do stream** no
+início (conversa de origem + lista de mensagens dela, congeladas) e toda
+gravação (patches de upload, fallback 404, fim do SSE) escreve nesse escopo —
+nunca no `messagesRef.current` vivo nem na conversa ativa do momento. Espelho
+`activeConversationIdRef` detecta troca de conversa no meio do stream para não
+sobrescrever a UI da conversa para a qual o usuário navegou. Obs.: o app usa o
+shim `localFirestore` (`DocRef` sem `.id`), então `createConversation` passou a
+retornar `{ ref, id }`.
+
+**5. CRS ESRI sem "ZONE".** `detectUtmProj` ganhou o fallback
+`UTM[_\s]*(\d{1,2})\s*([NS])?(?![0-9])` (com lookahead para não casar "UTM_201"
+como zona 20). Cobre `SIRGAS_2000_UTM_21S` / `WGS_1984_UTM_21N` — afeta
+`detectCrs` e `resolveShapefileCrs` de uma vez. Testes com os dois .prj ESRI
+sem a palavra Zone.
+
+**6. Pisos próprios.** Contenção agora usa só `CONTAINMENT_SLIVER_TOLERANCE_M2`
+(500 m²), vazios só `MIN_GAP_M2` (10 m²) — o `Math.max(..., minOverlapM2)` que
+elevava os pisos conforme o slider da UI foi removido — e AIR×ATP usa o default
+do detector (1 m² + 0,01% relativo), sem receber `minOverlapM2`.
+
+---
+
 ## 🔴 Crítico / Alto (verificados)
 
 ### 1. Download do recorte SIMCAR sempre dá 401 — `backend/simcar/routes.ts:721`
