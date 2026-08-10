@@ -21,6 +21,8 @@ export const AUTH_REQUIRED_PATHS: (string | RegExp)[] = [
   "/api/simcar/clip/report",
   // DELETE de um job de recorte: apaga arquivos a partir de URLs do corpo.
   /^\/api\/simcar\/clip\/[^/]+$/,
+  // Download do ZIP de um job de recorte (2 segmentos — a regex acima não cobre).
+  /^\/api\/simcar\/clip\/download\/[^/]+$/,
   "/api/simcar/receipts/search",
   /^\/api\/simcar\/receipts\/download\/[^/]+$/,
   "/api/cbers-wpm/search",

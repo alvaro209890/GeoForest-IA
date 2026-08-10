@@ -73,6 +73,9 @@ describe("GET /api/simcar/clip/phases/:jobId", () => {
     const { requiresAuth } = await import("../auth-required-paths");
     expect(requiresAuth("/api/simcar/clip/phases/job-1")).toBe(true);
     expect(requiresAuth("/api/simcar/clip/analyze-auas")).toBe(true);
+    // Regressão: download tem 2 segmentos e a regex de DELETE não cobria —
+    // a rota pedia `authUid` que nunca era populado → 401 sempre.
+    expect(requiresAuth("/api/simcar/clip/download/job-1")).toBe(true);
   });
 
   it("R-03: logo após o recorte devolve Fase 1 disponível e as outras bloqueadas", async () => {
