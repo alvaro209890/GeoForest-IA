@@ -16,6 +16,14 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * FINALIZADO sozinho = sucesso; COM_PENDENCIA/REPROVADO = reprovado na prática.
+ * Compartilhado com o pipeline de processamento (process-geo.ts) — não divergir.
+ */
+export function isImportOk(resultado: string): boolean {
+  return /FINALIZADO/.test(resultado) && !/COM_PENDENCIA|REPROV/.test(resultado);
+}
+
+/**
  * Importa ZIP no projeto-teste SIMCAR (upload + ImportarArquivoShape + poll).
  * Sempre enfileirado serialmente.
  */
@@ -192,19 +200,20 @@ export async function importZipOnTestProjectUnlocked(args: {
     });
   }
 
-  const ok = resultado.includes("FINALIZADO") && !resultado.includes("COM_PENDENCIA");
-  // FINALIZADO sozinho = sucesso; COM_PENDENCIA = reprovado na prática
-  const reallyOk = /FINALIZADO/.test(resultado) && !/COM_PENDENCIA|REPROV/.test(resultado);
+  // Antes: `ok: reallyOk || ok` ≡ `ok` (ok é mais frouxo) — reprovação
+  // FINALIZADO … REPROVADO saía como ok:true, autofix não disparava e o
+  // pipeline anunciava "aprovada pela SEMA". Só o reallyOk é confiável.
+  const ok = isImportOk(resultado);
   push({
-    step: reallyOk ? "import_ok" : "import_fail",
-    message: reallyOk
+    step: ok ? "import_ok" : "import_fail",
+    message: ok
       ? "Importação FINALIZADA no SIMCAR."
       : `Importação concluída com pendência: ${resultado}`,
     percent: 100,
   });
 
   return {
-    ok: reallyOk || ok,
+    ok,
     resultado,
     status,
     detalhes,

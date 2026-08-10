@@ -8,6 +8,7 @@ import {
   withSimcarPollRetry,
 } from "./client";
 import { enqueueSimcar } from "./queue";
+import { isImportOk } from "./import-shape";
 import type { OraculoProgress, SimcarProcessOutcome } from "./types";
 
 function sleep(ms: number): Promise<void> {
@@ -159,7 +160,7 @@ export async function processGeoOnTestProjectUnlocked(args: {
     errosZipBuffer = null;
   }
 
-  const reallyOk = /FINALIZADO/.test(resultado) && !/COM_PENDENCIA|REPROV/.test(resultado);
+  const reallyOk = isImportOk(resultado);
   push({
     step: reallyOk ? "process_ok" : "process_fail",
     message: reallyOk ? "Processamento FINALIZADO." : `Processamento: ${resultado}`,
