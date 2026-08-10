@@ -39,6 +39,18 @@ const PRJ_SIRGAS_GEO =
     `GEOGCS["GCS_SIRGAS_2000",DATUM["D_SIRGAS_2000",SPHEROID["GRS_1980",6378137.0,298.257222101]],` +
     `PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]`;
 
+// Variante ESRI oficial SEM a palavra Zone/ZONE no nome do PROJCS
+// (SIRGAS_2000_UTM_21S) — era classificada como geográfica EPSG:4674.
+const PRJ_SIRGAS_UTM21S_SEM_ZONE =
+    `PROJCS["SIRGAS_2000_UTM_21S",GEOGCS["GCS_SIRGAS_2000",DATUM["D_SIRGAS_2000",` +
+    `SPHEROID["GRS_1980",6378137.0,298.257222101]],PRIMEM["Greenwich",0.0],` +
+    `UNIT["Degree",0.0174532925199433]],${UTM_TAIL}`;
+
+const PRJ_WGS84_UTM21N_SEM_ZONE =
+    `PROJCS["WGS_1984_UTM_21N",GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",` +
+    `SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],` +
+    `UNIT["Degree",0.0174532925199433]],${UTM_TAIL}`;
+
 const PRJ_SAD69_GEO =
     `GEOGCS["GCS_South_American_1969",DATUM["D_South_American_1969",` +
     `SPHEROID["GRS_1967_Truncated",6378160.0,298.25]],PRIMEM["Greenwich",0.0],` +
@@ -88,6 +100,17 @@ describe("detectUtmProj", () => {
 
         const wgs = detectUtmProj(PRJ_WGS84_UTM21S)!;
         expect(wgs).toContain("+datum=WGS84");
+    });
+
+    it("reconhece ESRI sem a palavra Zone no nome (SIRGAS_2000_UTM_21S)", () => {
+        const sirgas = detectUtmProj(PRJ_SIRGAS_UTM21S_SEM_ZONE);
+        expect(sirgas).toBeTruthy();
+        expect(sirgas).toContain("+proj=utm +zone=21 +south");
+        expect(sirgas).toContain("+ellps=GRS80 +towgs84=0,0,0");
+
+        const wgsN = detectUtmProj(PRJ_WGS84_UTM21N_SEM_ZONE)!;
+        expect(wgsN).toContain("+proj=utm +zone=21");
+        expect(wgsN).not.toContain("+south");
     });
 
     it("faz round-trip exato para SIRGAS 2000 UTM", () => {

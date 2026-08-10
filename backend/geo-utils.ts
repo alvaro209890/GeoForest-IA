@@ -145,7 +145,10 @@ export function detectUtmProj(prjText: string) {
     const upper = prjText.toUpperCase();
     const zoneMatch =
         upper.match(/UTM[^0-9]*ZONE[^0-9]*(\d{1,2})\s*([NS])?/) ||
-        upper.match(/ZONE[_\s]*(\d{1,2})\s*([NS])?/);
+        upper.match(/ZONE[_\s]*(\d{1,2})\s*([NS])?/) ||
+        // ESRI sem a palavra Zone/ZONE: SIRGAS_2000_UTM_21S, WGS_1984_UTM_21N…
+        // (?![0-9]) evita casar "UTM_201" como zona 20.
+        upper.match(/UTM[_\s]*(\d{1,2})\s*([NS])?(?![0-9])/);
     if (!zoneMatch) return null;
     const zone = Number(zoneMatch[1]);
     if (!Number.isFinite(zone) || zone <= 0 || zone > 60) return null;
