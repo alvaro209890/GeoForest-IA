@@ -19,20 +19,30 @@
 | R13 | **Chave de API vazando** em prompt, log ou fixture | Regra herdada: segredo só em env do backend; URLs persistidas sem `authkey`; revisão no PR de cada fase |
 | R14 | **Custo cobrado sem resultado** (job cai depois de 40 chamadas) | Reserva/liquidação por fase + checkpoints: retomar não recobra o que já foi feito |
 
-## 2. Decisões em aberto (precisam do Álvaro)
+## 2. Decisões fechadas (Álvaro | 2026-08-10)
 
-| # | Pergunta | Default proposto |
+| # | Pergunta | Decisão |
 |---|---|---|
-| **A1** | A Fase 2 começa em **2009** (primeiro ano pós-marco) ou inclui **Landsat 5 2008** como cena de calibração do mesmo ano do SPOT? | Começar em 2009; incluir L5 2008 apenas como cena de referência opcional, sem poder de datar |
-| **A2** | Em 2016 e 2017 há **Landsat 8 e Sentinel-2**. Qual usar? | Landsat 8 (continuidade com 2013–2015); Sentinel-2 fica como candidato da janela-ponte |
-| **A3** | Na Fase 3, qual o **limiar de vegetação declarada** que dispara alerta ALTO, e o tamanho de sliver a descartar? | ≥ 1% da AC **ou** ≥ 0,5 ha; slivers < 500 m² descartados |
-| **A4** | Existe **teto de polígonos** por job (para não travar a fila com um imóvel de 200 AUAS)? | Sem teto (`0`), mas com prévia de ETA e aviso quando passar de ~30 polígonos |
-| **A5** | O que acontece com o **fluxo V1 (2008–2024)** quando a Fase 1 ligar? | Vira legado somente-leitura: cards antigos abrem, mas nenhuma análise nova usa V1 |
-| **A6** | A Fase 3 **precisa mesmo** da Fase 2 concluída, ou pode ser liberada logo após a Fase 1? | Manter o pedido original (exige Fase 2). Nota técnica: ela não depende de dado da Fase 2 — é escolha de fluxo, e pode ser afrouxada depois sem retrabalho |
-| **A7** | Quando a Fase 2 der `SEM_MUDANCA_OBSERVADA`, o sistema deve **encadear automaticamente** a consulta SCCON (≥2019) ou só sugerir a aba? | Só sugerir, com link para a aba AUAS × SCCON |
-| **A8** | As **cenas** analisadas devem ser guardadas para o usuário rever, ou só o hash/proveniência? | Só proveniência + hash por padrão; guardar imagem apenas dos polígonos com alerta |
-| **A9** | O laudo em PDF deve trazer as **três fases num documento só** ou um PDF por fase? | Um documento só, com três seções e sumário |
-| **A10** | Uma fase pode ser **refeita isoladamente** pelo usuário, invalidando as seguintes? | Sim, com confirmação explícita e marcação `stale` nas posteriores |
+| **A1** | A Fase 2 começa em **2009** (primeiro ano pós-marco) ou inclui **Landsat 5 2008** como cena de calibração do mesmo ano do SPOT? | **Começar em 2009**; L5 2008 entra apenas como cena de referência opcional, sem poder de datar |
+| **A2** | Em 2016 e 2017 há **Landsat 8 e Sentinel-2**. Qual usar? | **Landsat 8** (continuidade com 2013–2015); Sentinel-2 fica como candidato da janela-ponte |
+| **A3** | Na Fase 3, qual o **limiar de vegetação declarada** que dispara alerta ALTO, e o tamanho de sliver a descartar? | **≥ 1% da AC ou ≥ 0,5 ha** (o que vier primeiro); slivers < 500 m² descartados |
+| **A4** | Existe **teto de polígonos** por job (para não travar a fila com um imóvel de 200 AUAS)? | **Sem teto (`0`)**, mas com prévia de ETA e aviso quando passar de ~30 polígonos |
+| **A5** | O que acontece com o **fluxo V1 (2008–2024)** quando a Fase 1 ligar? | **Legado somente-leitura**: cards antigos abrem, mas nenhuma análise nova usa V1 |
+| **A6** | A Fase 3 **precisa mesmo** da Fase 2 concluída, ou pode ser liberada logo após a Fase 1? | **Manter o pedido original** (exige Fase 2). Nota técnica: ela não depende de dado da Fase 2 — é escolha de fluxo, e pode ser afrouxada depois sem retrabalho |
+| **A7** | Quando a Fase 2 der `SEM_MUDANCA_OBSERVADA`, o sistema deve **encadear automaticamente** a consulta SCCON (≥2019) ou só sugerir a aba? | **Só sugerir**, com link para a aba AUAS × SCCON |
+| **A8** | As **cenas** analisadas devem ser guardadas para o usuário rever, ou só o hash/proveniência? | **Só proveniência + hash**; guardar imagem apenas dos polígonos com alerta |
+| **A9** | O laudo em PDF deve trazer as **três fases num documento só** ou um PDF por fase? | **Um documento só**, com três seções e sumário |
+| **A10** | Uma fase pode ser **refeita isoladamente** pelo usuário, invalidando as seguintes? | **Sim**, com confirmação explícita e marcação `stale` nas posteriores |
+
+**Decisão extra (Fase 3, fonte da área declarada, Álvaro | 2026-08-10):** manter a área
+declarada **só com `AVN`** (`SIMCAR_AC_VEG_DECLARED_SOURCES` inalterado); a
+`TIPOLOGIA_VEGETAL` segue como contexto no JSON, nunca como gatilho de alerta — medido em
+2026-08-07, ela cobre ~100% de toda AC e saturaria o alerta (falso ALTO universal).
+
+**Rollout combinado (Álvaro | 2026-08-10):** **F1** pronta para ligar
+(`SIMCAR_AUAS_V2_ENABLED=true` no servidor — dourado humano + live DeepSeek ok); **F2**
+liga após F1 estável ≥ 1 semana + dourado F2 conferido; **F3** liga após F2 estável +
+conferência GIS de ≥ 3 imóveis.
 
 ## 3. Fora de escopo (não entra neste plano)
 

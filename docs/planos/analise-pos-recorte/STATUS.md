@@ -2,9 +2,9 @@
 
 | Campo | Valor |
 |---|---|
-| Status | **🚧 EM IMPLEMENTAÇÃO** — F2 (datação 2009–2019) e F3 (vegetação na AC) implementadas, auditadas e no `main`; aguardando rollout por flag |
+| Status | **🚧 EM IMPLEMENTAÇÃO** — F2 (datação 2009–2019) e F3 (vegetação na AC) implementadas, auditadas e no `main`; decisões A1–A10 e fonte da declaração F3 **fechadas** (2026-08-10). Rollout: F1 pronta para ligar; F2 após F1 estável ≥1 semana; F3 após F2 + conferência GIS ≥3 imóveis |
 | Criado em | 2026-08-05 |
-| Atualizado em | 2026-08-07 (F2/F3 entregues, 2 rodadas de auditoria de bugs, deploy do código) |
+| Atualizado em | 2026-08-10 (decisões A1–A10 e fonte F3 fechadas pelo Álvaro; rollout definido) |
 | Autor | Claude (plano), com Álvaro |
 | Repo | `alvaro209890/GeoForest-IA` — branch `main` |
 | Pasta | `docs/planos/analise-pos-recorte/` |
@@ -31,7 +31,7 @@ Cada fase destrava a seguinte; a regra de desbloqueio é do backend, não só da
 - [x] **Stack de IA confirmada pelo Álvaro (2026-08-05):** visão = **Groq** (modelo do plano
       gratuito, `qwen/qwen3.6-27b`) · texto = **DeepSeek** (`deepseek-v4-pro`) — decisão D11,
       detalhada em [02 §9](02-arquitetura.md)
-- [ ] **A1–A4 respondidas pelo Álvaro** — bloqueiam o desenho final
+- [x] **A1–A4 respondidas pelo Álvaro (2026-08-10)** — A1: série F2 começa em 2009 (L5 2008 só como referência) · A2: Landsat 8 em 2016/2017 (S-2 na janela-ponte) · A3: alerta ALTO com ≥1% da AC ou ≥0,5 ha, slivers < 500 m² · A4: sem teto de polígonos, com prévia de ETA e aviso >30
 - [x] **F0.1 — levantamento WMS ao vivo 2009→2019 concluído (2026-08-05)**: 11/11 anos com `GetMap` válido; NIR é estilo, não camada. Relatório: [`docs/LEVANTAMENTO_WMS_ANALISE_POS_RECORTE.md`](../../LEVANTAMENTO_WMS_ANALISE_POS_RECORTE.md)
 - [x] **F0.3 — `polygons.ts` genérico** (`extractPolygonsFromLayer`, `countLayerPolygons`); `extractAuasPolygons` virou wrapper
 - [x] **F0.4 — checkpoint com namespace de fase + `catalogVersion`** (`buildPhaseCheckpointKey`)
@@ -42,10 +42,10 @@ Cada fase destrava a seguinte; a regra de desbloqueio é do backend, não só da
 - [x] **Deploy do código (2026-08-07)**: commit `7097fb84` no `main`, auto-sync buildado/reiniciado, Firebase hosting no ar — flags continuam desligadas (F2/F3 respondem 409 `PHASE_NOT_READY`)
 - [x] **Auditoria de bugs F2/F3 (2026-08-07)**: ownership/SSRF nas rotas de fase, flags independentes (`SIMCAR_AUAS_POS2008_ENABLED`/`SIMCAR_AC_VEG_ENABLED`), lock por `uid:jobId`, estado `STALE` transitivo, janela-ponte da F2 casada com a fronteira certa, validação de ano por `sceneId`, cenas WMS reais da F3, redutor visual (≥2 cenas positivas, sem falso alerta) e geométrico (buracos preservados), cache do catálogo por bbox. Changelog: [`docs/CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_BUGS.md`](../../CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_BUGS.md)
 - [x] **Auditoria de bugs rodada 2 (2026-08-07)** — sem tocar em segurança: deadlock do estado `STALE` (fase mandava "refaça" e a rota recusava), regra do ano exato aceitando anos não consecutivos, fronteira de sensor sumindo com ano reprovado (e fronteira falsa vinda da lista estática), **Fase 3 validada contra os shapefiles reais da Santa Clara** — `TIPOLOGIA_VEGETAL` cobre ~100% de toda AC e fazia 100% delas saírem como alerta ALTO; evidência geométrica 52 s → 2 s; AC de 0,00 ha não paga mais cena/visão; nomenclatura ARL/AUAS corrigida no laudo; `pnpm test` voltou a ficar verde no `main`. Changelog: [`docs/CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md`](../../CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md)
-- [ ] **A decidir (Álvaro):** manter a área declarada da F3 só com `AVN` (novo default, medido) ou voltar a somar `TIPOLOGIA_VEGETAL` via `SIMCAR_AC_VEG_DECLARED_SOURCES` — o doc 06 §3 especifica a soma, mas o dado real mostra que ela satura o alerta
-- [ ] F1 — ligar a Fase 1 (conjunto dourado + live DeepSeek + flag no servidor)
-- [ ] F2 rollout — `SIMCAR_AUAS_POS2008_ENABLED=true` (pré-requisito: F1 estável ≥1 semana + dourado F2)
-- [ ] F3 rollout — `SIMCAR_AC_VEG_ENABLED=true` (pré-requisito: F2 estável + conferência GIS ≥3 imóveis)
+- [x] **A decidir (Álvaro) resolvida (2026-08-10)**: área declarada da F3 fica **só com `AVN`** — `SIMCAR_AC_VEG_DECLARED_SOURCES` inalterado; a `TIPOLOGIA_VEGETAL` segue como contexto no JSON, nunca como gatilho (a soma satura o alerta, medido 2026-08-07)
+- [ ] F1 — **liberada pelo Álvaro (2026-08-10)**: pendente só ligar a flag `SIMCAR_AUAS_V2_ENABLED=true` no servidor (dourado + live DeepSeek ok)
+- [ ] F2 rollout — gate: `SIMCAR_AUAS_POS2008_ENABLED=true` após F1 estável ≥1 semana + dourado F2 conferido
+- [ ] F3 rollout — gate: `SIMCAR_AC_VEG_ENABLED=true` após F2 estável + conferência GIS ≥3 imóveis
 
 ## Dependências herdadas (já eram pendência antes deste plano)
 
@@ -56,11 +56,13 @@ Cada fase destrava a seguinte; a regra de desbloqueio é do backend, não só da
 | `SIMCAR_AUAS_V2_ENABLED` ausente no `backend.env` do servidor | Em produção o botão AUAS ainda roda o V1 (2008–2024) |
 | ~~`AuasPre2008Summary.tsx` sem uso no front~~ | **Não procede:** `SimcarAuasPre2008PanelV2` já é renderizado no card de resultado do recorte (conferido em 2026-08-05) |
 
-## Decisões pendentes que mudam o desenho
+## Decisões — todas fechadas (2026-08-10)
 
-**A1** início da série da Fase 2 (2009 × 2008) · **A2** Landsat 8 ou Sentinel-2 em
-2016/2017 · **A3** limiar de vegetação declarada na AC · **A4** teto de polígonos por job.
-As demais (A5–A10) têm default e não bloqueiam. Detalhe em
+**A1** série F2 começa em 2009 · **A2** Landsat 8 em 2016/2017 · **A3** alerta ALTO com
+≥1% da AC ou ≥0,5 ha · **A4** sem teto de polígonos · **A5** V1 legado somente-leitura ·
+**A6** F3 exige F2 · **A7** só sugerir SCCON · **A8** só proveniência + hash (imagem nos
+alertas) · **A9** laudo único com 3 seções · **A10** refazer fase com confirmação e
+`stale`. **F3 extra:** área declarada só com `AVN`. Detalhe em
 [11-riscos-e-decisoes-abertas.md](11-riscos-e-decisoes-abertas.md).
 
 ## Histórico
@@ -73,3 +75,4 @@ As demais (A5–A10) têm default e não bloqueiam. Detalhe em
 | 2026-08-07 | **Fases 2 e 3 implementadas e testadas** (commit `7097fb84`, +33 testes novos; `pnpm test` 579 passed/8 skipped, `check`/`build` verdes). Ver [`docs/CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_F2_F3.md`](../../CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_F2_F3.md). Push + auto-sync + Firebase hosting concluídos; flags permanecem `false` |
 | 2026-08-07 | **Auditoria rodada 2 (bugs, sem segurança)**: deadlock do `STALE`, regras 2/3 da datação, fronteiras de sensor, e Fase 3 confrontada com shapefile real (falso ALTO universal, 26× de desempenho, AC minúscula sem custo de IA). Suíte voltou a 100% verde. Ver [`docs/CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md`](../../CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md) |
 | 2026-08-07 | **Auditoria de bugs F2/F3 corrigida** (ownership/SSRF, flags independentes, lock de fase, invalidação `STALE` transitiva, janela-ponte da F2, validação de ano por `sceneId`, cenas WMS reais da F3, redutor visual e geométrico, cache do catálogo por bbox; +8 arquivos de teste novos; `pnpm test` 591 passed/8 skipped, `check`/`build` verdes). Ver [`docs/CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_BUGS.md`](../../CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_BUGS.md) |
+| 2026-08-10 | **Decisões A1–A10 + fonte da declaração F3 fechadas pelo Álvaro** (rodada de perguntas). Rollout definido: F1 pronta para ligar; F2 após F1 estável ≥1 semana; F3 após F2 + conferência GIS ≥3 imóveis. Atualizados `STATUS.md` e `11-riscos-e-decisoes-abertas.md` |
