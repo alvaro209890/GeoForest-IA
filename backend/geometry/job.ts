@@ -100,9 +100,9 @@ export async function runGeometryJob(args: {
             // `minOverlapM2` é o limiar de SOBREPOSIÇÃO (default 1 m² na UI) e
             // não serve para contenção: resíduo de vetorização entre camadas
             // vizinhas é da ordem de metros quadrados e virava validação
-            // impeditiva. Aqui vale o piso de sliver, ou o valor do usuário se
-            // for maior.
-            minAreaM2: Math.max(Number(settings.minOverlapM2) || 0, CONTAINMENT_SLIVER_TOLERANCE_M2),
+            // impeditiva. Vale só o piso próprio de sliver — o valor do usuário
+            // NÃO deve rebaixar nem elevar este piso (changelog 2026-08-08 §1.5).
+            minAreaM2: CONTAINMENT_SLIVER_TOLERANCE_M2,
           });
           allRows.push(...containmentResult.rows);
           allRuleViolations.push(...containmentResult.violations);
@@ -128,7 +128,9 @@ export async function runGeometryJob(args: {
         try {
           const airAtpResult = detectAirAtpAreaConsistency({
             layers: ruleLayers,
-            minDiffM2: settings.minOverlapM2,
+            // Sem minDiffM2: usa o default do detector (1 m² + tolerância
+            // relativa 0,01% da maior área) — o limiar de sobreposição da UI
+            // não pode vazar para a comparação de áreas AIR×ATP.
             maxDiffRatio: settings.airAtpMaxDiffRatio,
           });
           allRows.push(...airAtpResult.rows);
@@ -174,8 +176,10 @@ export async function runGeometryJob(args: {
             layerName: group.name,
             records,
             crs,
-            // Mesmo motivo da contenção: 1 m² é ruído de arredondamento.
-            minGapM2: Math.max(Number(settings.minOverlapM2) || 0, MIN_GAP_M2),
+            // Piso próprio de vazio: 1 m² é ruído de arredondamento; o limiar
+            // de sobreposição da UI não pode elevar este piso (changelog
+            // 2026-08-08 §1.5).
+            minGapM2: MIN_GAP_M2,
           });
           rows.push(...gapResult.rows);
           allGaps.push(...gapResult.gapPolygons);
