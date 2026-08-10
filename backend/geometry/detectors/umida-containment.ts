@@ -92,7 +92,7 @@ export function detectUmidaContainment(args: {
           umida.geometry.type === "Polygon" ? [umida.geometry.coordinates] : umida.geometry.coordinates;
         outer: for (const poly of polys) {
           for (const ring of poly) {
-            const samples = sampleRingEveryMeters(ring as number[][], umida.metricProjDef, SIMCAR_UMIDA_EDGE_SAMPLE_M);
+            const samples = sampleRingEveryMeters(ring as number[][], umida.crs, umida.metricProjDef, SIMCAR_UMIDA_EDGE_SAMPLE_M);
             for (const pt of samples) {
               if (!booleanPointInPolygon(turfPoint(pt), coverFeature as any)) {
                 edgeOutside = true;

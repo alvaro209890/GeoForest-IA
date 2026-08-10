@@ -371,17 +371,28 @@ export function pointToSegmentDistanceM(
 
 export function sampleRingEveryMeters(
   ring: number[][],
+  crs: CodedCrs,
   metricProjDef: string,
   stepM: number,
 ): number[][] {
   if (ring.length < 2 || stepM <= 0) return ring.map((p) => [Number(p[0]), Number(p[1])]);
-  const toM = proj4("WGS84", metricProjDef);
+  // Só projeta se a camada é geográfica — em camada UTM as coordenadas já são
+  // metros; re-projetá-las de WGS84 explodia `steps` (o job nunca terminava).
+  // Mesma regra de `candidateWidthM` em detectors/gaps.ts.
+  const toM =
+    crs.kind === "geographic"
+      ? proj4(crs.projDef || "EPSG:4326", metricProjDef)
+      : null;
   const out: number[][] = [];
   for (let i = 0; i < ring.length - 1; i += 1) {
     const a = ring[i];
     const b = ring[i + 1];
-    const [ax, ay] = toM.forward([Number(a[0]), Number(a[1])]) as [number, number];
-    const [bx, by] = toM.forward([Number(b[0]), Number(b[1])]) as [number, number];
+    const [ax, ay] = toM
+      ? (toM.forward([Number(a[0]), Number(a[1])]) as [number, number])
+      : [Number(a[0]), Number(a[1])];
+    const [bx, by] = toM
+      ? (toM.forward([Number(b[0]), Number(b[1])]) as [number, number])
+      : [Number(b[0]), Number(b[1])];
     const len = Math.hypot(bx - ax, by - ay);
     const steps = Math.max(1, Math.ceil(len / stepM));
     for (let s = 0; s <= steps; s += 1) {
