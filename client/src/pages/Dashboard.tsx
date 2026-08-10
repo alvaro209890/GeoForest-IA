@@ -613,6 +613,10 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   const [receiptHistory, setReceiptHistory] = useState<ReceiptHistoryItem[]>([]);
   const [receiptsRef, setReceiptsRef] = useState<ReturnType<typeof collection> | null>(null);
   const [activeConversationRef, setActiveConversationRef] = useState<DocumentReference | null>(null);
+  // Espelho vivo do id da conversa ativa: dentro de um handleSend async o estado
+  // fica congelado no render do início — este ref permite saber SE o usuário
+  // trocou de conversa enquanto um stream de chat rodava (race de gravação).
+  const activeConversationIdRef = useRef<string | null>(null);
   const [settingsRef, setSettingsRef] = useState<DocumentReference | null>(null);
   const settingsImportInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -2321,9 +2325,11 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     };
   }, [aiThinking, typingMessageId]);
 
-  const createConversation = async (collRef?: ReturnType<typeof collection>) => {
+  const createConversation = async (
+    collRef?: ReturnType<typeof collection>
+  ): Promise<{ ref: DocumentReference; id: string } | null> => {
     const ref = collRef || conversationsRef?.collection;
-    if (!ref) return;
+    if (!ref) return null;
 
     const id = nanoid();
     const docRef = doc(ref, id);
@@ -2345,11 +2351,13 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     };
     setConversations((prev) => [nextConv, ...prev]);
     setActiveConversationId(id);
+    activeConversationIdRef.current = id;
     setActiveConversationRef(docRef);
     setMessages(initialMessages);
     if (initialViewRef.current === 'simcar-clip') {
       navigateView('simcar-clip');
     }
+    return { ref: docRef, id };
   };
 
   const loadConversation = async (collRef: ReturnType<typeof collection>, id: string) => {
@@ -2388,6 +2396,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
       messagesRef.current = [DEFAULT_ASSISTANT_MESSAGE];
     }
     setActiveConversationId(id);
+    activeConversationIdRef.current = id;
     setActiveConversationRef(docRef);
     if (initialViewRef.current === 'simcar-clip') {
       navigateView('simcar-clip');
@@ -2840,10 +2849,21 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   };
 
 
-  const updateConversationMeta = async (updatedMessages: ChatMessage[], lastUserText: string) => {
-    if (!activeConversationRef) return;
+  const updateConversationMeta = async (
+    updatedMessages: ChatMessage[],
+    lastUserText: string,
+    conv?: { ref: DocumentReference | null; id: string | null }
+  ) => {
+    // `conv` é a conversa de ORIGEM capturada no início do stream. Sem ele, o
+    // `activeConversationRef` congelado no closure do handleSend apontaria para
+    // a conversa do render — mas o que corrompia era o conteúdo vivo de
+    // `messagesRef.current` indo parar na doc errada (race ao trocar de conversa
+    // durante o stream).
+    const ref = conv ? conv.ref : activeConversationRef;
+    const id = conv ? conv.id : activeConversationId;
+    if (!ref) return;
     const title =
-      conversations.find((c) => c.id === activeConversationId)?.title || 'Nova conversa';
+      conversations.find((c) => c.id === id)?.title || 'Nova conversa';
     const shouldSetTitle = title === 'Nova conversa' && lastUserText.trim().length > 0;
     const nextTitle = shouldSetTitle
       ? lastUserText.trim().split(/\s+/).slice(0, 6).join(' ')
@@ -2853,7 +2873,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     const lastAttachmentType = lastUser?.meta?.fileType;
 
     await setDoc(
-      activeConversationRef,
+      ref,
       {
         title: nextTitle,
         messages: sanitizeMessagesForFirestore(updatedMessages),
@@ -2867,7 +2887,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     setConversations((prev) =>
       prev
         .map((c) =>
-          c.id === activeConversationId
+          c.id === id
             ? {
               ...c,
               title: nextTitle,
@@ -2876,7 +2896,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
             }
             : c
         )
-        .sort((a, b) => (a.id === activeConversationId ? -1 : b.id === activeConversationId ? 1 : 0))
+        .sort((a, b) => (a.id === id ? -1 : b.id === id ? 1 : 0))
     );
   };
 
@@ -3300,8 +3320,16 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     simcarVectorizedRunning,
   ]);
 
-  const patchMessageMeta = async (messageId: string, patch: Partial<NonNullable<ChatMessage['meta']>>, lastUserText: string) => {
-    const updatedMessages = messagesRef.current.map((msg) =>
+  const patchMessageMeta = async (
+    messageId: string,
+    patch: Partial<NonNullable<ChatMessage['meta']>>,
+    lastUserText: string,
+    stream?: { conv: { ref: DocumentReference | null; id: string | null }; messages: ChatMessage[] }
+  ) => {
+    // `stream` = escopo do handleSend em andamento: mensagens e conversa de
+    // ORIGEM. Usar o escopo evita que a lista viva (messagesRef.current — que o
+    // loadConversation de OUTRA conversa sobrescreve) seja gravada na doc errada.
+    const updatedMessages = (stream ? stream.messages : messagesRef.current).map((msg) =>
       msg.id === messageId
         ? {
           ...msg,
@@ -3312,18 +3340,36 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
         }
         : msg
     );
-    messagesRef.current = updatedMessages;
-    setMessages(updatedMessages);
-    await updateConversationMeta(updatedMessages, lastUserText || 'Nova conversa');
+    if (stream) stream.messages = updatedMessages;
+    const switched = stream ? activeConversationIdRef.current !== stream.conv.id : false;
+    if (!switched) {
+      messagesRef.current = updatedMessages;
+      setMessages(updatedMessages);
+    }
+    await updateConversationMeta(updatedMessages, lastUserText || 'Nova conversa', stream?.conv);
   };
 
   const handleSend = async () => {
     if ((!input.trim() && !imageFile && !pdfFile && queuedFiles.length === 0) || sending) return;
 
 
-    if (!activeConversationRef && conversationsRef) {
-      await createConversation(conversationsRef.collection);
+    let targetConversationRef = activeConversationRef;
+    let targetConversationId = activeConversationId;
+    if (!targetConversationRef && conversationsRef) {
+      const created = await createConversation(conversationsRef.collection);
+      if (created) {
+        targetConversationRef = created.ref;
+        targetConversationId = created.id;
+      }
     }
+    // Escopo do stream: conversa de ORIGEM + lista de mensagens dela. Fica
+    // congelado aqui no início e é a ÚNICA coisa usada para gravar no fim —
+    // trocar de conversa no meio do stream não pode desviar a resposta para a
+    // conversa errada nem misturar a lista de mensagens de outra conversa.
+    const stream: { conv: { ref: DocumentReference | null; id: string | null }; messages: ChatMessage[] } = {
+      conv: { ref: targetConversationRef, id: targetConversationId },
+      messages: [],
+    };
 
     const userText = input.trim();
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -3405,6 +3451,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     const nextMessages = [...messages, userMessage];
     setMessages(nextMessages);
     messagesRef.current = nextMessages;
+    stream.messages = [...nextMessages];
     setInput('');
     setImageFile(null);
     setImagePreview(null);
@@ -3446,11 +3493,12 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
             fileDownloadUrl: firstImage.startsWith('data:') ? firstImage : toCloudinaryDownloadUrl(firstImage),
             uploadStatus: 'done',
           },
-          userText || 'Nova conversa'
+          userText || 'Nova conversa',
+          stream
         );
       })
       .catch(async () => {
-        await patchMessageMeta(currentUserMessageId, { uploadStatus: 'error' }, userText || 'Nova conversa');
+        await patchMessageMeta(currentUserMessageId, { uploadStatus: 'error' }, userText || 'Nova conversa', stream);
       });
 
     pdfUploadPromise
@@ -3464,11 +3512,12 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
             fileDownloadUrl: firstPdf.downloadUrl,
             uploadStatus: 'done',
           },
-          userText || 'Nova conversa'
+          userText || 'Nova conversa',
+          stream
         );
       })
       .catch(async () => {
-        await patchMessageMeta(currentUserMessageId, { uploadStatus: 'error' }, userText || 'Nova conversa');
+        await patchMessageMeta(currentUserMessageId, { uploadStatus: 'error' }, userText || 'Nova conversa', stream);
       });
 
     const imageDataUrlsForAi: string[] = [];
@@ -3628,11 +3677,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
           flushTypingNow('');
           setLiveThinkingText('');
           setLiveThinkingTarget('');
-          const latestMessages = messagesRef.current.length ? messagesRef.current : nextMessages;
-          const updatedMessages = [...latestMessages.filter((m) => m.id !== typingId), aiMessage];
-          setMessages(updatedMessages);
-          messagesRef.current = updatedMessages;
-          await updateConversationMeta(updatedMessages, userText || 'Nova conversa');
+          const updatedMessages = [...stream.messages.filter((m) => m.id !== typingId), aiMessage];
+          const switchedFallback = activeConversationIdRef.current !== stream.conv.id;
+          stream.messages = updatedMessages;
+          if (!switchedFallback) {
+            setMessages(updatedMessages);
+            messagesRef.current = updatedMessages;
+          }
+          await updateConversationMeta(updatedMessages, userText || 'Nova conversa', stream.conv);
           return;
         }
 
@@ -3744,11 +3796,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       flushTypingNow('');
       setLiveThinkingText('');
       setLiveThinkingTarget('');
-      const latestMessages = messagesRef.current.length ? messagesRef.current : nextMessages;
-      const updatedMessages = [...latestMessages.filter((m) => m.id !== typingId), aiMessage];
-      setMessages(updatedMessages);
-      messagesRef.current = updatedMessages;
-      await updateConversationMeta(updatedMessages, userText || 'Nova conversa');
+      const updatedMessages = [...stream.messages.filter((m) => m.id !== typingId), aiMessage];
+      const switched = activeConversationIdRef.current !== stream.conv.id;
+      stream.messages = updatedMessages;
+      if (!switched) {
+        setMessages(updatedMessages);
+        messagesRef.current = updatedMessages;
+      }
+      await updateConversationMeta(updatedMessages, userText || 'Nova conversa', stream.conv);
     } catch (error: any) {
       if (error?.name === 'AbortError') {
         setChatError((prev) => prev || 'Resposta interrompida. Você pode reenviar.');
@@ -4608,6 +4663,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         setConversations((prev) => prev.filter((c) => !linkedConversationIds.has(c.id)));
                         if (activeConversationId && linkedConversationIds.has(activeConversationId)) {
                           setActiveConversationId(null);
+                          activeConversationIdRef.current = null;
                           setActiveConversationRef(null);
                           setMessages([DEFAULT_ASSISTANT_MESSAGE]);
                           messagesRef.current = [DEFAULT_ASSISTANT_MESSAGE];
