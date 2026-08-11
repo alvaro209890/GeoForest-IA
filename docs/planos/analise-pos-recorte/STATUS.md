@@ -2,9 +2,9 @@
 
 | Campo | Valor |
 |---|---|
-| Status | **🚧 EM IMPLEMENTAÇÃO** — F2 (datação 2009–2019) e F3 (vegetação na AC) implementadas, auditadas e no `main`; decisões A1–A10 e fonte da declaração F3 **fechadas** (2026-08-10). Rollout: F1 pronta para ligar; F2 após F1 estável ≥1 semana; F3 após F2 + conferência GIS ≥3 imóveis |
+| Status | **🚧 EM IMPLEMENTAÇÃO** — F2 (datação 2009–2019) e F3 (vegetação na AC) implementadas, auditadas e no `main`; decisões A1–A10 e fonte da declaração F3 **fechadas** (2026-08-10). Rollout: **F1 LIGADA em produção (2026-08-10)**; F2 após F1 estável ≥1 semana; F3 após F2 + conferência GIS ≥3 imóveis |
 | Criado em | 2026-08-05 |
-| Atualizado em | 2026-08-10 (decisões A1–A10 e fonte F3 fechadas pelo Álvaro; rollout definido) |
+| Atualizado em | 2026-08-10 (F1 ligada em produção; decisões A1–A10 e fonte F3 fechadas) |
 | Autor | Claude (plano), com Álvaro |
 | Repo | `alvaro209890/GeoForest-IA` — branch `main` |
 | Pasta | `docs/planos/analise-pos-recorte/` |
@@ -43,7 +43,7 @@ Cada fase destrava a seguinte; a regra de desbloqueio é do backend, não só da
 - [x] **Auditoria de bugs F2/F3 (2026-08-07)**: ownership/SSRF nas rotas de fase, flags independentes (`SIMCAR_AUAS_POS2008_ENABLED`/`SIMCAR_AC_VEG_ENABLED`), lock por `uid:jobId`, estado `STALE` transitivo, janela-ponte da F2 casada com a fronteira certa, validação de ano por `sceneId`, cenas WMS reais da F3, redutor visual (≥2 cenas positivas, sem falso alerta) e geométrico (buracos preservados), cache do catálogo por bbox. Changelog: [`docs/CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_BUGS.md`](../../CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_BUGS.md)
 - [x] **Auditoria de bugs rodada 2 (2026-08-07)** — sem tocar em segurança: deadlock do estado `STALE` (fase mandava "refaça" e a rota recusava), regra do ano exato aceitando anos não consecutivos, fronteira de sensor sumindo com ano reprovado (e fronteira falsa vinda da lista estática), **Fase 3 validada contra os shapefiles reais da Santa Clara** — `TIPOLOGIA_VEGETAL` cobre ~100% de toda AC e fazia 100% delas saírem como alerta ALTO; evidência geométrica 52 s → 2 s; AC de 0,00 ha não paga mais cena/visão; nomenclatura ARL/AUAS corrigida no laudo; `pnpm test` voltou a ficar verde no `main`. Changelog: [`docs/CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md`](../../CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md)
 - [x] **A decidir (Álvaro) resolvida (2026-08-10)**: área declarada da F3 fica **só com `AVN`** — `SIMCAR_AC_VEG_DECLARED_SOURCES` inalterado; a `TIPOLOGIA_VEGETAL` segue como contexto no JSON, nunca como gatilho (a soma satura o alerta, medido 2026-08-07)
-- [ ] F1 — **liberada pelo Álvaro (2026-08-10)**: pendente só ligar a flag `SIMCAR_AUAS_V2_ENABLED=true` no servidor (dourado + live DeepSeek ok)
+- [x] F1 — **LIGADA em produção (2026-08-10, Hermes-server)**: flag `SIMCAR_AUAS_V2_ENABLED=true` adicionada ao `~/.config/geoforest/backend.env` do servidor + `systemctl --user restart geoforest-backend.service` + validado (flag presente no `/proc/<pid>/environ` do processo, porta 3001 HTTP 200). Dourado + live DeepSeek ok (liberada pelo Álvaro). F2/F3 seguem com gates.
 - [ ] F2 rollout — gate: `SIMCAR_AUAS_POS2008_ENABLED=true` após F1 estável ≥1 semana + dourado F2 conferido
 - [ ] F3 rollout — gate: `SIMCAR_AC_VEG_ENABLED=true` após F2 estável + conferência GIS ≥3 imóveis
 
