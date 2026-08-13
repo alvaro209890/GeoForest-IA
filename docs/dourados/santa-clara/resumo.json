@@ -1,0 +1,60 @@
+{
+  "jobId": "dourado-santa-clara-2026-08-12",
+  "geradoEm": "2026-08-13T02:10:38.063Z",
+  "fixture": "Recorte_SANTA_CLARA_FINAL_16-07-26.zip",
+  "camadas": {
+    "AIR": 9,
+    "AREA_CONSOLIDADA": 33,
+    "AREA_UMIDA": 48,
+    "ARL": 238,
+    "ATP": 1,
+    "AUAS": 38,
+    "AVN": 238,
+    "LAGOA_NATURAL": 57,
+    "RESERVATORIO_ARTIFICIAL": 21,
+    "RIO_10_A_50": 1,
+    "RIO_ATE_10": 25,
+    "TIPOLOGIA_VEGETAL": 88,
+    "UTILIDADE_PUBLICA": 10
+  },
+  "f2": {
+    "status": {
+      "polygonCount": 38,
+      "confirmedYearCount": 0,
+      "intervalCount": 0,
+      "alreadyAnthropizedCount": 9,
+      "noChangeCount": 13,
+      "inconclusiveCount": 16,
+      "totalAuasAreaHa": 3397.937719320621,
+      "areaByStatusHa": {
+        "CONFIRMADO_ANO": 0,
+        "CONFIRMADO_INTERVALO": 0,
+        "JA_ANTROPIZADO_NO_INICIO_DA_SERIE": 10.608105065139652,
+        "SEM_MUDANCA_OBSERVADA": 3365.1957648466932,
+        "INCONCLUSIVO": 22.1338494087882
+      },
+      "yearHistogram": {
+        "2009": {
+          "count": 9,
+          "areaHa": 10.608105065139652
+        }
+      }
+    },
+    "laudoModel": "deepseek-v4-pro",
+    "laudoArquivo": "f2-pos2008-laudo.md",
+    "laudoRegeneradoCom": "DeepSeek (prompt corrigido: sem títulos duplicados)"
+  },
+  "f3": {
+    "status": {
+      "polygonCount": 33,
+      "totalAcAreaHa": 3134.5975228886396,
+      "declaredVegetationCount": 3,
+      "declaredVegetationAreaHa": 250.9566791371372,
+      "apparentVegetationCount": 3,
+      "cleanCount": 9,
+      "inconclusiveCount": 18
+    },
+    "laudoModel": "deterministic-fallback (por design — F3 é determinística)",
+    "laudoArquivo": "f3-ac-vegetacao-laudo.md"
+  }
+}

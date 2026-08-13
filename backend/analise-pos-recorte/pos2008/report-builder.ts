@@ -108,6 +108,8 @@ async function requestPos2008DeepSeek(
           "Você NÃO pode concluir infração, passivo ambiental, regularidade ou irregularidade jurídica.",
           "Quando o status for SEM_MUDANCA_OBSERVADA, encerre o trecho do polígono orientando a consultar a aba de alertas AUAS × SCCON para eventos a partir de 2019 (datação por alerta oficial), sem afirmar que 'não houve desmate'.",
           "Distinga claramente ano confirmado de intervalo observado.",
+          "No campo markdown de cada seção NÃO inclua cabeçalho de seção (###) nem o polygonId em negrito como título — o sistema adiciona o título '### polygonId' automaticamente. Escreva apenas o corpo do parágrafo.",
+          "Formate áreas com no máximo 2 casas decimais (ex.: '12,35 ha'), sem ecoar números crus.",
           "Cite apenas os polygonId realmente informados. Inclua aviso de revisão por responsável técnico.",
           "Retorne apenas um objeto JSON no contrato pedido, sem markdown, em português do Brasil.",
         ].join(" "),

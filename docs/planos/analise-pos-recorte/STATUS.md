@@ -2,9 +2,9 @@
 
 | Campo | Valor |
 |---|---|
-| Status | **🚧 EM IMPLEMENTAÇÃO** — F2 (datação 2009–2019) e F3 (vegetação na AC) implementadas, auditadas e no `main`; decisões A1–A10 e fonte da declaração F3 **fechadas** (2026-08-10). Rollout: **F1 LIGADA em produção (2026-08-10)**; F2 após F1 estável ≥1 semana; F3 após F2 + conferência GIS ≥3 imóveis |
+| Status | **🚧 EM IMPLEMENTAÇÃO** — F2 (datação 2009–2019) e F3 (vegetação na AC) implementadas, auditadas e no `main`; decisões A1–A10 e fonte da declaração F3 **fechadas** (2026-08-10). Rollout: **F1 LIGADA em produção (2026-08-10)**; F2 após F1 estável ≥1 semana; F3 após F2 + conferência GIS ≥3 imóveis. **Dourados F2/F3 gerados (2026-08-12) — aguardando conferência do Álvaro** |
 | Criado em | 2026-08-05 |
-| Atualizado em | 2026-08-10 (F1 ligada em produção; decisões A1–A10 e fonte F3 fechadas) |
+| Atualizado em | 2026-08-12 (dourados F2/F3 gerados; fix DEEPSEEK_API_KEY expirada) |
 | Autor | Claude (plano), com Álvaro |
 | Repo | `alvaro209890/GeoForest-IA` — branch `main` |
 | Pasta | `docs/planos/analise-pos-recorte/` |
@@ -44,8 +44,10 @@ Cada fase destrava a seguinte; a regra de desbloqueio é do backend, não só da
 - [x] **Auditoria de bugs rodada 2 (2026-08-07)** — sem tocar em segurança: deadlock do estado `STALE` (fase mandava "refaça" e a rota recusava), regra do ano exato aceitando anos não consecutivos, fronteira de sensor sumindo com ano reprovado (e fronteira falsa vinda da lista estática), **Fase 3 validada contra os shapefiles reais da Santa Clara** — `TIPOLOGIA_VEGETAL` cobre ~100% de toda AC e fazia 100% delas saírem como alerta ALTO; evidência geométrica 52 s → 2 s; AC de 0,00 ha não paga mais cena/visão; nomenclatura ARL/AUAS corrigida no laudo; `pnpm test` voltou a ficar verde no `main`. Changelog: [`docs/CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md`](../../CHANGELOG_2026-08-07_AUDITORIA_BUGS_FASES.md)
 - [x] **A decidir (Álvaro) resolvida (2026-08-10)**: área declarada da F3 fica **só com `AVN`** — `SIMCAR_AC_VEG_DECLARED_SOURCES` inalterado; a `TIPOLOGIA_VEGETAL` segue como contexto no JSON, nunca como gatilho (a soma satura o alerta, medido 2026-08-07)
 - [x] F1 — **LIGADA em produção (2026-08-10, Hermes-server)**: flag `SIMCAR_AUAS_V2_ENABLED=true` adicionada ao `~/.config/geoforest/backend.env` do servidor + `systemctl --user restart geoforest-backend.service` + validado (flag presente no `/proc/<pid>/environ` do processo, porta 3001 HTTP 200). Dourado + live DeepSeek ok (liberada pelo Álvaro). F2/F3 seguem com gates.
-- [ ] F2 rollout — gate: `SIMCAR_AUAS_POS2008_ENABLED=true` após F1 estável ≥1 semana + dourado F2 conferido
-- [ ] F3 rollout — gate: `SIMCAR_AC_VEG_ENABLED=true` após F2 estável + conferência GIS ≥3 imóveis
+- [x] **Fix em produção (2026-08-12, Hermes-server):** `DEEPSEEK_API_KEY` do `backend.env` estava expirada (HTTP 401) → todos os laudos caíam no fallback determinístico (inclusive F1). Substituída pela chave válida do `~/.hermes/.env`; restart validado com laudo `deepseek-v4-pro`.
+- [x] **Dourados F2/F3 gerados (2026-08-12, Hermes-server):** `tools/rodar-dourado-f2-f3.ts` (versionado) rodou as duas fases sobre o recorte real da Santa Clara (38 AUAS, 33 ACs) com WMS/Groq/DeepSeek reais. Saída: `docs/dourados/santa-clara/` (JSON + laudos .md). Ver `docs/CHANGELOG_2026-08-12_DOURADO_F2_F3.md`.
+- [ ] **F2 rollout** — gate: `SIMCAR_AUAS_POS2008_ENABLED=true` após F1 estável ≥1 semana + **dourado F2 conferido pelo Álvaro** (laudo gerado 12/08 — conferência pendente)
+- [ ] F3 rollout — gate: `SIMCAR_AC_VEG_ENABLED=true` após F2 estável + conferência GIS ≥3 imóveis (laudos gerados 12/08 — conferência pendente)
 
 ## Dependências herdadas (já eram pendência antes deste plano)
 

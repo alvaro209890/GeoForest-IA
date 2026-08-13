@@ -1,0 +1,4174 @@
+{
+  "schemaVersion": 1,
+  "rulesVersion": "ac-vegetacao-v1",
+  "phase": "AC_VEG",
+  "jobId": "dourado-santa-clara-2026-08-12",
+  "pos2008JobRef": {
+    "rulesVersion": "auas-pos2008-v1",
+    "completedAt": "2026-08-13T02:07:19.890Z"
+  },
+  "summary": {
+    "polygonCount": 33,
+    "totalAcAreaHa": 3134.5975228886396,
+    "declaredVegetationCount": 3,
+    "declaredVegetationAreaHa": 250.9566791371372,
+    "apparentVegetationCount": 3,
+    "cleanCount": 9,
+    "inconclusiveCount": 18
+  },
+  "polygons": [
+    {
+      "polygonId": "AC-0001",
+      "geometryHash": "daae144b1b4f022d810cab8490f9437aaaf414700252e3ae3e1549d88eede04c",
+      "areaHa": 0.00008027938282903684,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0,
+        "tipologiaFraction": 0,
+        "tipologias": [],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0.8027938413750906,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": false
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Área de 0.0001 ha abaixo do mínimo analisável (0.05 ha): sem leitura visual.",
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente."
+      ]
+    },
+    {
+      "polygonId": "AC-0002",
+      "geometryHash": "7b0465c228c89f67b6f9ae8ced1574e47a205c4abc93bb7339a71549994d959b",
+      "areaHa": 0.225268364124273,
+      "status": "SEM_VEGETACAO_APARENTE",
+      "alertLevel": "NENHUM",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0.22526836412491766,
+        "tipologiaFraction": 1.0000000000028617,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 0.23 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 1.6313285271079245,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NONE",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "INTERIOR",
+        "sceneIds": [
+          "AC-0002:S2_2024",
+          "AC-0002:S2_2025_NIR",
+          "AC-0002:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "HIGH",
+      "evidence": [
+        "Nenhuma vegetação de aparência nativa observada dentro da AC (0.23 ha) nas cenas utilizáveis."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0003",
+      "geometryHash": "0c9a462093e7bb88f0415fb8b3b5e504a9bc41cea9afb7b2d285755c1ca6dad6",
+      "areaHa": 0.0008776946752393683,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0,
+        "tipologiaFraction": 0,
+        "tipologias": [],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 12.449867863613939,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": false
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Área de 0.0009 ha abaixo do mínimo analisável (0.05 ha): sem leitura visual.",
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente."
+      ]
+    },
+    {
+      "polygonId": "AC-0004",
+      "geometryHash": "e991a173d4859570473679afadc9c34e9a6fda08c08b7925838256b246090718",
+      "areaHa": 0.23861724434451126,
+      "status": "SEM_VEGETACAO_APARENTE",
+      "alertLevel": "NENHUM",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0.23861724434451126,
+        "tipologiaFraction": 1,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 0.24 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NONE",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "EDGE",
+        "sceneIds": [
+          "AC-0004:S2_2024",
+          "AC-0004:S2_2025_NIR",
+          "AC-0004:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "HIGH",
+      "evidence": [
+        "Nenhuma vegetação de aparência nativa observada dentro da AC (0.24 ha) nas cenas utilizáveis."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0005",
+      "geometryHash": "b1d35fbae512fbbc8f6aab4398cf6f2e6fcead73435c342f0d4d99a41d8a07df",
+      "areaHa": 0.34395289870291995,
+      "status": "SEM_VEGETACAO_APARENTE",
+      "alertLevel": "NENHUM",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0.34395289870291995,
+        "tipologiaFraction": 1,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 0.34 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NONE",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "EDGE",
+        "sceneIds": [
+          "AC-0005:S2_2024",
+          "AC-0005:S2_2025_NIR",
+          "AC-0005:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "HIGH",
+      "evidence": [
+        "Nenhuma vegetação de aparência nativa observada dentro da AC (0.34 ha) nas cenas utilizáveis."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0006",
+      "geometryHash": "33c3ab7ba5868822298d243d8703fb0ab1a2de088ddc3e6bcab49f661089b33b",
+      "areaHa": 0.03321547870100349,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0,
+        "tipologiaFraction": 0,
+        "tipologias": [],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 332.15478703582056,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": false
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Área de 0.0332 ha abaixo do mínimo analisável (0.05 ha): sem leitura visual.",
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente."
+      ]
+    },
+    {
+      "polygonId": "AC-0007",
+      "geometryHash": "4762548e541a25ce846c06a9f8426aa86cc213bd659cd39f44b1eed8d7d2b5fd",
+      "areaHa": 0.349715628755944,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0.34971562875830764,
+        "tipologiaFraction": 1.0000000000067588,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 0.35 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 2.449346606862338e-7,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "LARGE_BLOCK",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "INTERIOR",
+        "sceneIds": [
+          "AC-0007:S2_2024",
+          "AC-0007:S2_2025_NIR",
+          "AC-0007:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente.",
+        "Há uma diferença significativa na cobertura vegetal entre 2008 e os anos recentes (2024/2025). Em 2008, o polígono apresentava solo exposto e vegetação fragmentada (PATCHES), enquanto nas cenas atuais a área está coberta por vegetação nativa densa (LARGE_BLOCK), indicando um pro…",
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0008",
+      "geometryHash": "9b1a7d9f5b0375eda3a31e4134a201e09cc7cafe0d7f066a6e40a1fe31f7b4e9",
+      "areaHa": 0.004319121648878425,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0,
+        "tipologiaFraction": 0,
+        "tipologias": [],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 43.10657598244062,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": false
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Área de 0.0043 ha abaixo do mínimo analisável (0.05 ha): sem leitura visual.",
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente."
+      ]
+    },
+    {
+      "polygonId": "AC-0009",
+      "geometryHash": "cdfe2a051d376e64e199cfee6cefea68a728c61fef7a80a35ab75f98ac88b47b",
+      "areaHa": 0.004426125373347098,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0,
+        "tipologiaFraction": 0,
+        "tipologias": [],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 43.04372330268811,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": false
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Área de 0.0044 ha abaixo do mínimo analisável (0.05 ha): sem leitura visual.",
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente."
+      ]
+    },
+    {
+      "polygonId": "AC-0010",
+      "geometryHash": "3f6c5af55641e9d4152635b41cdf8ee3a146dbbeecf5dbf8f3ff3f36fbcfbf4c",
+      "areaHa": 0.12657016674693378,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0.12657016674736354,
+        "tipologiaFraction": 1.0000000000033955,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 0.13 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0.0000011901307485508522,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NONE",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "INTERIOR",
+        "sceneIds": [
+          "AC-0010:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente.",
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0011",
+      "geometryHash": "7bf47f4fd389f4068269fa87d458a068cc38c5331c6d7e22de683d675e1e5041",
+      "areaHa": 843.5428019125335,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 843.542823774699,
+        "tipologiaFraction": 1.000000025917079,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 843.54 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 1.0325084745096265,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente.",
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0012",
+      "geometryHash": "b7d54f923d5d28e9d1ef64a9bf2d502648ba0d9be8452fc70c334a608b96abae",
+      "areaHa": 0.00002118531589495318,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0,
+        "tipologiaFraction": 0,
+        "tipologias": [],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0.21185315894953177,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": false
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Área de 0.0000 ha abaixo do mínimo analisável (0.05 ha): sem leitura visual.",
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente."
+      ]
+    },
+    {
+      "polygonId": "AC-0013",
+      "geometryHash": "f93898f848775e0b62a58152df0e2359be78e11868807592a593b5f697180b4c",
+      "areaHa": 0.00018282336234359519,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0,
+        "tipologiaFraction": 0,
+        "tipologias": [],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 1.8282337545129739,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": false
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Área de 0.0002 ha abaixo do mínimo analisável (0.05 ha): sem leitura visual.",
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente."
+      ]
+    },
+    {
+      "polygonId": "AC-0014",
+      "geometryHash": "f79f7081e0db2d90628a3a83c09647b736592212dafc012eb909188a365e5d5b",
+      "areaHa": 0.29135398437841187,
+      "status": "VEGETACAO_APARENTE_DENTRO_DA_AC",
+      "alertLevel": "ALTO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0.2913511854701332,
+        "tipologiaFraction": 0.9999903934443024,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 0.29 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 18.661304531844515,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "LARGE_BLOCK",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "INTERIOR",
+        "sceneIds": [
+          "AC-0014:S2_2024",
+          "AC-0014:S2_2025_NIR",
+          "AC-0014:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "HIGH",
+      "evidence": [
+        "Visão registrou vegetação de aparência nativa dentro da AC em 3 de 3 cenas utilizáveis (LARGE_BLOCK).",
+        "Evidências geométricas não declararam vegetação; conferir em campo."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0015",
+      "geometryHash": "8a4541d495b6230facdee126946ba55be09aecbf839ab437470c5fe3a2c46436",
+      "areaHa": 0.011735816454175754,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0,
+        "tipologiaFraction": 0,
+        "tipologias": [],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 117.35816467352107,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": false
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Área de 0.0117 ha abaixo do mínimo analisável (0.05 ha): sem leitura visual.",
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente."
+      ]
+    },
+    {
+      "polygonId": "AC-0016",
+      "geometryHash": "3360870dce92dc268a88e97e622dfb27ba4b0e603315f08ba087158f47ed3ddb",
+      "areaHa": 0.0005879075530052982,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0,
+        "tipologiaFraction": 0,
+        "tipologias": [],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 5.879075530052981,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": false
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Área de 0.0006 ha abaixo do mínimo analisável (0.05 ha): sem leitura visual.",
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente."
+      ]
+    },
+    {
+      "polygonId": "AC-0017",
+      "geometryHash": "a19453b1cf7940256b315d31a40e25eb984090c4ef163eb260a413168f40ea5d",
+      "areaHa": 0.022230998845335807,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0,
+        "tipologiaFraction": 0,
+        "tipologias": [],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 3.514636951809891e-7,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": false
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Área de 0.0222 ha abaixo do mínimo analisável (0.05 ha): sem leitura visual.",
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente."
+      ]
+    },
+    {
+      "polygonId": "AC-0018",
+      "geometryHash": "a7dc41ed34cdc1e330bb5d46efc76643c1422ce9babd001c8ffd5ecb70a934b5",
+      "areaHa": 3.3623299061691445,
+      "status": "VEGETACAO_APARENTE_DENTRO_DA_AC",
+      "alertLevel": "ALTO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 3.3445233881438186,
+        "tipologiaFraction": 0.9947041133611979,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 3.34 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0.000009622352098131969,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "LARGE_BLOCK",
+        "estimatedFractionBand": "2-10ha",
+        "distribution": "INTERIOR",
+        "sceneIds": [
+          "AC-0018:S2_2024",
+          "AC-0018:S2_2025_NIR",
+          "AC-0018:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "HIGH",
+      "evidence": [
+        "Visão registrou vegetação de aparência nativa dentro da AC em 3 de 3 cenas utilizáveis (LARGE_BLOCK).",
+        "Evidências geométricas não declararam vegetação; conferir em campo."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 99% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0019",
+      "geometryHash": "c2ba0e4455932aae401b7d7dec8e7447ac471a18ee50644889e0b548dd6fd97d",
+      "areaHa": 1.971539082503423,
+      "status": "SEM_VEGETACAO_APARENTE",
+      "alertLevel": "NENHUM",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 1.971539082503423,
+        "tipologiaFraction": 1,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 1.97 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NONE",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "EDGE",
+        "sceneIds": [
+          "AC-0019:S2_2024",
+          "AC-0019:S2_2025_NIR",
+          "AC-0019:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "HIGH",
+      "evidence": [
+        "Nenhuma vegetação de aparência nativa observada dentro da AC (1.97 ha) nas cenas utilizáveis."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0020",
+      "geometryHash": "53e8ade1e066f611b75e154c0e1483135a4536739cec8b0ce4e4d1e35889d5eb",
+      "areaHa": 2.008658561140518,
+      "status": "VEGETACAO_APARENTE_DENTRO_DA_AC",
+      "alertLevel": "ALTO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 1.998232560409512,
+        "tipologiaFraction": 0.9948094708913164,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 2.00 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "LARGE_BLOCK",
+        "estimatedFractionBand": "2-10ha",
+        "distribution": "INTERIOR",
+        "sceneIds": [
+          "AC-0020:S2_2024",
+          "AC-0020:S2_2025_NIR",
+          "AC-0020:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "HIGH",
+      "evidence": [
+        "Visão registrou vegetação de aparência nativa dentro da AC em 3 de 3 cenas utilizáveis (LARGE_BLOCK).",
+        "Evidências geométricas não declararam vegetação; conferir em campo."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 99% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0021",
+      "geometryHash": "4985c78ac8d9b746ce1b8b3c3817dd49afdbd29dae7a7b32c27c2a44b4ae045e",
+      "areaHa": 4.953660414171046,
+      "status": "SEM_VEGETACAO_APARENTE",
+      "alertLevel": "NENHUM",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 4.953660414192535,
+        "tipologiaFraction": 1.0000000000043379,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 4.95 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0.000038209489661530025,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NONE",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "SCATTERED",
+        "sceneIds": [
+          "AC-0021:S2_2024",
+          "AC-0021:S2_2025_NIR",
+          "AC-0021:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "HIGH",
+      "evidence": [
+        "Nenhuma vegetação de aparência nativa observada dentro da AC (4.95 ha) nas cenas utilizáveis."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0022",
+      "geometryHash": "81001197d04e0731849b6003cbaa2f23711ac0d06a69bfccf7a1a104f9c00dae",
+      "areaHa": 0.07629068074820754,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0.07629068074777777,
+        "tipologiaFraction": 0.9999999999943668,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 0.08 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 4.727368005491332e-8,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NONE",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "SCATTERED",
+        "sceneIds": [
+          "AC-0022:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente.",
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0023",
+      "geometryHash": "50fd312ba65612c49e87d744608b5a66c43a3d2801d910974862b9d585269bd2",
+      "areaHa": 1.5383003739789936,
+      "status": "SEM_VEGETACAO_APARENTE",
+      "alertLevel": "NENHUM",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 1.538300373969539,
+        "tipologiaFraction": 0.9999999999938538,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 1.54 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0.0000014629061188766774,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NONE",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "SCATTERED",
+        "sceneIds": [
+          "AC-0023:S2_2024",
+          "AC-0023:S2_2025_NIR",
+          "AC-0023:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "HIGH",
+      "evidence": [
+        "Nenhuma vegetação de aparência nativa observada dentro da AC (1.54 ha) nas cenas utilizáveis."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0024",
+      "geometryHash": "50002d38600f78a55bfedee0105b2cd804d625be60eecc447616c824cafdf06f",
+      "areaHa": 0.005155511478321035,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0,
+        "tipologiaFraction": 0,
+        "tipologias": [],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 51.555114851972064,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": false
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Área de 0.0052 ha abaixo do mínimo analisável (0.05 ha): sem leitura visual.",
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente."
+      ]
+    },
+    {
+      "polygonId": "AC-0025",
+      "geometryHash": "da5670c2d8d023207a1ac595fb65e3f0d0a7b5f431ddca1aa23f61a486fb31c8",
+      "areaHa": 39.163803757717126,
+      "status": "VEGETACAO_DECLARADA_DENTRO_DA_AC",
+      "alertLevel": "ALTO",
+      "geometric": {
+        "avnAreaHa": 39.16374579634885,
+        "avnFraction": 0.9999985200270987,
+        "avnParts": 1,
+        "tipologiaAreaHa": 39.163803757749385,
+        "tipologiaFraction": 1.0000000000008238,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 39.16 ha"
+        ],
+        "arlAreaHa": 39.16374818713217,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0,
+        "declaredVegetationFraction": 0.9999985200270987,
+        "declaredVegetationAreaHa": 39.16374579634885,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "LARGE_BLOCK",
+        "estimatedFractionBand": ">10ha",
+        "distribution": "INTERIOR",
+        "sceneIds": [
+          "AC-0025:S2_2024",
+          "AC-0025:S2_2025_NIR",
+          "AC-0025:SPOT_2008"
+        ]
+      },
+      "flags": [
+        "AC_SOBREPOE_ARL"
+      ],
+      "confidence": "HIGH",
+      "evidence": [
+        "O próprio projeto declara vegetação dentro da Área Consolidada: 39.16 ha (100.0% da AC).",
+        "A AC sobrepõe Área de Reserva Legal (ARL/ARLREM) declarada: 39.16 ha (100.0% da AC)."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0026",
+      "geometryHash": "54ceacc32803903acbe358cfbb4ca4c9a8569fadd36c0fb2e4341c1357f3c49d",
+      "areaHa": 58.11758294233557,
+      "status": "VEGETACAO_DECLARADA_DENTRO_DA_AC",
+      "alertLevel": "ALTO",
+      "geometric": {
+        "avnAreaHa": 52.27311813501147,
+        "avnFraction": 0.899437235489938,
+        "avnParts": 2,
+        "tipologiaAreaHa": 58.11758294233213,
+        "tipologiaFraction": 0.9999999999999409,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 58.12 ha"
+        ],
+        "arlAreaHa": 52.27311832892983,
+        "auasAreaHa": 5.842205380777846,
+        "sliversDiscardedM2": 0,
+        "declaredVegetationFraction": 0.8994372354899379,
+        "declaredVegetationAreaHa": 52.27311813501147,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "LARGE_BLOCK",
+        "estimatedFractionBand": ">10ha",
+        "distribution": "INTERIOR",
+        "sceneIds": [
+          "AC-0026:S2_2024",
+          "AC-0026:S2_2025_NIR",
+          "AC-0026:SPOT_2008"
+        ]
+      },
+      "flags": [
+        "AC_SOBREPOE_ARL",
+        "AC_SOBREPOE_AUAS"
+      ],
+      "confidence": "HIGH",
+      "evidence": [
+        "O próprio projeto declara vegetação dentro da Área Consolidada: 52.27 ha (89.9% da AC).",
+        "A AC sobrepõe Área de Reserva Legal (ARL/ARLREM) declarada: 52.27 ha (89.9% da AC).",
+        "A AC sobrepõe Área de Uso Alternativo do Solo (AUAS) declarada: 5.84 ha (10.1% da AC)."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0027",
+      "geometryHash": "0f310453217005e748df2f168db351bce721c728ec91a8c311414d1638beedae",
+      "areaHa": 165.26703273720693,
+      "status": "VEGETACAO_DECLARADA_DENTRO_DA_AC",
+      "alertLevel": "ALTO",
+      "geometric": {
+        "avnAreaHa": 159.51981520577687,
+        "avnFraction": 0.965224658322699,
+        "avnParts": 1,
+        "tipologiaAreaHa": 165.26703273717257,
+        "tipologiaFraction": 0.999999999999792,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 165.27 ha"
+        ],
+        "arlAreaHa": 159.51965387759276,
+        "auasAreaHa": 5.747381470432177,
+        "sliversDiscardedM2": 0,
+        "declaredVegetationFraction": 0.965224658322699,
+        "declaredVegetationAreaHa": 159.51981520577687,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "LARGE_BLOCK",
+        "estimatedFractionBand": ">10ha",
+        "distribution": "INTERIOR",
+        "sceneIds": [
+          "AC-0027:S2_2024",
+          "AC-0027:S2_2025_NIR",
+          "AC-0027:SPOT_2008"
+        ]
+      },
+      "flags": [
+        "AC_SOBREPOE_ARL",
+        "AC_SOBREPOE_AUAS"
+      ],
+      "confidence": "HIGH",
+      "evidence": [
+        "O próprio projeto declara vegetação dentro da Área Consolidada: 159.52 ha (96.5% da AC).",
+        "A AC sobrepõe Área de Reserva Legal (ARL/ARLREM) declarada: 159.52 ha (96.5% da AC).",
+        "A AC sobrepõe Área de Uso Alternativo do Solo (AUAS) declarada: 5.75 ha (3.5% da AC)."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0028",
+      "geometryHash": "86c80b21cfd2c027b5b6706cfdadb4892970d1e02b89588a35ceeca80e1ebb16",
+      "areaHa": 422.0289711383637,
+      "status": "SEM_VEGETACAO_APARENTE",
+      "alertLevel": "NENHUM",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 422.02853367473483,
+        "tipologiaFraction": 0.9999989634274924,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 422.03 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0.12486530777853592,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NONE",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "EDGE",
+        "sceneIds": [
+          "AC-0028:S2_2024",
+          "AC-0028:S2_2025_NIR",
+          "AC-0028:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "HIGH",
+      "evidence": [
+        "Nenhuma vegetação de aparência nativa observada dentro da AC (422.03 ha) nas cenas utilizáveis."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0029",
+      "geometryHash": "fd4550c0ed07ea26845133fdc3c1809626c9f46e133904998a154a6e48019277",
+      "areaHa": 833.7837369524934,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 833.7836698943955,
+        "tipologiaFraction": 0.9999999195737517,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 833.78 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 36.84503923219823,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente.",
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0030",
+      "geometryHash": "a7eed231cb8a04b235757022069b8ed156c876121bcb87b3012712f2617d8c9e",
+      "areaHa": 747.9817526435785,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 747.972540238702,
+        "tipologiaFraction": 0.9999876836502442,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 747.97 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 5.231302742244202,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NOT_OBSERVABLE",
+        "estimatedFractionBand": null,
+        "distribution": null,
+        "sceneIds": []
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente.",
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0031",
+      "geometryHash": "6d4475801f0d68155f271386f5536158800abaa678b5382315d6219f724b5136",
+      "areaHa": 8.871530957664753,
+      "status": "SEM_VEGETACAO_APARENTE",
+      "alertLevel": "NENHUM",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 8.871530957664753,
+        "tipologiaFraction": 1,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 8.87 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NONE",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "SCATTERED",
+        "sceneIds": [
+          "AC-0031:S2_2024",
+          "AC-0031:S2_2025_NIR",
+          "AC-0031:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "HIGH",
+      "evidence": [
+        "Nenhuma vegetação de aparência nativa observada dentro da AC (8.87 ha) nas cenas utilizáveis."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0032",
+      "geometryHash": "4c316c012e5eba3aa8914f7ae3d54c93db81545413300b119f77c77359ffd2e7",
+      "areaHa": 0.1658130132480759,
+      "status": "SEM_VEGETACAO_APARENTE",
+      "alertLevel": "NENHUM",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0.1658130132480759,
+        "tipologiaFraction": 1,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 0.17 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 2.5570763302430386e-7,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "NONE",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "EDGE",
+        "sceneIds": [
+          "AC-0032:S2_2024",
+          "AC-0032:S2_2025_NIR",
+          "AC-0032:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "HIGH",
+      "evidence": [
+        "Nenhuma vegetação de aparência nativa observada dentro da AC (0.17 ha) nas cenas utilizáveis."
+      ],
+      "limitations": [
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    },
+    {
+      "polygonId": "AC-0033",
+      "geometryHash": "932d9d4f6cdacb25dc6e54e445800d5ce727fda2d0aedfc88ddaf1cecec8ac9d",
+      "areaHa": 0.10540658494315994,
+      "status": "INCONCLUSIVO",
+      "alertLevel": "INDETERMINADO",
+      "geometric": {
+        "avnAreaHa": 0,
+        "avnFraction": 0,
+        "avnParts": 0,
+        "tipologiaAreaHa": 0.10540648507536203,
+        "tipologiaFraction": 0.9999990525468786,
+        "tipologias": [
+          "interseção com TIPOLOGIA_VEGETAL: 0.11 ha"
+        ],
+        "arlAreaHa": 0,
+        "auasAreaHa": 0,
+        "sliversDiscardedM2": 0,
+        "declaredVegetationFraction": 0,
+        "declaredVegetationAreaHa": 0,
+        "declaredSources": [
+          "AVN"
+        ],
+        "tipologiaCoversWholeAc": true
+      },
+      "visual": {
+        "verdict": "LARGE_BLOCK",
+        "estimatedFractionBand": "<0.5ha",
+        "distribution": "INTERIOR",
+        "sceneIds": [
+          "AC-0033:SPOT_2008"
+        ]
+      },
+      "flags": [],
+      "confidence": "INCONCLUSIVE",
+      "evidence": [],
+      "limitations": [
+        "Visão sem cenas utilizáveis, cenas conflitantes ou observação insuficiente.",
+        "TIPOLOGIA_VEGETAL cobre 100% desta AC — camada de cobertura do imóvel, não mancha declarada; área declarada considerada apenas de: AVN."
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "sceneId": "AC-0002:S2_2024",
+      "polygonId": "AC-0002",
+      "geometryHash": "7b0465c228c89f67b6f9ae8ced1574e47a205c4abc93bb7339a71549994d959b",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "c57bcf2c2d391ed0a749b8337ef93e1534f02a4b6a259037abb4d68468082978",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.39397993935877,
+        -12.452589473409988,
+        -52.39177206064122,
+        -12.450433526590011
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:07:22.086Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.39397993935877%2C-12.452589473409988%2C-52.39177206064122%2C-12.450433526590011&width=96&height=94"
+    },
+    {
+      "sceneId": "AC-0002:S2_2025_NIR",
+      "polygonId": "AC-0002",
+      "geometryHash": "7b0465c228c89f67b6f9ae8ced1574e47a205c4abc93bb7339a71549994d959b",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "8779449767eecd62932b95affa6006d46543f23bfb2ecf12a8f7ad0928b718c2",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.39397993935877,
+        -12.452589473409988,
+        -52.39177206064122,
+        -12.450433526590011
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:07:22.764Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.39397993935877%2C-12.452589473409988%2C-52.39177206064122%2C-12.450433526590011&width=96&height=94"
+    },
+    {
+      "sceneId": "AC-0002:SPOT_2008",
+      "polygonId": "AC-0002",
+      "geometryHash": "7b0465c228c89f67b6f9ae8ced1574e47a205c4abc93bb7339a71549994d959b",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "e9ff5856fb27bbe9b37a54bc275ceae1ac3322c953b2ecec3760c14ee0b61cf4",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.39342796967939,
+        -12.452050486704994,
+        -52.39232403032061,
+        -12.450972513295005
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:07:22.923Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.39342796967939%2C-12.452050486704994%2C-52.39232403032061%2C-12.450972513295005&width=96&height=94"
+    },
+    {
+      "sceneId": "AC-0004:S2_2024",
+      "polygonId": "AC-0004",
+      "geometryHash": "e991a173d4859570473679afadc9c34e9a6fda08c08b7925838256b246090718",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "e5407f4abb1a29e3673198a171d9f0e721eb78552f80a6fd1c1018e6cb0c6743",
+      "width": 184,
+      "height": 94,
+      "bbox": [
+        -52.36533913832108,
+        -12.458525973409932,
+        -52.36110032385101,
+        -12.456370026589953
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.932,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:07:26.167Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.36533913832108%2C-12.458525973409932%2C-52.36110032385101%2C-12.456370026589953&width=184&height=94"
+    },
+    {
+      "sceneId": "AC-0004:S2_2025_NIR",
+      "polygonId": "AC-0004",
+      "geometryHash": "e991a173d4859570473679afadc9c34e9a6fda08c08b7925838256b246090718",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "91ec7044a13380a984b38c6dbf6d3272a4fcf904da11fca1469a6c449c478904",
+      "width": 184,
+      "height": 94,
+      "bbox": [
+        -52.36533913832108,
+        -12.458525973409932,
+        -52.36110032385101,
+        -12.456370026589953
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:07:26.781Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.36533913832108%2C-12.458525973409932%2C-52.36110032385101%2C-12.456370026589953&width=184&height=94"
+    },
+    {
+      "sceneId": "AC-0004:SPOT_2008",
+      "polygonId": "AC-0004",
+      "geometryHash": "e991a173d4859570473679afadc9c34e9a6fda08c08b7925838256b246090718",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "32cda396cfdbd168a3ed0cb5044e8ecffb3ef44cd9a11810fdf51061b622c56a",
+      "width": 369,
+      "height": 94,
+      "bbox": [
+        -52.36533913832108,
+        -12.457986986704936,
+        -52.36110032385101,
+        -12.456909013294949
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:07:26.944Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.36533913832108%2C-12.457986986704936%2C-52.36110032385101%2C-12.456909013294949&width=369&height=94"
+    },
+    {
+      "sceneId": "AC-0005:S2_2024",
+      "polygonId": "AC-0005",
+      "geometryHash": "b1d35fbae512fbbc8f6aab4398cf6f2e6fcead73435c342f0d4d99a41d8a07df",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "171dedbcef3717cc9362e782c18c7c4dcb1ecdf059dc2c7d467ae85ca2e9790c",
+      "width": 653,
+      "height": 129,
+      "bbox": [
+        -52.54202466805523,
+        -12.425978429200821,
+        -52.52700996410085,
+        -12.423018465756416
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.933,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:07:30.190Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.54202466805523%2C-12.425978429200821%2C-52.52700996410085%2C-12.423018465756416&width=653&height=129"
+    },
+    {
+      "sceneId": "AC-0005:S2_2025_NIR",
+      "polygonId": "AC-0005",
+      "geometryHash": "b1d35fbae512fbbc8f6aab4398cf6f2e6fcead73435c342f0d4d99a41d8a07df",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "fd47177f16f4a3774105bf3a99f20de596efef41ee7de38b61ecb5977570a8b6",
+      "width": 653,
+      "height": 129,
+      "bbox": [
+        -52.54202466805523,
+        -12.425978429200821,
+        -52.52700996410085,
+        -12.423018465756416
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:07:31.351Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.54202466805523%2C-12.425978429200821%2C-52.52700996410085%2C-12.423018465756416&width=653&height=129"
+    },
+    {
+      "sceneId": "AC-0005:SPOT_2008",
+      "polygonId": "AC-0005",
+      "geometryHash": "b1d35fbae512fbbc8f6aab4398cf6f2e6fcead73435c342f0d4d99a41d8a07df",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "aa440c0b7db1090ae70ea23735571ee8569ba2e81ebc6a7d97bbeba628d97e54",
+      "width": 1306,
+      "height": 258,
+      "bbox": [
+        -52.54202466805523,
+        -12.425978429200821,
+        -52.52700996410085,
+        -12.423018465756416
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:07:32.050Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.54202466805523%2C-12.425978429200821%2C-52.52700996410085%2C-12.423018465756416&width=1306&height=258"
+    },
+    {
+      "sceneId": "AC-0007:S2_2024",
+      "polygonId": "AC-0007",
+      "geometryHash": "4762548e541a25ce846c06a9f8426aa86cc213bd659cd39f44b1eed8d7d2b5fd",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "4f18ed852bc637833b54fc6a9dacb79082497929aae281fdf1887358d1f76715",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.451549252916216,
+        -12.441667865208098,
+        -52.449341467083784,
+        -12.439511918388119
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.974,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:07:36.121Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.451549252916216%2C-12.441667865208098%2C-52.449341467083784%2C-12.439511918388119&width=96&height=94"
+    },
+    {
+      "sceneId": "AC-0007:S2_2025_NIR",
+      "polygonId": "AC-0007",
+      "geometryHash": "4762548e541a25ce846c06a9f8426aa86cc213bd659cd39f44b1eed8d7d2b5fd",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "2688a8180c18355c970d37020522d38f28c65c13331a4c41040ba31350624c91",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.451549252916216,
+        -12.441667865208098,
+        -52.449341467083784,
+        -12.439511918388119
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.817,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:07:36.645Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.451549252916216%2C-12.441667865208098%2C-52.449341467083784%2C-12.439511918388119&width=96&height=94"
+    },
+    {
+      "sceneId": "AC-0007:SPOT_2008",
+      "polygonId": "AC-0007",
+      "geometryHash": "4762548e541a25ce846c06a9f8426aa86cc213bd659cd39f44b1eed8d7d2b5fd",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "8c6c8f3d55f760c52eb9e2af3842593cc87578c7436e6fc25ffd1278e3ab7ca2",
+      "width": 186,
+      "height": 94,
+      "bbox": [
+        -52.451512191999996,
+        -12.441128878503102,
+        -52.449378528000004,
+        -12.440050905093115
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:07:36.776Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.451512191999996%2C-12.441128878503102%2C-52.449378528000004%2C-12.440050905093115&width=186&height=94"
+    },
+    {
+      "sceneId": "AC-0010:S2_2024",
+      "polygonId": "AC-0010",
+      "geometryHash": "3f6c5af55641e9d4152635b41cdf8ee3a146dbbeecf5dbf8f3ff3f36fbcfbf4c",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.451402309059894,
+        -12.44193694145362,
+        -52.449194520940104,
+        -12.43978099463364
+      ],
+      "usability": "BELOW_MIN_RESOLUTION",
+      "qualityScore": 0,
+      "qualityFlags": [
+        "below_sensor_resolution: lado menor ≈ 3.8 px de 10 m (mínimo 4)"
+      ],
+      "fetchedAt": "2026-08-13T02:08:10.685Z"
+    },
+    {
+      "sceneId": "AC-0010:S2_2025_NIR",
+      "polygonId": "AC-0010",
+      "geometryHash": "3f6c5af55641e9d4152635b41cdf8ee3a146dbbeecf5dbf8f3ff3f36fbcfbf4c",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.451402309059894,
+        -12.44193694145362,
+        -52.449194520940104,
+        -12.43978099463364
+      ],
+      "usability": "BELOW_MIN_RESOLUTION",
+      "qualityScore": 0,
+      "qualityFlags": [
+        "below_sensor_resolution: lado menor ≈ 3.8 px de 10 m (mínimo 4)"
+      ],
+      "fetchedAt": "2026-08-13T02:08:10.685Z"
+    },
+    {
+      "sceneId": "AC-0010:SPOT_2008",
+      "polygonId": "AC-0010",
+      "geometryHash": "3f6c5af55641e9d4152635b41cdf8ee3a146dbbeecf5dbf8f3ff3f36fbcfbf4c",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "eee18f731e4c3122df325e695f0ec14c83b27a5f062c6514f3b0e44cad478bb3",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.450850362029946,
+        -12.441397954748624,
+        -52.44974646797005,
+        -12.440319981338636
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:11.032Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.450850362029946%2C-12.441397954748624%2C-52.44974646797005%2C-12.440319981338636&width=96&height=94"
+    },
+    {
+      "sceneId": "AC-0011:S2_2024",
+      "polygonId": "AC-0011",
+      "geometryHash": "7bf47f4fd389f4068269fa87d458a068cc38c5331c6d7e22de683d675e1e5041",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "82e3aba464d5b734503d4f03a96870c810415bb938f58df7ed8c9f6b86d563d8",
+      "width": 1600,
+      "height": 1375,
+      "bbox": [
+        -52.456580309346776,
+        -12.47581498799994,
+        -52.41058203219896,
+        -12.436275851999852
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.743,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:18.514Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.456580309346776%2C-12.47581498799994%2C-52.41058203219896%2C-12.436275851999852&width=1600&height=1375"
+    },
+    {
+      "sceneId": "AC-0011:S2_2025_NIR",
+      "polygonId": "AC-0011",
+      "geometryHash": "7bf47f4fd389f4068269fa87d458a068cc38c5331c6d7e22de683d675e1e5041",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "3a62d6a7bd25535c2c75c4803d1cbba305a2f1e0c6899de830994491e26e3f18",
+      "width": 1600,
+      "height": 1375,
+      "bbox": [
+        -52.456580309346776,
+        -12.47581498799994,
+        -52.41058203219896,
+        -12.436275851999852
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:25.806Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.456580309346776%2C-12.47581498799994%2C-52.41058203219896%2C-12.436275851999852&width=1600&height=1375"
+    },
+    {
+      "sceneId": "AC-0011:SPOT_2008",
+      "polygonId": "AC-0011",
+      "geometryHash": "7bf47f4fd389f4068269fa87d458a068cc38c5331c6d7e22de683d675e1e5041",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "d1d1cfcfcdf9bb19fa693f5791fa9e880760ab4fc749e2f97d557e880a7b670e",
+      "width": 1600,
+      "height": 1375,
+      "bbox": [
+        -52.456580309346776,
+        -12.47581498799994,
+        -52.41058203219896,
+        -12.436275851999852
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:35.744Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.456580309346776%2C-12.47581498799994%2C-52.41058203219896%2C-12.436275851999852&width=1600&height=1375"
+    },
+    {
+      "sceneId": "AC-0014:S2_2024",
+      "polygonId": "AC-0014",
+      "geometryHash": "f79f7081e0db2d90628a3a83c09647b736592212dafc012eb909188a365e5d5b",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "2957c65e546f8467317b6303e553a8aed054b230638257becdc9c9c9100d0b01",
+      "width": 96,
+      "height": 199,
+      "bbox": [
+        -52.4622213303485,
+        -12.487260881415658,
+        -52.46001316652693,
+        -12.48267936329361
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:36.977Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.4622213303485%2C-12.487260881415658%2C-52.46001316652693%2C-12.48267936329361&width=96&height=199"
+    },
+    {
+      "sceneId": "AC-0014:S2_2025_NIR",
+      "polygonId": "AC-0014",
+      "geometryHash": "f79f7081e0db2d90628a3a83c09647b736592212dafc012eb909188a365e5d5b",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "51cf1432c318ff0640b0ee3b6ca80e8b9b24fc12b396df4cee1f711f299f2a14",
+      "width": 96,
+      "height": 199,
+      "bbox": [
+        -52.4622213303485,
+        -12.487260881415658,
+        -52.46001316652693,
+        -12.48267936329361
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:37.569Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.4622213303485%2C-12.487260881415658%2C-52.46001316652693%2C-12.48267936329361&width=96&height=199"
+    },
+    {
+      "sceneId": "AC-0014:SPOT_2008",
+      "polygonId": "AC-0014",
+      "geometryHash": "f79f7081e0db2d90628a3a83c09647b736592212dafc012eb909188a365e5d5b",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "87216789cddfed197aed0e4c6121b0ec3b3334a96d3847a07524dc0f2c7ed833",
+      "width": 96,
+      "height": 398,
+      "bbox": [
+        -52.46166928939311,
+        -12.487260881415658,
+        -52.46056520748232,
+        -12.48267936329361
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:37.738Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.46166928939311%2C-12.487260881415658%2C-52.46056520748232%2C-12.48267936329361&width=96&height=398"
+    },
+    {
+      "sceneId": "AC-0018:S2_2024",
+      "polygonId": "AC-0018",
+      "geometryHash": "a7dc41ed34cdc1e330bb5d46efc76643c1422ce9babd001c8ffd5ecb70a934b5",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "4127601d838d9e02a90cfe23edf8dbc7f822a898f3180bc7d2ad1b1e34d16b77",
+      "width": 1666,
+      "height": 323,
+      "bbox": [
+        -52.47458939204521,
+        -12.3977311424722,
+        -52.43628109263603,
+        -12.390302574379804
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.826,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:41.625Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.47458939204521%2C-12.3977311424722%2C-52.43628109263603%2C-12.390302574379804&width=1666&height=323"
+    },
+    {
+      "sceneId": "AC-0018:S2_2025_NIR",
+      "polygonId": "AC-0018",
+      "geometryHash": "a7dc41ed34cdc1e330bb5d46efc76643c1422ce9babd001c8ffd5ecb70a934b5",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "e1cfca65cdfd0618a76fa507cace46b709cabf662633356c9835da97dda16c71",
+      "width": 1666,
+      "height": 323,
+      "bbox": [
+        -52.47458939204521,
+        -12.3977311424722,
+        -52.43628109263603,
+        -12.390302574379804
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.794,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:43.691Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.47458939204521%2C-12.3977311424722%2C-52.43628109263603%2C-12.390302574379804&width=1666&height=323"
+    },
+    {
+      "sceneId": "AC-0018:SPOT_2008",
+      "polygonId": "AC-0018",
+      "geometryHash": "a7dc41ed34cdc1e330bb5d46efc76643c1422ce9babd001c8ffd5ecb70a934b5",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "f963a9ade0709c51425658a16e635d2a6292423026062106c0a871e0efef8345",
+      "width": 2400,
+      "height": 465,
+      "bbox": [
+        -52.47458939204521,
+        -12.3977311424722,
+        -52.43628109263603,
+        -12.390302574379804
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:45.363Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.47458939204521%2C-12.3977311424722%2C-52.43628109263603%2C-12.390302574379804&width=2400&height=465"
+    },
+    {
+      "sceneId": "AC-0019:S2_2024",
+      "polygonId": "AC-0019",
+      "geometryHash": "c2ba0e4455932aae401b7d7dec8e7447ac471a18ee50644889e0b548dd6fd97d",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "5cc2668da10160abb9a60df0f06dda73b35b1d066d6b9a966f281d484a08e8f2",
+      "width": 148,
+      "height": 718,
+      "bbox": [
+        -52.451991430098374,
+        -12.29066687368207,
+        -52.44858170257911,
+        -12.274170547720539
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.799,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:50.545Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.451991430098374%2C-12.29066687368207%2C-52.44858170257911%2C-12.274170547720539&width=148&height=718"
+    },
+    {
+      "sceneId": "AC-0019:S2_2025_NIR",
+      "polygonId": "AC-0019",
+      "geometryHash": "c2ba0e4455932aae401b7d7dec8e7447ac471a18ee50644889e0b548dd6fd97d",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "ace68e542f595e87bb935f1e27206a4c6469d6eadaf179b2bc80c73b5ae82ca8",
+      "width": 148,
+      "height": 718,
+      "bbox": [
+        -52.451991430098374,
+        -12.29066687368207,
+        -52.44858170257911,
+        -12.274170547720539
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.811,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:51.931Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.451991430098374%2C-12.29066687368207%2C-52.44858170257911%2C-12.274170547720539&width=148&height=718"
+    },
+    {
+      "sceneId": "AC-0019:SPOT_2008",
+      "polygonId": "AC-0019",
+      "geometryHash": "c2ba0e4455932aae401b7d7dec8e7447ac471a18ee50644889e0b548dd6fd97d",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "4d83cd105aae5218ce3145e56f65ea7b4893a9d80bb623afc937d18a63c0d4f4",
+      "width": 297,
+      "height": 1441,
+      "bbox": [
+        -52.451991430098374,
+        -12.29066687368207,
+        -52.44858170257911,
+        -12.274170547720539
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:52.507Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.451991430098374%2C-12.29066687368207%2C-52.44858170257911%2C-12.274170547720539&width=297&height=1441"
+    },
+    {
+      "sceneId": "AC-0020:S2_2024",
+      "polygonId": "AC-0020",
+      "geometryHash": "53e8ade1e066f611b75e154c0e1483135a4536739cec8b0ce4e4d1e35889d5eb",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "3220444dd4cd66a2299c7b963647e28a5383bbb72b2ffc94a6cc6501e54e6492",
+      "width": 1806,
+      "height": 359,
+      "bbox": [
+        -52.47421886694496,
+        -12.219635657767967,
+        -52.432726906050625,
+        -12.211371629420867
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:08:57.517Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.47421886694496%2C-12.219635657767967%2C-52.432726906050625%2C-12.211371629420867&width=1806&height=359"
+    },
+    {
+      "sceneId": "AC-0020:S2_2025_NIR",
+      "polygonId": "AC-0020",
+      "geometryHash": "53e8ade1e066f611b75e154c0e1483135a4536739cec8b0ce4e4d1e35889d5eb",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "504043001b4be8747195b855fc569f406669edfb0d92a674a39d1be7b3931c9f",
+      "width": 1806,
+      "height": 359,
+      "bbox": [
+        -52.47421886694496,
+        -12.219635657767967,
+        -52.432726906050625,
+        -12.211371629420867
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:00.013Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.47421886694496%2C-12.219635657767967%2C-52.432726906050625%2C-12.211371629420867&width=1806&height=359"
+    },
+    {
+      "sceneId": "AC-0020:SPOT_2008",
+      "polygonId": "AC-0020",
+      "geometryHash": "53e8ade1e066f611b75e154c0e1483135a4536739cec8b0ce4e4d1e35889d5eb",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "38869743cc6746eeff31b71d2965451b02787012a7ea14fe2a14cfcb89c92adb",
+      "width": 2400,
+      "height": 477,
+      "bbox": [
+        -52.47421886694496,
+        -12.219635657767967,
+        -52.432726906050625,
+        -12.211371629420867
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.771,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:01.577Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.47421886694496%2C-12.219635657767967%2C-52.432726906050625%2C-12.211371629420867&width=2400&height=477"
+    },
+    {
+      "sceneId": "AC-0021:S2_2024",
+      "polygonId": "AC-0021",
+      "geometryHash": "4985c78ac8d9b746ce1b8b3c3817dd49afdbd29dae7a7b32c27c2a44b4ae045e",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "deb483a82011c4f2da99704a0ca4836bd0d5ae5c2d67085821109a3c56a54abe",
+      "width": 339,
+      "height": 106,
+      "bbox": [
+        -52.4441061,
+        -12.48473755,
+        -52.4363139,
+        -12.482297449999999
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:06.623Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.4441061%2C-12.48473755%2C-52.4363139%2C-12.482297449999999&width=339&height=106"
+    },
+    {
+      "sceneId": "AC-0021:S2_2025_NIR",
+      "polygonId": "AC-0021",
+      "geometryHash": "4985c78ac8d9b746ce1b8b3c3817dd49afdbd29dae7a7b32c27c2a44b4ae045e",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "1f5bbcc82edba1614a06a9b3c40d9da00d4ca6ff57dff30bab488d4dd37d5b50",
+      "width": 339,
+      "height": 106,
+      "bbox": [
+        -52.4441061,
+        -12.48473755,
+        -52.4363139,
+        -12.482297449999999
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:07.278Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.4441061%2C-12.48473755%2C-52.4363139%2C-12.482297449999999&width=339&height=106"
+    },
+    {
+      "sceneId": "AC-0021:SPOT_2008",
+      "polygonId": "AC-0021",
+      "geometryHash": "4985c78ac8d9b746ce1b8b3c3817dd49afdbd29dae7a7b32c27c2a44b4ae045e",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "8ca23314d8786b0fe049226a438075f21463edf488ceddcc7ad776cfeb18b827",
+      "width": 678,
+      "height": 213,
+      "bbox": [
+        -52.4441061,
+        -12.48473755,
+        -52.4363139,
+        -12.482297449999999
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:07.595Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.4441061%2C-12.48473755%2C-52.4363139%2C-12.482297449999999&width=678&height=213"
+    },
+    {
+      "sceneId": "AC-0022:S2_2024",
+      "polygonId": "AC-0022",
+      "geometryHash": "81001197d04e0731849b6003cbaa2f23711ac0d06a69bfccf7a1a104f9c00dae",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.4400920717885,
+        -12.483675473409988,
+        -52.4378839282115,
+        -12.481519526590011
+      ],
+      "usability": "BELOW_MIN_RESOLUTION",
+      "qualityScore": 0,
+      "qualityFlags": [
+        "below_sensor_resolution: lado menor ≈ 2.7 px de 10 m (mínimo 4)"
+      ],
+      "fetchedAt": "2026-08-13T02:09:10.366Z"
+    },
+    {
+      "sceneId": "AC-0022:S2_2025_NIR",
+      "polygonId": "AC-0022",
+      "geometryHash": "81001197d04e0731849b6003cbaa2f23711ac0d06a69bfccf7a1a104f9c00dae",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.4400920717885,
+        -12.483675473409988,
+        -52.4378839282115,
+        -12.481519526590011
+      ],
+      "usability": "BELOW_MIN_RESOLUTION",
+      "qualityScore": 0,
+      "qualityFlags": [
+        "below_sensor_resolution: lado menor ≈ 2.7 px de 10 m (mínimo 4)"
+      ],
+      "fetchedAt": "2026-08-13T02:09:10.366Z"
+    },
+    {
+      "sceneId": "AC-0022:SPOT_2008",
+      "polygonId": "AC-0022",
+      "geometryHash": "81001197d04e0731849b6003cbaa2f23711ac0d06a69bfccf7a1a104f9c00dae",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "2f6ad8117a4fbc0b5c0262101101fa63b105d41db5e50142b5a74d33e33fd68c",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.43954003589425,
+        -12.483136486704995,
+        -52.43843596410575,
+        -12.482058513295005
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:10.487Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.43954003589425%2C-12.483136486704995%2C-52.43843596410575%2C-12.482058513295005&width=96&height=94"
+    },
+    {
+      "sceneId": "AC-0023:S2_2024",
+      "polygonId": "AC-0023",
+      "geometryHash": "50fd312ba65612c49e87d744608b5a66c43a3d2801d910974862b9d585269bd2",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "0c7e8b73a3faa0a795750ac1b553cc0dedececbfc67228bcb61b1a83f5432c3b",
+      "width": 215,
+      "height": 94,
+      "bbox": [
+        -52.4428442,
+        -12.48385997340999,
+        -52.4378938,
+        -12.48170402659001
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:12.474Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.4428442%2C-12.48385997340999%2C-52.4378938%2C-12.48170402659001&width=215&height=94"
+    },
+    {
+      "sceneId": "AC-0023:S2_2025_NIR",
+      "polygonId": "AC-0023",
+      "geometryHash": "50fd312ba65612c49e87d744608b5a66c43a3d2801d910974862b9d585269bd2",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "c0a395b4b05c8d7600d1ca569aab760b4b4831fc6d4d978db88e822e6adb34fb",
+      "width": 215,
+      "height": 94,
+      "bbox": [
+        -52.4428442,
+        -12.48385997340999,
+        -52.4378938,
+        -12.48170402659001
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:13.008Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.4428442%2C-12.48385997340999%2C-52.4378938%2C-12.48170402659001&width=215&height=94"
+    },
+    {
+      "sceneId": "AC-0023:SPOT_2008",
+      "polygonId": "AC-0023",
+      "geometryHash": "50fd312ba65612c49e87d744608b5a66c43a3d2801d910974862b9d585269bd2",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "a1793dafc92781793dab37d8f5ea4150baa4f21ac99fd9d08beb8d908b550736",
+      "width": 430,
+      "height": 184,
+      "bbox": [
+        -52.4428442,
+        -12.4838441,
+        -52.4378938,
+        -12.4817199
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:13.217Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.4428442%2C-12.4838441%2C-52.4378938%2C-12.4817199&width=430&height=184"
+    },
+    {
+      "sceneId": "AC-0025:S2_2024",
+      "polygonId": "AC-0025",
+      "geometryHash": "da5670c2d8d023207a1ac595fb65e3f0d0a7b5f431ddca1aa23f61a486fb31c8",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "b6f8a6522cbeaa3a3c0c578367ed9ef5d331734598fa4d5df454bcd6d6d74867",
+      "width": 605,
+      "height": 366,
+      "bbox": [
+        -52.43895514999986,
+        -12.44584964999989,
+        -52.42504384999989,
+        -12.437437349999993
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.768,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:17.221Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.43895514999986%2C-12.44584964999989%2C-52.42504384999989%2C-12.437437349999993&width=605&height=366"
+    },
+    {
+      "sceneId": "AC-0025:S2_2025_NIR",
+      "polygonId": "AC-0025",
+      "geometryHash": "da5670c2d8d023207a1ac595fb65e3f0d0a7b5f431ddca1aa23f61a486fb31c8",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "0e6e8bab147426736bba0e388e62814066b197198e867fae889dbed1b6504136",
+      "width": 605,
+      "height": 366,
+      "bbox": [
+        -52.43895514999986,
+        -12.44584964999989,
+        -52.42504384999989,
+        -12.437437349999993
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.801,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:18.335Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.43895514999986%2C-12.44584964999989%2C-52.42504384999989%2C-12.437437349999993&width=605&height=366"
+    },
+    {
+      "sceneId": "AC-0025:SPOT_2008",
+      "polygonId": "AC-0025",
+      "geometryHash": "da5670c2d8d023207a1ac595fb65e3f0d0a7b5f431ddca1aa23f61a486fb31c8",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "7245597dd25ac9a358b0248a3940a73a951e6745d4ff5a87b97fc6d48d41cf75",
+      "width": 800,
+      "height": 484,
+      "bbox": [
+        -52.43895514999986,
+        -12.44584964999989,
+        -52.42504384999989,
+        -12.437437349999993
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:18.965Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.43895514999986%2C-12.44584964999989%2C-52.42504384999989%2C-12.437437349999993&width=800&height=484"
+    },
+    {
+      "sceneId": "AC-0026:S2_2024",
+      "polygonId": "AC-0026",
+      "geometryHash": "54ceacc32803903acbe358cfbb4ca4c9a8569fadd36c0fb2e4341c1357f3c49d",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "c65ee6091392e2186efbdb1005d44b0047c2b3408b82fe2429f8a58f48631562",
+      "width": 350,
+      "height": 903,
+      "bbox": [
+        -52.416451350000024,
+        -12.450907699999934,
+        -52.40840564999987,
+        -12.430162299999918
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.959,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:23.110Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.416451350000024%2C-12.450907699999934%2C-52.40840564999987%2C-12.430162299999918&width=350&height=903"
+    },
+    {
+      "sceneId": "AC-0026:S2_2025_NIR",
+      "polygonId": "AC-0026",
+      "geometryHash": "54ceacc32803903acbe358cfbb4ca4c9a8569fadd36c0fb2e4341c1357f3c49d",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "8893b8e4995532f272aa861c13418bc5fb195751c95373fd158c77141aa7893e",
+      "width": 350,
+      "height": 903,
+      "bbox": [
+        -52.416451350000024,
+        -12.450907699999934,
+        -52.40840564999987,
+        -12.430162299999918
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.796,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:24.538Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.416451350000024%2C-12.450907699999934%2C-52.40840564999987%2C-12.430162299999918&width=350&height=903"
+    },
+    {
+      "sceneId": "AC-0026:SPOT_2008",
+      "polygonId": "AC-0026",
+      "geometryHash": "54ceacc32803903acbe358cfbb4ca4c9a8569fadd36c0fb2e4341c1357f3c49d",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "d7b036e70bf0510e014fdff09e9e0c9c95e43e3e7d5550628b3fe3d4f6b9cead",
+      "width": 480,
+      "height": 1238,
+      "bbox": [
+        -52.416451350000024,
+        -12.450907699999934,
+        -52.40840564999987,
+        -12.430162299999918
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:25.351Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.416451350000024%2C-12.450907699999934%2C-52.40840564999987%2C-12.430162299999918&width=480&height=1238"
+    },
+    {
+      "sceneId": "AC-0027:S2_2024",
+      "polygonId": "AC-0027",
+      "geometryHash": "0f310453217005e748df2f168db351bce721c728ec91a8c311414d1638beedae",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "c9c791fcd147ee7eb1d6aa38ee092b29ed754413b75e19c27bc8c096d8e40ee0",
+      "width": 850,
+      "height": 845,
+      "bbox": [
+        -52.42999139999987,
+        -12.449600699999959,
+        -52.410444599999856,
+        -12.430155299999914
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.965,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:30.908Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.42999139999987%2C-12.449600699999959%2C-52.410444599999856%2C-12.430155299999914&width=850&height=845"
+    },
+    {
+      "sceneId": "AC-0027:S2_2025_NIR",
+      "polygonId": "AC-0027",
+      "geometryHash": "0f310453217005e748df2f168db351bce721c728ec91a8c311414d1638beedae",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "ca9261368cc428859f427a47853e4abb378a2386fcf1e1f37a1cda6e16b2d981",
+      "width": 850,
+      "height": 845,
+      "bbox": [
+        -52.42999139999987,
+        -12.449600699999959,
+        -52.410444599999856,
+        -12.430155299999914
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.79,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:33.247Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.42999139999987%2C-12.449600699999959%2C-52.410444599999856%2C-12.430155299999914&width=850&height=845"
+    },
+    {
+      "sceneId": "AC-0027:SPOT_2008",
+      "polygonId": "AC-0027",
+      "geometryHash": "0f310453217005e748df2f168db351bce721c728ec91a8c311414d1638beedae",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "3e299d5a1b06f28c52ef1fd91705cb24ae6f910f6b18153f4cbfaf04eabbf8c0",
+      "width": 900,
+      "height": 895,
+      "bbox": [
+        -52.42999139999987,
+        -12.449600699999959,
+        -52.410444599999856,
+        -12.430155299999914
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:34.660Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.42999139999987%2C-12.449600699999959%2C-52.410444599999856%2C-12.430155299999914&width=900&height=895"
+    },
+    {
+      "sceneId": "AC-0028:S2_2024",
+      "polygonId": "AC-0028",
+      "geometryHash": "86c80b21cfd2c027b5b6706cfdadb4892970d1e02b89588a35ceeca80e1ebb16",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "4e3332e4c18a1b9c67a5a7d26bdfe7504e7839f8798192986f917164c2ad02ba",
+      "width": 1200,
+      "height": 946,
+      "bbox": [
+        -52.449633999999946,
+        -12.456747150728228,
+        -52.393554999999935,
+        -12.412517589035252
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.967,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:40.479Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.449633999999946%2C-12.456747150728228%2C-52.393554999999935%2C-12.412517589035252&width=1200&height=946"
+    },
+    {
+      "sceneId": "AC-0028:S2_2025_NIR",
+      "polygonId": "AC-0028",
+      "geometryHash": "86c80b21cfd2c027b5b6706cfdadb4892970d1e02b89588a35ceeca80e1ebb16",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "56bbd50c56e6d4b93ed5b5585c15c94cb4691de3aee3f3bb1bf2cf0af76d49ad",
+      "width": 1200,
+      "height": 946,
+      "bbox": [
+        -52.449633999999946,
+        -12.456747150728228,
+        -52.393554999999935,
+        -12.412517589035252
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.798,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:43.968Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.449633999999946%2C-12.456747150728228%2C-52.393554999999935%2C-12.412517589035252&width=1200&height=946"
+    },
+    {
+      "sceneId": "AC-0028:SPOT_2008",
+      "polygonId": "AC-0028",
+      "geometryHash": "86c80b21cfd2c027b5b6706cfdadb4892970d1e02b89588a35ceeca80e1ebb16",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "a48238b1deb9c2f589dba1bca5f780da17e7b50072fc2825eba4ee8604551469",
+      "width": 1200,
+      "height": 946,
+      "bbox": [
+        -52.449633999999946,
+        -12.456747150728228,
+        -52.393554999999935,
+        -12.412517589035252
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:45.836Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.449633999999946%2C-12.456747150728228%2C-52.393554999999935%2C-12.412517589035252&width=1200&height=946"
+    },
+    {
+      "sceneId": "AC-0029:S2_2024",
+      "polygonId": "AC-0029",
+      "geometryHash": "fd4550c0ed07ea26845133fdc3c1809626c9f46e133904998a154a6e48019277",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "9392c696beb258937e48b764cd93443d0e07a5ee24e1c1654316a041019dd801",
+      "width": 1600,
+      "height": 1380,
+      "bbox": [
+        -52.465353675371176,
+        -12.509357052040432,
+        -52.419349452877434,
+        -12.469688651891818
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.61,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:09:54.544Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.465353675371176%2C-12.509357052040432%2C-52.419349452877434%2C-12.469688651891818&width=1600&height=1380"
+    },
+    {
+      "sceneId": "AC-0029:S2_2025_NIR",
+      "polygonId": "AC-0029",
+      "geometryHash": "fd4550c0ed07ea26845133fdc3c1809626c9f46e133904998a154a6e48019277",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "87caf4c92ed2e0537607e14c0fdb3250e45ecddd06ef7ee4687af5e93aba34d3",
+      "width": 1600,
+      "height": 1380,
+      "bbox": [
+        -52.465353675371176,
+        -12.509357052040432,
+        -52.419349452877434,
+        -12.469688651891818
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:10:01.776Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.465353675371176%2C-12.509357052040432%2C-52.419349452877434%2C-12.469688651891818&width=1600&height=1380"
+    },
+    {
+      "sceneId": "AC-0029:SPOT_2008",
+      "polygonId": "AC-0029",
+      "geometryHash": "fd4550c0ed07ea26845133fdc3c1809626c9f46e133904998a154a6e48019277",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "5f36c36e9e7f7cc1efba13c42ee5aae27ce13167de472610f1a9c89b1fdfda21",
+      "width": 1600,
+      "height": 1380,
+      "bbox": [
+        -52.465353675371176,
+        -12.509357052040432,
+        -52.419349452877434,
+        -12.469688651891818
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:10:07.231Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.465353675371176%2C-12.509357052040432%2C-52.419349452877434%2C-12.469688651891818&width=1600&height=1380"
+    },
+    {
+      "sceneId": "AC-0030:S2_2024",
+      "polygonId": "AC-0030",
+      "geometryHash": "a7eed231cb8a04b235757022069b8ed156c876121bcb87b3012712f2617d8c9e",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "565d5cd00fe61c62c5dc9200f05ca48f56588838b7e4a23c54414f073d2ed300",
+      "width": 1600,
+      "height": 1562,
+      "bbox": [
+        -52.46360555114144,
+        -12.487354430075122,
+        -52.41760570375666,
+        -12.442438871325573
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.674,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:10:15.189Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.46360555114144%2C-12.487354430075122%2C-52.41760570375666%2C-12.442438871325573&width=1600&height=1562"
+    },
+    {
+      "sceneId": "AC-0030:S2_2025_NIR",
+      "polygonId": "AC-0030",
+      "geometryHash": "a7eed231cb8a04b235757022069b8ed156c876121bcb87b3012712f2617d8c9e",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "bbdadf96eb93a6ff6e5b7fed03525d87c02d76a2e38a097f8c3cbeaba3fbbbf9",
+      "width": 1600,
+      "height": 1562,
+      "bbox": [
+        -52.46360555114144,
+        -12.487354430075122,
+        -52.41760570375666,
+        -12.442438871325573
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:10:23.351Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.46360555114144%2C-12.487354430075122%2C-52.41760570375666%2C-12.442438871325573&width=1600&height=1562"
+    },
+    {
+      "sceneId": "AC-0030:SPOT_2008",
+      "polygonId": "AC-0030",
+      "geometryHash": "a7eed231cb8a04b235757022069b8ed156c876121bcb87b3012712f2617d8c9e",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "8b3480c87602026f7093466e45c8ae77a761cf9219e4ebc61bec09d898a2d670",
+      "width": 1600,
+      "height": 1562,
+      "bbox": [
+        -52.46360555114144,
+        -12.487354430075122,
+        -52.41760570375666,
+        -12.442438871325573
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:10:28.125Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.46360555114144%2C-12.487354430075122%2C-52.41760570375666%2C-12.442438871325573&width=1600&height=1562"
+    },
+    {
+      "sceneId": "AC-0031:S2_2024",
+      "polygonId": "AC-0031",
+      "geometryHash": "6d4475801f0d68155f271386f5536158800abaa678b5382315d6219f724b5136",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "114c0100f4100cefc814f088eb35faefa55a4f07a5d665401237f8bc98aecdf0",
+      "width": 327,
+      "height": 129,
+      "bbox": [
+        -52.45030532978516,
+        -12.443554650112356,
+        -52.442787258175734,
+        -12.440585015804436
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.834,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:10:29.464Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.45030532978516%2C-12.443554650112356%2C-52.442787258175734%2C-12.440585015804436&width=327&height=129"
+    },
+    {
+      "sceneId": "AC-0031:S2_2025_NIR",
+      "polygonId": "AC-0031",
+      "geometryHash": "6d4475801f0d68155f271386f5536158800abaa678b5382315d6219f724b5136",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "8c0a179b17c09dade4faea9ee8c79c064292774034642a1172c65a72b814aa41",
+      "width": 327,
+      "height": 129,
+      "bbox": [
+        -52.45030532978516,
+        -12.443554650112356,
+        -52.442787258175734,
+        -12.440585015804436
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.771,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:10:30.114Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.45030532978516%2C-12.443554650112356%2C-52.442787258175734%2C-12.440585015804436&width=327&height=129"
+    },
+    {
+      "sceneId": "AC-0031:SPOT_2008",
+      "polygonId": "AC-0031",
+      "geometryHash": "6d4475801f0d68155f271386f5536158800abaa678b5382315d6219f724b5136",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "543a1a1a21cd41ea9564afaddff1ba34e83d4b625fdd34696b553b07341cfdb4",
+      "width": 654,
+      "height": 258,
+      "bbox": [
+        -52.45030532978516,
+        -12.443554650112356,
+        -52.442787258175734,
+        -12.440585015804436
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.809,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:10:30.408Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.45030532978516%2C-12.443554650112356%2C-52.442787258175734%2C-12.440585015804436&width=654&height=258"
+    },
+    {
+      "sceneId": "AC-0032:S2_2024",
+      "polygonId": "AC-0032",
+      "geometryHash": "4c316c012e5eba3aa8914f7ae3d54c93db81545413300b119f77c77359ffd2e7",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "d2f98aeae040f41638c9c88a1ab7cbc95ee5dea9894e1f167e85889d96eef02b",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.45077573757775,
+        -12.44165062564886,
+        -52.44856795189187,
+        -12.439494678828881
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.931,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:10:33.339Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2024&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.45077573757775%2C-12.44165062564886%2C-52.44856795189187%2C-12.439494678828881&width=96&height=94"
+    },
+    {
+      "sceneId": "AC-0032:S2_2025_NIR",
+      "polygonId": "AC-0032",
+      "geometryHash": "4c316c012e5eba3aa8914f7ae3d54c93db81545413300b119f77c77359ffd2e7",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "9f9dd23adaee78028507698d76c501c95ae0a1520f048b08afb96a3c1d4d0a39",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.45077573757775,
+        -12.44165062564886,
+        -52.44856795189187,
+        -12.439494678828881
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.809,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:10:33.910Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3ASENTINEL_2_2025&styles=Geoportal_Sentinel_2_2025_NIR&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.45077573757775%2C-12.44165062564886%2C-52.44856795189187%2C-12.439494678828881&width=96&height=94"
+    },
+    {
+      "sceneId": "AC-0032:SPOT_2008",
+      "polygonId": "AC-0032",
+      "geometryHash": "4c316c012e5eba3aa8914f7ae3d54c93db81545413300b119f77c77359ffd2e7",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "ed8a0bed2a5ea0c9162030bd50314e52a11ca208aa80acb69e35304d526c5206",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.45022379115628,
+        -12.441111638943864,
+        -52.449119898313334,
+        -12.440033665533877
+      ],
+      "usability": "USABLE",
+      "qualityScore": 1,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:10:34.028Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.45022379115628%2C-12.441111638943864%2C-52.449119898313334%2C-12.440033665533877&width=96&height=94"
+    },
+    {
+      "sceneId": "AC-0033:S2_2024",
+      "polygonId": "AC-0033",
+      "geometryHash": "932d9d4f6cdacb25dc6e54e445800d5ce727fda2d0aedfc88ddaf1cecec8ac9d",
+      "year": 2024,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2024",
+      "imageSha256": "",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.47103240856346,
+        -12.213339621303872,
+        -52.46882654446638,
+        -12.211183674483893
+      ],
+      "usability": "BELOW_MIN_RESOLUTION",
+      "qualityScore": 0,
+      "qualityFlags": [
+        "below_sensor_resolution: lado menor ≈ 3.1 px de 10 m (mínimo 4)"
+      ],
+      "fetchedAt": "2026-08-13T02:10:36.548Z"
+    },
+    {
+      "sceneId": "AC-0033:S2_2025_NIR",
+      "polygonId": "AC-0033",
+      "geometryHash": "932d9d4f6cdacb25dc6e54e445800d5ce727fda2d0aedfc88ddaf1cecec8ac9d",
+      "year": 2025,
+      "sensor": "SENTINEL_2",
+      "layer": "Mosaicos:SENTINEL_2_2025",
+      "style": "Geoportal_Sentinel_2_2025_NIR",
+      "imageSha256": "",
+      "width": 96,
+      "height": 94,
+      "bbox": [
+        -52.47103240856346,
+        -12.213339621303872,
+        -52.46882654446638,
+        -12.211183674483893
+      ],
+      "usability": "BELOW_MIN_RESOLUTION",
+      "qualityScore": 0,
+      "qualityFlags": [
+        "below_sensor_resolution: lado menor ≈ 3.1 px de 10 m (mínimo 4)"
+      ],
+      "fetchedAt": "2026-08-13T02:10:36.548Z"
+    },
+    {
+      "sceneId": "AC-0033:SPOT_2008",
+      "polygonId": "AC-0033",
+      "geometryHash": "932d9d4f6cdacb25dc6e54e445800d5ce727fda2d0aedfc88ddaf1cecec8ac9d",
+      "year": 2008,
+      "sensor": "SPOT",
+      "layer": "Mosaicos:MOSAICO_SPOT_SEPLAN",
+      "imageSha256": "47da10d4057302db6a4dcd24e36372910467fea41f041a1a80c5570f5854afa1",
+      "width": 121,
+      "height": 94,
+      "bbox": [
+        -52.47062565704551,
+        -12.212800634598876,
+        -52.46923329598433,
+        -12.211722661188888
+      ],
+      "usability": "USABLE",
+      "qualityScore": 0.793,
+      "qualityFlags": [],
+      "fetchedAt": "2026-08-13T02:10:36.667Z",
+      "storedImageUrl": "https://geo.sema.mt.gov.br/geoserver/ows?service=WMS&request=GetMap&version=1.1.1&layers=Mosaicos%3AMOSAICO_SPOT_SEPLAN&styles=&format=image%2Fpng&transparent=false&srs=EPSG%3A4326&bbox=-52.47062565704551%2C-12.212800634598876%2C-52.46923329598433%2C-12.211722661188888&width=121&height=94"
+    }
+  ],
+  "windows": [
+    {
+      "polygonId": "AC-0001",
+      "windowId": "WAVAC_ATUAL",
+      "status": "SKIPPED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "POLYGON_TOO_SMALL"
+    },
+    {
+      "polygonId": "AC-0002",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-c8f47036-5ea5-4685-a284-07b6e3888462",
+      "inputTokens": 4531,
+      "outputTokens": 589,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0002",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0002:S2_2024",
+          "AC-0002:S2_2025_NIR",
+          "AC-0002:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0002:S2_2024",
+            "year": 2024,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A área interna do polígono apresenta tonalidade magenta/rosa, indicando solo exposto ou área antropizada na composição de falsa-cor.",
+              "Contraste nítido com a vegetação verde neon circundante."
+            ],
+            "limitations": [
+              "Resolução espacial limitada para identificar detalhes finos do solo."
+            ]
+          },
+          {
+            "sceneId": "AC-0002:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "Manutenção da tonalidade magenta/rosa dentro do polígono, consistente com a ausência de cobertura vegetal nativa.",
+              "Padrão visual idêntico ao da cena de 2024."
+            ],
+            "limitations": [
+              "Resolução espacial limitada."
+            ]
+          },
+          {
+            "sceneId": "AC-0002:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "Na cena em cor natural, o interior do polígono aparece em tom claro/bege (solo exposto/pastagem), contrastando com o verde escuro da vegetação nativa ao redor."
+            ],
+            "limitations": [
+              "Alta pixelização da imagem SPOT."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0003",
+      "windowId": "WAVAC_ATUAL",
+      "status": "SKIPPED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "POLYGON_TOO_SMALL"
+    },
+    {
+      "polygonId": "AC-0004",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-041f3542-aee9-4724-b571-45db964e49fb",
+      "inputTokens": 3507,
+      "outputTokens": 610,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0004",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0004:S2_2024",
+          "AC-0004:S2_2025_NIR",
+          "AC-0004:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0004:S2_2024",
+            "year": 2024,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "A área interna ao polígono apresenta tonalidade magenta/rosa, característica de solo exposto ou pastagem em imagens de falsa-cor.",
+              "A vegetação nativa (verde neon) está visível apenas na borda externa superior, fora do limite do polígono."
+            ],
+            "limitations": [
+              "Resolução espacial limitada para detecção de pequenas árvores isoladas."
+            ]
+          },
+          {
+            "sceneId": "AC-0004:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "Consistência com a cena de 2024; a área interna permanece com tonalidade magenta/rosa (solo/pastagem).",
+              "Não há pixels de vegetação nativa (verde) dentro do polígono."
+            ],
+            "limitations": [
+              "Resolução espacial limitada."
+            ]
+          },
+          {
+            "sceneId": "AC-0004:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "A imagem em cor natural mostra a área interna com tonalidade clara/bege, indicando solo exposto ou pastagem.",
+              "A vegetação nativa (verde escuro) está restrita à borda externa superior."
+            ],
+            "limitations": [
+              "Resolução espacial mais baixa comparada aos Sentinel-2."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0005",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-82a12b7a-f819-4dab-be0d-6ec968a62c41",
+      "inputTokens": 5299,
+      "outputTokens": 634,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0005",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0005:S2_2024",
+          "AC-0005:S2_2025_NIR",
+          "AC-0005:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0005:S2_2024",
+            "year": 2024,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "A área interna ao polígono apresenta tonalidade magenta/branca, característica de solo exposto ou área antropizada em imagens Sentinel-2 (falsa-cor).",
+              "A vegetação nativa (verde neon) está visível apenas fora do polígono, adjacente à linha vermelha."
+            ],
+            "limitations": [
+              "A linha do polígono corta a transição entre a área limpa e a floresta, mas o interior do polígono está desprovido de vegetação nativa."
+            ]
+          },
+          {
+            "sceneId": "AC-0005:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "Consistência com a cena de 2024: a área interna ao polígono permanece com tonalidade magenta/cinza (solo/antropizada).",
+              "Não há presença de pixels verdes (vegetação) dentro dos limites do polígono."
+            ],
+            "limitations": []
+          },
+          {
+            "sceneId": "AC-0005:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "Na imagem em cor natural, a área interna ao polígono é clara (solo/pasto), contrastando com a vegetação escura fora do polígono.",
+              "A linha vermelha delimita a borda da área desmatada, não incluindo a floresta remanescente."
+            ],
+            "limitations": []
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0006",
+      "windowId": "WAVAC_ATUAL",
+      "status": "SKIPPED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "POLYGON_TOO_SMALL"
+    },
+    {
+      "polygonId": "AC-0007",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-be50d6e8-e99f-4867-b911-aa30b85eb767",
+      "inputTokens": 4019,
+      "outputTokens": 727,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0007",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0007:S2_2024",
+          "AC-0007:S2_2025_NIR",
+          "AC-0007:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0007:S2_2024",
+            "year": 2024,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 0.95,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena em falsa-cor (Sentinel-2) exibe tonalidade verde forte/neon dentro do polígono, indicando vegetação densa e nativa.",
+              "Não há presença de tons magenta ou roxo que indicariam solo exposto ou pastagem."
+            ],
+            "limitations": [
+              "Resolução espacial limitada para detecção de clareiras muito pequenas."
+            ]
+          },
+          {
+            "sceneId": "AC-0007:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 0.95,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "Manutenção da tonalidade verde forte/neon, consistente com cobertura vegetal nativa densa.",
+              "Aparência visual idêntica à cena de 2024, indicando estabilidade da cobertura."
+            ],
+            "limitations": [
+              "Resolução espacial limitada."
+            ]
+          },
+          {
+            "sceneId": "AC-0007:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "PATCHES",
+            "estimatedFraction": 0.4,
+            "distribution": "SCATTERED",
+            "confidence": "MEDIUM",
+            "evidence": [
+              "Cena em cor natural mostra áreas de solo exposto (tons claros/bege) misturadas com vegetação (tons verde-escuro) dentro do polígono.",
+              "A vegetação não cobre a totalidade da área, apresentando-se fragmentada."
+            ],
+            "limitations": [
+              "Baixa resolução espacial da imagem SPOT dificulta a distinção precisa de pequenas árvores isoladas."
+            ]
+          }
+        ],
+        "conflicts": [
+          "Há uma diferença significativa na cobertura vegetal entre 2008 e os anos recentes (2024/2025). Em 2008, o polígono apresentava solo exposto e vegetação fragmentada (PATCHES), enquanto nas cenas atuais a área está coberta por vegetação nativa densa (LARGE_BLOCK), indicando um pro…"
+        ]
+      }
+    },
+    {
+      "polygonId": "AC-0008",
+      "windowId": "WAVAC_ATUAL",
+      "status": "SKIPPED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "POLYGON_TOO_SMALL"
+    },
+    {
+      "polygonId": "AC-0009",
+      "windowId": "WAVAC_ATUAL",
+      "status": "SKIPPED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "POLYGON_TOO_SMALL"
+    },
+    {
+      "polygonId": "AC-0010",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-e0a8f071-e0a5-4710-aecc-5ba9387f6c4b",
+      "inputTokens": 1903,
+      "outputTokens": 267,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0010",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0010:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0010:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A área interna do polígono apresenta tonalidade clara/bege uniforme, característica de solo exposto ou área limpa em imagens de cor natural.",
+              "Contraste nítido com a vegetação verde-escuro visível imediatamente ao redor do polígono."
+            ],
+            "limitations": [
+              "Resolução espacial da imagem limita a detecção de indivíduos arbóreos isolados ou regeneração incipiente."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0011",
+      "windowId": "WAVAC_ATUAL",
+      "status": "FAILED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "HTTP_413"
+    },
+    {
+      "polygonId": "AC-0012",
+      "windowId": "WAVAC_ATUAL",
+      "status": "SKIPPED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "POLYGON_TOO_SMALL"
+    },
+    {
+      "polygonId": "AC-0013",
+      "windowId": "WAVAC_ATUAL",
+      "status": "SKIPPED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "POLYGON_TOO_SMALL"
+    },
+    {
+      "polygonId": "AC-0014",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-1a568eff-af7a-43ba-80f3-b461de3547de",
+      "inputTokens": 3507,
+      "outputTokens": 617,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0014",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0014:S2_2024",
+          "AC-0014:S2_2025_NIR",
+          "AC-0014:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0014:S2_2024",
+            "year": 2024,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 0.95,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena em falsa-cor (Sentinel-2) exibe tonalidade verde forte/neon dentro do polígono, indicando vegetação densa e nativa.",
+              "O polígono está totalmente inserido na área de cobertura vegetal contínua."
+            ],
+            "limitations": [
+              "Resolução espacial limitada para detalhamento fino da estrutura da copa."
+            ]
+          },
+          {
+            "sceneId": "AC-0014:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 0.95,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena mais recente mantém a assinatura espectral de vegetação densa (verde neon) dentro do polígono.",
+              "Não há evidências visuais de desmatamento ou clareiras dentro da área delimitada."
+            ],
+            "limitations": [
+              "Imagem ligeiramente granulada, mas suficiente para classificação de cobertura."
+            ]
+          },
+          {
+            "sceneId": "AC-0014:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 0.95,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A imagem em cor natural (SPOT) mostra cobertura vegetal escura e contínua dentro do polígono.",
+              "A textura visual confirma floresta densa sem sinais de fragmentação interna."
+            ],
+            "limitations": [
+              "Resolução espacial inferior às cenas Sentinel-2."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0015",
+      "windowId": "WAVAC_ATUAL",
+      "status": "SKIPPED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "POLYGON_TOO_SMALL"
+    },
+    {
+      "polygonId": "AC-0016",
+      "windowId": "WAVAC_ATUAL",
+      "status": "SKIPPED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "POLYGON_TOO_SMALL"
+    },
+    {
+      "polygonId": "AC-0017",
+      "windowId": "WAVAC_ATUAL",
+      "status": "SKIPPED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "POLYGON_TOO_SMALL"
+    },
+    {
+      "polygonId": "AC-0018",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-22dd005f-e58c-42ad-b74b-437faf38f4e4",
+      "inputTokens": 5299,
+      "outputTokens": 624,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0018",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0018:S2_2024",
+          "AC-0018:S2_2025_NIR",
+          "AC-0018:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0018:S2_2024",
+            "year": 2024,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena em falsa-cor (Sentinel-2) exibe uma cobertura homogênea de cor verde forte/neon dentro do polígono, característica de vegetação nativa densa e saudável.",
+              "Não há presença de tons magenta, roxo ou cinza que indicariam solo exposto ou pastagem."
+            ],
+            "limitations": []
+          },
+          {
+            "sceneId": "AC-0018:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena mais recente mantém a consistência visual com a de 2024, apresentando textura e tonalidade verde neon uniforme, indicando manutenção da cobertura vegetal nativa densa.",
+              "O limite do polígono (linha vermelha) corta uma área contínua de vegetação sem interrupções visíveis."
+            ],
+            "limitations": []
+          },
+          {
+            "sceneId": "AC-0018:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A área dentro do polígono contrasta com as áreas adjacentes de solo exposto (cinza claro) e lavoura (linhas paralelas), confirmando a presença de mata."
+            ],
+            "limitations": []
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0019",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-9edd0e77-659b-4126-9ff6-1bf25ba9d9d7",
+      "inputTokens": 5299,
+      "outputTokens": 609,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0019",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0019:S2_2024",
+          "AC-0019:S2_2025_NIR",
+          "AC-0019:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0019:S2_2024",
+            "year": 2024,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "A área interna ao polígono vermelho apresenta tonalidade branca/cinza claro, característica de solo exposto ou área antropizada em imagens de falsa-cor.",
+              "A vegetação nativa (verde neon) está visível apenas adjacente ao limite do polígono, fora da área delimitada."
+            ],
+            "limitations": [
+              "Imagem de baixa resolução."
+            ]
+          },
+          {
+            "sceneId": "AC-0019:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "A área interna ao polígono vermelho apresenta tonalidade cinza/azulada, indicando ausência de cobertura vegetal nativa densa.",
+              "A vegetação nativa (verde neon) está confinada à área externa ao polígono."
+            ],
+            "limitations": [
+              "Imagem de baixa resolução."
+            ]
+          },
+          {
+            "sceneId": "AC-0019:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "A área interna ao polígono vermelho é predominantemente clara (solo exposto/pastagem), sem textura de floresta nativa.",
+              "A vegetação nativa (verde escuro) está visível apenas fora do polígono."
+            ],
+            "limitations": [
+              "Imagem de baixa resolução."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0020",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-8617b61b-9131-4418-b00f-d3dd55d24dc8",
+      "inputTokens": 5299,
+      "outputTokens": 636,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0020",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0020:S2_2024",
+          "AC-0020:S2_2025_NIR",
+          "AC-0020:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0020:S2_2024",
+            "year": 2024,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena em falsa-cor (Sentinel-2) exibe uma tonalidade verde forte/neon uniforme dentro do polígono, indicando vegetação densa e saudável.",
+              "Não há presença de tons magenta ou roxo que indicariam solo exposto ou pastagem seca."
+            ],
+            "limitations": [
+              "Imagem de mosaico, resolução espacial limitada para detalhamento fino."
+            ]
+          },
+          {
+            "sceneId": "AC-0020:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena de 2025 mantém a consistência visual com a de 2024, apresentando cobertura vegetal densa (verde neon) em toda a área do polígono.",
+              "Ausência de clareiras ou áreas antropizadas visíveis."
+            ],
+            "limitations": [
+              "Imagem de mosaico."
+            ]
+          },
+          {
+            "sceneId": "AC-0020:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena em cor natural (SPOT) mostra uma textura de copa de árvores contínua e densa (verde-escuro) preenchendo todo o polígono.",
+              "A vegetação se estende além dos limites do polígono, indicando um bloco florestal maior."
+            ],
+            "limitations": [
+              "Imagem histórica."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0021",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-28cd06b6-f832-4dc0-936a-4a4c1f58aa34",
+      "inputTokens": 3763,
+      "outputTokens": 575,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0021",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0021:S2_2024",
+          "AC-0021:S2_2025_NIR",
+          "AC-0021:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0021:S2_2024",
+            "year": 2024,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "SCATTERED",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena em falsa-cor mostra o interior do polígono predominantemente em tons de magenta/roxo, indicando solo exposto ou área antropizada.",
+              "Não há presença de pixels verdes fortes (vegetação nativa) dentro da área delimitada."
+            ],
+            "limitations": [
+              "Resolução espacial do mosaico."
+            ]
+          },
+          {
+            "sceneId": "AC-0021:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "SCATTERED",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena de 2025 confirma a ausência de vegetação nativa, exibindo a mesma assinatura espectral magenta/roxa de solo exposto dentro do polígono."
+            ],
+            "limitations": [
+              "Resolução espacial do mosaico."
+            ]
+          },
+          {
+            "sceneId": "AC-0021:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "SCATTERED",
+            "confidence": "HIGH",
+            "evidence": [
+              "A imagem em cor natural mostra o solo em tons de marrom/bege claro, indicando área limpa ou pastagem sem cobertura florestal nativa."
+            ],
+            "limitations": [
+              "Resolução espacial."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0022",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-812d2320-9844-4f14-9f89-a1eee4004024",
+      "inputTokens": 1903,
+      "outputTokens": 264,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0022",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0022:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0022:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "SCATTERED",
+            "confidence": "HIGH",
+            "evidence": [
+              "A imagem SPOT 2008 (cor natural) mostra o interior do polígono com tonalidade marrom-acinzentada, característica de solo exposto ou área limpa.",
+              "Não há presença de pixels verdes escuros que indiquem cobertura vegetal nativa dentro da área delimitada."
+            ],
+            "limitations": [
+              "Resolução espacial limitada da imagem fornecida."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0023",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-1db0b15e-258b-47e0-8bbe-8f422520807d",
+      "inputTokens": 2995,
+      "outputTokens": 645,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0023",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0023:S2_2024",
+          "AC-0023:S2_2025_NIR",
+          "AC-0023:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0023:S2_2024",
+            "year": 2024,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "SCATTERED",
+            "confidence": "HIGH",
+            "evidence": [
+              "A área interna do polígono apresenta tonalidade magenta/azul-acinzentada, característica de solo exposto ou pastagem seca em composições de falsa-cor.",
+              "Não há presença de pixels verdes fortes (infravermelho próximo) dentro dos limites do polígono."
+            ],
+            "limitations": [
+              "Resolução espacial limitada para detecção de indivíduos arbóreos isolados muito pequenos."
+            ]
+          },
+          {
+            "sceneId": "AC-0023:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "SCATTERED",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena confirma a ausência de vegetação nativa densa, mantendo a tonalidade magenta/azulada (solo/antropizado) dentro do polígono.",
+              "A vegetação verde neon está restrita às áreas adjacentes ao polígono."
+            ],
+            "limitations": [
+              "Imagem com baixa resolução espacial (pixelização visível)."
+            ]
+          },
+          {
+            "sceneId": "AC-0023:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "SCATTERED",
+            "confidence": "HIGH",
+            "evidence": [
+              "Na imagem em cor natural, o interior do polígono exibe tonalidade marrom/terrosa, indicando solo exposto ou pastagem.",
+              "A vegetação nativa (verde escuro) é visível apenas fora do polígono, ao fundo."
+            ],
+            "limitations": [
+              "Imagem antiga, serve apenas para comparação histórica."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0024",
+      "windowId": "WAVAC_ATUAL",
+      "status": "SKIPPED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "POLYGON_TOO_SMALL"
+    },
+    {
+      "polygonId": "AC-0025",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-a8e455c5-a853-4707-bb4a-2ed6dfdcf2a4",
+      "inputTokens": 6067,
+      "outputTokens": 617,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0025",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0025:S2_2024",
+          "AC-0025:S2_2025_NIR",
+          "AC-0025:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0025:S2_2024",
+            "year": 2024,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena em falsa-cor (Sentinel-2) exibe o polígono preenchido inteiramente com tonalidade verde forte/neon, indicando vegetação densa e contínua.",
+              "Não há presença de tons magenta ou roxo dentro do polígono, o que confirma a ausência de solo exposto ou pastagem."
+            ],
+            "limitations": []
+          },
+          {
+            "sceneId": "AC-0025:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena mais recente mantém a coloração verde neon homogênea dentro do polígono, consistente com a cobertura vegetal densa observada em 2024.",
+              "A textura e a cor indicam manutenção da vegetação nativa sem desmatamento aparente."
+            ],
+            "limitations": []
+          },
+          {
+            "sceneId": "AC-0025:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena em cor natural (SPOT) mostra o polígono coberto por vegetação de cor verde-escura, típica de floresta ou mata densa."
+            ],
+            "limitations": []
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0026",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-fec9f29b-3ee0-4bc2-b220-4cc054f0c8e3",
+      "inputTokens": 3763,
+      "outputTokens": 659,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0026",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0026:S2_2024",
+          "AC-0026:S2_2025_NIR",
+          "AC-0026:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0026:S2_2024",
+            "year": 2024,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena em falsa-cor (Sentinel-2) exibe o polígono preenchido inteiramente por uma tonalidade verde forte/neon, indicando vegetação densa e contínua.",
+              "Não há presença de tons magenta, roxo ou cinza dentro do polígono, o que descartaria solo exposto ou pastagem seca."
+            ],
+            "limitations": [
+              "Imagem em baixa resolução (zoom), mas a textura e a cor são consistentes com cobertura vegetal nativa."
+            ]
+          },
+          {
+            "sceneId": "AC-0026:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena mais recente mantém a mesma assinatura espectral de vegetação densa (verde neon) ocupando todo o polígono.",
+              "A consistência com a cena de 2024 reforça a estabilidade da cobertura vegetal."
+            ],
+            "limitations": [
+              "Baixa resolução espacial."
+            ]
+          },
+          {
+            "sceneId": "AC-0026:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena em cor natural (SPOT) mostra o polígono coberto por vegetação de cor verde-escura, típica de floresta nativa.",
+              "O contraste com as áreas adjacentes (solo claro/pastagem) é nítido, delimitando a área de vegetação."
+            ],
+            "limitations": [
+              "Imagem antiga, mas de alta qualidade visual."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0027",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-b3cf6c98-22a6-4eb8-ac42-975ded68c0ea",
+      "inputTokens": 4531,
+      "outputTokens": 645,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0027",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0027:S2_2024",
+          "AC-0027:S2_2025_NIR",
+          "AC-0027:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0027:S2_2024",
+            "year": 2024,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena em falsa-cor (Sentinel-2) exibe uma tonalidade verde forte/neon uniforme dentro do polígono, indicando vegetação densa e contínua.",
+              "Não há sinais de solo exposto (magenta/roxo) ou clareiras dentro da área delimitada."
+            ],
+            "limitations": [
+              "Resolução espacial do mosaico limita a identificação de espécies individuais."
+            ]
+          },
+          {
+            "sceneId": "AC-0027:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena mais recente mantém a assinatura espectral de vegetação densa (verde neon) cobrindo integralmente o polígono.",
+              "A textura é homogênea, sem indícios de desmatamento ou degradação visível."
+            ],
+            "limitations": [
+              "Análise baseada em mosaico regional."
+            ]
+          },
+          {
+            "sceneId": "AC-0027:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A imagem em cor natural (SPOT) mostra uma cobertura vegetal escura e densa preenchendo todo o polígono."
+            ],
+            "limitations": [
+              "Imagem histórica com resolução inferior às cenas atuais."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0028",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-3cbc1f0f-f163-40dd-8ffc-95b2e47612e1",
+      "inputTokens": 6067,
+      "outputTokens": 581,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0028",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0028:S2_2024",
+          "AC-0028:S2_2025_NIR",
+          "AC-0028:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0028:S2_2024",
+            "year": 2024,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "A área interna do polígono apresenta tonalidade magenta/rosa clara, característica de solo exposto ou pastagem seca em imagens de falsa-cor.",
+              "Não há presença de pixels verdes (vegetação nativa) dentro dos limites do polígono."
+            ],
+            "limitations": []
+          },
+          {
+            "sceneId": "AC-0028:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena confirma a ausência de vegetação nativa dentro do polígono, que aparece em tons acinzentados/marrom-claro.",
+              "A vegetação verde densa está restrita às áreas adjacentes ao polígono."
+            ],
+            "limitations": []
+          },
+          {
+            "sceneId": "AC-0028:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "Na imagem em cor natural, o interior do polígono mostra solo exposto e pastagem (tons de bege e marrom claro).",
+              "A vegetação nativa (verde escuro) é visível apenas fora do polígono, indicando que a área já estava desmatada em 2008."
+            ],
+            "limitations": []
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0029",
+      "windowId": "WAVAC_ATUAL",
+      "status": "FAILED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "HTTP_413"
+    },
+    {
+      "polygonId": "AC-0030",
+      "windowId": "WAVAC_ATUAL",
+      "status": "FAILED",
+      "model": "ac-vegetacao-v1",
+      "errorCode": "HTTP_413"
+    },
+    {
+      "polygonId": "AC-0031",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-1bc9db78-a01f-4f65-a5d4-e912b6665cd9",
+      "inputTokens": 3763,
+      "outputTokens": 614,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0031",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0031:S2_2024",
+          "AC-0031:S2_2025_NIR",
+          "AC-0031:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0031:S2_2024",
+            "year": 2024,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "SCATTERED",
+            "confidence": "HIGH",
+            "evidence": [
+              "A área interna do polígono apresenta tonalidade cinza-rosada uniforme, característica de solo exposto ou pastagem degradada em imagens de falsa-cor.",
+              "Não há presença de pixels verdes (vegetação nativa) dentro dos limites do polígono."
+            ],
+            "limitations": [
+              "Imagem de baixa resolução, mas padrão de cor distinto."
+            ]
+          },
+          {
+            "sceneId": "AC-0031:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "SCATTERED",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena mostra o interior do polígono com tonalidade marrom-acinzentada, indicando ausência de cobertura vegetal densa.",
+              "A vegetação verde visível está restrita à área externa adjacente ao polígono."
+            ],
+            "limitations": [
+              "Imagem de baixa resolução."
+            ]
+          },
+          {
+            "sceneId": "AC-0031:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "SCATTERED",
+            "confidence": "HIGH",
+            "evidence": [
+              "Na imagem em cor natural, o interior do polígono exibe textura de solo/pastagem seca (tons de bege/marrom claro).",
+              "Não há manchas de vegetação nativa (verde escuro) dentro da área delimitada."
+            ],
+            "limitations": [
+              "Imagem de baixa resolução."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0032",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-033de4a9-d7d6-477c-91d5-def11b3c3339",
+      "inputTokens": 4531,
+      "outputTokens": 571,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0032",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0032:S2_2024",
+          "AC-0032:S2_2025_NIR",
+          "AC-0032:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0032:S2_2024",
+            "year": 2024,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "O interior do polígono apresenta tonalidade cinza/branca, indicando solo exposto ou área antropizada.",
+              "A vegetação nativa (verde forte) está visível apenas fora do polígono, ao lado esquerdo."
+            ],
+            "limitations": [
+              "Resolução espacial limitada para detecção de rebrota muito recente."
+            ]
+          },
+          {
+            "sceneId": "AC-0032:S2_2025_NIR",
+            "year": 2025,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "Manutenção da tonalidade cinza/branca dentro do polígono, consistente com área limpa.",
+              "Contraste nítido com a vegetação densa adjacente."
+            ],
+            "limitations": []
+          },
+          {
+            "sceneId": "AC-0032:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "NONE",
+            "estimatedFraction": 0,
+            "distribution": "EDGE",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena em cor natural mostra o interior do polígono com tonalidade clara (solo/pastagem), sem cobertura de vegetação nativa.",
+              "A vegetação nativa (verde escuro) está restrita à área adjacente à esquerda."
+            ],
+            "limitations": []
+          }
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "polygonId": "AC-0033",
+      "windowId": "WAVAC_ATUAL",
+      "status": "COMPLETED",
+      "model": "qwen/qwen3.6-27b",
+      "requestId": "chatcmpl-a8f8305a-e070-485d-9607-3b482bd974c4",
+      "inputTokens": 2415,
+      "outputTokens": 277,
+      "observation": {
+        "schemaVersion": 1,
+        "polygonId": "AC-0033",
+        "windowId": "WAVAC_ATUAL",
+        "inspectedSceneIds": [
+          "AC-0033:SPOT_2008"
+        ],
+        "observations": [
+          {
+            "sceneId": "AC-0033:SPOT_2008",
+            "year": 2008,
+            "vegetationInside": "LARGE_BLOCK",
+            "estimatedFraction": 1,
+            "distribution": "INTERIOR",
+            "confidence": "HIGH",
+            "evidence": [
+              "A cena SPOT 2008 em cor natural exibe tonalidade verde-escura homogênea dentro do polígono, característica de cobertura vegetal densa e contínua.",
+              "Não há evidências visuais de clareiras, solo exposto ou fragmentação dentro da área delimitada."
+            ],
+            "limitations": [
+              "Resolução espacial da imagem limita a detecção de pequenas clareiras ou estradas de terra estreitas."
+            ]
+          }
+        ],
+        "conflicts": []
+      }
+    }
+  ],
+  "report": {
+    "model": "deterministic-fallback",
+    "markdown": "# Fase 3 — Vegetação aparente na Área Consolidada\n\nRegras: ac-vegetacao-v1 — precedência geométrica: o projeto declara.\n\n| Métrica | Valor |\n|---|---|\n| Polígonos AC analisados | 33 |\n| Vegetação declarada dentro da AC | 3 (251.0 ha) |\n| Vegetação aparente (visão) | 3 |\n| Sem vegetação aparente | 9 |\n| Inconclusivos | 18 |\n| Área total de AC | 3134.6 ha |\n\n## Quadro por AC\n\n| AC | Area (ha) | Alerta | Status | Vegetação (ha) | Confiança |\n| AC-0001 | 0.00 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0002 | 0.23 | NENHUM | SEM_VEGETACAO_APARENTE | 0.00 | HIGH |\n| AC-0003 | 0.00 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0004 | 0.24 | NENHUM | SEM_VEGETACAO_APARENTE | 0.00 | HIGH |\n| AC-0005 | 0.34 | NENHUM | SEM_VEGETACAO_APARENTE | 0.00 | HIGH |\n| AC-0006 | 0.03 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0007 | 0.35 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0008 | 0.00 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0009 | 0.00 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0010 | 0.13 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0011 | 843.54 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0012 | 0.00 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0013 | 0.00 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0014 | 0.29 | ALTO | VEGETACAO_APARENTE_DENTRO_DA_AC | 0.00 | HIGH |\n| AC-0015 | 0.01 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0016 | 0.00 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0017 | 0.02 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0018 | 3.36 | ALTO | VEGETACAO_APARENTE_DENTRO_DA_AC | 0.00 | HIGH |\n| AC-0019 | 1.97 | NENHUM | SEM_VEGETACAO_APARENTE | 0.00 | HIGH |\n| AC-0020 | 2.01 | ALTO | VEGETACAO_APARENTE_DENTRO_DA_AC | 0.00 | HIGH |\n| AC-0021 | 4.95 | NENHUM | SEM_VEGETACAO_APARENTE | 0.00 | HIGH |\n| AC-0022 | 0.08 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0023 | 1.54 | NENHUM | SEM_VEGETACAO_APARENTE | 0.00 | HIGH |\n| AC-0024 | 0.01 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0025 | 39.16 | ALTO | VEGETACAO_DECLARADA_DENTRO_DA_AC | 39.16 | HIGH |\n| AC-0026 | 58.12 | ALTO | VEGETACAO_DECLARADA_DENTRO_DA_AC | 52.27 | HIGH |\n| AC-0027 | 165.27 | ALTO | VEGETACAO_DECLARADA_DENTRO_DA_AC | 159.52 | HIGH |\n| AC-0028 | 422.03 | NENHUM | SEM_VEGETACAO_APARENTE | 0.00 | HIGH |\n| AC-0029 | 833.78 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0030 | 747.98 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n| AC-0031 | 8.87 | NENHUM | SEM_VEGETACAO_APARENTE | 0.00 | HIGH |\n| AC-0032 | 0.17 | NENHUM | SEM_VEGETACAO_APARENTE | 0.00 | HIGH |\n| AC-0033 | 0.11 | INDETERMINADO | INCONCLUSIVO | 0.00 | INCONCLUSIVE |\n\n## Janelas de visão\n\n- **AC-0001** (WAVAC_ATUAL): SKIPPED\n- **AC-0002** (WAVAC_ATUAL): AC-0002:S2_2024:NONE(HIGH), AC-0002:S2_2025_NIR:NONE(HIGH), AC-0002:SPOT_2008:NONE(HIGH)\n- **AC-0003** (WAVAC_ATUAL): SKIPPED\n- **AC-0004** (WAVAC_ATUAL): AC-0004:S2_2024:NONE(HIGH), AC-0004:S2_2025_NIR:NONE(HIGH), AC-0004:SPOT_2008:NONE(HIGH)\n- **AC-0005** (WAVAC_ATUAL): AC-0005:S2_2024:NONE(HIGH), AC-0005:S2_2025_NIR:NONE(HIGH), AC-0005:SPOT_2008:NONE(HIGH)\n- **AC-0006** (WAVAC_ATUAL): SKIPPED\n- **AC-0007** (WAVAC_ATUAL): AC-0007:S2_2024:LARGE_BLOCK(HIGH), AC-0007:S2_2025_NIR:LARGE_BLOCK(HIGH), AC-0007:SPOT_2008:PATCHES(MEDIUM)\n- **AC-0008** (WAVAC_ATUAL): SKIPPED\n- **AC-0009** (WAVAC_ATUAL): SKIPPED\n- **AC-0010** (WAVAC_ATUAL): AC-0010:SPOT_2008:NONE(HIGH)\n- **AC-0011** (WAVAC_ATUAL): FAILED\n- **AC-0012** (WAVAC_ATUAL): SKIPPED\n- **AC-0013** (WAVAC_ATUAL): SKIPPED\n- **AC-0014** (WAVAC_ATUAL): AC-0014:S2_2024:LARGE_BLOCK(HIGH), AC-0014:S2_2025_NIR:LARGE_BLOCK(HIGH), AC-0014:SPOT_2008:LARGE_BLOCK(HIGH)\n- **AC-0015** (WAVAC_ATUAL): SKIPPED\n- **AC-0016** (WAVAC_ATUAL): SKIPPED\n- **AC-0017** (WAVAC_ATUAL): SKIPPED\n- **AC-0018** (WAVAC_ATUAL): AC-0018:S2_2024:LARGE_BLOCK(HIGH), AC-0018:S2_2025_NIR:LARGE_BLOCK(HIGH), AC-0018:SPOT_2008:LARGE_BLOCK(HIGH)\n- **AC-0019** (WAVAC_ATUAL): AC-0019:S2_2024:NONE(HIGH), AC-0019:S2_2025_NIR:NONE(HIGH), AC-0019:SPOT_2008:NONE(HIGH)\n- **AC-0020** (WAVAC_ATUAL): AC-0020:S2_2024:LARGE_BLOCK(HIGH), AC-0020:S2_2025_NIR:LARGE_BLOCK(HIGH), AC-0020:SPOT_2008:LARGE_BLOCK(HIGH)\n- **AC-0021** (WAVAC_ATUAL): AC-0021:S2_2024:NONE(HIGH), AC-0021:S2_2025_NIR:NONE(HIGH), AC-0021:SPOT_2008:NONE(HIGH)\n- **AC-0022** (WAVAC_ATUAL): AC-0022:SPOT_2008:NONE(HIGH)\n- **AC-0023** (WAVAC_ATUAL): AC-0023:S2_2024:NONE(HIGH), AC-0023:S2_2025_NIR:NONE(HIGH), AC-0023:SPOT_2008:NONE(HIGH)\n- **AC-0024** (WAVAC_ATUAL): SKIPPED\n- **AC-0025** (WAVAC_ATUAL): AC-0025:S2_2024:LARGE_BLOCK(HIGH), AC-0025:S2_2025_NIR:LARGE_BLOCK(HIGH), AC-0025:SPOT_2008:LARGE_BLOCK(HIGH)\n- **AC-0026** (WAVAC_ATUAL): AC-0026:S2_2024:LARGE_BLOCK(HIGH), AC-0026:S2_2025_NIR:LARGE_BLOCK(HIGH), AC-0026:SPOT_2008:LARGE_BLOCK(HIGH)\n- **AC-0027** (WAVAC_ATUAL): AC-0027:S2_2024:LARGE_BLOCK(HIGH), AC-0027:S2_2025_NIR:LARGE_BLOCK(HIGH), AC-0027:SPOT_2008:LARGE_BLOCK(HIGH)\n- **AC-0028** (WAVAC_ATUAL): AC-0028:S2_2024:NONE(HIGH), AC-0028:S2_2025_NIR:NONE(HIGH), AC-0028:SPOT_2008:NONE(HIGH)\n- **AC-0029** (WAVAC_ATUAL): FAILED\n- **AC-0030** (WAVAC_ATUAL): FAILED\n- **AC-0031** (WAVAC_ATUAL): AC-0031:S2_2024:NONE(HIGH), AC-0031:S2_2025_NIR:NONE(HIGH), AC-0031:SPOT_2008:NONE(HIGH)\n- **AC-0032** (WAVAC_ATUAL): AC-0032:S2_2024:NONE(HIGH), AC-0032:S2_2025_NIR:NONE(HIGH), AC-0032:SPOT_2008:NONE(HIGH)\n- **AC-0033** (WAVAC_ATUAL): AC-0033:SPOT_2008:LARGE_BLOCK(HIGH)\n\nSugere-se validação em campo das Áreas Consolidadas com alerta, e conferência do CAR declarado (CFlor). Enviar somente o material desta análise; nada deve ser tratado como infração ou conclusão.",
+    "evidenceRefs": [
+      "ac:AC-0001",
+      "ac:AC-0002",
+      "ac:AC-0003",
+      "ac:AC-0004",
+      "ac:AC-0005",
+      "ac:AC-0006",
+      "ac:AC-0007",
+      "ac:AC-0008",
+      "ac:AC-0009",
+      "ac:AC-0010",
+      "ac:AC-0011",
+      "ac:AC-0012",
+      "ac:AC-0013",
+      "ac:AC-0014",
+      "ac:AC-0015",
+      "ac:AC-0016",
+      "ac:AC-0017",
+      "ac:AC-0018",
+      "ac:AC-0019",
+      "ac:AC-0020",
+      "ac:AC-0021",
+      "ac:AC-0022",
+      "ac:AC-0023",
+      "ac:AC-0024",
+      "ac:AC-0025",
+      "ac:AC-0026",
+      "ac:AC-0027",
+      "ac:AC-0028",
+      "ac:AC-0029",
+      "ac:AC-0030",
+      "ac:AC-0031",
+      "ac:AC-0032",
+      "ac:AC-0033"
+    ]
+  },
+  "limitations": [
+    "AC-0001: AC menor que o mínimo analisável; apenas evidência geométrica.",
+    "AC-0003: AC menor que o mínimo analisável; apenas evidência geométrica.",
+    "AC-0006: AC menor que o mínimo analisável; apenas evidência geométrica.",
+    "AC-0008: AC menor que o mínimo analisável; apenas evidência geométrica.",
+    "AC-0009: AC menor que o mínimo analisável; apenas evidência geométrica.",
+    "AC-0011: visão falhou (HTTP_413); apenas evidência geométrica.",
+    "AC-0012: AC menor que o mínimo analisável; apenas evidência geométrica.",
+    "AC-0013: AC menor que o mínimo analisável; apenas evidência geométrica.",
+    "AC-0015: AC menor que o mínimo analisável; apenas evidência geométrica.",
+    "AC-0016: AC menor que o mínimo analisável; apenas evidência geométrica.",
+    "AC-0017: AC menor que o mínimo analisável; apenas evidência geométrica.",
+    "AC-0024: AC menor que o mínimo analisável; apenas evidência geométrica.",
+    "AC-0029: visão falhou (HTTP_413); apenas evidência geométrica.",
+    "AC-0030: visão falhou (HTTP_413); apenas evidência geométrica."
+  ],
+  "startedAt": "2026-08-13T02:07:19.936Z",
+  "completedAt": "2026-08-13T02:10:38.053Z"
+}
