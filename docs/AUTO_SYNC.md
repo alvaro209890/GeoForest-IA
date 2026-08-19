@@ -78,6 +78,25 @@ explicitamente. E para logs: usar `>> file 2>&1` (redireciona stdout PRIMEIRO, d
 stderr pro mesmo lugar) — `2>&1 >> file` redireciona stderr pro console do systemd,
 não pro arquivo.
 
+## ⚠️ Pitfall corrigido em 2026-08-19: push do GitHub não disparava o build
+
+**Sintoma:** `origin/main` no GitHub avançava (`2d1fb6b6`, ZIP CBERS), o checkout
+de produção ficava em `0ea2e632`, e o timer "rodava" a cada 2 min sem logar nada
+além de `fetch failed` ocasional.
+
+**Causa raiz:** em 2026-08-12 o script passou a comparar `HEAD` local com
+`/tmp/geoforest-autosync.last-build` para cobrir commit feito **no próprio
+server**. Num push vindo do GitHub, `HEAD` e `last-build` continuam iguais
+(o reset ainda não aconteceu), então o script saía na hora e **nunca puxava
+`origin/main`**. No fim do deploy antigo ainda gravava o hash **pré-reset**.
+
+**Correção** em `/home/server/.config/geoforest/auto-sync.sh` (backup
+`auto-sync.sh.bak-20260819`):
+
+- rebuild se `HEAD != origin/main` **ou** `HEAD != last-build`;
+- `last-build` grava o hash **depois** do `reset --hard`;
+- `git fetch` deixa de descartar stderr (`2>/dev/null`).
+
 ## ⚠️ Setup único que o auto-sync NÃO faz: venv da Solicitação
 
 O auto-sync não cria o venv Python da aba Solicitação de Prioridade (o `.venv/` está
