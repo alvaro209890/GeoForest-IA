@@ -23,6 +23,7 @@ import {
   cbersArchiveZipUrl,
   cbersBatchZipFilename,
 } from '@/dashboard/cbers/filenames';
+import { resolveBackendUrl } from '@/lib/api';
 import type { UseCbersJobsReturn } from '@/dashboard/hooks/useCbersJobs';
 import type { CbersPanelProps } from '../CbersPanel';
 
@@ -34,7 +35,6 @@ export function CbersJobList({ cbers }: CbersPanelProps) {
     cbersJobId,
     cbersProgress,
     setCbersError,
-    downloadZip: downloadSimcarZip,
     requestProcessCancel,
   } = cbers;
 
@@ -145,25 +145,27 @@ export function CbersJobList({ cbers }: CbersPanelProps) {
                 Cancelar
               </button>
             )}
-            {done && activeCbersZipUrl && (
-              <button
-                type="button"
-                onClick={() => downloadSimcarZip(activeCbersZipUrl, cbersArchiveZipFilename(activeCbers))}
+            {done && activeCbersZipUrl && resolveBackendUrl(activeCbersZipUrl) && (
+              <a
+                href={resolveBackendUrl(activeCbersZipUrl)}
+                download={cbersArchiveZipFilename(activeCbers)}
+                rel="noopener noreferrer"
                 className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-4 py-3 text-sm font-semibold text-white hover:bg-cyan-500 transition-colors"
               >
                 <Download size={17} />
                 Baixar cena em ZIP
-              </button>
+              </a>
             )}
-            {done && activeCbers?.batchZipUrl && (
-              <button
-                type="button"
-                onClick={() => downloadSimcarZip(activeCbers.batchZipUrl, activeCbers.batchZipFilename || cbersBatchZipFilename(activeCbers.jobId))}
+            {done && activeCbers?.batchZipUrl && resolveBackendUrl(activeCbers.batchZipUrl) && (
+              <a
+                href={resolveBackendUrl(activeCbers.batchZipUrl)}
+                download={activeCbers.batchZipFilename || cbersBatchZipFilename(activeCbers.jobId)}
+                rel="noopener noreferrer"
                 className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500 transition-colors"
               >
                 <Download size={17} />
                 Baixar todos em ZIP
-              </button>
+              </a>
             )}
             {Array.isArray(activeCbers?.scenes) && activeCbers.scenes.length > 0 && (
               <div className="space-y-2">
@@ -185,15 +187,16 @@ export function CbersJobList({ cbers }: CbersPanelProps) {
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
                       <div className="h-full rounded-full bg-cyan-400" style={{ width: `${Math.max(0, Math.min(100, sceneState.percent))}%` }} />
                     </div>
-                    {sceneState.status === 'completed' && cbersArchiveZipUrl(sceneState) && (
-                      <button
-                        type="button"
-                        onClick={() => downloadSimcarZip(cbersArchiveZipUrl(sceneState), cbersArchiveZipFilename(sceneState))}
+                    {sceneState.status === 'completed' && cbersArchiveZipUrl(sceneState) && resolveBackendUrl(cbersArchiveZipUrl(sceneState)) && (
+                      <a
+                        href={resolveBackendUrl(cbersArchiveZipUrl(sceneState))}
+                        download={cbersArchiveZipFilename(sceneState)}
+                        rel="noopener noreferrer"
                         className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-500"
                       >
                         <Download size={14} />
                         Baixar cena em ZIP
-                      </button>
+                      </a>
                     )}
                     {sceneState.alignmentStatus === 'failed_private' && (
                       <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/10 p-2 text-[10px] text-amber-100">

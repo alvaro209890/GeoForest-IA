@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CAR_ESTADUAL_EXAMPLE,
+  CAR_ESTADUAL_PLACEHOLDER,
   cbersArchiveZipFilename,
   cbersArchiveZipUrl,
   cbersBatchZipFilename,
   cbersDownloadFilename,
   cbersOutputFilename,
+  cbersSceneZipFilename,
+  cbersSceneZipPath,
 } from './filenames';
 
 describe('cbers filenames', () => {
@@ -50,5 +54,34 @@ describe('cbers filenames', () => {
     expect(cbersBatchZipFilename('abcdefghijklmnop')).toBe(
       'CBERS_4A_WPM_LOTE_abcdefgh_C342_PAN.zip',
     );
+  });
+
+  it('uses the state CAR example, not the federal SICAR number', () => {
+    expect(CAR_ESTADUAL_EXAMPLE).toBe('MT274719/2025');
+    expect(CAR_ESTADUAL_PLACEHOLDER).toBe('Ex: MT274719/2025');
+    expect(CAR_ESTADUAL_EXAMPLE.startsWith('MT-')).toBe(false);
+  });
+
+  it('builds a scene zip path from wmsDownloadUrl or archiveImageId', () => {
+    expect(
+      cbersSceneZipPath({
+        id: 'SCENE_A',
+        wmsDownloadUrl: '/api/cbers-wpm/wms-download?imageId=img-1',
+      }),
+    ).toBe('/api/cbers-wpm/wms-download?imageId=img-1');
+    expect(
+      cbersSceneZipPath({
+        id: 'SCENE_A',
+        archiveImageId: 'img-2',
+      }),
+    ).toBe('/api/cbers-wpm/wms-download?imageId=img-2');
+    expect(cbersSceneZipPath({ id: 'SCENE_A' })).toBe(
+      '/api/cbers-wpm/wms-download?itemId=SCENE_A',
+    );
+  });
+
+  it('names the scene zip from archive filename or item id', () => {
+    expect(cbersSceneZipFilename({ id: 'SCENE_A', archiveFilename: 'folha.TIF' })).toBe('folha.zip');
+    expect(cbersSceneZipFilename({ id: 'SCENE_A' })).toBe('SCENE_A_C342_PAN.zip');
   });
 });

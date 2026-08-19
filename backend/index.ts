@@ -329,6 +329,10 @@ async function startServer() {
   const logBackend = createLogger(bootId, renderInfo);
   const app = createApp(logBackend);
   const server = createServer(app);
+  // ZIP do WMS CBERS chega a vários GB. O default do Node 18+ (requestTimeout=5 min)
+  // aborta o stream no meio do download.
+  server.requestTimeout = 0;
+  server.timeout = 0;
 
   process.on("unhandledRejection", (reason: unknown) => {
     logBackend(

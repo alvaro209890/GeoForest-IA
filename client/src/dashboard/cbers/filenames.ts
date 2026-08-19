@@ -1,4 +1,8 @@
-import type { CbersHistoryItem, CbersSceneJobState } from './types';
+import type { CbersHistoryItem, CbersScene, CbersSceneJobState } from './types';
+
+/** Exemplo de CAR estadual (SIMCAR MT) — nunca o número federal do SICAR. */
+export const CAR_ESTADUAL_EXAMPLE = 'MT274719/2025';
+export const CAR_ESTADUAL_PLACEHOLDER = `Ex: ${CAR_ESTADUAL_EXAMPLE}`;
 
 export const cbersOutputFilename = (itemId?: string | null) => {
   const stem = String(itemId || 'CBERS_4A_WPM')
@@ -42,4 +46,26 @@ export const cbersArchiveZipUrl = (item?: Pick<CbersHistoryItem, 'archiveImageId
 export const cbersBatchZipFilename = (jobId?: string | null) => {
   const suffix = String(jobId || '').trim().slice(0, 8);
   return `CBERS_4A_WPM_LOTE${suffix ? `_${suffix}` : ''}_C342_PAN.zip`;
+};
+
+export const cbersSceneZipPath = (
+  scene?: Pick<CbersScene, 'id' | 'archiveImageId' | 'wmsDownloadUrl'> | null,
+): string => {
+  if (!scene) return '';
+  if (scene.wmsDownloadUrl) return scene.wmsDownloadUrl;
+  if (scene.archiveImageId) {
+    return `/api/cbers-wpm/wms-download?imageId=${encodeURIComponent(scene.archiveImageId)}`;
+  }
+  if (scene.id) return `/api/cbers-wpm/wms-download?itemId=${encodeURIComponent(scene.id)}`;
+  return '';
+};
+
+export const cbersSceneZipFilename = (
+  scene?: Pick<CbersScene, 'id' | 'archiveFilename'> | null,
+): string => {
+  if (!scene) return 'CBERS_4A_WPM.zip';
+  const stem = String(scene.archiveFilename || cbersOutputFilename(scene.id))
+    .replace(/\.(tif|tiff|zip)$/i, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '_') || 'CBERS_4A_WPM';
+  return `${stem}.zip`;
 };

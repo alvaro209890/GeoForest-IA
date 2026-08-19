@@ -367,6 +367,22 @@ curl -fsSI https://ia-florestal.web.app
 curl -sS "https://wms.cursar.space/geoserver/cbers/wms?service=WMS&version=1.3.0&request=GetCapabilities"
 ```
 
+## Download ZIP das imagens do acervo
+
+A aba CBERS entrega a folha pelo `GET /api/cbers-wpm/wms-download?imageId=…`
+(ou `itemId`). O arquivo tem vários GB; o site usa um `<a href>` real para o
+navegador gravar o anexo, sem `fetch`+`blob` (que carregaria o GeoTIFF na RAM).
+
+O Node do backend desliga `requestTimeout` nesse stream. Conferir:
+
+```bash
+curl -fsSI "https://geoforest-api.cursar.space/api/cbers-wpm/wms-download?imageId=<imageId>"
+```
+
+Deve voltar `200`, `Content-Type: application/zip` e
+`Content-Disposition: attachment`. Changelog:
+`docs/CHANGELOG_2026-08-19_CBERS_ZIP_E_CAR_ESTADUAL.md`.
+
 ## Arquivos principais no codigo
 
 ```text

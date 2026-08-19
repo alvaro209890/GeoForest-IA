@@ -19,10 +19,10 @@ import {
 } from 'lucide-react';
 import { CbersMapPreview } from '@/dashboard/components/CbersMapPreview';
 import {
-  cbersArchiveZipFilename,
-  cbersArchiveZipUrl,
-  cbersBatchZipFilename,
+  cbersSceneZipFilename,
+  cbersSceneZipPath,
 } from '@/dashboard/cbers/filenames';
+import { resolveBackendUrl } from '@/lib/api';
 import type { UseCbersJobsReturn } from '@/dashboard/hooks/useCbersJobs';
 import type { CbersPanelProps } from '../CbersPanel';
 
@@ -39,7 +39,6 @@ export function CbersPreviewMap({ cbers }: CbersPanelProps) {
     cbersWmsDownloadingId,
     toggleCbersSceneSelection,
     startCbersProcessing,
-    downloadCbersWmsZip,
   } = cbers;
 
   return (
@@ -52,6 +51,7 @@ export function CbersPreviewMap({ cbers }: CbersPanelProps) {
         const availableOnWms = cbersPreviewScene.wmsAvailable && cbersPreviewScene.wmsUrl;
         const blocked = cbersPreviewScene.coversArea === false || Boolean(availableOnWms) || Boolean(cbersPreviewScene.level && cbersPreviewScene.level !== 'L4');
         const estimate = cbersPreviewScene.estimate;
+        const zipHref = resolveBackendUrl(cbersSceneZipPath(cbersPreviewScene));
         return createPortal(
           <div
             className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-4"
@@ -178,15 +178,17 @@ export function CbersPreviewMap({ cbers }: CbersPanelProps) {
                             <ArrowUpRight size={13} />
                             <span className="truncate">{cbersPreviewScene.wmsLayerName || cbersPreviewScene.wmsUrl}</span>
                           </a>
-                          <button
-                            type="button"
-                            onClick={() => void downloadCbersWmsZip(cbersPreviewScene)}
-                            disabled={cbersWmsDownloadingId === cbersPreviewScene.id}
-                            className="mt-3 inline-flex items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-50 transition-colors hover:bg-emerald-400/15 disabled:opacity-60"
-                          >
-                            {cbersWmsDownloadingId === cbersPreviewScene.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                            Baixar ZIP da imagem
-                          </button>
+                          {zipHref ? (
+                            <a
+                              href={zipHref}
+                              download={cbersSceneZipFilename(cbersPreviewScene)}
+                              rel="noopener noreferrer"
+                              className="mt-3 inline-flex items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-50 transition-colors hover:bg-emerald-400/15"
+                            >
+                              {cbersWmsDownloadingId === cbersPreviewScene.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                              Baixar ZIP da imagem
+                            </a>
+                          ) : null}
                         </div>
                       </div>
                     </div>

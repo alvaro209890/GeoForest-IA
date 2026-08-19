@@ -549,28 +549,21 @@ export function useCbersJobs({
         ? `/api/cbers-wpm/wms-download?imageId=${encodeURIComponent(scene.archiveImageId)}`
         : `/api/cbers-wpm/wms-download?itemId=${encodeURIComponent(scene.id)}`
     );
-    const resolved = resolveBackendUrl(endpoint);
-    if (!resolved) {
+    if (!resolveBackendUrl(endpoint)) {
       toast.error('Link do ZIP da imagem WMS indisponível.');
       return;
     }
     setCbersWmsDownloadingId(scene.id);
     try {
-      const a = document.createElement('a');
-      a.href = resolved;
-      a.download = `${scene.archiveFilename || cbersOutputFilename(scene.id).replace(/\.(tif|tiff)$/i, '')}.zip`
-        .replace(/[^a-zA-Z0-9._-]/g, '_') || 'CBERS_4A_WPM.zip';
-      a.rel = 'noopener noreferrer';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      toast.success('Download da imagem WMS iniciado.');
-    } catch (error: any) {
-      toast.error(error?.message || 'Falha ao baixar ZIP da imagem WMS.');
+      await downloadZip(
+        endpoint,
+        `${scene.archiveFilename || cbersOutputFilename(scene.id).replace(/\.(tif|tiff)$/i, '')}.zip`
+          .replace(/[^a-zA-Z0-9._-]/g, '_') || 'CBERS_4A_WPM.zip',
+      );
     } finally {
       window.setTimeout(() => setCbersWmsDownloadingId(null), 1200);
     }
-  }, []);
+  }, [downloadZip]);
 
   return {
     cbersFile,

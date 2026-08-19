@@ -8,12 +8,54 @@ import { apiUrl, readApiError, resolveBackendUrl } from '@/lib/api';
 import { normalizeImageCaption, toFileProxyUrl } from './format';
 import type { SimcarAnalysisImage } from '@/dashboard/types/history';
 
+/** Pathname de uma URL de download, ignorando query string e origem. */
+export function zipUrlPathname(url: string): string {
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  try {
+    if (/^https?:\/\//i.test(raw)) return new URL(raw).pathname;
+    return new URL(raw, 'https://geoforest.local').pathname;
+  } catch {
+    return raw.split('?')[0].split('#')[0];
+  }
+}
+
+/**
+ * ZIP do WMS CBERS/Landsat é GeoTIFF de vários GB. `fetch` + `blob()` carregaria
+ * o arquivo inteiro na RAM e em geral não inicia o download. O navegador precisa
+ * fazer o GET sozinho (`<a href>` real).
+ */
+export function isNativeAttachmentZipUrl(url: string): boolean {
+  const pathname = zipUrlPathname(url);
+  return (
+    pathname === '/api/cbers-wpm/wms-download' ||
+    pathname === '/api/landsat/wms-download' ||
+    pathname.startsWith('/api/raster/')
+  );
+}
+
+export function startNativeAttachmentDownload(url: string, filename: string): void {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.replace(/[^a-zA-Z0-9._-]/g, '_') || 'download.zip';
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  window.setTimeout(() => a.remove(), 2000);
+}
+
 export async function downloadSimcarZip(url?: string | null, filename = 'SIMCAR_Recorte.zip') {
   const rawUrl = String(url || '').trim();
   const resolved = resolveBackendUrl(rawUrl);
   const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_') || 'SIMCAR_Recorte.zip';
   if (!resolved) {
     toast.error('Link do ZIP indisponível. Processe o recorte novamente.');
+    return;
+  }
+
+  if (isNativeAttachmentZipUrl(rawUrl) || isNativeAttachmentZipUrl(resolved)) {
+    startNativeAttachmentDownload(resolved, safeFilename);
+    toast.success('Download do ZIP iniciado.');
     return;
   }
 
@@ -27,13 +69,7 @@ export async function downloadSimcarZip(url?: string | null, filename = 'SIMCAR_
   })();
 
   if (!isBackendApiDownload) {
-    const a = document.createElement('a');
-    a.href = resolved;
-    a.download = safeFilename;
-    a.rel = 'noopener noreferrer';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    startNativeAttachmentDownload(resolved, safeFilename);
     return;
   }
 

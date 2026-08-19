@@ -19,10 +19,11 @@ import {
 } from 'lucide-react';
 import { CbersMapPreview } from '@/dashboard/components/CbersMapPreview';
 import {
-  cbersArchiveZipFilename,
-  cbersArchiveZipUrl,
-  cbersBatchZipFilename,
+  CAR_ESTADUAL_PLACEHOLDER,
+  cbersSceneZipFilename,
+  cbersSceneZipPath,
 } from '@/dashboard/cbers/filenames';
+import { resolveBackendUrl } from '@/lib/api';
 import type { UseCbersJobsReturn } from '@/dashboard/hooks/useCbersJobs';
 import type { CbersPanelProps } from '../CbersPanel';
 
@@ -67,7 +68,6 @@ export function CbersSceneSelector({ cbers }: CbersPanelProps) {
     applyCbersZipFile,
     searchCbersScenes,
     startCbersProcessing,
-    downloadCbersWmsZip,
     cbersScenes,
   } = cbers;
 
@@ -107,7 +107,7 @@ export function CbersSceneSelector({ cbers }: CbersPanelProps) {
             }
           }}
           disabled={Boolean(cbersFile)}
-          placeholder="Ex: MT-5107768-XXXXXXX..."
+          placeholder={CAR_ESTADUAL_PLACEHOLDER}
           className={`w-full rounded-xl border bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none placeholder-slate-600 focus:border-cyan-500/50 ${cbersFile ? 'border-white/5 opacity-40 cursor-not-allowed' : 'border-white/10'}`}
         />
         <p className="mt-1 text-[10px] text-slate-500">
@@ -115,7 +115,7 @@ export function CbersSceneSelector({ cbers }: CbersPanelProps) {
             ? 'A ATP será buscada automaticamente no WFS da SEMA, pelo mesmo sistema do recorte SIMCAR.'
             : cbersFile
               ? 'Remova o ZIP para buscar pelo Nº do CAR.'
-              : 'Preencha para usar a geometria do CAR estadual sem enviar ZIP.'}
+              : 'Use o CAR estadual (ex.: MT274719/2025), não o número federal do SICAR.'}
         </p>
       </div>
     
@@ -330,11 +330,18 @@ export function CbersSceneSelector({ cbers }: CbersPanelProps) {
               const availableOnWms = scene.wmsAvailable && scene.wmsUrl;
               const legacyNonL4 = Boolean(scene.level && scene.level !== 'L4');
               const blocked = scene.coversArea === false || Boolean(availableOnWms) || legacyNonL4;
+              const zipHref = resolveBackendUrl(cbersSceneZipPath(scene));
               return (
-                <button
+                <div
                   key={scene.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setCbersPreviewScene(scene)}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return;
+                    e.preventDefault();
+                    setCbersPreviewScene(scene);
+                  }}
                   className={`text-left rounded-xl border p-3 transition-all ${selected ? 'border-cyan-500/40 bg-cyan-500/10' : availableOnWms ? 'border-emerald-500/25 bg-emerald-500/[0.06] hover:border-emerald-400/40' : blocked ? 'border-red-500/20 bg-red-500/[0.04]' : 'border-white/10 bg-white/[0.03] hover:border-cyan-500/25 hover:bg-cyan-500/[0.04]'}`}
                 >
                   <div className="flex gap-3">
@@ -378,24 +385,18 @@ export function CbersSceneSelector({ cbers }: CbersPanelProps) {
                             <ArrowUpRight size={12} />
                             <span className="truncate">{scene.wmsLayerName || scene.wmsUrl}</span>
                           </a>
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void downloadCbersWmsZip(scene);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key !== 'Enter' && e.key !== ' ') return;
-                              e.preventDefault();
-                              e.stopPropagation();
-                              void downloadCbersWmsZip(scene);
-                            }}
-                            className="mt-2 inline-flex max-w-full items-center gap-1 rounded-md border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-100 hover:bg-emerald-400/15"
-                          >
-                            {cbersWmsDownloadingId === scene.id ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-                            <span className="truncate">Baixar ZIP</span>
-                          </span>
+                          {zipHref ? (
+                            <a
+                              href={zipHref}
+                              download={cbersSceneZipFilename(scene)}
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="mt-2 inline-flex max-w-full items-center gap-1 rounded-md border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-100 hover:bg-emerald-400/15"
+                            >
+                              {cbersWmsDownloadingId === scene.id ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                              <span className="truncate">Baixar ZIP</span>
+                            </a>
+                          ) : null}
                         </div>
                       )}
                       {scene.alignmentStatus === 'failed_private' && (
@@ -424,7 +425,7 @@ export function CbersSceneSelector({ cbers }: CbersPanelProps) {
                       {selected ? <CheckSquare size={17} /> : <Square size={17} />}
                     </span>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>

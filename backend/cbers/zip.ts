@@ -83,6 +83,8 @@ export function setWmsZipHeaders(res: Response, filename: string, files: CbersWm
   res.setHeader("Content-Type", "application/zip");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.setHeader("X-CBERS-WMS-File-Count", String(files.length));
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Accel-Buffering", "no");
 }
 
 export function resolveWmsZipRequest(args: {

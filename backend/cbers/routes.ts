@@ -90,6 +90,8 @@ export function registerCbersWpmRoutes(app: Express): void {
 
   app.head("/api/cbers-wpm/wms-download", async (req: Request, res: Response) => {
     try {
+      req.setTimeout(0);
+      res.setTimeout(0);
       const itemId = String(req.query.itemId || "").trim();
       const imageId = String(req.query.imageId || "").trim();
       if (!itemId && !imageId) {
@@ -110,6 +112,8 @@ export function registerCbersWpmRoutes(app: Express): void {
 
   app.get("/api/cbers-wpm/wms-download", async (req: Request, res: Response) => {
     try {
+      req.setTimeout(0);
+      res.setTimeout(0);
       const itemId = String(req.query.itemId || "").trim();
       const imageId = String(req.query.imageId || "").trim();
       if (!itemId && !imageId) {
