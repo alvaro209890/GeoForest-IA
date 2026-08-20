@@ -6,7 +6,9 @@
  * duplicar o contrato HTTP nem o estado de rate limit do processo (8k TPM).
  * A API pública de cada cliente de fase continua igual para quem já a consome.
  */
-export const GROQ_VISION_URL = "https://api.groq.com/openai/v1/chat/completions";
+/** URL da API de chat — Groq por padrão, sobrescrevível via env. */
+export const GROQ_VISION_URL =
+  process.env.VISION_API_URL || "https://api.groq.com/openai/v1/chat/completions";
 
 /**
  * Os mosaicos anuais publicados pela SEMA-MT **não têm estilo em cor natural**:
@@ -198,7 +200,7 @@ async function performAttempt(
       },
       body: JSON.stringify({
         model: args.model,
-        reasoning_effort: "none",
+        ...(GROQ_VISION_URL.includes("groq.com") ? { reasoning_effort: "none" } : {}),
         temperature: 0,
         response_format: { type: "json_object" },
         messages: [
@@ -224,7 +226,7 @@ async function performAttempt(
       throw new GroqVisionError("RATE_LIMITED", "Groq retornou 429 (rate limit).", true);
     }
     if (response.status === 401) {
-      throw new GroqVisionError("HTTP_401", "Groq recusou autenticação (verifique GROQ_API_KEY).", false);
+      throw new GroqVisionError("HTTP_401", "API recusou autenticação (verifique VISION_API_KEY / GROQ_API_KEY).", false);
     }
     if (response.status === 400) {
       // O 400 mais comum aqui é `json_validate_failed`: com `response_format`
@@ -305,12 +307,12 @@ export async function requestGroqVisionGeneric(
     return { ok: false, errorCode: "NO_IMAGES", message: "Nenhuma imagem utilizável para esta janela." };
   }
 
-  const apiKey = String(options.apiKey ?? process.env.GROQ_API_KEY ?? "").trim();
+  const apiKey = String(options.apiKey ?? process.env.VISION_API_KEY ?? process.env.GROQ_API_KEY ?? "").trim();
   if (!apiKey) {
-    return { ok: false, errorCode: "MISSING_KEY", message: "GROQ_API_KEY não configurada." };
+    return { ok: false, errorCode: "MISSING_KEY", message: "VISION_API_KEY (ou GROQ_API_KEY) não configurada." };
   }
   const fetchImpl = options.fetchImpl || fetch;
-  const model = options.model || "qwen/qwen3.6-27b";
+  const model = options.model || process.env.VISION_MODEL || "google/gemini-2.5-flash";
   const timeoutMs = options.timeoutMs ?? 120_000;
   const sleep = options.sleep || defaultSleep;
   const sentSceneIds = request.images.map((img) => img.sceneId);
