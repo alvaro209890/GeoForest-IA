@@ -882,10 +882,12 @@ export function getOrderedSatelliteKeys(selectedLayers: string[] = []): string[]
     });
 }
 
-export const ANALYSIS_VISION_MODELS = [
-    "meta-llama/llama-4-maverick-17b-128e-instruct",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-];
+export const ANALYSIS_VISION_MODELS = (
+    process.env.VISION_MODEL || "google/gemini-2.5-flash"
+)
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
 export const GROQ_TEXT_MODELS = [
     "openai/gpt-oss-120b",
     "meta-llama/llama-3.3-70b-versatile",
@@ -1409,11 +1411,13 @@ async function callVisionAnalysis(
                 const controller = new AbortController();
                 const timeout = setTimeout(() => controller.abort(), VISION_TIMEOUT_MS);
 
-                const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                const visionApiUrl = process.env.VISION_API_URL || "https://api.groq.com/openai/v1/chat/completions";
+                const visionApiKey = process.env.VISION_API_KEY || apiKey;
+                const response = await fetch(visionApiUrl, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
-                        Authorization: `Bearer ${apiKey}`,
+                        Authorization: `Bearer ${visionApiKey}`,
                     },
                     body: JSON.stringify({
                         model,
