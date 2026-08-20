@@ -14,12 +14,12 @@ export type Pos2008Sensor =
   /** Camada forçada por env cujo nome não casa com nenhum padrão conhecido. */
   | "UNKNOWN";
 
-export type Pos2008WindowId = "W2009_2011"
-  | "W2011_2013"
-  | "W2013_2015"
-  | "W2015_2017"
-  | "W2017_2019"
-  | "WBRIDGE";
+/**
+ * Id de janela no formato `W<anoInicial>_<anoFinal>` (ex.: `W2009_2011`), gerado
+ * por `buildPos2008Windows` a partir da série efetiva — por isso é template
+ * literal e não enum: a série é configurável (`SIMCAR_AUAS_POS2008_SERIES_END`).
+ */
+export type Pos2008WindowId = `W${number}_${number}` | "WBRIDGE";
 
 /** Fronteiras de sensor conhecidas entre anos consecutivos da série 2009–2019. */
 export const POS2008_SENSOR_BOUNDARIES: Array<{ fromYear: number; toYear: number }> = [

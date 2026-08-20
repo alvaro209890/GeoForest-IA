@@ -13,7 +13,7 @@ import type {
   Pos2008WindowObservation,
 } from "./types";
 import type { SceneUsability } from "../types";
-import { POS2008_SERIES_END, POS2008_SERIES_START, type SensorBoundary } from "./timeline";
+import { getPos2008Series, type Pos2008Series, type SensorBoundary } from "./timeline";
 
 const CONFIDENCE_RANK: Record<Confidence, number> = {
   HIGH: 3,
@@ -46,6 +46,8 @@ export type Pos2008ReducerInput = {
   windows: Pos2008ReducerWindowInput[];
   sensorBoundaries: SensorBoundary[];
   bridge: Pos2008BridgeInput;
+  /** Série efetiva analisada. Omitida = a configurada por env (padrão 2009–2019). */
+  series?: Pos2008Series;
 };
 
 type MergedObservation = {
@@ -133,6 +135,7 @@ function crossesSensorBoundary(
  * Ordem rígida das regras 1–5 do doc 05 §6; nenhuma decisão depende de texto livre.
  */
 export function reducePos2008Polygon(input: Pos2008ReducerInput): AuasPos2008PolygonResult {
+  const { startYear: seriesStart, endYear: seriesEnd } = input.series ?? getPos2008Series();
   const observationsByYear = mergeObservations(input.windows);
   const transitions = mergeTransitions(input.windows);
   const limitations: string[] = [];
@@ -166,23 +169,23 @@ export function reducePos2008Polygon(input: Pos2008ReducerInput): AuasPos2008Pol
   const firstYear = sortedYears[0];
   const firstObs = firstYear !== undefined ? definiteByYear.get(firstYear) : undefined;
   if (
-    firstYear === POS2008_SERIES_START &&
+    firstYear === seriesStart &&
     firstObs &&
     firstObs.state === "ANTHROPIZED" &&
-    isUsableYear(input.sceneUsabilityByYear[POS2008_SERIES_START])
+    isUsableYear(input.sceneUsabilityByYear[seriesStart])
   ) {
     const evidence: string[] = [];
     if (input.pre2008.pre2008Alert) {
       evidence.push(
-        `Polígono já antropizado no mosaico de ${POS2008_SERIES_START}; coerente com o alerta pré-2008 da Fase 1 (evento anterior ao marco).`
+        `Polígono já antropizado no mosaico de ${seriesStart}; coerente com o alerta pré-2008 da Fase 1 (evento anterior ao marco).`
       );
     } else {
-      evidence.push(`Polígono já antropizado no mosaico de ${POS2008_SERIES_START} — primeiro ano observável da série.`);
+      evidence.push(`Polígono já antropizado no mosaico de ${seriesStart} — primeiro ano observável da série.`);
     }
     return {
       ...base,
       status: "JA_ANTROPIZADO_NO_INICIO_DA_SERIE",
-      firstDetectedYear: POS2008_SERIES_START,
+      firstDetectedYear: seriesStart,
       observedInterval: null,
       confidence: firstObs.confidence,
       crossedSensorBoundary: false,
@@ -318,8 +321,8 @@ export function reducePos2008Polygon(input: Pos2008ReducerInput): AuasPos2008Pol
   // A série cobrada é a INTEIRA (constantes do plano), não só os anos que vieram
   // no catálogo: ano que sequer foi olhado não pode virar "sem mudança".
   const seriesYears = Array.from(
-    { length: POS2008_SERIES_END - POS2008_SERIES_START + 1 },
-    (_, i) => POS2008_SERIES_START + i
+    { length: seriesEnd - seriesStart + 1 },
+    (_, i) => seriesStart + i
   );
   const missingUsable = seriesYears.filter(
     (y) => !isUsableYear(input.sceneUsabilityByYear[y]) || !definiteByYear.has(y)
@@ -355,10 +358,10 @@ export function reducePos2008Polygon(input: Pos2008ReducerInput): AuasPos2008Pol
     confidence: worstConfidence,
     crossedSensorBoundary: false,
     bridgeWindowUsed: null,
-    evidence: [`Nenhuma conversão de vegetação nativa observada na série ${POS2008_SERIES_START}–${POS2008_SERIES_END} analisada.`],
+    evidence: [`Nenhuma conversão de vegetação nativa observada na série ${seriesStart}–${seriesEnd} analisada.`],
     limitations: [
       ...limitations,
-      "Ausência de mudança observada nesta série não certifica ausência de desmate; para eventos a partir de 2019, consultar a aba AUAS × SCCON (datação por alerta oficial).",
+      `Ausência de mudança observada nesta série não certifica ausência de desmate; para eventos a partir de ${seriesEnd}, consultar a aba AUAS × SCCON (datação por alerta oficial).`,
     ],
   };
 }

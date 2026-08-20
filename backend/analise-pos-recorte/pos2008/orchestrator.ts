@@ -11,7 +11,7 @@ import { extractPolygonsFromLayer } from "../polygons";
 import { buildPhaseCheckpointKey } from "../checkpoint-store";
 import { requestPos2008VisionWindow, type Pos2008VisionDeps } from "./groq-vision-client";
 import { resolvePos2008Catalog, type PosCatalog } from "./catalog";
-import { buildTimelinePlan } from "./timeline";
+import { buildTimelinePlan, getPos2008Series } from "./timeline";
 import { reducePos2008Aggregate, reducePos2008Polygon, type Pos2008ReducerWindowInput } from "./evidence-reducer";
 import { buildPos2008Scene, type BuildPos2008SceneDeps } from "./scenes";
 import { buildPos2008Report, type BuildPos2008ReportInput } from "./report-builder";
@@ -186,7 +186,8 @@ export async function runPos2008Analysis(
     return emptyPos2008Analysis(input.jobId, startedAt, now(), catalog);
   }
 
-  const plan = buildTimelinePlan(catalog.entries);
+  const series = getPos2008Series();
+  const plan = buildTimelinePlan(catalog.entries, series);
   const pre2008ByPolygon = new Map<string, AuasPre2008AnalysisV2["polygons"][number]>();
   for (const p of input.pre2008Meta?.polygons || []) {
     pre2008ByPolygon.set(p.polygonId, p);
@@ -371,6 +372,7 @@ export async function runPos2008Analysis(
 
     const pre2008 = pre2008ByPolygon.get(polygon.polygonId);
     const polygonResult = reducePos2008Polygon({
+      series,
       polygonId: polygon.polygonId,
       geometryHash: polygon.geometryHash,
       areaHa: polygon.areaHa,

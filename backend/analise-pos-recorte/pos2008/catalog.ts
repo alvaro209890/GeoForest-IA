@@ -16,7 +16,7 @@ import {
   type WmsLayerRef,
   type YearCatalogEntry,
 } from "./catalog-discovery";
-import { POS2008_SERIES_END, POS2008_SERIES_START } from "./timeline";
+import { getPos2008Series } from "./timeline";
 import { buildWmsGetMapUrl } from "../wms-scenes";
 
 export type PosCatalog = {
@@ -113,10 +113,7 @@ function entriesToCatalog(entries: YearCatalogEntry[], nowMs: number): PosCatalo
 async function discoverEntries(deps: CatalogDeps): Promise<YearCatalogEntry[]> {
   const xml = await (deps.fetchCapabilitiesXml || fetchSemamtCapabilitiesXml)();
   const layerNames = parseWmsCapabilities(xml).layers;
-  return buildYearCatalog(layerNames, {
-    startYear: POS2008_SERIES_START,
-    endYear: POS2008_SERIES_END,
-  });
+  return buildYearCatalog(layerNames, getPos2008Series());
 }
 
 /**

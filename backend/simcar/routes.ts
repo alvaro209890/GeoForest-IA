@@ -1278,7 +1278,7 @@ export function registerSimcarClipRoutes(app: Express) {
                                 images: analysisOutcome.cloudinaryUrls.map((item: { url: string }) => item.url),
                             }],
                             analysisMeta: analysisOutcome.analysisMeta,
-                            analysisRulesVersion: "acavn-fixed-v4",
+                            analysisRulesVersion: "acavn-fixed-v5",
                         },
                     });
                     try {

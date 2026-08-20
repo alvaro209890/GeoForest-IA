@@ -1,6 +1,12 @@
 /**
  * PDF Report — geração do laudo técnico SIMCAR em PDF (pdfkit) e persistência.
  * Extraído de simcar-clip.ts (Plano 02, Fase 5b).
+ *
+ * v2 (2026-08-20): laudo reorganizado para leitura de gestor — painel de
+ * veredito com semáforo no topo, resumo executivo em bullets, quadro de
+ * achados colorido, linha do tempo visual com o marco de 22/07/2008 e
+ * renderização estruturada do markdown da IA (títulos e bullets preservados).
+ * Toda a decisão de conteúdo/cor vive em `report-theme.ts`; aqui só se desenha.
  */
 
 import fs from "fs";
@@ -10,12 +16,32 @@ import PDFDocument from "pdfkit";
 import { readPersistedSimcarClipForUid, hydrateCachedJob, persistSimcarClipArtifacts } from "./hydration";
 import { uploadRawBufferToCloudinary } from "./cloudinary";
 import { toPublicApiUrl } from "./constants";
-import type { CachedJob, LayerSummary, PersistedClipContextV1 } from "./types";
+import type { CachedJob } from "./types";
+import {
+    PALETTE,
+    TONES,
+    LEGAL_BASIS_LINES,
+    buildAcAvnFindings,
+    buildAuasFindings,
+    buildExecutiveBullets,
+    buildTimelineModel,
+    buildVerdictPanel,
+    classifyLayerNature,
+    detectReportKind,
+    parseMarkdownBlocks,
+    reportKindSectionTitle,
+    splitLongParagraph,
+    type ExecutiveBullet,
+    type Finding,
+    type MarkdownBlock,
+    type TimelineModel,
+    type Tone,
+} from "./report-theme";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const SIMCAR_REPORT_VERSION = "simcar-report-v1";
+const SIMCAR_REPORT_VERSION = "simcar-report-v2";
 
 export type SimcarReportArtifact = {
     reportPdfUrl: string;
@@ -44,14 +70,14 @@ function normalizeReportImages(value: unknown): SimcarReportImage[] {
         .filter((item) => item.url);
 }
 
+/**
+ * Limpeza de texto para uso fora do renderizador de markdown (o renderizador
+ * precisa dos `#` e dos `-`, então não passa por aqui).
+ */
 function reportCleanText(value: unknown, maxChars = 5000): string {
     return String(value || "")
         .replace(/<think>[\s\S]*?<\/think>/gi, "")
         .replace(/\r/g, "")
-        .replace(/\*\*/g, "")
-        .replace(/^\s{0,3}#{1,6}\s*/gm, "")
-        .replace(/^\s*[-*]\s+/gm, "- ")
-        .replace(/\n{3,}/g, "\n\n")
         .trim()
         .slice(0, maxChars);
 }
@@ -65,8 +91,11 @@ function breakLongPdfToken(token: string, chunkSize = 28): string {
     return chunks.join(" ");
 }
 
+/** Deixa um trecho seguro para o pdfkit: sem base64, sem URL gigante, sem token infinito. */
 function reportPdfSafeText(value: unknown, maxChars = 5000): string {
-    return reportCleanText(value, maxChars)
+    return String(value || "")
+        .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .replace(/\r/g, "")
         .replace(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+/gi, "[imagem incorporada]")
         .replace(/https?:\/\/\S+/gi, (rawUrl) => {
             const cleanUrl = rawUrl.replace(/[),.;:]+$/g, "");
@@ -80,69 +109,14 @@ function reportPdfSafeText(value: unknown, maxChars = 5000): string {
         .replace(/[^\s]{42,}/g, (token) => breakLongPdfToken(token))
         .replace(/[ \t]{2,}/g, " ")
         .replace(/\n[ \t]+/g, "\n")
-        .trim();
+        .trim()
+        .slice(0, maxChars);
 }
 
 function reportSingleLineText(value: unknown, maxChars = 120): string {
     const clean = reportPdfSafeText(value, maxChars * 2).replace(/\s+/g, " ").trim();
     if (clean.length <= maxChars) return clean;
     return `${clean.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
-}
-
-function splitPdfTextChunks(value: string, maxChunkChars = 950): string[] {
-    const chunks: string[] = [];
-    for (const paragraph of value.split(/\n{2,}/).map((item) => item.trim()).filter(Boolean)) {
-        let remaining = paragraph;
-        while (remaining.length > maxChunkChars) {
-            const splitAt = Math.max(
-                remaining.lastIndexOf(". ", maxChunkChars),
-                remaining.lastIndexOf("; ", maxChunkChars),
-                remaining.lastIndexOf(", ", maxChunkChars),
-                remaining.lastIndexOf(" ", maxChunkChars),
-            );
-            const safeSplit = splitAt > 160 ? splitAt + 1 : maxChunkChars;
-            chunks.push(remaining.slice(0, safeSplit).trim());
-            remaining = remaining.slice(safeSplit).trim();
-        }
-        if (remaining) chunks.push(remaining);
-    }
-    return chunks;
-}
-
-function reportStatusLabel(value: unknown): string {
-    const clean = String(value || "").trim().toUpperCase();
-    const labels: Record<string, string> = {
-        SIM: "Sim",
-        NAO: "Não",
-        MEDIA: "Média",
-        ALTA: "Alta",
-        BAIXA: "Baixa",
-        INCONCLUSIVO: "Inconclusivo",
-        AUAS_VALIDA: "AUAS válida",
-        AUAS_INVALIDA: "AUAS inválida",
-        AUAS_PARCIAL: "AUAS parcial",
-    };
-    return labels[clean] || (clean ? clean : "Não informado");
-}
-
-const AUAS_PRE2008_STATUS_LABEL: Record<string, string> = {
-    ALERTA_PRE_2008: "Alerta pré-2008",
-    SEM_EVIDENCIA_PRE_2008: "Sem evidência pré-2008",
-    INCONCLUSIVO: "Inconclusivo",
-};
-
-/**
- * Resumo executivo da seção AUAS no PDF. V2 (schemaVersion 2) usa
- * pre2008Status/pre2008Alert e nunca o texto "passivo pós-2008" do V1.
- */
-function formatAuasExecutiveSummaryLine(auasMeta: any): string {
-    if (auasMeta?.schemaVersion === 2) {
-        const statusLabel = AUAS_PRE2008_STATUS_LABEL[String(auasMeta.status || "")] || "Não informado";
-        const alertLabel = auasMeta.pre2008Alert === true ? "Sim" : auasMeta.pre2008Alert === false ? "Não" : "Não informado";
-        const polygonCount = Number(auasMeta.summary?.polygonCount || 0);
-        return `Síntese de AUAS (pré-2008, análise por polígono): ${statusLabel}. Alerta de antropização anterior a 2008: ${alertLabel}. Polígonos AUAS analisados individualmente: ${polygonCount}. O nível de confiança atribuído é ${reportStatusLabel(auasMeta.confidence)}.`;
-    }
-    return `Síntese de AUAS: ${reportStatusLabel(auasMeta.finalStatus)}. Identificação de passivo ambiental: ${auasMeta.passivoAmbiental === true ? "Sim" : auasMeta.passivoAmbiental === false ? "Não" : "Não informado"}. O nível de confiança atribuído a esta análise é ${reportStatusLabel(auasMeta.confidence)}.`;
 }
 
 function selectPrincipalReportImages(acImages: SimcarReportImage[], auasImages: SimcarReportImage[]): SimcarReportImage[] {
@@ -196,8 +170,15 @@ export async function buildSimcarReportPdfBuffer(args: {
     const imageBuffers = await Promise.all(
         selectedImages.map(async (img) => ({ ...img, buffer: await fetchReportImageBuffer(img.url) })),
     );
-    const logoPath = path.resolve(__dirname, "..", "geoforest_app_logo.png");
-    const logoBuffer = fs.existsSync(logoPath) ? fs.readFileSync(logoPath) : null;
+    // Em produção o bundle vira `dist/index.js` (raiz = `..`); em dev o módulo vive
+    // em `backend/simcar/` e a logo está dois níveis acima. Resolver por candidatos
+    // evita o laudo sair sem marca só porque mudou o ponto de entrada.
+    const logoPath = [
+        path.resolve(__dirname, "..", "geoforest_app_logo.png"),
+        path.resolve(__dirname, "..", "..", "geoforest_app_logo.png"),
+        path.resolve(process.cwd(), "geoforest_app_logo.png"),
+    ].find((candidate) => fs.existsSync(candidate));
+    const logoBuffer = logoPath ? fs.readFileSync(logoPath) : null;
 
     const doc = new PDFDocument({
         size: "A4",
@@ -220,292 +201,641 @@ export async function buildSimcarReportPdfBuffer(args: {
     const pageH = doc.page.height;
     const margin = 42;
     const contentW = pageW - margin * 2;
-    
-    // Paleta de Cores
-    const colors = {
-        primary: "#059669", // Emerald 600
-        primaryLight: "#D1FAE5", // Emerald 100
-        primaryBg: "#ECFDF5", // Emerald 50
-        dark: "#0F172A", // Slate 900
-        darkText: "#1E293B", // Slate 800
-        text: "#334155", // Slate 700
-        lightText: "#64748B", // Slate 500
-        border: "#E2E8F0", // Slate 200
-        bg: "#F8FAFC" // Slate 50
-    };
+    const colors = PALETTE;
+
+    /* ─── Primitivas de desenho ──────────────────────────────── */
 
     const ensureSpace = (height: number) => {
-        if (doc.y + height > pageH - margin) {
+        if (doc.y + height > pageH - margin - 16) {
             doc.addPage();
-            doc.font("Helvetica").fillColor(colors.lightText).fontSize(8).text(`GeoForest IA | Laudo SIMCAR | Job ${reportSingleLineText(args.jobId, 44)}`, margin, 24, {
-                width: contentW,
-                align: "right",
-            });
+            doc.font("Helvetica").fillColor(colors.lightText).fontSize(8).text(
+                `GeoForest IA | Laudo SIMCAR | Job ${reportSingleLineText(args.jobId, 44)}`,
+                margin,
+                24,
+                { width: contentW, align: "right" },
+            );
             doc.x = margin;
-            doc.moveDown(1.5);
+            doc.y = 48;
         }
     };
 
-    const sectionTitle = (title: string) => {
-        ensureSpace(40);
-        doc.moveDown(1);
-        doc.font("Helvetica-Bold").fontSize(15).fillColor(colors.dark).text(title, margin, doc.y, { align: "left" });
-        doc.moveTo(margin, doc.y + 6).lineTo(pageW - margin, doc.y + 6).strokeColor(colors.primary).lineWidth(1.5).stroke();
-        doc.moveDown(1.2);
+    const sectionTitle = (title: string, subtitle?: string) => {
+        ensureSpace(56);
+        doc.moveDown(0.8);
+        const y = doc.y;
+        doc.rect(margin, y + 2, 4, 16).fill(colors.primary);
+        doc.font("Helvetica-Bold").fontSize(14).fillColor(colors.dark).text(title, margin + 12, y, {
+            width: contentW - 12,
+            align: "left",
+        });
+        if (subtitle) {
+            doc.font("Helvetica").fontSize(8.5).fillColor(colors.lightText).text(subtitle, margin + 12, doc.y + 1, {
+                width: contentW - 12,
+                align: "left",
+            });
+        }
+        doc.moveTo(margin, doc.y + 5).lineTo(pageW - margin, doc.y + 5).strokeColor(colors.border).lineWidth(1).stroke();
+        doc.y += 12;
         doc.x = margin;
     };
 
-    const bodyText = (text: string, maxChars = 2800) => {
-        const clean = reportPdfSafeText(text, maxChars);
-        if (!clean) {
-            doc.font("Helvetica").fontSize(10).fillColor(colors.lightText).text("Não informado.", margin, doc.y, { width: contentW, lineGap: 4, align: 'left' });
-            doc.x = margin;
-            return;
+    /** Pílula colorida de status. Devolve a largura ocupada. */
+    const pill = (text: string, tone: Tone, x: number, y: number, minWidth = 0): number => {
+        const label = reportSingleLineText(text, 26);
+        doc.font("Helvetica-Bold").fontSize(7.5);
+        const width = Math.max(minWidth, doc.widthOfString(label) + 14);
+        const palette = TONES[tone];
+        doc.roundedRect(x, y, width, 14, 7).fillAndStroke(palette.bg, palette.border);
+        doc.font("Helvetica-Bold").fontSize(7.5).fillColor(palette.fg).text(label, x, y + 3.6, {
+            width,
+            align: "center",
+        });
+        return width;
+    };
+
+    /** Caixa de destaque com trilho colorido à esquerda. */
+    const calloutBox = (title: string, lines: string[], tone: Tone, opts: { compact?: boolean } = {}) => {
+        const palette = TONES[tone];
+        const innerW = contentW - 34;
+        const bodyFont = opts.compact ? 8.5 : 9;
+        doc.font("Helvetica").fontSize(bodyFont);
+        const safeLines = lines.map((line) => reportPdfSafeText(line, 900)).filter(Boolean);
+        const bodyH = safeLines.reduce(
+            (sum, line) => sum + doc.heightOfString(line, { width: innerW, lineGap: 2.5 }) + 3,
+            0,
+        );
+        const titleH = title ? 15 : 0;
+        const boxH = titleH + bodyH + 16;
+        ensureSpace(boxH + 10);
+        const y = doc.y;
+        doc.roundedRect(margin, y, contentW, boxH, 7).fillAndStroke(palette.bg, palette.border);
+        doc.rect(margin, y + 2, 3.5, boxH - 4).fill(palette.fg);
+        let cursor = y + 9;
+        if (title) {
+            doc.font("Helvetica-Bold").fontSize(9.5).fillColor(palette.fg).text(title, margin + 16, cursor, {
+                width: innerW,
+            });
+            cursor += titleH;
         }
-        for (const block of splitPdfTextChunks(clean)) {
-            doc.font("Helvetica").fontSize(10);
-            const blockHeight = doc.heightOfString(block, { width: contentW, lineGap: 3, align: "left" });
-            ensureSpace(Math.min(blockHeight + 16, pageH - margin * 2));
-            doc.font("Helvetica").fontSize(10).fillColor(colors.text).text(block, margin, doc.y, {
-                width: contentW,
-                lineGap: 3,
+        for (const line of safeLines) {
+            doc.font("Helvetica").fontSize(bodyFont).fillColor(colors.darkText).text(line, margin + 16, cursor, {
+                width: innerW,
+                lineGap: 2.5,
+            });
+            cursor = doc.y + 3;
+        }
+        doc.x = margin;
+        doc.y = y + boxH + 8;
+    };
+
+    /** Lista de bullets com marcador colorido por tom. */
+    const bulletList = (items: ExecutiveBullet[], opts: { fontSize?: number } = {}) => {
+        const fontSize = opts.fontSize ?? 9.5;
+        for (const item of items) {
+            const text = reportPdfSafeText(item.text, 700);
+            if (!text) continue;
+            doc.font("Helvetica").fontSize(fontSize);
+            const h = doc.heightOfString(text, { width: contentW - 18, lineGap: 2.5 });
+            ensureSpace(h + 8);
+            const y = doc.y;
+            doc.circle(margin + 4.5, y + fontSize * 0.55, 2.6).fill(TONES[item.tone].fg);
+            doc.font("Helvetica").fontSize(fontSize).fillColor(colors.text).text(text, margin + 14, y, {
+                width: contentW - 18,
+                lineGap: 2.5,
                 align: "left",
             });
             doc.x = margin;
-            doc.moveDown(0.5);
+            doc.y += 4;
         }
     };
 
-    const metric = (label: string, value: string, x: number, y: number, w: number) => {
-        doc.roundedRect(x, y, w, 60, 8).fillAndStroke(colors.primaryBg, colors.primaryLight);
-        doc.font("Helvetica-Bold").fontSize(14).fillColor(colors.primary).text(reportSingleLineText(value, 24), x + 12, y + 14, { width: w - 24, align: "left" });
-        doc.font("Helvetica").fontSize(8.5).fillColor(colors.lightText).text(reportSingleLineText(label, 34), x + 12, y + 36, { width: w - 24, align: "left" });
+    /** Renderiza markdown de IA preservando títulos e bullets. */
+    const markdownBody = (markdown: string, maxChars = 9000) => {
+        const blocks: MarkdownBlock[] = parseMarkdownBlocks(reportCleanText(markdown, maxChars));
+        if (blocks.length === 0) {
+            doc.font("Helvetica").fontSize(9.5).fillColor(colors.lightText).text("Não informado.", margin, doc.y, {
+                width: contentW,
+            });
+            doc.x = margin;
+            return;
+        }
+        for (const block of blocks) {
+            if (block.type === "heading") {
+                ensureSpace(26);
+                doc.moveDown(0.35);
+                const y = doc.y;
+                doc.font("Helvetica-Bold").fontSize(10).fillColor(colors.primary).text(
+                    reportSingleLineText(block.text, 90).toUpperCase(),
+                    margin,
+                    y,
+                    { width: contentW },
+                );
+                doc.x = margin;
+                doc.y += 3;
+                continue;
+            }
+            if (block.type === "bullet") {
+                const label = block.label ? `${reportSingleLineText(block.label, 60)}: ` : "";
+                const text = reportPdfSafeText(block.text, 900);
+                if (!label && !text) continue;
+                doc.font("Helvetica").fontSize(9.5);
+                const h = doc.heightOfString(label + text, { width: contentW - 18, lineGap: 2.5 });
+                ensureSpace(h + 8);
+                const y = doc.y;
+                doc.circle(margin + 4.5, y + 5, 2.4).fill(colors.primary);
+                if (label) {
+                    // Rótulo em negrito e corpo normal na MESMA linha: o pdfkit aplica a
+                    // fonte corrente a cada trecho, então o estilo é trocado entre as
+                    // chamadas encadeadas por `continued`.
+                    doc.font("Helvetica-Bold").fontSize(9.5).fillColor(colors.darkText)
+                        .text(label, margin + 14, y, { width: contentW - 18, continued: true, lineGap: 2.5 });
+                    doc.font("Helvetica").fontSize(9.5).fillColor(colors.text).text(text, { lineGap: 2.5 });
+                } else {
+                    doc.font("Helvetica").fontSize(9.5).fillColor(colors.text)
+                        .text(text, margin + 14, y, { width: contentW - 18, lineGap: 2.5 });
+                }
+                doc.x = margin;
+                doc.y += 3;
+                continue;
+            }
+            for (const part of splitLongParagraph(reportPdfSafeText(block.text, 1800))) {
+                doc.font("Helvetica").fontSize(9.5);
+                const h = doc.heightOfString(part, { width: contentW, lineGap: 3 });
+                ensureSpace(Math.min(h + 10, pageH - margin * 2));
+                doc.font("Helvetica").fontSize(9.5).fillColor(colors.text).text(part, margin, doc.y, {
+                    width: contentW,
+                    lineGap: 3,
+                    align: "left",
+                });
+                doc.x = margin;
+                doc.y += 4;
+            }
+        }
     };
 
-    // --- Header ---
-    doc.rect(0, 0, pageW, 180).fill(colors.dark);
+    const metric = (label: string, value: string, x: number, y: number, w: number, tone: Tone = "neutral") => {
+        const palette = TONES[tone];
+        doc.roundedRect(x, y, w, 58, 8).fillAndStroke(palette.bg, palette.border);
+        doc.font("Helvetica-Bold").fontSize(14).fillColor(palette.fg).text(reportSingleLineText(value, 24), x + 11, y + 13, {
+            width: w - 22,
+            align: "left",
+        });
+        doc.font("Helvetica").fontSize(8).fillColor(colors.lightText).text(reportSingleLineText(label, 34), x + 11, y + 35, {
+            width: w - 22,
+            align: "left",
+        });
+    };
+
+    /* ─── Cabeçalho ──────────────────────────────────────────── */
+
+    doc.rect(0, 0, pageW, 152).fill(colors.dark);
+    doc.rect(0, 148, pageW, 4).fill(colors.primary);
     if (logoBuffer) {
         try {
-            doc.image(logoBuffer, margin, 40, { fit: [52, 52] });
+            doc.image(logoBuffer, margin, 34, { fit: [46, 46] });
         } catch {
             // Ignora a imagem se não decodificar
         }
     }
-    
-    doc.font("Helvetica-Bold").fontSize(26).fillColor("#FFFFFF").text("Laudo Técnico SIMCAR", margin + 70, 44, {
-        width: contentW - 70,
-        align: "left"
+    doc.font("Helvetica-Bold").fontSize(23).fillColor("#FFFFFF").text("Laudo Técnico SIMCAR", margin + 62, 36, {
+        width: contentW - 62,
+        align: "left",
     });
-    doc.font("Helvetica").fontSize(11).fillColor(colors.primaryLight).text("Relatório executivo gerado automaticamente pela GeoForest IA", margin + 70, 78, {
-        width: contentW - 70,
-        align: "left"
-    });
-    
-    doc.font("Helvetica-Bold").fontSize(13).fillColor("#FFFFFF").text(reportSingleLineText(args.filename || "Recorte SIMCAR", 130), margin, 126, {
-        width: contentW,
-        align: "left"
-    });
-    doc.font("Helvetica").fontSize(9.5).fillColor(colors.lightText).text(
-        `Job: ${reportSingleLineText(args.jobId, 44)} | Gerado em ${new Date().toLocaleString("pt-BR", { timeZone: "America/Cuiaba" })}`,
+    doc.font("Helvetica").fontSize(10).fillColor(colors.primaryLight).text(
+        "Análise geoespacial assistida por IA · documento de apoio ao responsável técnico",
+        margin + 62,
+        66,
+        { width: contentW - 62, align: "left" },
+    );
+    doc.font("Helvetica-Bold").fontSize(12).fillColor("#FFFFFF").text(
+        reportSingleLineText(args.filename || "Recorte SIMCAR", 120),
         margin,
-        146,
+        104,
+        { width: contentW, align: "left" },
+    );
+    doc.font("Helvetica").fontSize(9).fillColor("#94A3B8").text(
+        `Job: ${reportSingleLineText(args.jobId, 44)} · Gerado em ${new Date().toLocaleString("pt-BR", { timeZone: "America/Cuiaba" })} · ${SIMCAR_REPORT_VERSION}`,
+        margin,
+        124,
         { width: contentW, align: "left" },
     );
 
-    // Initial Y position after header
-    doc.y = 210;
+    doc.y = 172;
     doc.x = margin;
-    
-    // --- Metrics Section ---
+
+    /* ─── Modelo do laudo ────────────────────────────────────── */
+
     const summary = args.summary || {};
     const layers = Array.isArray(summary.layers) ? summary.layers : (args.job?.layerSummaries || []);
     const propertyAreaHa = Number(summary.propertyAreaHa || args.job?.areaHa || 0);
     const layersWithData = Number(summary.layersWithData || layers.filter((l: any) => Number(l?.features || 0) > 0).length || 0);
     const totalFeatures = Number(summary.totalFeaturesClipped || layers.reduce((sum: number, l: any) => sum + Number(l?.features || 0), 0));
     const totalLayers = Number(summary.layersProcessed || layers.length || 0);
-    
-    const metricGap = 12;
-    const metricW = (contentW - metricGap * 3) / 4;
-    
-    const metricsStartY = doc.y; // Fixa a posição Y
-    metric("Área do imóvel", `${propertyAreaHa.toFixed(2)} ha`, margin, metricsStartY, metricW);
-    metric("Camadas com dados", `${layersWithData}/${totalLayers}`, margin + (metricW + metricGap), metricsStartY, metricW);
-    metric("Feições recortadas", String(totalFeatures), margin + (metricW + metricGap) * 2, metricsStartY, metricW);
-    metric("Modo de Análise", args.sourceMode === "vectorized-analysis" ? "Vetorizado" : "Recorte", margin + (metricW + metricGap) * 3, metricsStartY, metricW);
-    
-    // Restaura as coordenadas para debaixo das métricas
-    doc.x = margin;
-    doc.y = metricsStartY + 85;
 
-    // --- Resumo Executivo ---
-    const acMeta = args.analysisMeta?.globalVerdict || {};
-    const auasMeta = args.auasMeta || {};
-    sectionTitle("Resumo Executivo");
-    const executive = [
-        `A análise técnica SIMCAR foi processada com sucesso para o identificador de serviço ${args.jobId}.`,
-        `Durante o processamento, foram avaliadas ${totalLayers} camadas ambientais. Identificou-se a presença de dados sobrepostos à propriedade em ${layersWithData} camada(s), resultando no recorte e extração de ${totalFeatures} feição(ões) vetorial(is).`,
-        args.analysisText ? `Indicadores de Área Consolidada (AC): ${reportStatusLabel(acMeta.acForaShape)} para áreas fora da poligonal declarada. Indicadores de Vegetação Nativa (AVN): ${reportStatusLabel(acMeta.avnDentroShapeAntropizado)} para antropização dentro da poligonal. O nível de confiança atribuído a esta análise é ${reportStatusLabel(acMeta.confidence)}.` : "",
-        args.auasText ? formatAuasExecutiveSummaryLine(auasMeta) : "",
-    ].filter(Boolean).join("\n\n");
-    bodyText(executive, 2200);
+    const auasKind = detectReportKind(args.auasMeta);
+    const acAvnFindings: Finding[] = args.analysisText ? buildAcAvnFindings(args.analysisMeta) : [];
+    const auasFindings: Finding[] = args.auasText ? buildAuasFindings(args.auasMeta, auasKind) : [];
+    const findings = [...acAvnFindings, ...auasFindings];
+    const timeline = buildTimelineModel({ analysisMeta: args.analysisMeta, auasMeta: args.auasMeta });
+    const verdict = buildVerdictPanel({
+        findings,
+        kind: auasKind,
+        analysisMeta: args.analysisMeta,
+        auasMeta: args.auasMeta,
+    });
 
-    // --- Tabela de Camadas ---
-    sectionTitle("Quantitativos por Camada");
-    const withData = layers.filter((l: any) => Number(l?.features || 0) > 0).slice(0, 20);
-    if (withData.length === 0) {
-        bodyText("Nenhuma camada ambiental estadual ou federal apresentou sobreposição com a área do imóvel analisado.", 800);
-    } else {
-        const tableStartY = doc.y;
-        
-        doc.rect(margin, tableStartY, contentW, 24).fill(colors.primary);
-        doc.font("Helvetica-Bold").fontSize(9).fillColor("#FFFFFF");
-        doc.text("Camada Ambiental", margin + 10, tableStartY + 8, { width: 180, align: "left" });
-        doc.text("Origem", margin + 200, tableStartY + 8, { width: 70, align: "left" });
-        doc.text("Feições", margin + 280, tableStartY + 8, { width: 60, align: "right" });
-        doc.text("Área (ha)", margin + 350, tableStartY + 8, { width: 70, align: "right" });
-        doc.text("% Imóvel", margin + 430, tableStartY + 8, { width: 65, align: "right" });
-        
-        let currentY = tableStartY + 24;
-        
-        withData.forEach((layer: any, idx: number) => {
-            ensureSpace(24);
-            if (doc.y < currentY) {
-                currentY = doc.y;
-                doc.rect(margin, currentY, contentW, 24).fill(colors.primary);
-                doc.font("Helvetica-Bold").fontSize(9).fillColor("#FFFFFF");
-                doc.text("Camada Ambiental", margin + 10, currentY + 8, { width: 180, align: "left" });
-                doc.text("Origem", margin + 200, currentY + 8, { width: 70, align: "left" });
-                doc.text("Feições", margin + 280, currentY + 8, { width: 60, align: "right" });
-                doc.text("Área (ha)", margin + 350, currentY + 8, { width: 70, align: "right" });
-                doc.text("% Imóvel", margin + 430, currentY + 8, { width: 65, align: "right" });
-                currentY += 24;
-            }
-            
-            if (idx % 2 === 0) doc.rect(margin, currentY, contentW, 22).fill(colors.bg);
-            else doc.rect(margin, currentY, contentW, 22).fill("#FFFFFF");
-            
-            doc.rect(margin, currentY, contentW, 22).strokeColor(colors.border).lineWidth(0.5).stroke();
-            
-            const areaHa = Number(layer.areaHa || 0);
-            const pct = propertyAreaHa > 0 && areaHa > 0 ? `${((areaHa / propertyAreaHa) * 100).toFixed(1)}%` : "-";
-            
-            doc.font("Helvetica").fontSize(8.5).fillColor(colors.darkText);
-            doc.text(reportSingleLineText(layer.name || "-", 42), margin + 10, currentY + 6, { width: 180, align: "left" });
-            doc.text(reportSingleLineText(layer.source === "property" ? "Imóvel" : "WFS", 16), margin + 200, currentY + 6, { width: 70, align: "left" });
-            doc.text(reportSingleLineText(String(Number(layer.features || 0)), 12), margin + 280, currentY + 6, { width: 60, align: "right" });
-            doc.text(areaHa > 0 ? areaHa.toFixed(2) : "-", margin + 350, currentY + 6, { width: 70, align: "right" });
-            doc.text(pct, margin + 430, currentY + 6, { width: 65, align: "right" });
-            
-            currentY += 22;
-            doc.y = currentY;
-            doc.x = margin;
+    /* ─── Painel de veredito ─────────────────────────────────── */
+
+    {
+        const palette = TONES[verdict.tone];
+        const innerW = contentW - 34;
+        doc.font("Helvetica").fontSize(9.5);
+        const headline = reportPdfSafeText(verdict.headline, 600);
+        const headlineH = doc.heightOfString(headline, { width: innerW, lineGap: 2.5 });
+        const boxH = 34 + headlineH + 18;
+        const y = doc.y;
+        doc.roundedRect(margin, y, contentW, boxH, 9).fillAndStroke(palette.bg, palette.border);
+        doc.rect(margin, y + 2, 5, boxH - 4).fill(palette.fg);
+        doc.font("Helvetica").fontSize(8).fillColor(colors.lightText).text("VEREDITO GERAL DA ANÁLISE", margin + 18, y + 10, {
+            width: innerW,
         });
-        doc.moveDown(1);
+        doc.font("Helvetica-Bold").fontSize(15).fillColor(palette.fg).text(verdict.title, margin + 18, y + 21, {
+            width: innerW - 130,
+        });
+        pill(`Confiança: ${verdict.confidence}`, verdict.confidenceTone, margin + contentW - 132, y + 24, 118);
+        doc.font("Helvetica").fontSize(9.5).fillColor(colors.darkText).text(headline, margin + 18, y + 44, {
+            width: innerW,
+            lineGap: 2.5,
+        });
+        doc.x = margin;
+        doc.y = y + boxH + 12;
     }
 
-    // --- Gráfico de Áreas ---
+    /* ─── Métricas ───────────────────────────────────────────── */
+
+    {
+        const gap = 11;
+        const metricW = (contentW - gap * 3) / 4;
+        const y = doc.y;
+        metric("Área do imóvel", `${propertyAreaHa.toFixed(2)} ha`, margin, y, metricW, "info");
+        metric(
+            "Camadas com dados",
+            `${layersWithData}/${totalLayers}`,
+            margin + (metricW + gap),
+            y,
+            metricW,
+            layersWithData > 0 ? "warn" : "ok",
+        );
+        metric("Feições recortadas", String(totalFeatures), margin + (metricW + gap) * 2, y, metricW, "neutral");
+        metric(
+            "Janela temporal",
+            timeline ? `${timeline.firstYear}–${timeline.lastYear}` : "Sem série",
+            margin + (metricW + gap) * 3,
+            y,
+            metricW,
+            timeline ? "info" : "neutral",
+        );
+        doc.x = margin;
+        doc.y = y + 70;
+    }
+
+    /* ─── Resumo executivo ───────────────────────────────────── */
+
+    sectionTitle("Resumo Executivo", "Leitura rápida: o que a análise encontrou e o que exige ação.");
+    bulletList(
+        buildExecutiveBullets({
+            jobId: args.jobId,
+            totalLayers,
+            layersWithData,
+            totalFeatures,
+            propertyAreaHa,
+            findings,
+            timeline,
+        }),
+    );
+
+    /* ─── Quadro de achados ──────────────────────────────────── */
+
+    if (findings.length > 0) {
+        sectionTitle("Quadro de Achados", "Verde = conforme · Amarelo = pendente de confirmação · Vermelho = revisar antes de submeter.");
+        const colLabelW = 178;
+        const colPillW = 96;
+        const colDetailW = contentW - colLabelW - colPillW - 24;
+        for (const finding of findings) {
+            const detail = reportPdfSafeText(finding.detail, 400);
+            doc.font("Helvetica").fontSize(8.5);
+            const detailH = doc.heightOfString(detail, { width: colDetailW, lineGap: 2 });
+            const rowH = Math.max(30, detailH + 14);
+            ensureSpace(rowH + 4);
+            const y = doc.y;
+            doc.rect(margin, y, contentW, rowH).fillAndStroke(colors.white, colors.border);
+            doc.rect(margin, y, 3, rowH).fill(TONES[finding.tone].fg);
+            doc.font("Helvetica-Bold").fontSize(8.8).fillColor(colors.darkText).text(
+                reportSingleLineText(finding.label, 46),
+                margin + 12,
+                y + 8,
+                { width: colLabelW - 12 },
+            );
+            pill(finding.status, finding.tone, margin + colLabelW, y + 8, colPillW - 10);
+            doc.font("Helvetica").fontSize(8.5).fillColor(colors.text).text(
+                detail,
+                margin + colLabelW + colPillW,
+                y + 7,
+                { width: colDetailW, lineGap: 2 },
+            );
+            doc.x = margin;
+            doc.y = y + rowH + 3;
+        }
+        doc.moveDown(0.4);
+    }
+
+    /* ─── Linha do tempo ─────────────────────────────────────── */
+
+    if (timeline) {
+        drawTimeline(timeline);
+    }
+
+    function drawTimeline(model: TimelineModel) {
+        sectionTitle(
+            "Linha do Tempo da Análise",
+            `${model.firstYear} a ${model.lastYear} · marco do Código Florestal (22/07/2008) destacado em vermelho.`,
+        );
+        const boxH = 104;
+        ensureSpace(boxH + 12);
+        const top = doc.y;
+        doc.roundedRect(margin, top, contentW, boxH, 8).fillAndStroke(colors.bg, colors.border);
+
+        const padX = 26;
+        const axisX0 = margin + padX;
+        const axisX1 = margin + contentW - padX;
+        const axisY = top + 58;
+        const span = Math.max(1, model.lastYear - model.firstYear);
+        const xOf = (year: number) => axisX0 + ((year - model.firstYear) / span) * (axisX1 - axisX0);
+
+        doc.moveTo(axisX0, axisY).lineTo(axisX1, axisY).strokeColor("#CBD5E1").lineWidth(2).stroke();
+
+        if (model.markerYear !== null) {
+            const mx = xOf(model.markerYear);
+            doc.save();
+            doc.dash(3, { space: 2 });
+            // A tracejada para ANTES do ponto do ano: cruzando o marcador ela
+            // riscava o rótulo do sensor e o do ano.
+            const markerBottom = axisY - (model.years.length <= 14 ? 22 : 8);
+            doc.moveTo(mx, top + 26).lineTo(mx, markerBottom).strokeColor(TONES.danger.fg).lineWidth(1.1).stroke();
+            doc.undash();
+            doc.restore();
+            // O marco costuma cair na ponta da série; sem trava o rótulo vaza a margem.
+            const labelW = 62;
+            const labelX = Math.min(Math.max(mx - labelW / 2, margin + 6), margin + contentW - labelW - 6);
+            doc.font("Helvetica-Bold").fontSize(7).fillColor(TONES.danger.fg).text("22/07/2008", labelX, top + 15, {
+                width: labelW,
+                align: "center",
+            });
+        }
+
+        const usableYears = model.years.filter((y) => y.state !== "missing").length;
+        const labelStep = Math.max(1, Math.ceil(model.years.length / Math.floor((axisX1 - axisX0) / 30)));
+        model.years.forEach((item, idx) => {
+            const x = xOf(item.year);
+            if (item.state === "missing") {
+                doc.circle(x, axisY, 3.4).lineWidth(1).fillAndStroke(colors.white, TONES.neutral.border);
+            } else if (item.state === "event") {
+                doc.circle(x, axisY, 4.6).fill(TONES.danger.fg);
+            } else {
+                doc.circle(x, axisY, 3.6).fill(TONES.ok.fg);
+            }
+            const showLabel = idx % labelStep === 0 || item.state === "event" || item.year === model.lastYear;
+            if (showLabel) {
+                doc.font(item.state === "event" ? "Helvetica-Bold" : "Helvetica").fontSize(6.6).fillColor(
+                    item.state === "event" ? TONES.danger.fg : colors.lightText,
+                ).text(String(item.year), x - 14, axisY + 9, { width: 28, align: "center" });
+                if (item.label && model.years.length <= 14) {
+                    doc.font("Helvetica").fontSize(6).fillColor(colors.lightText).text(item.label, x - 14, axisY - 17, {
+                        width: 28,
+                        align: "center",
+                    });
+                }
+            }
+        });
+
+        const legendY = top + boxH - 21;
+        doc.circle(margin + 20, legendY + 3, 3.2).fill(TONES.ok.fg);
+        doc.font("Helvetica").fontSize(7).fillColor(colors.lightText).text("cena utilizável", margin + 28, legendY, { width: 80 });
+        doc.circle(margin + 118, legendY + 3, 3.2).lineWidth(1).fillAndStroke(colors.white, TONES.neutral.border);
+        doc.font("Helvetica").fontSize(7).fillColor(colors.lightText).text("sem cena no ano", margin + 126, legendY, { width: 90 });
+        doc.circle(margin + 228, legendY + 3, 3.8).fill(TONES.danger.fg);
+        doc.font("Helvetica").fontSize(7).fillColor(colors.lightText).text("conversão datada", margin + 236, legendY, { width: 96 });
+        doc.font("Helvetica").fontSize(7).fillColor(colors.lightText).text(
+            `${usableYears} de ${model.years.length} ano(s) com cena`,
+            margin + contentW - 170,
+            legendY,
+            { width: 154, align: "right" },
+        );
+
+        doc.x = margin;
+        doc.y = top + boxH + 10;
+        if (model.eventYears.length > 0) {
+            calloutBox(
+                "Datação observada",
+                [
+                    `Conversão de vegetação nativa observada em: ${model.eventYears.join(", ")}. ${
+                        model.markerYear !== null && model.eventYears.some((y) => y > model.markerYear!)
+                            ? "Eventos posteriores a 2008 exigem autorização de supressão (Lei 12.651/2012, art. 26) — confrontar com AUTEX/AUAS emitidas."
+                            : "Eventos anteriores ao marco reforçam a caracterização de área consolidada."
+                    }`,
+                ],
+                "warn",
+                { compact: true },
+            );
+        }
+    }
+
+    /* ─── Quantitativos por camada ───────────────────────────── */
+
+    sectionTitle("Quantitativos por Camada", "Somente camadas com feição recortada dentro do imóvel.");
+    const withData = layers.filter((l: any) => Number(l?.features || 0) > 0).slice(0, 24);
+    if (withData.length === 0) {
+        calloutBox(
+            "Nenhuma sobreposição encontrada",
+            ["Nenhuma camada ambiental estadual ou federal apresentou sobreposição com a área do imóvel analisado."],
+            "ok",
+        );
+    } else {
+        const colX = {
+            name: margin + 10,
+            nature: margin + 196,
+            features: margin + 286,
+            area: margin + 356,
+            pct: margin + 436,
+        };
+        const drawHeader = (y: number) => {
+            doc.rect(margin, y, contentW, 22).fill(colors.dark);
+            doc.font("Helvetica-Bold").fontSize(8).fillColor("#FFFFFF");
+            doc.text("Camada ambiental", colX.name, y + 7, { width: 180 });
+            doc.text("Natureza", colX.nature, y + 7, { width: 84 });
+            doc.text("Feições", colX.features, y + 7, { width: 62, align: "right" });
+            doc.text("Área (ha)", colX.area, y + 7, { width: 72, align: "right" });
+            doc.text("% imóvel", colX.pct, y + 7, { width: 64, align: "right" });
+            return y + 22;
+        };
+
+        ensureSpace(60);
+        let currentY = drawHeader(doc.y);
+
+        withData.forEach((layer: any, idx: number) => {
+            if (currentY + 21 > pageH - margin - 24) {
+                doc.y = currentY;
+                ensureSpace(60);
+                currentY = drawHeader(doc.y);
+            }
+            const areaHa = Number(layer.areaHa || 0);
+            const pctValue = propertyAreaHa > 0 && areaHa > 0 ? (areaHa / propertyAreaHa) * 100 : 0;
+            const pct = pctValue > 0 ? `${pctValue.toFixed(1)}%` : "-";
+            const { nature, tone } = classifyLayerNature(layer.name);
+
+            doc.rect(margin, currentY, contentW, 21).fillAndStroke(idx % 2 === 0 ? colors.bg : colors.white, colors.border);
+            doc.rect(margin, currentY, 2.5, 21).fill(TONES[tone].fg);
+            doc.font("Helvetica").fontSize(8.2).fillColor(colors.darkText);
+            doc.text(reportSingleLineText(layer.name || "-", 40), colX.name, currentY + 6, { width: 180 });
+            doc.font("Helvetica-Bold").fontSize(7.4).fillColor(TONES[tone].fg);
+            doc.text(nature, colX.nature, currentY + 6.5, { width: 84 });
+            doc.font("Helvetica").fontSize(8.2).fillColor(colors.darkText);
+            doc.text(String(Number(layer.features || 0)), colX.features, currentY + 6, { width: 62, align: "right" });
+            doc.text(areaHa > 0 ? areaHa.toFixed(2) : "-", colX.area, currentY + 6, { width: 72, align: "right" });
+            doc.font(pctValue >= 25 ? "Helvetica-Bold" : "Helvetica").fillColor(
+                pctValue >= 25 ? TONES.warn.fg : colors.darkText,
+            );
+            doc.text(pct, colX.pct, currentY + 6, { width: 64, align: "right" });
+            currentY += 21;
+        });
+        doc.x = margin;
+        doc.y = currentY + 8;
+
+        if (layers.filter((l: any) => Number(l?.features || 0) > 0).length > withData.length) {
+            doc.font("Helvetica-Oblique").fontSize(7.5).fillColor(colors.lightText).text(
+                `Exibindo as ${withData.length} primeiras camadas com dados; a lista completa está no ZIP do recorte.`,
+                margin,
+                doc.y,
+                { width: contentW },
+            );
+            doc.x = margin;
+            doc.moveDown(0.6);
+        }
+    }
+
+    /* ─── Gráfico de áreas ───────────────────────────────────── */
+
     const chartDataArray = layers.filter((l: any) => Number(l?.features || 0) > 0 && Number(l?.areaHa || 0) > 0);
     if (chartDataArray.length > 0) {
         chartDataArray.sort((a: any, b: any) => Number(b.areaHa || 0) - Number(a.areaHa || 0));
-        
-        // Vamos limitar as top 15 camadas para manter o gráfico legível
         const topChartLayers = chartDataArray.slice(0, 15);
-        
         const chartConfig = {
-            type: 'horizontalBar',
+            type: "horizontalBar",
             data: {
                 labels: topChartLayers.map((l: any) => reportSingleLineText(l.name || "Desconhecido", 22)),
-                datasets: [{
-                    label: 'Área (ha)',
-                    data: topChartLayers.map((l: any) => Number(l.areaHa || 0).toFixed(2)),
-                    backgroundColor: colors.primary,
-                    borderWidth: 0,
-                }]
+                datasets: [
+                    {
+                        label: "Área (ha)",
+                        data: topChartLayers.map((l: any) => Number(l.areaHa || 0).toFixed(2)),
+                        backgroundColor: topChartLayers.map((l: any) => TONES[classifyLayerNature(l.name).tone].fg),
+                        borderWidth: 0,
+                    },
+                ],
             },
             options: {
                 plugins: {
-                    datalabels: { anchor: 'end', align: 'right', color: colors.darkText, font: { weight: 'bold' } }
+                    datalabels: { anchor: "end", align: "right", color: colors.darkText, font: { weight: "bold" } },
                 },
                 legend: { display: false },
                 title: { display: false },
                 scales: {
                     xAxes: [{ ticks: { beginAtZero: true, fontColor: colors.lightText }, gridLines: { color: colors.border } }],
-                    yAxes: [{ ticks: { fontColor: colors.text, fontStyle: 'bold' }, gridLines: { display: false } }]
-                }
-            }
+                    yAxes: [{ ticks: { fontColor: colors.text, fontStyle: "bold" }, gridLines: { display: false } }],
+                },
+            },
         };
-        
         const chartHeight = Math.max(220, topChartLayers.length * 28 + 60);
         const chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(chartConfig))}&w=600&h=${chartHeight}&bkg=white&devicePixelRatio=2.0`;
-        
         try {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 8000);
             const resp = await fetch(chartUrl, { signal: controller.signal });
             clearTimeout(timer);
-            
             if (resp.ok) {
                 const chartBuf = Buffer.from(await resp.arrayBuffer());
-                sectionTitle("Proporção de Áreas por Camada (ha)");
-                
+                // Decodifica ANTES de escrever o título: imagem quebrada não pode
+                // deixar uma seção vazia no laudo.
+                (doc as any).openImage(chartBuf);
                 const frameHeight = Math.max(160, topChartLayers.length * 22 + 50);
-                ensureSpace(frameHeight + 60);
+                // Título e moldura precisam caber juntos, senão o título fica órfão
+                // no rodapé de uma página e o gráfico sozinho na seguinte.
+                ensureSpace(frameHeight + 96);
+                sectionTitle("Proporção de Áreas por Camada (ha)", "Cores seguem a natureza da camada: laranja = restrição legal, azul = uso, cinza = base.");
                 const chartY = doc.y;
-                
                 doc.rect(margin, chartY, contentW, frameHeight).fillAndStroke("#FFFFFF", colors.border);
-                doc.image(chartBuf, margin + 10, chartY + 10, { fit: [contentW - 20, frameHeight - 20], align: "center", valign: "center" });
-                
+                doc.image(chartBuf, margin + 10, chartY + 10, {
+                    fit: [contentW - 20, frameHeight - 20],
+                    align: "center",
+                    valign: "center",
+                });
                 doc.y = chartY + frameHeight + 10;
                 doc.x = margin;
-                doc.moveDown(0.5);
             }
         } catch (err) {
             console.warn("[SIMCAR PDF] Falha ao gerar gráfico via quickchart.io", err);
         }
     }
 
-    // --- Análise IA Textos ---
+    /* ─── Textos das análises ────────────────────────────────── */
+
     if (args.analysisText) {
-        sectionTitle("Análise de Área Consolidada e Vegetação Nativa (AC/AVN)");
-        bodyText(args.analysisText, 4000);
+        sectionTitle(
+            "Análise de Área Consolidada e Vegetação Nativa (AC/AVN)",
+            "Interpretação das cenas em torno do marco de 22/07/2008.",
+        );
+        markdownBody(args.analysisText, 9000);
     }
     if (args.auasText) {
-        sectionTitle("Análise de Área de Uso Alternativo do Solo (AUAS)");
-        bodyText(args.auasText, 4000);
+        sectionTitle(reportKindSectionTitle(auasKind), "Resultado por polígono, conforme calculado pelo sistema.");
+        markdownBody(args.auasText, 9000);
     }
 
-    // --- Imagens ---
+    /* ─── Fundamentação legal ────────────────────────────────── */
+
+    sectionTitle("Fundamentação Legal Aplicada", "Normas que definem os marcos temporais usados nesta análise.");
+    bulletList(LEGAL_BASIS_LINES.map((text) => ({ text, tone: "info" as Tone })), { fontSize: 8.6 });
+
+    /* ─── Anexo fotográfico ──────────────────────────────────── */
+
     if (imageBuffers.some((img) => img.buffer)) {
-        sectionTitle("Anexo Fotográfico: Satélites e Vetores Analisados");
+        sectionTitle("Anexo Fotográfico", "Cenas de satélite com os vetores do CAR sobrepostos.");
+        let figureIndex = 0;
         for (const img of imageBuffers) {
             if (!img.buffer) continue;
             try {
                 const pdfImg = (doc as any).openImage(img.buffer);
                 const aspectRatio = pdfImg.width / pdfImg.height;
-                const MAX_HEIGHT = 450;
-                
+                const MAX_HEIGHT = 430;
                 let targetWidth = contentW - 4;
                 let targetHeight = targetWidth / aspectRatio;
-                
                 if (targetHeight > MAX_HEIGHT) {
                     targetHeight = MAX_HEIGHT;
                     targetWidth = targetHeight * aspectRatio;
                 }
-
                 ensureSpace(targetHeight + 40);
+                figureIndex += 1;
                 const imgY = doc.y;
-                
-                const offsetX = margin + 2 + ((contentW - 4 - targetWidth) / 2);
-
+                const offsetX = margin + 2 + (contentW - 4 - targetWidth) / 2;
                 doc.rect(margin, imgY, contentW, targetHeight + 4).fillAndStroke(colors.bg, colors.border);
                 doc.image(img.buffer, offsetX, imgY + 2, { width: targetWidth, height: targetHeight });
-                
-                doc.y = imgY + targetHeight + 12;
-                doc.font("Helvetica-Oblique").fontSize(9).fillColor(colors.lightText).text(reportSingleLineText(img.caption || "Imagem de análise espacial", 150), margin, doc.y, {
-                    width: contentW,
-                    align: "center",
-                });
-                doc.moveDown(1.5);
+                doc.y = imgY + targetHeight + 10;
+                doc.font("Helvetica-Oblique").fontSize(8.5).fillColor(colors.lightText).text(
+                    `Figura ${figureIndex} — ${reportSingleLineText(img.caption || "Imagem de análise espacial", 140)}`,
+                    margin,
+                    doc.y,
+                    { width: contentW, align: "center" },
+                );
+                doc.moveDown(1.2);
                 doc.x = margin;
             } catch {
                 // Ignore broken image in report.
@@ -513,25 +843,56 @@ export async function buildSimcarReportPdfBuffer(args: {
         }
     }
 
-    // --- Avisos e Footer ---
+    /* ─── Limitações ─────────────────────────────────────────── */
+
     const warnings = [
         ...(Array.isArray(summary.warnings) ? summary.warnings : []),
         ...(Array.isArray(args.job?.warnings) ? args.job!.warnings! : []),
-    ].filter(Boolean);
+    ]
+        .filter(Boolean)
+        .map((item: any) => String(item));
+    const metaLimitations = [
+        ...(Array.isArray(args.auasMeta?.limitations) ? args.auasMeta.limitations : []),
+    ]
+        .filter(Boolean)
+        .map((item: any) => String(item));
+
     sectionTitle("Limitações e Observações Técnicas");
-    bodyText([
-        "Este laudo é um documento técnico de apoio gerado automaticamente por algoritmos de Inteligência Artificial e geoprocessamento. Os resultados extraídos (áreas, intersecções, validações de regras de negócio) são indicativos e devem ser rigorosamente revisados pelo Engenheiro ou Responsável Técnico antes de qualquer submissão a órgãos ambientais, tomada de decisão, ou uso como peça técnica oficial (ART). A GeoForest IA não se responsabiliza por autuações ou indeferimentos baseados no uso não revisado destes dados.",
-        warnings.length > 0 ? `Alertas emitidos durante o processamento:\n• ${warnings.slice(0, 8).join("\n• ")}` : "",
-    ].filter(Boolean).join("\n\n"), 2500);
+    calloutBox(
+        "Este laudo não substitui o parecer do responsável técnico",
+        [
+            "Documento técnico de apoio gerado automaticamente por algoritmos de geoprocessamento e Inteligência Artificial. Áreas, interseções e vereditos são indicativos e devem ser revisados por engenheiro ou responsável técnico antes de qualquer submissão a órgão ambiental, tomada de decisão ou uso como peça técnica oficial (ART).",
+            "A análise por imagem não conclui infração, passivo ambiental ou irregularidade jurídica: ela indica onde a evidência visual diverge do vetor declarado. A GeoForest IA não se responsabiliza por autuações ou indeferimentos decorrentes do uso não revisado destes dados.",
+        ],
+        "warn",
+    );
+    if (warnings.length > 0 || metaLimitations.length > 0) {
+        bulletList(
+            [...metaLimitations.slice(0, 8), ...warnings.slice(0, 8)].map((text) => ({ text, tone: "neutral" as Tone })),
+            { fontSize: 8.6 },
+        );
+    }
+
+    /* ─── Rodapé ─────────────────────────────────────────────── */
 
     const totalPages = doc.bufferedPageRange().count;
     for (let i = 0; i < totalPages; i += 1) {
         doc.switchToPage(i);
-        doc.font("Helvetica").fontSize(8).fillColor(colors.lightText).text(
-            `GeoForest IA | ${SIMCAR_REPORT_VERSION} | Página ${i + 1} de ${totalPages}`,
+        // Escrever abaixo da margem inferior faz o pdfkit abrir uma página nova a
+        // cada chamada — era isso que enchia o laudo de páginas em branco no fim.
+        doc.page.margins.bottom = 0;
+        doc.moveTo(margin, pageH - 34).lineTo(pageW - margin, pageH - 34).strokeColor(PALETTE.border).lineWidth(0.5).stroke();
+        doc.font("Helvetica").fontSize(7.5).fillColor(PALETTE.lightText).text(
+            `GeoForest IA · ${SIMCAR_REPORT_VERSION} · revisão obrigatória por responsável técnico`,
             margin,
-            pageH - 28,
-            { width: contentW, align: "center" },
+            pageH - 26,
+            { width: contentW / 2, align: "left" },
+        );
+        doc.font("Helvetica").fontSize(7.5).fillColor(PALETTE.lightText).text(
+            `Página ${i + 1} de ${totalPages}`,
+            margin + contentW / 2,
+            pageH - 26,
+            { width: contentW / 2, align: "right" },
         );
     }
 
@@ -579,8 +940,8 @@ export async function generateAndPersistSimcarReport(args: {
             layers: job.layerSummaries,
             warnings: job.warnings,
         } : null);
-        const analysisText = reportCleanText(args.analysisText || extractFirstAiText(persisted.analysisMessages), 7000);
-        const auasText = reportCleanText(args.auasText || extractFirstAiText(persisted.auasAnalysisMessages), 7000);
+        const analysisText = reportCleanText(args.analysisText || extractFirstAiText(persisted.analysisMessages), 12000);
+        const auasText = reportCleanText(args.auasText || extractFirstAiText(persisted.auasAnalysisMessages), 12000);
         if (!analysisText && !auasText) {
             throw new Error("Nenhuma análise IA encontrada para gerar o PDF.");
         }

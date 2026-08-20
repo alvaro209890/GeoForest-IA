@@ -5,17 +5,36 @@
  */
 import { z } from "zod";
 import { sanitizeVisionPayload, type SanitizeCounters } from "../text-sanitizer";
+import type { Pos2008WindowId } from "./types";
 
 const limitationsArray = z.array(z.string().trim().min(1).max(280)).max(8);
 
 // Texto já saneado por `sanitizeVisionPayload`; o schema só confere formato.
 const evidenceTextArray = z.array(z.string().trim().min(1).max(280)).max(8);
 
-const windowIdSchema = z.enum(["W2009_2011", "W2011_2013", "W2013_2015", "W2015_2017", "W2017_2019", "WBRIDGE"]);
+/**
+ * A série da Fase 2 é configurável, então o id de janela é validado por formato
+ * (`W<ano>_<ano>`), não por lista fixa. O amarrar-de-verdade continua sendo o
+ * `data.windowId !== expected.windowId` mais abaixo.
+ */
+const windowIdSchema = z
+  .string()
+  .trim()
+  .regex(/^(W\d{4}_\d{4}|WBRIDGE)$/, "windowId fora do formato W<ano>_<ano>")
+  .transform((value) => value as Pos2008WindowId);
+
+/**
+ * Faixa de anos aceita no JSON da visão. A validação forte é o cruzamento com
+ * `sentSceneMetadata` (o ano tem de bater com a cena enviada); estes limites são
+ * só sanidade e por isso cobrem toda a série publicável pela SEMA, e não a
+ * janela 2008–2019 de quando a Fase 2 nasceu.
+ */
+const SERIES_MIN_YEAR = 2003;
+const SERIES_MAX_YEAR = 2030;
 
 const observationSchema = z.object({
   sceneId: z.string().trim().min(1).max(80),
-  year: z.number().int().min(2008).max(2019),
+  year: z.number().int().min(SERIES_MIN_YEAR).max(SERIES_MAX_YEAR),
   state: z.enum(["NATIVE_VEGETATION", "ANTHROPIZED", "MIXED", "NOT_OBSERVABLE"]),
   observableFraction: z.number().min(0).max(1).nullable(),
   confidence: z.enum(["HIGH", "MEDIUM", "LOW", "INCONCLUSIVE"]),
@@ -27,8 +46,8 @@ const transitionSchema = z
   .object({
     fromSceneId: z.string().trim().min(1).max(80),
     toSceneId: z.string().trim().min(1).max(80),
-    fromYear: z.number().int().min(2008).max(2019),
-    toYear: z.number().int().min(2008).max(2019),
+    fromYear: z.number().int().min(SERIES_MIN_YEAR).max(SERIES_MAX_YEAR),
+    toYear: z.number().int().min(SERIES_MIN_YEAR).max(SERIES_MAX_YEAR),
     transition: z.enum(["NONE", "NATIVE_TO_ANTHROPIZED", "ANTHROPIZED_TO_NATIVE", "UNCLEAR"]),
     confidence: z.enum(["HIGH", "MEDIUM", "LOW", "INCONCLUSIVE"]),
     evidence: evidenceTextArray,

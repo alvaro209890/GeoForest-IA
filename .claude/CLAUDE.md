@@ -124,7 +124,7 @@ Fase 1 AUAS 2003–2008 → Fase 2 datação 2009–2019 → Fase 3 vegetação 
 | `SIMCAR_AC_VEG_ENABLED` | 3 | `false` |
 
 As três são **independentes** e nenhuma existe no `backend.env` do server — em produção o
-botão de AUAS ainda roda o **V1** (`processAuasAnalysis`, janela 2008–2024). Ligar cada
+botão de AUAS ainda roda o **V1** (`processAuasAnalysis`, janela 2008–2025). Ligar cada
 uma é decisão consciente do Álvaro (pré-requisitos no plano). Enquanto desligadas, as
 rotas respondem `409 PHASE_NOT_READY`.
 
@@ -160,6 +160,26 @@ Changelogs: `CHANGELOG_2026-08-07_ANALISE_POS_RECORTE_F2_F3.md`, `..._BUGS.md` (
 Terceiro, sobre a suíte: um teste que falha em `pnpm test` mas passa isolado é quase sempre
 **timeout sob carga** (o default do vitest é 5 s e `processar-projeto.test.ts` leva ~108 s),
 não bug de lógica.
+
+## Laudo PDF e janela temporal
+
+O laudo é o `simcar-report-v2` (`backend/simcar/report.ts` desenha;
+`backend/simcar/report-theme.ts` decide conteúdo e cor, e é onde ficam os testes).
+Amostra local sem rede: `npx tsx scripts/preview-laudo-pdf.ts /tmp/laudo.pdf --fase=acavn`.
+
+A janela de imagens nasce de dois marcos legais: **22/07/2008** (Lei 12.651/2012,
+art. 3º, IV) e **22/07/2003** (pousio — IN SEMA-MT 04/2023, art. 42 §6º). Por isso
+a análise AC/AVN começa em 2003, e não em 2006. Inventário do acervo da SEMA,
+camadas vetoriais úteis ainda não integradas e o que fazer com MapBiomas/PRODES/
+DETER: `docs/IMAGENS_E_CAMADAS_LAUDO.md`.
+
+| Env | Efeito | Default |
+|---|---|---|
+| `SIMCAR_ACAVN_SATELLITE_KEYS` | Cenas da análise AC/AVN (1 imagem de visão cada — mexe no custo) | 2003, 2005, 2006, 2007, SPOT 2008, 2008 |
+| `SIMCAR_AUAS_POS2008_SERIES_START` / `_END` | Série visual da Fase 2; as janelas são geradas a partir dela | 2009 / 2019 |
+
+⚠️ **Buracos reais do acervo da SEMA:** 2001 não existe, 2002 só tem Landsat 7 e
+2012 só tem ResourceSat. Não presuma `LANDSAT_5_<ano>` para todo ano.
 
 ## IA: Groq para visão, DeepSeek para texto
 

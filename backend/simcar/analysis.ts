@@ -37,6 +37,7 @@ import type {
 import { fileURLToPath } from "url";
 
 // Internal modules
+import { FALSE_COLOR_PROMPT_NOTE } from "../analise-pos-recorte/groq-vision-core";
 import { extractZipEntries, detectUtmProj, reprojectBbox, resolveShapefileCrs } from "../geo-utils";
 import {
     buildWfsUrl,
@@ -305,6 +306,20 @@ const SATELLITE_METADATA: Record<string, SatelliteMetadata> = {
         revisitDays: 16,
         bestUseCase: "Série histórica longa (1984-2011), ideal para análise multitemporal pré-marco",
     },
+    landsat7: {
+        sensor: "Landsat 7 ETM+",
+        spatialResolution: "30m (multiespectral) / 15m (pancromático)",
+        spectralBands: "Azul, Verde, Vermelho, NIR, SWIR-1, Térmico, SWIR-2, Pan",
+        revisitDays: 16,
+        bestUseCase: "Único mosaico estadual de 2002 — fecha o vão entre 2000 e 2003 na série pré-marco",
+    },
+    resourcesat: {
+        sensor: "ResourceSat-2 LISS-3",
+        spatialResolution: "23,5m (multiespectral)",
+        spectralBands: "Verde, Vermelho, NIR, SWIR",
+        revisitDays: 24,
+        bestUseCase: "Único mosaico estadual de 2012 — evita salto de 2011 para 2013 na datação",
+    },
     landsat8: {
         sensor: "Landsat 8 OLI/TIRS",
         spatialResolution: "30m (multiespectral) / 15m (pan) / 100m (térmico)",
@@ -324,7 +339,9 @@ const SATELLITE_METADATA: Record<string, SatelliteMetadata> = {
 function getSatelliteFamily(key: string): string {
     if (key.startsWith("sentinel2")) return "sentinel2";
     if (key.startsWith("landsat8")) return "landsat8";
+    if (key.startsWith("landsat7")) return "landsat7";
     if (key.startsWith("landsat5")) return "landsat5";
+    if (key.startsWith("resourcesat")) return "resourcesat";
     return "spot";
 }
 
@@ -841,25 +858,52 @@ function buildSatLayer(sensor: string, year: number, wmsPrefix: string, labelPre
     };
 }
 
-/** Available satellite base layers for analysis. */
+/**
+ * Camadas-base de satélite disponíveis para análise.
+ *
+ * A lista espelha o que o GeoServer da SEMA publica de fato (conferido no
+ * GetCapabilities de 2026-08-20 — ver `docs/IMAGENS_E_CAMADAS_LAUDO.md`).
+ * Buracos reais da série estadual: **2001 e 2002 não têm Landsat 5** (2002 é
+ * coberto por Landsat 7) e **2012 não tem Landsat** (é ResourceSat).
+ */
 const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]; label: string; year: number }> = {
-    // SPOT (high-res 2.5m)
+    // SPOT (high-res 2.5m) — base oficial do marco de 2008 (Nota Técnica 001/2017 SEMA-MT)
     spot_2008: { wmsLayer: SPOT_LAYER, label: "SPOT 2008", year: 2008 },
-    // Landsat 5 (30m) — 1984-2011
+    // Landsat 5 (30m) — 1984-2011 (sem 2001 e 2002 no acervo da SEMA)
     ...Object.fromEntries([1984, 1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011].map(
         (y) => [`landsat5_${y}`, buildSatLayer("LANDSAT5", y, "LANDSAT_5", "Landsat 5")]
+    )),
+    // Landsat 7 (30m) — só 2002, fecha o vão entre 2000 e 2003
+    ...Object.fromEntries([2002].map(
+        (y) => [`landsat7_${y}`, buildSatLayer("LANDSAT7", y, "LANDSAT_7", "Landsat 7")]
+    )),
+    // ResourceSat (~24m) — só 2012, único mosaico do ano na SEMA
+    ...Object.fromEntries([2012].map(
+        (y) => [`resourcesat_${y}`, buildSatLayer("RESOURCESAT", y, "RESOURCESAT", "ResourceSat")]
     )),
     // Landsat 8 (30m) — 2013-2018
     ...Object.fromEntries([2013, 2014, 2015, 2016, 2017, 2018].map(
         (y) => [`landsat8_${y}`, buildSatLayer("LANDSAT8", y, "LANDSAT_8", "Landsat 8")]
     )),
-    // Sentinel-2 (10m) — 2016-2024
-    ...Object.fromEntries([2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024].map(
+    // Sentinel-2 (10m) — 2016-2025
+    ...Object.fromEntries([2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025].map(
         (y) => [`sentinel2_${y}`, buildSatLayer("SENTINEL2", y, "SENTINEL_2", "Sentinel-2")]
     )),
 };
 
-const AC_AVN_FIXED_KEYS = [
+/**
+ * Janela fixa da análise AC/AVN.
+ *
+ * Começa em **2003** porque a IN SEMA-MT 04/2023, art. 42 §6º (c/c Decreto
+ * estadual 288/2023) reconhece como consolidada a área implantada até
+ * 22/07/2003 que esteja em pousio no marco de 2008 — sem a cena de 2003 não dá
+ * para distinguir pousio de vegetação nativa. Termina em 2008 (marco do art.
+ * 3º, IV da Lei 12.651/2012), com SPOT 2,5 m como cena de maior peso.
+ * Ajustável por `SIMCAR_ACAVN_SATELLITE_KEYS` (lista separada por vírgula).
+ */
+const AC_AVN_DEFAULT_KEYS = [
+    "landsat5_2003",
+    "landsat5_2005",
     "landsat5_2006",
     "landsat5_2007",
     "spot_2008",
@@ -867,7 +911,17 @@ const AC_AVN_FIXED_KEYS = [
 ] as const;
 
 export function getFixedAcAvnSatelliteKeys(): string[] {
-    return AC_AVN_FIXED_KEYS.filter((k) => Boolean(SATELLITE_LAYERS[k]));
+    const override = String(process.env.SIMCAR_ACAVN_SATELLITE_KEYS || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    const keys = override.length > 0 ? override : [...AC_AVN_DEFAULT_KEYS];
+    const valid = keys.filter((k) => Boolean(SATELLITE_LAYERS[k]));
+    if (override.length > 0 && valid.length === 0) {
+        console.warn("[SIMCAR] SIMCAR_ACAVN_SATELLITE_KEYS não casou com nenhuma camada; usando a janela padrão.");
+        return [...AC_AVN_DEFAULT_KEYS].filter((k) => Boolean(SATELLITE_LAYERS[k]));
+    }
+    return valid;
 }
 
 export function getOrderedSatelliteKeys(selectedLayers: string[] = []): string[] {
@@ -2218,7 +2272,7 @@ function buildPropertyContext(
     ].join("\n");
 }
 
-/** Build prompt for a SINGLE satellite analysis (3 images). */
+/** Build prompt for a SINGLE satellite analysis (1 composite image). */
 function buildSingleSatellitePrompt(
     areaHa: number,
     layerSummaries: LayerSummary[],
@@ -2239,7 +2293,7 @@ function buildSingleSatellitePrompt(
 
     return [
         "Você é a **GeoForest IA**, especialista em sensoriamento remoto e análise ambiental para imóveis rurais em Mato Grosso.",
-        "Analise as 3 imagens do satélite fornecido comparando com os dados vetoriais do CAR.",
+        "Analise a imagem composta do satélite fornecido comparando com os dados vetoriais do CAR.",
         "",
         "---",
         "",
@@ -2273,16 +2327,16 @@ function buildSingleSatellitePrompt(
                 "",
             ]
             : []),
-        "**Legenda dos polígonos (Sem preenchimento para visualização real do solo):**",
-        "- 🟥 **Contorno Vermelho**: limite da PROPRIEDADE RURAL (ATP)",
-        "- 🟪 **Contorno Magenta Neon**: ÁREA CONSOLIDADA (AC) — uso antrópico declarado",
-        "- 🟦 **Contorno Ciano Neon**: VEGETAÇÃO NATIVA (AVN) — vegetação nativa declarada",
-        ...(hasAuas ? ["- 🟧 **Contorno Laranja Neon**: AUAS — uso alternativo do solo"] : []),
-        ...(hasArl ? ["- 🟩 **Contorno Verde Neon**: RESERVA LEGAL (ARL/ARLREM)"] : []),
+        `> **${FALSE_COLOR_PROMPT_NOTE}**`,
         "",
-        `- Imagem 1: Visão Geral — base ${sat.label} + propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}${hasArl ? " + ARL" : ""}`,
-        `- Imagem 2: Área Consolidada — base ${sat.label} + propriedade + somente AC`,
-        `- Imagem 3: AVN — base ${sat.label} + propriedade + somente AVN`,
+        "**Legenda dos polígonos (contorno forte + preenchimento translúcido de 12%, que não esconde o solo):**",
+        "- 🟥 **Vermelho**: limite da PROPRIEDADE RURAL (ATP)",
+        "- 🟪 **Magenta Neon**: ÁREA CONSOLIDADA (AC) — uso antrópico declarado",
+        "- 🟦 **Ciano Neon**: VEGETAÇÃO NATIVA (AVN) — vegetação nativa declarada",
+        ...(hasAuas ? ["- 🟧 **Laranja Neon**: AUAS — uso alternativo do solo"] : []),
+        ...(hasArl ? ["- 🟩 **Verde Neon**: RESERVA LEGAL (ARL/ARLREM)"] : []),
+        "",
+        `**Imagem única (composite):** base ${sat.label} com propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}${hasArl ? " + ARL" : ""} sobrepostos, e a mesma legenda desenhada no canto inferior esquerdo da própria imagem.`,
         "",
         "---",
         "",
@@ -2293,6 +2347,11 @@ function buildSingleSatellitePrompt(
         "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada e manchas arbustivas intercaladas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso antrópico.",
         "- Para cada zona da AC, estimar o percentual (%) relativo de concordância/discordância com a classificação CAR, ao invés de hectares absolutos.",
         "- Indicar localização aproximada dos trechos discordantes: 'porção norte', 'borda leste', 'setor central', etc.",
+        ...(isPreMarco
+            ? [
+                `- **Pousio (IN SEMA-MT 04/2023, art. 42 §6º):** nesta cena de ${year}, cobertura vegetal jovem e homogênea sobre traçado antigo de talhão (bordas retas, estradas remanescentes) indica área em descanso — o uso implantado até 22/07/2003 mantém a área como CONSOLIDADA. Não classifique pousio como vegetação nativa.`,
+            ]
+            : []),
         "",
         "## Análise da Vegetação Nativa (AVN — contorno ciano)",
         "- As áreas contornadas em ciano apresentam textura de vegetação nativa contínua (floresta, cerrado, mata ciliar)?",
@@ -2350,15 +2409,13 @@ export function buildAnalysisPrompt(
     const satDescriptions = validLayers.map((k, i) => {
         const sat = SATELLITE_LAYERS[k];
         const meta = getSatelliteMetadata(k);
-        const imgBase = i * 3 + 1;
+        const imgBase = i + 1;
         return [
             `### ${sat.label} — ${meta.sensor} (${meta.spatialResolution})`,
             `- Bandas: ${meta.spectralBands}`,
             `- Revisita: ${meta.revisitDays} dias | Uso ideal: ${meta.bestUseCase}`,
             `- Peso da evidência: ${meta.spatialResolution.includes("2.5") ? "ALTO (confirmação isolada suficiente)" : meta.spatialResolution.includes("10") ? "MÉDIO (verificar com outra fonte)" : "BAIXO (requer confirmação cruzada)"}`,
-            `- Imagem ${imgBase}: visão geral (propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}${hasArl ? " + ARL" : ""})`,
-            `- Imagem ${imgBase + 1}: foco AC (contorno magenta)`,
-            `- Imagem ${imgBase + 2}: foco AVN (contorno ciano)`,
+            `- Imagem ${imgBase}: composite único (propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}${hasArl ? " + ARL" : ""}, com legenda desenhada na imagem)`,
         ].join("\n");
     }).join("\n\n");
 
@@ -2381,9 +2438,13 @@ export function buildAnalysisPrompt(
             : []),
         "## Regras Técnicas Obrigatórias",
         "",
+        `> **${FALSE_COLOR_PROMPT_NOTE}**`,
+        "",
         "### Área Consolidada (AC — contorno magenta)",
         "- AC_FORA_SHAPE = **SIM** somente quando houver EVIDÊNCIA VISUAL CLARA de uso antrópico (pastagem, agricultura, solo exposto, estrada, benfeitorias) em área do imóvel que NÃO está coberta pelo polígono AC.",
         "- Critério de evidência clara: SPOT 2008 confirmando sozinho É suficiente (2.5m de resolução). Para Landsat, exige concordância de ao menos 2 cenas independentes.",
+        "- **Pousio (IN SEMA-MT 04/2023, art. 42 §6º):** área com atividade agrossilvipastoril visível até 22/07/2003 que apareça em descanso (capoeira/regeneração inicial) na cena de 2008 continua sendo CONSOLIDADA. Se a cena de 2003 mostrar uso antrópico e a de 2008 mostrar cobertura vegetal jovem e homogênea, isso é pousio — NÃO classifique como vegetação nativa.",
+        "- Distinga regeneração pós-uso (dossel baixo e uniforme, bordas retas herdadas do talhão, estradas remanescentes) de vegetação nativa primária (dossel alto e irregular, bordas sinuosas).",
         "- Padrão de textura antrópica: tonalidade uniforme sem gradiente de dossel, estrutura regular de lavoura ou pasto limpo, estradas visíveis ou cicatrizes de fogo.",
         "- Padrão de vegetação nativa: textura rugosa de copas, gradiente de cor verde-escuro, estrutura irregular de dossel (Floresta), ou manchas herbáceas intercaladas com arbustos (Cerrado).",
         "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada, manchas arbustivas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso antrópico.",
@@ -3374,12 +3435,18 @@ function buildSynthesisPrompt(
 /* ─── AUAS Analysis Pipeline ─────────────────────────────────── */
 
 /** Satellite keys used for AUAS analysis: starts at 2008, then chronological order. */
+/**
+ * Série temporal da rotina AUAS: do marco (2008) até o ano mais recente
+ * publicado pela SEMA, **sem buraco de ano**. O 2012 é ResourceSat porque o
+ * acervo estadual não tem Landsat nesse ano, e 2019+ é Sentinel-2.
+ */
 export const AUAS_SATELLITE_KEYS: string[] = [
     "spot_2008",
     "landsat5_2008",
     "landsat5_2009",
     "landsat5_2010",
     "landsat5_2011",
+    "resourcesat_2012",
     "landsat8_2013",
     "landsat8_2014",
     "landsat8_2015",
@@ -3395,6 +3462,7 @@ export const AUAS_SATELLITE_KEYS: string[] = [
     "sentinel2_2022",
     "sentinel2_2023",
     "sentinel2_2024",
+    "sentinel2_2025",
 ].filter((k) => !!SATELLITE_LAYERS[k]);
 
 /**
@@ -5197,7 +5265,7 @@ export function sendAcAvnComplete(res: Response, result: AcAvnAnalysisResult, re
         ...(!result.imageOnly && { analysis: result.analysisText, analysisMeta: result.analysisMeta }),
         images: result.cloudinaryUrls,
         layerSummaries: result.layerSummaries.filter((l) => ["AUAS", "AREA_CONSOLIDADA", "AVN", "ATP"].includes(l.name)),
-        analysisRulesVersion: "acavn-fixed-v4",
+        analysisRulesVersion: "acavn-fixed-v5",
         satellitesUsed: result.usedSatelliteKeys,
         satellitesMissing: result.missingSatelliteKeys,
         cloudWarnings: result.cloudWarnings.length > 0 ? result.cloudWarnings : undefined,

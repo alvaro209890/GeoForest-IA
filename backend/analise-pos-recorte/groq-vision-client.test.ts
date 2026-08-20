@@ -82,13 +82,21 @@ describe("requestGroqVisionWindow — validações locais", () => {
   it("nunca envia mais de 3 image_url mesmo com 3 imagens (checagem do payload)", async () => {
     const fetchImpl = vi.fn(async (_url: any, init: any) => {
       const body = JSON.parse(init.body);
+      // O modelo default deixou de ser fixo (commit cee54247: `VISION_MODEL`), por
+      // isso o teste passa o modelo por `deps` em vez de cravar o default aqui.
       expect(body.model).toBe("qwen/qwen3.6-27b");
+      // `reasoning_effort` só é enviado quando o endpoint é da Groq — mandar o
+      // campo para outro provedor quebra a chamada.
       expect(body.reasoning_effort).toBe("none");
       const imageParts = body.messages[1].content.filter((c: any) => c.type === "image_url");
       expect(imageParts.length).toBeLessThanOrEqual(3);
       return jsonResponse(groqSuccessBody(validObservationPayload()));
     });
-    const result = await requestGroqVisionWindow(baseRequest(), { fetchImpl, apiKey: "k" });
+    const result = await requestGroqVisionWindow(baseRequest(), {
+      fetchImpl,
+      apiKey: "k",
+      model: "qwen/qwen3.6-27b",
+    });
     expect(result.ok).toBe(true);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
