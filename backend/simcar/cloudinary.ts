@@ -12,15 +12,15 @@ export type { AiImage };
 
 /**
  * Compress image for AI vision analysis (base64 fallback path, used when Cloudinary is unavailable).
- * Downscales to max 800×600 and encodes as JPEG at quality 65 with metadata stripped.
+ * Downscales to max 1024×768 and encodes as JPEG at quality 80 with metadata stripped.
  * Keeps enough detail for vegetation/land-use classification while minimising token cost.
  */
 export async function compressForVision(dataUrl: string): Promise<string> {
     const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
     const buf = Buffer.from(base64, "base64");
     const compressed = await sharp(buf)
-        .resize(800, 600, { fit: "inside", withoutEnlargement: true })
-        .jpeg({ quality: 65, mozjpeg: true })
+        .resize(1024, 768, { fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 80, mozjpeg: true })
         .toBuffer();
     return `data:image/jpeg;base64,${compressed.toString("base64")}`;
 }
@@ -39,7 +39,7 @@ export async function uploadToCloudinary(dataUrl: string, filename: string, uid 
 
 /**
  * Returns a Cloudinary URL with on-the-fly transformations optimized for AI vision APIs.
- * Resizes to max 800×600, converts to JPEG at quality 65, strips metadata.
+ * Resizes to max 1024×768, converts to JPEG at quality 80, strips metadata.
  * This reduces image token consumption by ~70–80% vs. sending the full-res PNG,
  * while preserving enough detail for land-use / vegetation classification.
  * The original full-resolution URL is kept intact for user display.

@@ -1276,7 +1276,9 @@ function buildPolygonOverlaySvg(
     propertyPolygon: Feature<Polygon | MultiPolygon>,
     layerGeometries: Map<string, Geometry[]>,
     layers: Array<{ name: string; stroke: string; fill: string; strokeWidth: number }>,
+    options: { showLegend?: boolean } = {},
 ): Buffer {
+    const showLegend = options.showLegend !== false;
     const svgParts: string[] = [
         `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
     ];
@@ -1301,6 +1303,43 @@ function buildPolygonOverlaySvg(
             "#FF0000", 3.5, "transparent",
         ),
     );
+
+    // Legend in bottom-left corner
+    if (showLegend) {
+        const legendItems: Array<{ color: string; label: string }> = [
+            { color: "#FF0000", label: "Propriedade" },
+        ];
+        for (const layer of layers) {
+            const geoms = layerGeometries.get(layer.name);
+            if (geoms && geoms.length > 0) {
+                const labels: Record<string, string> = {
+                    AREA_CONSOLIDADA: "Área Consolidada",
+                    AVN: "AVN",
+                    AUAS: "AUAS",
+                    ARL: "ARL",
+                    ARLREM: "ARL",
+                };
+                legendItems.push({ color: layer.stroke, label: labels[layer.name] || layer.name });
+            }
+        }
+
+        const lineH = 20;
+        const padX = 12;
+        const padY = 10;
+        const boxW = 180;
+        const boxH = padY * 2 + legendItems.length * lineH;
+        const boxX = 10;
+        const boxY = height - boxH - 10;
+
+        svgParts.push(`<!-- Legenda -->`);
+        svgParts.push(`<rect x="${boxX}" y="${boxY}" width="${boxW}" height="${boxH}" rx="6" fill="rgba(0,0,0,0.75)" />`);
+
+        legendItems.forEach((item, i) => {
+            const y = boxY + padY + i * lineH + 12;
+            svgParts.push(`<rect x="${boxX + padX}" y="${y - 10}" width="12" height="12" rx="2" fill="${item.color}" />`);
+            svgParts.push(`<text x="${boxX + padX + 18}" y="${y}" fill="white" font-family="sans-serif" font-size="13">${item.label}</text>`);
+        });
+    }
 
     svgParts.push("</svg>");
     return Buffer.from(svgParts.join("\n"));
@@ -4840,7 +4879,7 @@ async function generateSatelliteImages(
 
     const validKeys = getOrderedSatelliteKeys(selectedLayers);
 
-    const totalSteps = validKeys.length * 3;
+    const totalSteps = validKeys.length;
     let step = 0;
 
     for (const key of validKeys) {
@@ -4877,7 +4916,7 @@ async function generateSatelliteImages(
                 percent: 10 + Math.round((step / totalSteps) * 40),
                 message: `Aviso: ${sat.label} indisponivel, pulando...`,
             });
-            step += 3;
+            step += 1;
             continue;
         }
         usedKeys.push(key);
@@ -4904,41 +4943,20 @@ async function generateSatelliteImages(
             // Cloud detection is non-fatal
         }
 
-        // 3 composites per satellite
-        // 1: Overview (AC + AVN + AUAS + ARL + property)
-        const overviewLayers: Array<{ name: string; stroke: string; fill: string; strokeWidth: number }> = [
-            { name: "AREA_CONSOLIDADA", stroke: "#FF00FF", fill: "transparent", strokeWidth: 3.5 }, // Neon Magenta
-            { name: "AVN", stroke: "#00FFFF", fill: "transparent", strokeWidth: 3.5 }, // Neon Cyan
-            { name: "AUAS", stroke: "#FF5500", fill: "transparent", strokeWidth: 2.5 }, // Neon Orange
+        // 1 composite per satellite — all layers + legend
+        const compositeLayers: Array<{ name: string; stroke: string; fill: string; strokeWidth: number }> = [
+            { name: "AREA_CONSOLIDADA", stroke: "#FF00FF", fill: "rgba(255,0,255,0.12)", strokeWidth: 3.5 }, // Neon Magenta
+            { name: "AVN", stroke: "#00FFFF", fill: "rgba(0,255,255,0.12)", strokeWidth: 3.5 }, // Neon Cyan
+            { name: "AUAS", stroke: "#FF5500", fill: "rgba(255,85,0,0.12)", strokeWidth: 2.5 }, // Neon Orange
         ];
         // Add ARL/ARLREM overlay if present
         if (layerGeos.has("ARL") || layerGeos.has("ARLREM")) {
-            overviewLayers.push({ name: "ARL", stroke: "#00FF00", fill: "transparent", strokeWidth: 2.5 }); // Neon Green
-            overviewLayers.push({ name: "ARLREM", stroke: "#32CD32", fill: "transparent", strokeWidth: 2.5 });
+            compositeLayers.push({ name: "ARL", stroke: "#00FF00", fill: "rgba(0,255,0,0.12)", strokeWidth: 2.5 }); // Neon Green
+            compositeLayers.push({ name: "ARLREM", stroke: "#32CD32", fill: "rgba(50,205,50,0.12)", strokeWidth: 2.5 });
         }
-        const overviewSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, overviewLayers);
+        const compositeSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, compositeLayers);
         const hasArl = layerGeos.has("ARL") || layerGeos.has("ARLREM");
-        images.push({ dataUrl: await compositeOverlay(basePng, overviewSvg), caption: `${sat.label} - Visao Geral (propriedade + AC + AVN + AUAS${hasArl ? " + ARL" : ""})` });
-        step++;
-
-        sendSSE(res, {
-            type: "progress", step: "generating_images",
-            percent: 10 + Math.round((step / totalSteps) * 40),
-            message: `${sat.label}: renderizando Area Consolidada...`,
-        });
-
-        // 2: AC only (Neon Magenta, transparent fill)
-        const acSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
-            { name: "AREA_CONSOLIDADA", stroke: "#FF00FF", fill: "transparent", strokeWidth: 4 },
-        ]);
-        images.push({ dataUrl: await compositeOverlay(basePng, acSvg), caption: `${sat.label} - Area Consolidada` });
-        step++;
-
-        // 3: AVN only (Neon Cyan, transparent fill)
-        const avnSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
-            { name: "AVN", stroke: "#00FFFF", fill: "transparent", strokeWidth: 4 },
-        ]);
-        images.push({ dataUrl: await compositeOverlay(basePng, avnSvg), caption: `${sat.label} - AVN` });
+        images.push({ dataUrl: await compositeOverlay(basePng, compositeSvg), caption: `${sat.label} — Visão Geral (AC + AVN + AUAS${hasArl ? " + ARL" : ""})` });
         step++;
     }
 
@@ -5045,7 +5063,7 @@ export async function runAcAvnSatelliteAnalysis(
                 caption: cu.caption,
             });
         }
-        console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs (800x600 q65) for vision API`);
+        console.log(`[SIMCAR ANALYSIS] Using ${aiImages.length} Cloudinary URLs (1024x768 q80) for vision API`);
     } else {
         console.log(`[SIMCAR ANALYSIS] Cloudinary partial/failed, compressing ${imagesToAnalyze!.length} images for vision API`);
         for (const img of imagesToAnalyze!) {
