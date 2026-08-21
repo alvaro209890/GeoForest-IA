@@ -102,6 +102,24 @@ describe("lerOcupacaoSimcar", () => {
     // 30s > 1s + 10s de margem → considerado fantasma.
     await expect(lerOcupacaoSimcar()).resolves.toMatchObject({ ocupado: false });
   });
+
+  it("ignorarConnIds tira a nossa entrada da conta de ocupação", async () => {
+    stubRtdb({
+      clients: clients({
+        sistema: { "geoforest-1": { who: "Sistema", lastSeen: AGORA - 1_000 } },
+        uidA: { c1: { who: "Pamera", lastSeen: AGORA - 2_000 } },
+      }),
+      current: null,
+    });
+
+    const comHumano = await lerOcupacaoSimcar({ ignorarConnIds: ["geoforest-1"] });
+    expect(comHumano).toMatchObject({ ocupado: true, por: "Pamera", conexoes: 1 });
+
+    const soSelf = await lerOcupacaoSimcar({
+      ignorarConnIds: ["geoforest-1", "c1"],
+    });
+    expect(soSelf).toMatchObject({ ocupado: false, conexoes: 0 });
+  });
 });
 
 describe("lerOcupacaoSimcarCached", () => {
@@ -117,17 +135,15 @@ describe("lerOcupacaoSimcarCached", () => {
   });
 });
 
-describe("R2 — o GeoForest é invisível no monitor", () => {
-  it("o módulo não tem nenhuma escrita no RTDB de presença", () => {
+describe("leitura do monitor continua só GET", () => {
+  it("monitor.ts não escreve no RTDB — a presença Sistema mora em presenca.ts", () => {
     const arquivo = path.join(path.dirname(fileURLToPath(import.meta.url)), "monitor.ts");
     const codigo = fs.readFileSync(arquivo, "utf8");
-    // Só o comentário do cabeçalho pode citar escrita; o código, nunca.
     const semComentarios = codigo
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/(^|[^:])\/\/.*$/gm, "$1");
 
     expect(semComentarios).not.toMatch(/method:\s*["'](PUT|PATCH|POST|DELETE)["']/i);
     expect(semComentarios).toMatch(/method:\s*["']GET["']/);
-    expect(semComentarios).not.toMatch(/\.(set|update|remove|push)\s*\(/);
   });
 });

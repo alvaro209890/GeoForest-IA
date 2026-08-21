@@ -126,8 +126,11 @@ A conta técnica também é usada **por pessoas**, no navegador. O
 Tampermonkey grava presença no Realtime Database
 `monitor-car-default-rtdb`, nó `presence/simcar/clients`.
 
-O GeoForest **apenas lê** esse nó (`monitor.ts`, só `GET`; um teste de superfície
-garante que não existe escrita — o bot é invisível para os outros usuários).
+O GeoForest **lê** esse nó para esperar o humano (`monitor.ts`, só `GET`) e
+**grava** presença com `who: "Sistema"` enquanto usa a conta (`presenca.ts`).
+O painel interno passa a mostrar EM USO / Responsável **Sistema**. A espera
+quando uma pessoa está logada continua — a própria entrada é ignorada na conta
+de ocupação para não deadlock.
 
 | Momento | Comportamento |
 |---|---|

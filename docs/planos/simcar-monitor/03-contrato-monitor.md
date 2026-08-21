@@ -10,7 +10,9 @@
 | `https://monitor-car-default-rtdb.firebaseio.com/presence/simcar/current.json` | GET | `{status, lastSeen, graceUntil, who}` ou `null` (legado; hoje `null`) |
 | `…/clients/<uid>/<connId>.json` | DELETE | `null` (sem auth — usado apenas em limpeza manual) |
 
-> ⚠️ O GeoForest **nunca** usa o DELETE nem escreve em presence (R2). O DELETE acima é documentado apenas como referência de limpeza manual.
+> Desde 2026-08-21 o GeoForest **grava** `who: "Sistema"` em
+> `presence/simcar/clients/sistema/<connId>` enquanto usa a conta (`presenca.ts`).
+> O DELETE passou a ser o encerramento normal da presença, não só limpeza manual.
 
 ## Regra de ocupação (espelha o site do monitor)
 
