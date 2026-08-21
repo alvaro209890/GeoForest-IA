@@ -178,10 +178,10 @@ function reportImageYear(caption: string): number {
 
 function reportImageWeight(caption: string): number {
     const cap = String(caption || "");
-    // Destaque do achado (ex.: "SPOT 2008 — Destaque AVN ...") tem prioridade
-    // máxima no anexo: vem antes das demais cenas, pois mostra o local e o ano
-    // do trecho apontado no quadro de achados.
-    if (/destaque avn/i.test(cap)) return -1;
+    // Destaques do achado (ex.: "SPOT 2008 — Destaque AVN ..." / "SPOT 2008 —
+    // Destaque Reservatório ...") têm prioridade máxima no anexo: vêm antes das
+    // demais cenas, pois mostram o local e o ano do trecho apontado no laudo.
+    if (/destaque avn|destaque reservatório/i.test(cap)) return -1;
     if (/spot/i.test(cap)) return 0;
     if (reportImageYear(cap) === 2008) return 1;
     if (reportImageYear(cap) === 2003) return 2;
@@ -920,6 +920,30 @@ export async function buildSimcarReportPdfBuffer(args: {
     if (args.auasText) {
         sectionTitle(reportKindSectionTitle(auasKind), "Resultado por polígono, conforme calculado pelo sistema.");
         markdownBody(args.auasText, 9000);
+    }
+
+    /* ─── Reservatórios artificiais: quadro explícito ─────────── */
+
+    // O encarte digital do CAR não transfere a lâmina d'água para a área
+    // consolidada/AUAS automaticamente (regressão real: Lote 81, 21/08/2026).
+    // Quando há reservatório no recorte, o laudo declara os números em quadro
+    // próprio, além do texto gerado pela análise.
+    const reservoirAnalysis: any = args.analysisMeta?.reservoirAnalysis || null;
+    if (reservoirAnalysis?.hasReservoir) {
+        ensureSpace(120);
+        sectionTitle(
+            "Reservatórios Artificiais — Enquadramento Legal",
+            "Lâmina d'água presente no recorte e tratamento no CAR/SIMCAR.",
+        );
+        const feats = Number(reservoirAnalysis.totalFeatures || 0);
+        const linhas: string[] = [
+            `${feats} feição(ões) de reservatório artificial, total de ${Number(reservoirAnalysis.totalAreaHa || 0).toFixed(4)} ha (${Number(reservoirAnalysis.pctOfProperty || 0).toFixed(2)}% do imóvel).`,
+            `Sobre Área Consolidada declarada: ${Number(reservoirAnalysis.overlapAcHa || 0).toFixed(4)} ha · Sobre AUAS declarada: ${Number(reservoirAnalysis.overlapAuasHa || 0).toFixed(4)} ha · Sobre AVN: ${Number(reservoirAnalysis.overlapAvnHa || 0).toFixed(4)} ha · Fora de camada declarada: ${Number(reservoirAnalysis.outsideDeclaredHa || 0).toFixed(4)} ha.`,
+            "Lei 12.651/2012, art. 4º, III e §1º: reservatório artificial que NÃO decorre de barramento/represamento de curso d'água natural NÃO gera APP de entorno — a lâmina d'água enquadra-se como uso antrópico (área consolidada/AUAS).",
+            "Art. 4º, §4º: acumulações naturais ou artificiais com superfície inferior a 1 ha ficam dispensadas da faixa de APP de entorno (vedada nova supressão de vegetação nativa).",
+            "O encarte digital do CAR (origem deste recorte) NÃO transfere automaticamente a lâmina d'água para a área consolidada/AUAS — a adequação do perímetro no CAR/SIMCAR deve ser conferida pelo responsável técnico.",
+        ];
+        calloutBox("Reservatório artificial detectado", linhas, "info", { compact: false });
     }
 
     /* ─── Fundamentação legal ────────────────────────────────── */

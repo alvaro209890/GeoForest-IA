@@ -2745,6 +2745,11 @@ export type AcAvnAnalysisMeta = {
         reservatorioOverlapAvnHa: number;
         hasReservatorioLayer: boolean;
     } | null;
+    /** Análise dos reservatórios artificiais do recorte — lâmina d'água,
+     * sobreposição com AC/AUAS/AVN e enquadramento legal (Lei 12.651/2012,
+     * art. 4º III, §1º e §4º). Declarada no laudo porque o encarte digital do
+     * CAR não transfere a lâmina para a área consolidada/AUAS automaticamente. */
+    reservoirAnalysis?: ReservoirAnalysis | null;
 };
 
 export type AcAvnAnalysisResult = {
@@ -3571,6 +3576,98 @@ function computeAcAvnGeometryCrossCheck(job: CachedJob): AcAvnAnalysisMeta["geom
         acAreaHa: Number(acAreaHa.toFixed(4)),
         reservatorioOverlapAvnHa: Number(reservatorioOverlapAvnHa.toFixed(4)),
         hasReservatorioLayer,
+    };
+}
+
+/**
+ * Análise dos reservatórios artificiais do recorte.
+ *
+ * O encarte digital do CAR/SICAR (de onde o recorte sai) NÃO soma a lâmina
+ * d'água do reservatório à área consolidada/AUAS automaticamente. Pela Lei
+ * 12.651/2012, art. 4º, III e §1º, reservatório artificial que NÃO decorre de
+ * barramento/represamento de curso d'água natural NÃO gera APP de entorno —
+ * a lâmina fica como uso antrópico (AUAS/consolidada), e §4º dispensa faixa
+ * de APP para acumulações naturais/artificiais com superfície < 1 ha.
+ */
+export type ReservoirAnalysis = {
+    hasReservoir: boolean;
+    totalFeatures: number;
+    totalAreaHa: number;
+    /** Área do reservatório que cai sobre AREA_CONSOLIDADA declarada. */
+    overlapAcHa: number;
+    /** Área do reservatório que cai sobre AUAS declarada. */
+    overlapAuasHa: number;
+    /** Área do reservatório sobre AVN (conflito — precisa de revisão). */
+    overlapAvnHa: number;
+    /** Área do reservatório fora de AC/AUAS/AVN (lâmina "solta"). */
+    outsideDeclaredHa: number;
+    /** Percentual da área total do imóvel ocupado por reservatórios. */
+    pctOfProperty: number;
+    /** Menor e maior feição, para dimensionar a narrativa. */
+    minFeatureHa: number;
+    maxFeatureHa: number;
+};
+
+export function computeReservoirAnalysis(job: CachedJob, propertyAreaHa = 0): ReservoirAnalysis {
+    const reservGeoms = job.clippedGeometries?.get("RESERVATORIO_ARTIFICIAL") || [];
+    if (reservGeoms.length === 0) {
+        return {
+            hasReservoir: false,
+            totalFeatures: 0,
+            totalAreaHa: 0,
+            overlapAcHa: 0,
+            overlapAuasHa: 0,
+            overlapAvnHa: 0,
+            outsideDeclaredHa: 0,
+            pctOfProperty: 0,
+            minFeatureHa: 0,
+            maxFeatureHa: 0,
+        };
+    }
+    const merged = mergeLayerGeometriesAsFeature(job.clippedGeometries, "RESERVATORIO_ARTIFICIAL");
+    const totalAreaHa = merged ? turfArea(merged) / 10000 : 0;
+
+    const overlapWith = (layerName: string): number => {
+        const other = mergeLayerGeometriesAsFeature(job.clippedGeometries, layerName);
+        if (!other || !merged) return 0;
+        try {
+            const overlap = turfIntersect(
+                turfFeatureCollection([merged, other]) as FeatureCollection<Polygon | MultiPolygon>,
+            ) as Feature<Polygon | MultiPolygon> | null;
+            return overlap ? turfArea(overlap) / 10000 : 0;
+        } catch {
+            return 0;
+        }
+    };
+
+    const overlapAcHa = overlapWith("AREA_CONSOLIDADA");
+    const overlapAuasHa = overlapWith("AUAS");
+    const overlapAvnHa = overlapWith("AVN");
+    const outsideDeclaredHa = Math.max(0, totalAreaHa - (overlapAcHa + overlapAuasHa + overlapAvnHa));
+
+    let minFeatureHa = Infinity;
+    let maxFeatureHa = 0;
+    for (const geom of reservGeoms) {
+        const polyLike = toPolygonOrMultiFeature(geom);
+        if (!polyLike) continue;
+        const a = turfArea(polyLike) / 10000;
+        if (a > 0) {
+            minFeatureHa = Math.min(minFeatureHa, a);
+            maxFeatureHa = Math.max(maxFeatureHa, a);
+        }
+    }
+
+    return {
+        hasReservoir: true,
+        totalFeatures: reservGeoms.length,
+        totalAreaHa: Number(totalAreaHa.toFixed(4)),
+        overlapAcHa: Number(overlapAcHa.toFixed(4)),
+        overlapAuasHa: Number(overlapAuasHa.toFixed(4)),
+        overlapAvnHa: Number(overlapAvnHa.toFixed(4)),
+        outsideDeclaredHa: Number(outsideDeclaredHa.toFixed(4)),
+        pctOfProperty: propertyAreaHa > 0 ? Number(((totalAreaHa / propertyAreaHa) * 100).toFixed(2)) : 0,
+        minFeatureHa: Number((minFeatureHa === Infinity ? 0 : minFeatureHa).toFixed(4)),
+        maxFeatureHa: Number(maxFeatureHa.toFixed(4)),
     };
 }
 
@@ -5328,6 +5425,88 @@ export async function buildAvnHighlightImage(
     };
 }
 
+/**
+ * Gera a imagem de DESTAQUE do(s) reservatório(s) artificial(is) do recorte:
+ * zoom no bbox do reservatório (ou no imóvel inteiro se o reservatório for
+ * pontual demais), na cena de maior peso (SPOT 2008), com overlay
+ * AC+AUAS+RESERVATÓRIO+propriedade — vira a PRIMEIRA figura do anexo quando o
+ * laudo tem reservatório, deixando explícita a lâmina d'água (regressão real:
+ * Lote 81, 21/08/2026 — a visão confundiu reservatório com "uso na AVN").
+ */
+export async function buildReservoirHighlightImage(
+    res: Response,
+    job: CachedJob,
+    usedKeys: string[],
+): Promise<{ dataUrl: string; caption: string } | null> {
+    const reservoirGeoms = job.clippedGeometries?.get("RESERVATORIO_ARTIFICIAL") || [];
+    if (reservoirGeoms.length === 0) return null;
+
+    // Bbox do reservatório com padding. Se o reservatório for menor que ~0,5 ha
+    // (pontual), expande para caber um contexto útil da propriedade.
+    const feats: number[][] = [];
+    for (const g of reservoirGeoms) {
+        if (g.type === "Polygon") { for (const ring of g.coordinates) for (const c of ring) feats.push(c); }
+        else if (g.type === "MultiPolygon") { for (const poly of g.coordinates) for (const ring of poly) for (const c of ring) feats.push(c); }
+    }
+    if (feats.length === 0) return null;
+    let [minX, minY, maxX, maxY] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const [x, y] of feats) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
+    let focusBbox: [number, number, number, number] = [minX, minY, maxX, maxY];
+    const wSpan = maxX - minX, hSpan = maxY - minY;
+    const isTiny = wSpan < 0.003 || hSpan < 0.003; // ~ <300m de lado em graus
+    if (isTiny) {
+        // Expande para o imóvel inteiro, preservando o contexto.
+        const polyGeom = job.polygon?.geometry;
+        const pFeats: number[][] = [];
+        if (polyGeom?.type === "Polygon") for (const ring of polyGeom.coordinates) for (const c of ring) pFeats.push(c);
+        else if (polyGeom?.type === "MultiPolygon") for (const gp of polyGeom.coordinates) for (const ring of gp) for (const c of ring) pFeats.push(c);
+        if (pFeats.length > 0) {
+            let [px, py, qx, qy] = [Infinity, Infinity, -Infinity, -Infinity];
+            for (const [x, y] of pFeats) { px = Math.min(px, x); py = Math.min(py, y); qx = Math.max(qx, x); qy = Math.max(qy, y); }
+            focusBbox = [px, py, qx, qy];
+        }
+    }
+    const zoomBbox = normalizeRenderBboxAspect(padBbox(focusBbox, 0.12), 2.5);
+    const areaHa = job.areaHa ?? 0;
+    const baseRes = calculateDynamicResolution(areaHa, zoomBbox);
+    const width = Math.max(baseRes.width, 900);
+    const height = Math.max(baseRes.height, 600);
+
+    const key = (usedKeys.includes("spot_2008") ? "spot_2008" : usedKeys[0]);
+    if (!key) return null;
+    const sat = SATELLITE_LAYERS[key];
+    if (!sat) return null;
+
+    sendSSE(res, {
+        type: "progress",
+        step: "generating_images",
+        percent: 61,
+        message: "Gerando destaque visual dos reservatórios artificiais do recorte...",
+    });
+    const resolved = await fetchSatelliteImage(key, sat, zoomBbox, width, height, "SIMCAR ANALYSIS");
+    if (!resolved?.png) return null;
+
+    const rawLayerGeos: Map<string, Geometry[]> = job.clippedGeometries ?? new Map<string, Geometry[]>();
+    const layerGeos = new Map<string, Geometry[]>();
+    for (const [name, geoms] of rawLayerGeos) {
+        layerGeos.set(name, geoms.map((g: Geometry) => simplifyGeometryForOverlay(g, 1200)));
+    }
+    const svg = buildPolygonOverlaySvg(width, height, zoomBbox, job.polygon!, layerGeos, [
+        { name: "RESERVATORIO_ARTIFICIAL", stroke: "#0044FF", fill: "rgba(0,0,255,0.35)", strokeWidth: 4 },
+        { name: "AREA_CONSOLIDADA", stroke: "#FF00FF", fill: "rgba(255,0,255,0.12)", strokeWidth: 3.5 },
+        { name: "AUAS", stroke: "#FFA500", fill: "rgba(255,165,0,0.14)", strokeWidth: 3.5 },
+        { name: "AVN", stroke: "#00FFFF", fill: "rgba(0,255,255,0.14)", strokeWidth: 3.5 },
+    ]);
+    const dataUrl = await compositeOverlay(resolved.png, svg);
+    const provenance = resolved.provenance ? ` · ${resolved.provenance}` : "";
+    return {
+        dataUrl,
+        // "Destaque Reservatório" também recebe peso -1 no anexo (reportImageWeight)
+        // para vir antes das demais cenas; o rótulo do satélite fica no início.
+        caption: `${sat.label} — Destaque Reservatório Artificial (lâmina d'água do recorte)${provenance}`,
+    };
+}
+
 export async function runAcAvnSatelliteAnalysis(
     res: Response,
     job: CachedJob,
@@ -5570,6 +5749,25 @@ export async function runAcAvnSatelliteAnalysis(
         }
     }
 
+    // ─── Reservatórios artificiais: narrativa explícita ──────────────────────
+    // O encarte digital do CAR não soma a lâmina d'água à área consolidada/AUAS
+    // automaticamente. Medimos e declaramos no laudo: área total, nº de feições,
+    // sobreposição com AC/AUAS/AVN e o enquadramento legal (Lei 12.651/2012).
+    const reservoirAnalysis = computeReservoirAnalysis(job, areaHa);
+    if (reservoirAnalysis.hasReservoir) {
+        normalizedAcAvn.meta.reservoirAnalysis = reservoirAnalysis;
+        normalizedAcAvn.text += [
+            "",
+            "## Reservatórios Artificiais — Enquadramento Legal",
+            `- ${reservoirAnalysis.totalFeatures} feição(ões), total de ${reservoirAnalysis.totalAreaHa.toFixed(4)} ha (${reservoirAnalysis.pctOfProperty.toFixed(2)}% do imóvel).`,
+            `- Sobre AC declarada: ${reservoirAnalysis.overlapAcHa.toFixed(4)} ha | Sobre AUAS declarada: ${reservoirAnalysis.overlapAuasHa.toFixed(4)} ha | Sobre AVN: ${reservoirAnalysis.overlapAvnHa.toFixed(4)} ha | Fora de camada declarada: ${reservoirAnalysis.outsideDeclaredHa.toFixed(4)} ha.`,
+            "- Lei 12.651/2012, art. 4º, III e §1º: reservatório artificial que NÃO decorre de barramento/represamento de curso d'água natural NÃO gera APP de entorno — a lâmina d'água enquadra-se como uso antrópico (área consolidada/AUAS).",
+            "- Art. 4º, §4º: acumulações naturais ou artificiais com superfície inferior a 1 ha ficam dispensadas da faixa de APP de entorno (vedada nova supressão de vegetação nativa).",
+            "- O encarte digital do CAR, de onde o recorte é extraído, NÃO transfere automaticamente a lâmina d'água para a área consolidada/AUAS — a adequação do perímetro no CAR/SIMCAR deve ser conferida pelo responsável técnico.",
+            "- Recomendação: conferir a titularidade/outorga do reservatório e o cruzamento com a área consolidada declarada; ajustar o shape do CAR se a lâmina estiver sobre uso consolidado/AUAS não declarado.",
+        ].join("\n");
+    }
+
     // ─── Destaque do achado "área consolidada dentro da AVN" ────────────────
     // Quando a IA confirma o achado (avnDentroShapeAntropizado = SIM), gera uma
     // imagem em zoom no trecho AC∩AVN e a insere como PRIMEIRA figura no anexo.
@@ -5595,6 +5793,32 @@ export async function runAcAvnSatelliteAnalysis(
             }
         } catch (highlightErr: any) {
             console.warn("[SIMCAR ANALYSIS] Destaque AVN não gerado (não-fatal):", highlightErr?.message || highlightErr);
+        }
+    }
+
+    // ─── Destaque dos reservatórios artificiais ──────────────────────────────
+    // Quando o recorte tem reservatório artificial, gera uma imagem em zoom na
+    // lâmina d'água e a insere como PRIMEIRA figura do anexo (peso -1 no
+    // report). Deixa explícita a realidade física que a visão pode confundir
+    // com "uso consolidado dentro da AVN" (regressão real Lote 81).
+    if (reservoirAnalysis.hasReservoir) {
+        try {
+            const reservHighlight = await buildReservoirHighlightImage(res, job, usedSatelliteKeys);
+            if (reservHighlight) {
+                const url = await uploadToCloudinary(
+                    reservHighlight.dataUrl,
+                    `simcar_analysis_${tag}_destaque_reservatorio`,
+                    job.uid || "anonymous",
+                );
+                cloudinaryUrls.unshift({ url, caption: reservHighlight.caption });
+                cloudinaryStoredBytes += estimateBytesFromDataUrl(reservHighlight.dataUrl);
+                console.log(`[SIMCAR ANALYSIS] Destaque Reservatório adicionado como primeira figura: ${url}`);
+            }
+        } catch (reservHighlightErr: any) {
+            console.warn(
+                "[SIMCAR ANALYSIS] Destaque Reservatório não gerado (não-fatal):",
+                reservHighlightErr?.message || reservHighlightErr,
+            );
         }
     }
 

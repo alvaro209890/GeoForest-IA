@@ -173,6 +173,21 @@ export type AcAvnAnalysisMeta = {
         reservatorioOverlapAvnHa: number;
         hasReservatorioLayer: boolean;
     } | null;
+    /** Análise dos reservatórios artificiais do recorte — lâmina d'água,
+     * sobreposição com AC/AUAS/AVN e enquadramento legal (Lei 12.651/2012,
+     * art. 4º III, §1º e §4º). */
+    reservoirAnalysis?: {
+        hasReservoir: boolean;
+        totalFeatures: number;
+        totalAreaHa: number;
+        overlapAcHa: number;
+        overlapAuasHa: number;
+        overlapAvnHa: number;
+        outsideDeclaredHa: number;
+        pctOfProperty: number;
+        minFeatureHa: number;
+        maxFeatureHa: number;
+    } | null;
 };
 
 export type AcAvnAnalysisResult = {

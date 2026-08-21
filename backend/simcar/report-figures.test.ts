@@ -71,6 +71,18 @@ describe("selectPrincipalReportImages", () => {
         expect(escolhidas).toHaveLength(comDestaque.length);
     });
 
+    it("a imagem de Destaque Reservatório fica ANTES das demais cenas (regressão Lote 81)", () => {
+        const comReserv = [
+            ...JANELA_REAL,
+            { url: "/img/destaque-reserv.png", caption: "SPOT 2008 — Destaque Reservatório Artificial (lâmina d'água do recorte) · Acervo" },
+        ];
+        const escolhidas = selectPrincipalReportImages(comReserv, []);
+        expect(escolhidas[0].caption).toContain("Destaque Reservatório");
+        // janela AC/AVN continua completa após o destaque
+        expect(escolhidas).toHaveLength(comReserv.length);
+        expect(escolhidas.some((img) => /spot/i.test(img.caption) && !/destaque/i.test(img.caption))).toBe(true);
+    });
+
     it("quando precisa cortar, corta o ano mais distante do marco", () => {
         // 12 cenas AC/AVN estouram o teto; o SPOT e os marcos têm que sobreviver.
         const muitas = Array.from({ length: 12 }, (_, i) => ({

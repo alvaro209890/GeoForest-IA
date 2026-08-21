@@ -128,7 +128,7 @@ export function reduceImageSet(
 
     const yearOf = (caption: string): number => Number(caption.match(/\b(?:19|20)\d{2}\b/)?.[0] || 0);
     const weightOf = (caption: string): number => {
-        if (/destaque avn/i.test(caption)) return -1;
+        if (/destaque avn|destaque reservatório/i.test(caption)) return -1;
         if (/spot/i.test(caption)) return 0;
         if (yearOf(caption) === 2008) return 1;
         if (yearOf(caption) === 2003) return 2;
