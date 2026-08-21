@@ -941,7 +941,9 @@ export async function buildSimcarReportPdfBuffer(args: {
             `Sobre Área Consolidada declarada: ${Number(reservoirAnalysis.overlapAcHa || 0).toFixed(4)} ha · Sobre AUAS declarada: ${Number(reservoirAnalysis.overlapAuasHa || 0).toFixed(4)} ha · Sobre AVN: ${Number(reservoirAnalysis.overlapAvnHa || 0).toFixed(4)} ha · Fora de camada declarada: ${Number(reservoirAnalysis.outsideDeclaredHa || 0).toFixed(4)} ha.`,
             "Lei 12.651/2012, art. 4º, III e §1º: reservatório artificial que NÃO decorre de barramento/represamento de curso d'água natural NÃO gera APP de entorno — a lâmina d'água enquadra-se como uso antrópico (área consolidada/AUAS).",
             "Art. 4º, §4º: acumulações naturais ou artificiais com superfície inferior a 1 ha ficam dispensadas da faixa de APP de entorno (vedada nova supressão de vegetação nativa).",
-            "O encarte digital do CAR (origem deste recorte) NÃO transfere automaticamente a lâmina d'água para a área consolidada/AUAS — a adequação do perímetro no CAR/SIMCAR deve ser conferida pelo responsável técnico.",
+            "Manual do Projeto Geográfico do SIMCAR (SEMA-MT, 2018), seção 8.14: reservatório artificial = decorrente de barramento/represamento de curso d'água natural; Anexo 01 marca ÁREA INUNDADA sobre AUAS/AVN/AC como VALIDAÇÃO IMPEDITIVA.",
+            "IN MMA nº 2/2014 e Decreto 7.830/2012: AUAS = uso alternativo do solo; reservatório sem barramento não é APP e a lâmina enquadra-se como uso consolidado/AUAS.",
+            "O encarte digital do CAR (origem deste recorte) NÃO transfere automaticamente a lâmina d'água para a área consolidada/AUAS — a validação impeditiva do SIMCAR bloqueia a sobreposição; a adequação do perímetro no CAR/SIMCAR deve ser feita pelo responsável técnico.",
         ];
         calloutBox("Reservatório artificial detectado", linhas, "info", { compact: false });
     }

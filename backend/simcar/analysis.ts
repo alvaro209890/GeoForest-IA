@@ -5763,7 +5763,9 @@ export async function runAcAvnSatelliteAnalysis(
             `- Sobre AC declarada: ${reservoirAnalysis.overlapAcHa.toFixed(4)} ha | Sobre AUAS declarada: ${reservoirAnalysis.overlapAuasHa.toFixed(4)} ha | Sobre AVN: ${reservoirAnalysis.overlapAvnHa.toFixed(4)} ha | Fora de camada declarada: ${reservoirAnalysis.outsideDeclaredHa.toFixed(4)} ha.`,
             "- Lei 12.651/2012, art. 4º, III e §1º: reservatório artificial que NÃO decorre de barramento/represamento de curso d'água natural NÃO gera APP de entorno — a lâmina d'água enquadra-se como uso antrópico (área consolidada/AUAS).",
             "- Art. 4º, §4º: acumulações naturais ou artificiais com superfície inferior a 1 ha ficam dispensadas da faixa de APP de entorno (vedada nova supressão de vegetação nativa).",
-            "- O encarte digital do CAR, de onde o recorte é extraído, NÃO transfere automaticamente a lâmina d'água para a área consolidada/AUAS — a adequação do perímetro no CAR/SIMCAR deve ser conferida pelo responsável técnico.",
+            "- Manual de Elaboração do Projeto Geográfico do SIMCAR (SEMA-MT, atual. 07/11/2018), seção 8.14: 'São reservatórios d'água artificiais, decorrentes de barramento ou represamento de cursos d'água naturais dentro do imóvel' — e o Anexo 01 (Validações GEO) marca sobreposição de ÁREA INUNDADA com AUAS/AVN/AREA CONSOLIDADA como VALIDAÇÃO IMPEDITIVA.",
+            "- IN MMA nº 2/2014 (06/05/2014, procedimentos do SICAR) + Decreto 7.830/2012: AUAS é a área com uso alternativo do solo; reservatório sem barramento não é APP e a lâmina fica no enquadramento de uso consolidado/AUAS.",
+            "- O encarte digital do CAR, de onde o recorte é extraído, NÃO transfere automaticamente a lâmina d'água para a área consolidada/AUAS — a validação impeditiva do SIMCAR impede a sobreposição, então a adequação do perímetro no CAR/SIMCAR deve ser feita pelo responsável técnico.",
             "- Recomendação: conferir a titularidade/outorga do reservatório e o cruzamento com a área consolidada declarada; ajustar o shape do CAR se a lâmina estiver sobre uso consolidado/AUAS não declarado.",
         ].join("\n");
     }
