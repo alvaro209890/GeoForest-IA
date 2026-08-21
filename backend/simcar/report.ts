@@ -7,6 +7,12 @@
  * achados colorido, linha do tempo visual com o marco de 22/07/2008 e
  * renderização estruturada do markdown da IA (títulos e bullets preservados).
  * Toda a decisão de conteúdo/cor vive em `report-theme.ts`; aqui só se desenha.
+ *
+ * v3 (2026-08-20): o laudo passa a sair no papel timbrado oficial da IMAP — o
+ * mesmo PNG e as mesmas margens/cabeçalho/rodapé que o sistema de
+ * acompanhamento de processos usa nos .docx de parecer. A geometria e o
+ * desenho do timbrado moram em `report-imap.ts`; a estrutura do laudo (v2)
+ * segue igual, só reajustada à área útil do Ofício (453 pt em vez de 511 pt).
  */
 
 import fs from "fs";
@@ -37,11 +43,15 @@ import {
     type TimelineModel,
     type Tone,
 } from "./report-theme";
+import { createImapTimbrado, IMAP_CONTENT_WIDTH, IMAP_PAGE } from "./report-imap";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const SIMCAR_REPORT_VERSION = "simcar-report-v2";
+const SIMCAR_REPORT_VERSION = "simcar-report-v3";
+
+/** Título do cabeçalho de todas as páginas (o Ofício traz "ANÁLISE DE ÁREA"). */
+const REPORT_HEADER_TITLE = "LAUDO TÉCNICO SIMCAR";
 
 export type SimcarReportArtifact = {
     reportPdfUrl: string;
@@ -180,14 +190,23 @@ export async function buildSimcarReportPdfBuffer(args: {
     ].find((candidate) => fs.existsSync(candidate));
     const logoBuffer = logoPath ? fs.readFileSync(logoPath) : null;
 
+    // `autoFirstPage: false` para que o handler de `pageAdded` já esteja ligado
+    // quando a primeira página nascer — é ele que carimba o timbrado.
     const doc = new PDFDocument({
         size: "A4",
-        margin: 42,
+        margins: {
+            top: IMAP_PAGE.marginTop,
+            bottom: IMAP_PAGE.marginBottom,
+            left: IMAP_PAGE.marginLeft,
+            right: IMAP_PAGE.marginRight,
+        },
         bufferPages: true,
+        autoFirstPage: false,
         info: {
             Title: `Laudo Técnico SIMCAR - ${args.jobId}`,
-            Author: "GeoForest IA",
+            Author: "IMAP Engenharia e Soluções",
             Subject: "Relatório técnico de análise SIMCAR",
+            Creator: "GeoForest IA",
         },
     });
     const chunks: Buffer[] = [];
@@ -197,30 +216,38 @@ export async function buildSimcarReportPdfBuffer(args: {
         doc.on("error", reject);
     });
 
-    const pageW = doc.page.width;
-    const pageH = doc.page.height;
-    const margin = 42;
-    const contentW = pageW - margin * 2;
+    /* ─── Papel timbrado da IMAP ─────────────────────────────── */
+
+    const timbrado = createImapTimbrado(doc, {
+        headerTitle: REPORT_HEADER_TITLE,
+        footerMeta: `GeoForest IA · ${SIMCAR_REPORT_VERSION} · Job ${reportSingleLineText(args.jobId, 40)}`,
+    });
+    doc.on("pageAdded", () => timbrado.drawHeader());
+    doc.addPage();
+
+    const pageW = IMAP_PAGE.width;
+    const pageH = IMAP_PAGE.height;
+    const margin = IMAP_PAGE.marginLeft;
+    const marginTop = IMAP_PAGE.marginTop;
+    const marginBottom = IMAP_PAGE.marginBottom;
+    const contentW = IMAP_CONTENT_WIDTH;
     const colors = PALETTE;
 
     /* ─── Primitivas de desenho ──────────────────────────────── */
 
+    // O identificador do laudo não é mais repetido no topo de cada página: o
+    // cabeçalho do timbrado já assina a folha e o job vai no rodapé.
     const ensureSpace = (height: number) => {
-        if (doc.y + height > pageH - margin - 16) {
-            doc.addPage();
-            doc.font("Helvetica").fillColor(colors.lightText).fontSize(8).text(
-                `GeoForest IA | Laudo SIMCAR | Job ${reportSingleLineText(args.jobId, 44)}`,
-                margin,
-                24,
-                { width: contentW, align: "right" },
-            );
-            doc.x = margin;
-            doc.y = 48;
+        if (doc.y + height > pageH - marginBottom) {
+            doc.addPage(); // `pageAdded` desenha o timbrado e recoloca x/y na margem
         }
     };
 
     const sectionTitle = (title: string, subtitle?: string) => {
-        ensureSpace(56);
+        // Reserva o título MAIS um começo de corpo: na área útil do Ofício
+        // (649 pt de altura útil) um `ensureSpace(56)` deixava título órfão no
+        // pé da página e o conteúdo sozinho na seguinte.
+        ensureSpace(86);
         doc.moveDown(0.8);
         const y = doc.y;
         doc.rect(margin, y + 2, 4, 16).fill(colors.primary);
@@ -321,7 +348,7 @@ export async function buildSimcarReportPdfBuffer(args: {
         }
         for (const block of blocks) {
             if (block.type === "heading") {
-                ensureSpace(26);
+                ensureSpace(44); // título + a 1ª linha do que vem embaixo
                 doc.moveDown(0.35);
                 const y = doc.y;
                 doc.font("Helvetica-Bold").fontSize(10).fillColor(colors.primary).text(
@@ -361,7 +388,7 @@ export async function buildSimcarReportPdfBuffer(args: {
             for (const part of splitLongParagraph(reportPdfSafeText(block.text, 1800))) {
                 doc.font("Helvetica").fontSize(9.5);
                 const h = doc.heightOfString(part, { width: contentW, lineGap: 3 });
-                ensureSpace(Math.min(h + 10, pageH - margin * 2));
+                ensureSpace(Math.min(h + 10, pageH - marginTop - marginBottom));
                 doc.font("Helvetica").fontSize(9.5).fillColor(colors.text).text(part, margin, doc.y, {
                     width: contentW,
                     lineGap: 3,
@@ -376,52 +403,63 @@ export async function buildSimcarReportPdfBuffer(args: {
     const metric = (label: string, value: string, x: number, y: number, w: number, tone: Tone = "neutral") => {
         const palette = TONES[tone];
         doc.roundedRect(x, y, w, 58, 8).fillAndStroke(palette.bg, palette.border);
-        doc.font("Helvetica-Bold").fontSize(14).fillColor(palette.fg).text(reportSingleLineText(value, 24), x + 11, y + 13, {
-            width: w - 22,
+        // `lineBreak: false`: na área útil do Ofício a caixa tem ~106 pt e uma
+        // área de 5 dígitos quebraria em duas linhas por cima do rótulo.
+        doc.font("Helvetica-Bold").fontSize(12.5).fillColor(palette.fg).text(reportSingleLineText(value, 24), x + 9, y + 14, {
+            width: w - 18,
             align: "left",
+            lineBreak: false,
         });
-        doc.font("Helvetica").fontSize(8).fillColor(colors.lightText).text(reportSingleLineText(label, 34), x + 11, y + 35, {
-            width: w - 22,
+        doc.font("Helvetica").fontSize(7.6).fillColor(colors.lightText).text(reportSingleLineText(label, 34), x + 9, y + 35, {
+            width: w - 18,
             align: "left",
         });
     };
 
-    /* ─── Cabeçalho ──────────────────────────────────────────── */
+    /* ─── Abertura (só a 1ª página) ──────────────────────────── */
 
-    doc.rect(0, 0, pageW, 152).fill(colors.dark);
-    doc.rect(0, 148, pageW, 4).fill(colors.primary);
-    if (logoBuffer) {
-        try {
-            doc.image(logoBuffer, margin, 34, { fit: [46, 46] });
-        } catch {
-            // Ignora a imagem se não decodificar
+    // A faixa escura de página inteira da v2 cobria a logo do timbrado; a
+    // abertura agora é um cartão que começa abaixo da margem do Ofício.
+    {
+        const cardH = 100;
+        const y = marginTop;
+        doc.roundedRect(margin, y, contentW, cardH, 8).fillAndStroke(colors.white, colors.border);
+        doc.rect(margin + 1, y + 2, 4, cardH - 4).fill(colors.primary);
+        if (logoBuffer) {
+            try {
+                doc.image(logoBuffer, margin + contentW - 48, y + 14, { fit: [32, 32] });
+            } catch {
+                // Ignora a imagem se não decodificar
+            }
         }
-    }
-    doc.font("Helvetica-Bold").fontSize(23).fillColor("#FFFFFF").text("Laudo Técnico SIMCAR", margin + 62, 36, {
-        width: contentW - 62,
-        align: "left",
-    });
-    doc.font("Helvetica").fontSize(10).fillColor(colors.primaryLight).text(
-        "Análise geoespacial assistida por IA · documento de apoio ao responsável técnico",
-        margin + 62,
-        66,
-        { width: contentW - 62, align: "left" },
-    );
-    doc.font("Helvetica-Bold").fontSize(12).fillColor("#FFFFFF").text(
-        reportSingleLineText(args.filename || "Recorte SIMCAR", 120),
-        margin,
-        104,
-        { width: contentW, align: "left" },
-    );
-    doc.font("Helvetica").fontSize(9).fillColor("#94A3B8").text(
-        `Job: ${reportSingleLineText(args.jobId, 44)} · Gerado em ${new Date().toLocaleString("pt-BR", { timeZone: "America/Cuiaba" })} · ${SIMCAR_REPORT_VERSION}`,
-        margin,
-        124,
-        { width: contentW, align: "left" },
-    );
+        doc.font("Helvetica-Bold").fontSize(19).fillColor(colors.dark).text("Laudo Técnico SIMCAR", margin + 18, y + 15, {
+            width: contentW - 84,
+            lineBreak: false,
+        });
+        doc.font("Helvetica").fontSize(8.5).fillColor(colors.lightText).text(
+            "Análise geoespacial assistida por IA · documento de apoio ao responsável técnico",
+            margin + 18,
+            y + 39,
+            { width: contentW - 84 },
+        );
+        doc.moveTo(margin + 18, y + 58).lineTo(margin + contentW - 18, y + 58)
+            .strokeColor(colors.border).lineWidth(0.8).stroke();
+        doc.font("Helvetica-Bold").fontSize(10.5).fillColor(colors.darkText).text(
+            reportSingleLineText(args.filename || "Recorte SIMCAR", 90),
+            margin + 18,
+            y + 65,
+            { width: contentW - 36, lineBreak: false },
+        );
+        doc.font("Helvetica").fontSize(7.6).fillColor(colors.lightText).text(
+            `Job: ${reportSingleLineText(args.jobId, 44)} · Gerado em ${new Date().toLocaleString("pt-BR", { timeZone: "America/Cuiaba" })} · ${SIMCAR_REPORT_VERSION}`,
+            margin + 18,
+            y + 81,
+            { width: contentW - 36, lineBreak: false },
+        );
 
-    doc.y = 172;
-    doc.x = margin;
+        doc.x = margin;
+        doc.y = y + cardH + 14;
+    }
 
     /* ─── Modelo do laudo ────────────────────────────────────── */
 
@@ -474,7 +512,7 @@ export async function buildSimcarReportPdfBuffer(args: {
     /* ─── Métricas ───────────────────────────────────────────── */
 
     {
-        const gap = 11;
+        const gap = 9;
         const metricW = (contentW - gap * 3) / 4;
         const y = doc.y;
         metric("Área do imóvel", `${propertyAreaHa.toFixed(2)} ha`, margin, y, metricW, "info");
@@ -518,9 +556,9 @@ export async function buildSimcarReportPdfBuffer(args: {
 
     if (findings.length > 0) {
         sectionTitle("Quadro de Achados", "Verde = conforme · Amarelo = pendente de confirmação · Vermelho = revisar antes de submeter.");
-        const colLabelW = 178;
-        const colPillW = 96;
-        const colDetailW = contentW - colLabelW - colPillW - 24;
+        const colLabelW = 148;
+        const colPillW = 86;
+        const colDetailW = contentW - colLabelW - colPillW - 22;
         for (const finding of findings) {
             const detail = reportPdfSafeText(finding.detail, 400);
             doc.font("Helvetica").fontSize(8.5);
@@ -530,11 +568,11 @@ export async function buildSimcarReportPdfBuffer(args: {
             const y = doc.y;
             doc.rect(margin, y, contentW, rowH).fillAndStroke(colors.white, colors.border);
             doc.rect(margin, y, 3, rowH).fill(TONES[finding.tone].fg);
-            doc.font("Helvetica-Bold").fontSize(8.8).fillColor(colors.darkText).text(
+            doc.font("Helvetica-Bold").fontSize(8.4).fillColor(colors.darkText).text(
                 reportSingleLineText(finding.label, 46),
-                margin + 12,
+                margin + 11,
                 y + 8,
-                { width: colLabelW - 12 },
+                { width: colLabelW - 14 },
             );
             pill(finding.status, finding.tone, margin + colLabelW, y + 8, colPillW - 10);
             doc.font("Helvetica").fontSize(8.5).fillColor(colors.text).text(
@@ -618,18 +656,19 @@ export async function buildSimcarReportPdfBuffer(args: {
             }
         });
 
+        // Legenda compactada: na largura do Ofício ela colidia com o contador.
         const legendY = top + boxH - 21;
-        doc.circle(margin + 20, legendY + 3, 3.2).fill(TONES.ok.fg);
-        doc.font("Helvetica").fontSize(7).fillColor(colors.lightText).text("cena utilizável", margin + 28, legendY, { width: 80 });
-        doc.circle(margin + 118, legendY + 3, 3.2).lineWidth(1).fillAndStroke(colors.white, TONES.neutral.border);
-        doc.font("Helvetica").fontSize(7).fillColor(colors.lightText).text("sem cena no ano", margin + 126, legendY, { width: 90 });
-        doc.circle(margin + 228, legendY + 3, 3.8).fill(TONES.danger.fg);
-        doc.font("Helvetica").fontSize(7).fillColor(colors.lightText).text("conversão datada", margin + 236, legendY, { width: 96 });
+        doc.circle(margin + 16, legendY + 3, 3.2).fill(TONES.ok.fg);
+        doc.font("Helvetica").fontSize(7).fillColor(colors.lightText).text("cena utilizável", margin + 24, legendY, { width: 62, lineBreak: false });
+        doc.circle(margin + 94, legendY + 3, 3.2).lineWidth(1).fillAndStroke(colors.white, TONES.neutral.border);
+        doc.font("Helvetica").fontSize(7).fillColor(colors.lightText).text("sem cena no ano", margin + 102, legendY, { width: 68, lineBreak: false });
+        doc.circle(margin + 178, legendY + 3, 3.8).fill(TONES.danger.fg);
+        doc.font("Helvetica").fontSize(7).fillColor(colors.lightText).text("conversão datada", margin + 186, legendY, { width: 72, lineBreak: false });
         doc.font("Helvetica").fontSize(7).fillColor(colors.lightText).text(
             `${usableYears} de ${model.years.length} ano(s) com cena`,
-            margin + contentW - 170,
+            margin + contentW - 165,
             legendY,
-            { width: 154, align: "right" },
+            { width: 155, align: "right", lineBreak: false },
         );
 
         doc.x = margin;
@@ -652,6 +691,8 @@ export async function buildSimcarReportPdfBuffer(args: {
 
     /* ─── Quantitativos por camada ───────────────────────────── */
 
+    // O cabeçalho preto da tabela precisa caber junto com o título da seção.
+    ensureSpace(146);
     sectionTitle("Quantitativos por Camada", "Somente camadas com feição recortada dentro do imóvel.");
     const withData = layers.filter((l: any) => Number(l?.features || 0) > 0).slice(0, 24);
     if (withData.length === 0) {
@@ -661,21 +702,24 @@ export async function buildSimcarReportPdfBuffer(args: {
             "ok",
         );
     } else {
+        // Colunas dimensionadas para a área útil do Ofício (453 pt), não para os
+        // 511 pt da margem de 42 pt da v2 — senão a coluna de % vazava a folha.
         const colX = {
             name: margin + 10,
-            nature: margin + 196,
-            features: margin + 286,
-            area: margin + 356,
-            pct: margin + 436,
+            nature: margin + 186,
+            features: margin + 258,
+            area: margin + 312,
+            pct: margin + 382,
         };
+        const colW = { name: 172, nature: 68, features: 48, area: 64, pct: 58 };
         const drawHeader = (y: number) => {
             doc.rect(margin, y, contentW, 22).fill(colors.dark);
-            doc.font("Helvetica-Bold").fontSize(8).fillColor("#FFFFFF");
-            doc.text("Camada ambiental", colX.name, y + 7, { width: 180 });
-            doc.text("Natureza", colX.nature, y + 7, { width: 84 });
-            doc.text("Feições", colX.features, y + 7, { width: 62, align: "right" });
-            doc.text("Área (ha)", colX.area, y + 7, { width: 72, align: "right" });
-            doc.text("% imóvel", colX.pct, y + 7, { width: 64, align: "right" });
+            doc.font("Helvetica-Bold").fontSize(7.6).fillColor("#FFFFFF");
+            doc.text("Camada ambiental", colX.name, y + 7.5, { width: colW.name, lineBreak: false });
+            doc.text("Natureza", colX.nature, y + 7.5, { width: colW.nature, lineBreak: false });
+            doc.text("Feições", colX.features, y + 7.5, { width: colW.features, align: "right", lineBreak: false });
+            doc.text("Área (ha)", colX.area, y + 7.5, { width: colW.area, align: "right", lineBreak: false });
+            doc.text("% imóvel", colX.pct, y + 7.5, { width: colW.pct, align: "right", lineBreak: false });
             return y + 22;
         };
 
@@ -683,7 +727,7 @@ export async function buildSimcarReportPdfBuffer(args: {
         let currentY = drawHeader(doc.y);
 
         withData.forEach((layer: any, idx: number) => {
-            if (currentY + 21 > pageH - margin - 24) {
+            if (currentY + 21 > pageH - marginBottom) {
                 doc.y = currentY;
                 ensureSpace(60);
                 currentY = drawHeader(doc.y);
@@ -695,17 +739,17 @@ export async function buildSimcarReportPdfBuffer(args: {
 
             doc.rect(margin, currentY, contentW, 21).fillAndStroke(idx % 2 === 0 ? colors.bg : colors.white, colors.border);
             doc.rect(margin, currentY, 2.5, 21).fill(TONES[tone].fg);
-            doc.font("Helvetica").fontSize(8.2).fillColor(colors.darkText);
-            doc.text(reportSingleLineText(layer.name || "-", 40), colX.name, currentY + 6, { width: 180 });
-            doc.font("Helvetica-Bold").fontSize(7.4).fillColor(TONES[tone].fg);
-            doc.text(nature, colX.nature, currentY + 6.5, { width: 84 });
-            doc.font("Helvetica").fontSize(8.2).fillColor(colors.darkText);
-            doc.text(String(Number(layer.features || 0)), colX.features, currentY + 6, { width: 62, align: "right" });
-            doc.text(areaHa > 0 ? areaHa.toFixed(2) : "-", colX.area, currentY + 6, { width: 72, align: "right" });
+            doc.font("Helvetica").fontSize(8).fillColor(colors.darkText);
+            doc.text(reportSingleLineText(layer.name || "-", 34), colX.name, currentY + 6.5, { width: colW.name, lineBreak: false });
+            doc.font("Helvetica-Bold").fontSize(7.2).fillColor(TONES[tone].fg);
+            doc.text(nature, colX.nature, currentY + 7, { width: colW.nature, lineBreak: false });
+            doc.font("Helvetica").fontSize(8).fillColor(colors.darkText);
+            doc.text(String(Number(layer.features || 0)), colX.features, currentY + 6.5, { width: colW.features, align: "right", lineBreak: false });
+            doc.text(areaHa > 0 ? areaHa.toFixed(2) : "-", colX.area, currentY + 6.5, { width: colW.area, align: "right", lineBreak: false });
             doc.font(pctValue >= 25 ? "Helvetica-Bold" : "Helvetica").fillColor(
                 pctValue >= 25 ? TONES.warn.fg : colors.darkText,
             );
-            doc.text(pct, colX.pct, currentY + 6, { width: 64, align: "right" });
+            doc.text(pct, colX.pct, currentY + 6.5, { width: colW.pct, align: "right", lineBreak: false });
             currentY += 21;
         });
         doc.x = margin;
@@ -873,27 +917,14 @@ export async function buildSimcarReportPdfBuffer(args: {
         );
     }
 
-    /* ─── Rodapé ─────────────────────────────────────────────── */
+    /* ─── Rodapé do Ofício (endereço + página) ───────────────── */
 
+    // Só aqui se conhece o total de páginas, então o rodapé é carimbado num
+    // segundo passe — ele mora dentro da margem inferior, sem cobrir conteúdo.
     const totalPages = doc.bufferedPageRange().count;
     for (let i = 0; i < totalPages; i += 1) {
         doc.switchToPage(i);
-        // Escrever abaixo da margem inferior faz o pdfkit abrir uma página nova a
-        // cada chamada — era isso que enchia o laudo de páginas em branco no fim.
-        doc.page.margins.bottom = 0;
-        doc.moveTo(margin, pageH - 34).lineTo(pageW - margin, pageH - 34).strokeColor(PALETTE.border).lineWidth(0.5).stroke();
-        doc.font("Helvetica").fontSize(7.5).fillColor(PALETTE.lightText).text(
-            `GeoForest IA · ${SIMCAR_REPORT_VERSION} · revisão obrigatória por responsável técnico`,
-            margin,
-            pageH - 26,
-            { width: contentW / 2, align: "left" },
-        );
-        doc.font("Helvetica").fontSize(7.5).fillColor(PALETTE.lightText).text(
-            `Página ${i + 1} de ${totalPages}`,
-            margin + contentW / 2,
-            pageH - 26,
-            { width: contentW / 2, align: "right" },
-        );
+        timbrado.drawFooter(i + 1);
     }
 
     doc.end();

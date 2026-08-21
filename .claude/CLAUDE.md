@@ -163,9 +163,18 @@ não bug de lógica.
 
 ## Laudo PDF e janela temporal
 
-O laudo é o `simcar-report-v2` (`backend/simcar/report.ts` desenha;
+O laudo é o `simcar-report-v3` (`backend/simcar/report.ts` desenha;
 `backend/simcar/report-theme.ts` decide conteúdo e cor, e é onde ficam os testes).
 Amostra local sem rede: `npx tsx scripts/preview-laudo-pdf.ts /tmp/laudo.pdf --fase=acavn`.
+
+**O laudo sai no papel timbrado oficial da IMAP** — o MESMO PNG e as MESMAS
+margens/cabeçalho/rodapé que o sistema de acompanhamento de processos usa nos
+.docx de parecer (`frontend/utils/timbradoImap.ts` + `utils/parecer/oficioHeaderFooter.ts`).
+Geometria e desenho ficam em `backend/simcar/report-imap.ts`; o PNG em
+`backend/simcar/assets/timbrado_imap.png`. A área útil é a do Ofício (453 pt, não
+511 pt) — **qualquer coluna nova de tabela tem que caber nela**. Se o timbrado for
+atualizado no acompanhamento, copiar o PNG de novo para cá: os dois sistemas devem
+sair no mesmo papel.
 
 A janela de imagens nasce de dois marcos legais: **22/07/2008** (Lei 12.651/2012,
 art. 3º, IV) e **22/07/2003** (pousio — IN SEMA-MT 04/2023, art. 42 §6º). Por isso

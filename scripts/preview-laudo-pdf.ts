@@ -1,6 +1,6 @@
 /**
  * Gera um laudo PDF de amostra, sem rede e sem Firebase, para conferência visual
- * do layout (`simcar-report-v2`).
+ * do layout (`simcar-report-v3`, no papel timbrado da IMAP).
  *
  *   npx tsx scripts/preview-laudo-pdf.ts [saida.pdf] [--fase=acavn|pre2008|pos2008|acveg]
  *

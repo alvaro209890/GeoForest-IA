@@ -10,7 +10,9 @@
 /* ─── Paleta ─────────────────────────────────────────────────── */
 
 export const PALETTE = {
-    primary: "#059669",     // Emerald 600 — identidade GeoForest
+    // O laudo sai no papel timbrado da IMAP (report-imap.ts), então o verde de
+    // acento é o do Ofício (#008A07) — não o Emerald 600 da marca GeoForest.
+    primary: "#008A07",
     primaryLight: "#D1FAE5",
     primaryBg: "#ECFDF5",
     dark: "#0F172A",        // Slate 900
