@@ -179,6 +179,11 @@ import {
     type WmsSource,
 } from "./acervo-local";
 import {
+    calculateDynamicResolution as calculateSensorDynamicResolution,
+    expandBboxForContext,
+    sensorGroundResolutionM,
+} from "../analise-pos-recorte/wms-scenes";
+import {
     fetchWfsClipFeatures,
     fetchWfsIntersectsFeatures,
     fetchWfsBboxFeatures,
@@ -1189,42 +1194,46 @@ async function fetchWmsImageBufferOnce(
     width = 1200,
     height = 900,
     source: WmsSource = SEMA_SOURCE,
+    timeoutMsOverride?: number,
 ): Promise<Buffer> {
     const mapUrl = buildWmsGetMapUrl(layers, bbox, width, height, "image/png", "EPSG:4326", source);
     const controller = new AbortController();
-    const dynamicTimeout = calculateWmsTimeout(width, height);
+    const dynamicTimeout = Math.max(1_000, timeoutMsOverride ?? calculateWmsTimeout(width, height));
     const timeout = setTimeout(() => controller.abort(), dynamicTimeout);
-    const response = await fetch(mapUrl, { signal: controller.signal });
-    clearTimeout(timeout);
+    try {
+        const response = await fetch(mapUrl, { signal: controller.signal });
 
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`WMS error ${response.status}: ${text.slice(0, 200)}`);
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`WMS error ${response.status}: ${text.slice(0, 200)}`);
+        }
+
+        // Check Content-Type header
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("xml") || contentType.includes("html") || contentType.includes("text")) {
+            const text = await response.text();
+            throw new Error(`WMS retornou ${contentType} em vez de imagem: ${text.slice(0, 200)}`);
+        }
+
+        const arr = await response.arrayBuffer();
+        const buf = Buffer.from(arr);
+
+        // Validate buffer starts with PNG or JPEG magic bytes
+        if (buf.length < 4) {
+            throw new Error(`WMS retornou buffer muito pequeno (${buf.length} bytes)`);
+        }
+        const isPng = buf.subarray(0, 4).equals(PNG_MAGIC);
+        const isJpeg = buf.subarray(0, 3).equals(JPEG_MAGIC);
+        if (!isPng && !isJpeg) {
+            // Likely an XML/text error response with 200 status
+            const preview = buf.toString("utf8", 0, Math.min(200, buf.length));
+            throw new Error(`WMS retornou formato inválido (não é PNG/JPEG): ${preview.slice(0, 150)}`);
+        }
+
+        return buf;
+    } finally {
+        clearTimeout(timeout);
     }
-
-    // Check Content-Type header
-    const contentType = response.headers.get("content-type") || "";
-    if (contentType.includes("xml") || contentType.includes("html") || contentType.includes("text")) {
-        const text = await response.text();
-        throw new Error(`WMS retornou ${contentType} em vez de imagem: ${text.slice(0, 200)}`);
-    }
-
-    const arr = await response.arrayBuffer();
-    const buf = Buffer.from(arr);
-
-    // Validate buffer starts with PNG or JPEG magic bytes
-    if (buf.length < 4) {
-        throw new Error(`WMS retornou buffer muito pequeno (${buf.length} bytes)`);
-    }
-    const isPng = buf.subarray(0, 4).equals(PNG_MAGIC);
-    const isJpeg = buf.subarray(0, 3).equals(JPEG_MAGIC);
-    if (!isPng && !isJpeg) {
-        // Likely an XML/text error response with 200 status
-        const preview = buf.toString("utf8", 0, Math.min(200, buf.length));
-        throw new Error(`WMS retornou formato inválido (não é PNG/JPEG): ${preview.slice(0, 150)}`);
-    }
-
-    return buf;
 }
 
 function isRetryableWmsError(error: unknown): boolean {
@@ -1241,8 +1250,11 @@ function isRetryableWmsError(error: unknown): boolean {
     );
 }
 
-function buildWmsResolutionFallbacks(width: number, height: number): Array<[number, number]> {
-    const factors = [1, 0.85, 0.7, 0.55];
+function buildWmsResolutionFallbacks(
+    width: number,
+    height: number,
+    factors = [1, 0.85, 0.7, 0.55],
+): Array<[number, number]> {
     const seen = new Set<string>();
     const out: Array<[number, number]> = [];
     for (const factor of factors) {
@@ -1256,6 +1268,13 @@ function buildWmsResolutionFallbacks(width: number, height: number): Array<[numb
     return out;
 }
 
+type WmsFetchOptions = {
+    timeoutMs?: number;
+    maxDurationMs?: number;
+    retryAttempts?: number;
+    fallbackFactors?: number[];
+};
+
 /** Fetch WMS with retry and resolution fallback. Always returns at target width/height. */
 async function fetchWmsImageBuffer(
     layers: string[],
@@ -1263,21 +1282,35 @@ async function fetchWmsImageBuffer(
     width = 1200,
     height = 900,
     source: WmsSource = SEMA_SOURCE,
+    options: WmsFetchOptions = {},
 ): Promise<Buffer> {
-    const resolutions = buildWmsResolutionFallbacks(width, height);
+    const resolutions = buildWmsResolutionFallbacks(width, height, options.fallbackFactors);
+    const retryAttempts = Math.max(1, options.retryAttempts ?? WMS_FETCH_RETRY_ATTEMPTS);
+    const deadline = Number.isFinite(options.maxDurationMs) && (options.maxDurationMs || 0) > 0
+        ? Date.now() + Number(options.maxDurationMs)
+        : Number.POSITIVE_INFINITY;
     let lastError: unknown = null;
 
     for (const [tryW, tryH] of resolutions) {
-        for (let attempt = 1; attempt <= WMS_FETCH_RETRY_ATTEMPTS; attempt++) {
+        if (Date.now() >= deadline) break;
+        for (let attempt = 1; attempt <= retryAttempts; attempt++) {
+            const remainingMs = deadline - Date.now();
+            if (remainingMs <= 0) break;
             try {
-                const buf = await fetchWmsImageBufferOnce(layers, bbox, tryW, tryH, source);
+                const requestTimeout = Math.max(
+                    1,
+                    Math.min(options.timeoutMs ?? calculateWmsTimeout(tryW, tryH), remainingMs),
+                );
+                const buf = await fetchWmsImageBufferOnce(layers, bbox, tryW, tryH, source, requestTimeout);
                 if (tryW === width && tryH === height) return buf;
                 return await sharp(buf).resize(width, height, { fit: "fill" }).png().toBuffer();
             } catch (err) {
                 lastError = err;
                 const retryable = isRetryableWmsError(err);
-                if (retryable && attempt < WMS_FETCH_RETRY_ATTEMPTS) {
-                    await sleepMs(WMS_RETRY_BASE_DELAY_MS * attempt);
+                if (retryable && attempt < retryAttempts) {
+                    const delay = Math.min(WMS_RETRY_BASE_DELAY_MS * attempt, Math.max(0, deadline - Date.now()));
+                    if (delay <= 0) break;
+                    await sleepMs(delay);
                     continue;
                 }
                 break;
@@ -1322,10 +1355,28 @@ async function fetchSatelliteImage(
         ...semaLayers.map((layer) => ({ layer, source: SEMA_SOURCE })),
     ];
 
+    const isSpot = satelliteKey.toLowerCase().startsWith("spot");
+    const spotDeadline = isSpot ? Date.now() + 35_000 : Number.POSITIVE_INFINITY;
     let lastError = "unknown";
     for (const candidate of candidates) {
+        const remainingSpotMs = spotDeadline - Date.now();
+        if (remainingSpotMs <= 0) break;
         try {
-            const png = await fetchWmsImageBuffer([candidate.layer], bbox, width, height, candidate.source);
+            const png = await fetchWmsImageBuffer(
+                [candidate.layer],
+                bbox,
+                width,
+                height,
+                candidate.source,
+                isSpot
+                    ? {
+                        timeoutMs: 20_000,
+                        maxDurationMs: remainingSpotMs,
+                        retryAttempts: 1,
+                        fallbackFactors: [1, 0.6],
+                    }
+                    : undefined,
+            );
             if (candidate.source.id === "acervo") {
                 const { empty, ratio } = await isMostlyEmptyRender(png);
                 if (empty) {
@@ -2298,6 +2349,35 @@ function buildRenderBbox(
     maxAspectRatio = 2.5,
 ): [number, number, number, number] {
     return normalizeRenderBboxAspect(padBbox(bbox, paddingPercent), maxAspectRatio);
+}
+
+type SatelliteSceneFrame = {
+    bbox: [number, number, number, number];
+    width: number;
+    height: number;
+};
+
+/**
+ * O mosaico SPOT é muito mais pesado que as camadas Landsat. Para ele, usa-se
+ * somente a janela local da propriedade, com contexto limitado a 5 km, e não
+ * uma resolução artificialmente maior que a informação nativa do sensor.
+ */
+function buildSatelliteSceneFrame(
+    satelliteKey: string,
+    areaHa: number,
+    propertyBbox: [number, number, number, number],
+    defaultBbox: [number, number, number, number],
+    defaultWidth: number,
+    defaultHeight: number,
+): SatelliteSceneFrame {
+    if (!satelliteKey.toLowerCase().startsWith("spot")) {
+        return { bbox: defaultBbox, width: defaultWidth, height: defaultHeight };
+    }
+
+    const groundResolutionM = sensorGroundResolutionM("SPOT");
+    const bbox = expandBboxForContext(propertyBbox, groundResolutionM);
+    const { width, height } = calculateSensorDynamicResolution(areaHa, bbox, groundResolutionM);
+    return { bbox, width, height };
 }
 
 /** Build shared context block (property info + quantitative table). */
@@ -3611,6 +3691,7 @@ async function generateAuasSatelliteImages(
         throwIfClientDisconnected(res);
         const sat = SATELLITE_LAYERS[key];
         if (!sat) { step++; continue; }
+        const frame = buildSatelliteSceneFrame(key, areaHa, bbox!, paddedBbox, IMG_W, IMG_H);
 
         sendSSE(res, {
             type: "progress", step: "generating_images",
@@ -3618,7 +3699,7 @@ async function generateAuasSatelliteImages(
             message: `Baixando imagem ${sat.label} para AUAS...`,
         });
 
-        const resolved = await fetchSatelliteImage(key, sat, paddedBbox, IMG_W, IMG_H, "AUAS ANALYSIS");
+        const resolved = await fetchSatelliteImage(key, sat, frame.bbox, frame.width, frame.height, "AUAS ANALYSIS");
         throwIfClientDisconnected(res);
         const basePng = resolved?.png || null;
         const provenance = resolved?.provenance || "";
@@ -3653,7 +3734,7 @@ async function generateAuasSatelliteImages(
         // AUAS overlay when available; otherwise analyze full property for potential non-vectorized AUAS
         if (hasAuasLayer) {
             // View 1: AUAS outline with very light fill to preserve texture for visual reading
-            const outlineSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+            const outlineSvg = buildPolygonOverlaySvg(frame.width, frame.height, frame.bbox, propertyPolygon!, layerGeos, [
                 { name: "AUAS", stroke: "#FFFFFF", fill: "rgba(255, 255, 255, 0.05)", strokeWidth: 3.0 },
                 { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.00)", strokeWidth: 1.4 },
                 { name: "AREA_CONSOLIDADA", stroke: "#A855F7", fill: "rgba(168, 85, 247, 0.00)", strokeWidth: 1.4 },
@@ -3664,7 +3745,7 @@ async function generateAuasSatelliteImages(
             });
 
             // View 2: contextual overlays to improve discrimination between AC/AVN/AUAS
-            const contextSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+            const contextSvg = buildPolygonOverlaySvg(frame.width, frame.height, frame.bbox, propertyPolygon!, layerGeos, [
                 { name: "AUAS", stroke: "#FFFFFF", fill: "rgba(255, 255, 255, 0.20)", strokeWidth: 2.2 },
                 { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.14)", strokeWidth: 1.3 },
                 { name: "AREA_CONSOLIDADA", stroke: "#A855F7", fill: "rgba(168, 85, 247, 0.12)", strokeWidth: 1.3 },
@@ -3674,7 +3755,7 @@ async function generateAuasSatelliteImages(
                 caption: `${sat.label} — AUAS contexto` + (provenance ? ` · ${provenance}` : ""),
             });
         } else {
-            const propertySvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+            const propertySvg = buildPolygonOverlaySvg(frame.width, frame.height, frame.bbox, propertyPolygon!, layerGeos, [
                 { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.20)", strokeWidth: 1.8 },
             ]);
             images.push({
@@ -5048,13 +5129,15 @@ async function generateSatelliteImages(
     for (const key of validKeys) {
         throwIfClientDisconnected(res);
         const sat = SATELLITE_LAYERS[key];
+        if (!sat) { step++; continue; }
+        const frame = buildSatelliteSceneFrame(key, areaHa, bbox!, paddedBbox, IMG_W, IMG_H);
         sendSSE(res, {
             type: "progress", step: "generating_images",
             percent: 10 + Math.round((step / totalSteps) * 40),
             message: `Baixando imagem ${sat.label}...`,
         });
 
-        const resolved = await fetchSatelliteImage(key, sat, paddedBbox, IMG_W, IMG_H, "SIMCAR ANALYSIS");
+        const resolved = await fetchSatelliteImage(key, sat, frame.bbox, frame.width, frame.height, "SIMCAR ANALYSIS");
         throwIfClientDisconnected(res);
         const basePng = resolved?.png || null;
         const provenance = resolved?.provenance || "";
@@ -5101,7 +5184,7 @@ async function generateSatelliteImages(
             compositeLayers.push({ name: "ARL", stroke: "#00FF00", fill: "rgba(0,255,0,0.12)", strokeWidth: 2.5 }); // Neon Green
             compositeLayers.push({ name: "ARLREM", stroke: "#32CD32", fill: "rgba(50,205,50,0.12)", strokeWidth: 2.5 });
         }
-        const compositeSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, compositeLayers);
+        const compositeSvg = buildPolygonOverlaySvg(frame.width, frame.height, frame.bbox, propertyPolygon!, layerGeos, compositeLayers);
         const hasArl = layerGeos.has("ARL") || layerGeos.has("ARLREM");
         // ⚠️ A proveniência é SUFIXO, nunca prefixo: `selectPrincipalReportImages`
         // e `reduceImageSet` ordenam lendo o começo da legenda (SPOT, ano). Mexer
