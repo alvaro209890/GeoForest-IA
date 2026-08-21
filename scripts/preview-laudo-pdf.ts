@@ -2,7 +2,10 @@
  * Gera um laudo PDF de amostra, sem rede e sem Firebase, para conferência visual
  * do layout (`simcar-report-v3`, no papel timbrado da IMAP).
  *
- *   npx tsx scripts/preview-laudo-pdf.ts [saida.pdf] [--fase=acavn|pre2008|pos2008|acveg] [--docx]
+ *   npx tsx scripts/preview-laudo-pdf.ts [saida.pdf] [--fase=acavn|pre2008|pos2008|acveg] [--docx] [--vetorizado]
+ *
+ * `--vetorizado` simula a aba "Análise de vetorização" (ZIP enviado pelo RT em
+ * vez de recorte WFS) — muda a nota de origem dos vetores no laudo.
  *
  * Com `--docx`, gera também o .docx ao lado do .pdf (mesmo nome, outra
  * extensão) — é o formato editável do mesmo laudo.
@@ -167,13 +170,14 @@ const auasByFase: Record<string, { text: string; meta: any }> = {
 
 const auas = auasByFase[fase];
 
+const SOURCE_MODE = process.argv.includes("--vetorizado") ? "vectorized-analysis" : "auto-clip";
 const jobId = "9f2c41ab-7de0-4c1a-9b55-preview0001";
 const filename = "Fazenda Santa Clara — recorte SIMCAR (amostra)";
 
 const buffer = await buildSimcarReportPdfBuffer({
     jobId,
     filename,
-    sourceMode: "vectorized-analysis",
+    sourceMode: SOURCE_MODE,
     summary,
     analysisText: fase === "acavn" ? analysisText : analysisText,
     analysisMeta,
@@ -191,6 +195,7 @@ if (process.argv.includes("--docx")) {
     const docxBuffer = await buildSimcarReportDocxBuffer({
         jobId,
         filename,
+        sourceMode: SOURCE_MODE,
         summary,
         analysisText: fase === "acavn" ? analysisText : analysisText,
         analysisMeta,

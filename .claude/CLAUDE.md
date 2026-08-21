@@ -164,6 +164,25 @@ Terceiro, sobre a suíte: um teste que falha em `pnpm test` mas passa isolado é
 **timeout sob carga** (o default do vitest é 5 s e `processar-projeto.test.ts` leva ~108 s),
 não bug de lógica.
 
+## Aba "Análise de vetorização" (modo `vectorized-analysis`)
+
+Recebe o ZIP do modelo SIMCAR **já vetorizado** e roda a mesma análise de IA do
+pós-recorte, **sem consulta WFS** — o imóvel é reconstruído do ATP/AIR do próprio
+ZIP (`parseCachedContextFromOutputZip`). O cliente encadeia AC/AVN → AUAS sozinho
+e consolida um laudo único.
+
+- **Persiste no mesmo documento do recorte** (`users/<uid>/simcar_clips/<jobId>`),
+  por merge incremental. Testes em `vectorized-persistence.test.ts`.
+- **O laudo é gerado DUAS vezes por rodada** (fim do AC/AVN e fim do AUAS). É de
+  propósito: se o AUAS falhar, o laudo parcial é o que sobra. O órfão que isso
+  gerava no storage foi resolvido por `discardSupersededReportFiles`.
+- ⚠️ **`status: "completed"` é gravado já no import**, antes de a análise rodar.
+  O cliente compensa com `!hasVectorizedFinalReport`. Não confie nesse status
+  sozinho para saber se a análise terminou.
+- Validação completa e hipóteses já descartadas (AVN/ARL idênticas, área maior
+  que o imóvel): `docs/VALIDACAO_2026-08-21_ABA_VETORIZADA.md`. **Leia antes de
+  "consertar" área de camada** — o comportamento é o mesmo do modo recorte.
+
 ## Laudo (PDF + DOCX) e janela temporal
 
 O laudo sai em **dois formatos do mesmo conteúdo**: `simcar-report-v3` em PDF
@@ -174,8 +193,13 @@ ficam os testes — **mexa no tema, não nos renderizadores**, senão os formato
 divergem. O DOCX não traz anexo fotográfico nem o gráfico de barras (motivos no
 cabeçalho do módulo). Falha no DOCX não retém a entrega: o PDF vai assim mesmo.
 
-Amostra local sem rede, os dois de uma vez:
-`npx tsx scripts/preview-laudo-pdf.ts /tmp/laudo.pdf --fase=acavn --docx`.
+O laudo declara a **origem dos vetores** (`vectorSourceNote`): base da SEMA no
+modo recorte, ZIP do RT no modo vetorizado. Isso muda o que "divergência"
+significa e não pode sumir da peça.
+
+Amostra local sem rede, os dois formatos de uma vez:
+`npx tsx scripts/preview-laudo-pdf.ts /tmp/laudo.pdf --fase=acavn --docx`
+(some `--vetorizado` para simular a aba de vetorização).
 
 **O laudo sai no papel timbrado oficial da IMAP** — o MESMO PNG e as MESMAS
 margens/cabeçalho/rodapé que o sistema de acompanhamento de processos usa nos

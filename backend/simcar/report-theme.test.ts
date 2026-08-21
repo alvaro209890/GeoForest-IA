@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { POUSIO_PROMPT_RULE } from "../analise-pos-recorte/groq-vision-core";
 import {
     AC_VS_AUAS_GLOSSARY,
+    normalizeVectorSource,
+    vectorSourceNote,
     LEGAL_BASIS_LINES,
     POUSIO_MAX_YEARS,
     buildAcAvnFindings,
@@ -449,5 +451,38 @@ describe("regra do pousio quinquenal", () => {
 
     it("o prompt não repete a instrução antiga de nunca classificar como vegetação nativa", () => {
         expect(POUSIO_PROMPT_RULE).not.toMatch(/N[AÃ]O classifique pousio como vegeta/i);
+    });
+});
+
+describe("origem dos vetores (recorte × ZIP vetorizado)", () => {
+    /**
+     * A aba "Análise de vetorização" analisa o que o RT desenhou, não o que
+     * está publicado na SEMA. Sem essa distinção impressa, um "AC fora do
+     * shape" no laudo do modo vetorizado lê como divergência contra o cadastro
+     * vigente — quando é erro de desenho ainda em revisão.
+     */
+    it("reconhece o modo vetorizado e trata o resto como recorte", () => {
+        expect(normalizeVectorSource("vectorized-analysis")).toBe("vectorized-analysis");
+        expect(normalizeVectorSource("auto-clip")).toBe("auto-clip");
+        expect(normalizeVectorSource("")).toBe("auto-clip");
+        expect(normalizeVectorSource(undefined)).toBe("auto-clip");
+        expect(normalizeVectorSource("qualquer-coisa")).toBe("auto-clip");
+    });
+
+    it("no modo vetorizado, diz que os vetores são do RT e que não houve recorte WFS", () => {
+        const nota = vectorSourceNote("vectorized-analysis");
+        expect(nota.label).toContain("ZIP vetorizado");
+        expect(nota.detail).toContain("não houve recorte WFS");
+        expect(nota.detail).toContain("vetorização em revisão");
+    });
+
+    it("no modo recorte, diz que os vetores vieram da base estadual", () => {
+        const nota = vectorSourceNote("auto-clip");
+        expect(nota.label).toContain("base da SEMA-MT");
+        expect(nota.detail).toContain("WFS estadual");
+    });
+
+    it("as duas notas são distintas — senão o box não informa nada", () => {
+        expect(vectorSourceNote("vectorized-analysis").label).not.toBe(vectorSourceNote("auto-clip").label);
     });
 });

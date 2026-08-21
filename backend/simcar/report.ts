@@ -19,8 +19,8 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import PDFDocument from "pdfkit";
-import { readPersistedSimcarClipForUid, hydrateCachedJob, persistSimcarClipArtifacts } from "./hydration";
-import { uploadRawBufferToCloudinary } from "./cloudinary";
+import { readPersistedSimcarClipForUid, hydrateCachedJob, persistSimcarClipArtifacts, storagePathBelongsToUid } from "./hydration";
+import { deleteFromCloudinary, uploadRawBufferToCloudinary } from "./cloudinary";
 import { EXPORT_EXCLUDED_LAYERS, isExcludedFromExport, toPublicApiUrl } from "./constants";
 import type { CachedJob } from "./types";
 import {
@@ -38,6 +38,7 @@ import {
     parseMarkdownBlocks,
     reportKindSectionTitle,
     splitLongParagraph,
+    vectorSourceNote,
     type ExecutiveBullet,
     type Finding,
     type MarkdownBlock,
@@ -705,6 +706,15 @@ export async function buildSimcarReportPdfBuffer(args: {
 
     // O cabeçalho preto da tabela precisa caber junto com o título da seção.
     ensureSpace(146);
+    {
+        // O leitor precisa saber se os polígonos são da base da SEMA ou da
+        // vetorização que o próprio RT enviou — muda o que "divergência" quer
+        // dizer. Ver `vectorSourceNote` em report-theme.ts.
+        const origem = vectorSourceNote(args.sourceMode);
+        ensureSpace(58);
+        calloutBox(origem.label, [origem.detail], "neutral", { compact: true });
+    }
+
     sectionTitle("Quantitativos por Camada", "Somente camadas com feição recortada dentro do imóvel.");
     const withData = layers.filter((l: any) => Number(l?.features || 0) > 0).slice(0, 24);
     if (withData.length === 0) {
@@ -954,6 +964,36 @@ export async function buildSimcarReportPdfBuffer(args: {
     return done;
 }
 
+/**
+ * Remove do storage o PDF/DOCX da geração anterior deste mesmo job.
+ *
+ * Silencioso de propósito: falhar em apagar um arquivo velho não pode derrubar
+ * a entrega do laudo novo, que já está pronto e persistido.
+ */
+async function discardSupersededReportFiles(
+    uid: string,
+    persisted: any,
+    atuais: { reportPdfUrl: string; reportDocxUrl: string },
+): Promise<void> {
+    const anteriores = [
+        String(persisted?.reportPdfUrl || ""),
+        String(persisted?.files?.reportPdfUrl || ""),
+        String(persisted?.reportDocxUrl || ""),
+        String(persisted?.files?.reportDocxUrl || ""),
+    ];
+    const manter = new Set([atuais.reportPdfUrl, atuais.reportDocxUrl].filter(Boolean));
+    const alvos = Array.from(new Set(anteriores.filter(Boolean)))
+        .filter((url) => !manter.has(url))
+        .filter((url) => storagePathBelongsToUid(uid, url));
+    for (const url of alvos) {
+        try {
+            await deleteFromCloudinary(url, "raw");
+        } catch (err: any) {
+            console.warn("[SIMCAR REPORT] não deu para apagar laudo anterior:", err?.message || err);
+        }
+    }
+}
+
 export async function generateAndPersistSimcarReport(args: {
     uid: string;
     jobId: string;
@@ -1063,6 +1103,12 @@ export async function generateAndPersistSimcarReport(args: {
                 }
                 : {}),
         };
+        // Cada geração sobe um arquivo novo (o nome leva `Date.now()`), então sem
+        // isto o laudo anterior fica órfão no storage para sempre — e o fluxo
+        // vetorizado gera DUAS vezes por rodada (uma ao fim do AC/AVN, outra ao
+        // fim do AUAS), o que dobrava o lixo a cada análise.
+        await discardSupersededReportFiles(uid, persisted, { reportPdfUrl, reportDocxUrl });
+
         await persistSimcarClipArtifacts({
             uid,
             jobId,

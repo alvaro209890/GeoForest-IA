@@ -111,6 +111,40 @@ export const LEGAL_BASIS_LINES: string[] = [
     "Nota Técnica 001/2017/CGMA/SRMA/SEMA-MT (revisada em 2018) — metodologia oficial de interpretação de imagem para delimitar área consolidada, com base SPOT 2008 (2,5 m).",
 ];
 
+/* ─── Origem dos vetores ─────────────────────────────────────── */
+
+/**
+ * De onde vieram as geometrias do laudo.
+ *
+ * Isto muda o que os números significam e precisa estar escrito na peça:
+ * - `auto-clip` — recorte feito contra o WFS da SEMA. Os polígonos de AC, AVN e
+ *   AUAS são os que **estão publicados** na base estadual.
+ * - `vectorized-analysis` — ZIP do modelo já vetorizado, enviado pelo usuário.
+ *   Os polígonos são os que **o responsável técnico desenhou** e ainda não
+ *   necessariamente foram submetidos. Um "AC fora do shape" aqui aponta erro na
+ *   vetorização em revisão, não divergência contra o cadastro vigente.
+ */
+export type VectorSource = "auto-clip" | "vectorized-analysis";
+
+export function normalizeVectorSource(value: unknown): VectorSource {
+    return String(value || "").trim() === "vectorized-analysis" ? "vectorized-analysis" : "auto-clip";
+}
+
+export function vectorSourceNote(value: unknown): { label: string; detail: string } {
+    if (normalizeVectorSource(value) === "vectorized-analysis") {
+        return {
+            label: "Origem dos vetores: ZIP vetorizado enviado pelo responsável técnico",
+            detail:
+                "As camadas analisadas vieram do ZIP do modelo SIMCAR enviado, não da base estadual — não houve recorte WFS. Os quantitativos refletem a vetorização em revisão; divergências apontadas são de desenho, não do cadastro publicado na SEMA.",
+        };
+    }
+    return {
+        label: "Origem dos vetores: recorte automático contra a base da SEMA-MT",
+        detail:
+            "As camadas ambientais foram recortadas do WFS estadual para o perímetro do imóvel; os quantitativos refletem o que está publicado na base.",
+    };
+}
+
 /* ─── Identificação da etapa ─────────────────────────────────── */
 
 export type ReportKind =

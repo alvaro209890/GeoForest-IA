@@ -58,6 +58,7 @@ import {
     parseMarkdownBlocks,
     reportKindSectionTitle,
     splitLongParagraph,
+    vectorSourceNote,
     type Finding,
     type Tone,
 } from "./report-theme";
@@ -505,7 +506,12 @@ export async function buildSimcarReportDocxBuffer(args: {
 
     /* ─── Quantitativos por camada ───────────────────────────── */
 
-    body.push(...sectionHeading("Quantitativos por Camada", "Somente camadas com feição recortada dentro do imóvel."));
+    // Mesma nota de origem do PDF: base da SEMA x ZIP vetorizado do RT.
+    const origem = vectorSourceNote(args.sourceMode);
+    body.push(
+        calloutTable(origem.label, [origem.detail], "neutral"),
+        ...sectionHeading("Quantitativos por Camada", "Somente camadas com feição recortada dentro do imóvel."),
+    );
     const withData = layers.filter((l: any) => Number(l?.features || 0) > 0).slice(0, 40);
     if (withData.length === 0) {
         body.push(
