@@ -880,7 +880,7 @@ function buildSatLayer(sensor: string, year: number, wmsPrefix: string, labelPre
  * Buracos reais da série estadual: **2001 e 2002 não têm Landsat 5** (2002 é
  * coberto por Landsat 7) e **2012 não tem Landsat** (é ResourceSat).
  */
-const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]; label: string; year: number }> = {
+export const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]; label: string; year: number }> = {
     // SPOT (high-res 2.5m) — base oficial do marco de 2008 (Nota Técnica 001/2017 SEMA-MT)
     spot_2008: { wmsLayer: SPOT_LAYER, label: "SPOT 2008", year: 2008 },
     // Landsat 5 (30m) — 1984-2011 (sem 2001 e 2002 no acervo da SEMA)
@@ -1342,7 +1342,7 @@ export type ResolvedSatelliteImage = {
  * branco. Por isso `isMostlyEmptyRender` roda antes de aceitar, e só para o
  * acervo — o mosaico estadual é contínuo e não tem esse modo de falha.
  */
-async function fetchSatelliteImage(
+export async function fetchSatelliteImage(
     satelliteKey: string,
     sat: { wmsLayer: string; wmsAliases?: string[]; label: string; year: number },
     bbox: [number, number, number, number],
@@ -1465,7 +1465,7 @@ function geometriesToSvgPaths(
 }
 
 /** Build a complete SVG overlay with all polygon layers. */
-function buildPolygonOverlaySvg(
+export function buildPolygonOverlaySvg(
     width: number,
     height: number,
     bbox: [number, number, number, number],
@@ -2734,6 +2734,17 @@ export type AcAvnAnalysisMeta = {
     };
     cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
     auasContext?: AcAvnAuasContext | null;
+    /** Conferência geométrica do achado "uso dentro da AVN": AC∩AVN e
+     * AVN∩reservatório medidos no shape do recorte. Se a IA diz SIM mas aqui
+     * dá 0, o achado visual é falso positivo (reservatório/água) — o laudo
+     * rebaixa para INCONCLUSIVO com nota.  */
+    geometryCrossCheck?: {
+        acAvnOverlapHa: number;
+        avnAreaHa: number;
+        acAreaHa: number;
+        reservatorioOverlapAvnHa: number;
+        hasReservatorioLayer: boolean;
+    } | null;
 };
 
 export type AcAvnAnalysisResult = {
@@ -3522,6 +3533,44 @@ function normalizeAcAvnAnalysisOutput(
             cloudWarnings: options.cloudWarnings || [],
             auasContext,
         },
+    };
+}
+
+function computeAcAvnGeometryCrossCheck(job: CachedJob): AcAvnAnalysisMeta["geometryCrossCheck"] {
+    const acFeature = mergeLayerGeometriesAsFeature(job.clippedGeometries, "AREA_CONSOLIDADA");
+    const avnFeature = mergeLayerGeometriesAsFeature(job.clippedGeometries, "AVN");
+    if (!acFeature || !avnFeature) return null;
+    const acAreaHa = turfArea(acFeature) / 10000;
+    const avnAreaHa = turfArea(avnFeature) / 10000;
+    let acAvnOverlapHa = 0;
+    try {
+        const overlap = turfIntersect(
+            turfFeatureCollection([acFeature, avnFeature]) as FeatureCollection<Polygon | MultiPolygon>,
+        ) as Feature<Polygon | MultiPolygon> | null;
+        if (overlap) acAvnOverlapHa = turfArea(overlap) / 10000;
+    } catch {
+        acAvnOverlapHa = 0;
+    }
+    let reservatorioOverlapAvnHa = 0;
+    let hasReservatorioLayer = false;
+    const reservFeature = mergeLayerGeometriesAsFeature(job.clippedGeometries, "RESERVATORIO_ARTIFICIAL");
+    if (reservFeature) {
+        hasReservatorioLayer = true;
+        try {
+            const overlap = turfIntersect(
+                turfFeatureCollection([reservFeature, avnFeature]) as FeatureCollection<Polygon | MultiPolygon>,
+            ) as Feature<Polygon | MultiPolygon> | null;
+            if (overlap) reservatorioOverlapAvnHa = turfArea(overlap) / 10000;
+        } catch {
+            reservatorioOverlapAvnHa = 0;
+        }
+    }
+    return {
+        acAvnOverlapHa: Number(acAvnOverlapHa.toFixed(4)),
+        avnAreaHa: Number(avnAreaHa.toFixed(4)),
+        acAreaHa: Number(acAreaHa.toFixed(4)),
+        reservatorioOverlapAvnHa: Number(reservatorioOverlapAvnHa.toFixed(4)),
+        hasReservatorioLayer,
     };
 }
 
@@ -5484,6 +5533,42 @@ export async function runAcAvnSatelliteAnalysis(
         cloudWarnings,
         auasContext: acAvnAuasContext,
     });
+
+    // ─── Conferência geométrica do achado AVN ────────────────────────────────
+    // A visão pode confundir reservatório/água com "uso consolidado dentro da
+    // AVN" (falso positivo). Medimos AC∩AVN e AVN∩reservatório no shape real:
+    // se a IA diz SIM mas não há sobreposição geométrica, o achado é rebaixado
+    // para INCONCLUSIVO com nota explicativa — e o destaque não entra.
+    const geometryCrossCheck = computeAcAvnGeometryCrossCheck(job);
+    if (geometryCrossCheck) {
+        normalizedAcAvn.meta.geometryCrossCheck = geometryCrossCheck;
+        const avnVerdict = normalizedAcAvn.meta.globalVerdict?.avnDentroShapeAntropizado;
+        const noGeometricOverlap =
+            geometryCrossCheck.acAvnOverlapHa <= 0.0001 && geometryCrossCheck.avnAreaHa > 0.0001;
+        if (avnVerdict === "SIM" && noGeometricOverlap) {
+            console.warn(
+                "[SIMCAR ANALYSIS] Achado visual AVN sem suporte geométrico (AC∩AVN = 0). Rebaixando para INCONCLUSIVO.",
+            );
+            normalizedAcAvn.meta.globalVerdict.avnDentroShapeAntropizado = "INCONCLUSIVO";
+            const reservNote = geometryCrossCheck.hasReservatorioLayer && geometryCrossCheck.reservatorioOverlapAvnHa > 0.0001
+                ? `Há ${geometryCrossCheck.reservatorioOverlapAvnHa.toFixed(4)} ha de reservatório artificial sobreposto à AVN — a feição apontada como uso pode ser reservatório/água.`
+                : "A área apontada como uso pode ser reservatório artificial, lâmina d'água ou sombra de relevo.";
+            normalizedAcAvn.text += [
+                "",
+                "## Conferência Geométrica do Achado AVN",
+                `- Interseção AC∩AVN no shape do recorte: ${geometryCrossCheck.acAvnOverlapHa.toFixed(4)} ha.`,
+                `- AVN total: ${geometryCrossCheck.avnAreaHa.toFixed(4)} ha | AC total: ${geometryCrossCheck.acAreaHa.toFixed(4)} ha.`,
+                `- ${reservNote}`,
+                "- Veredito visual rebaixado para INCONCLUSIVO: sem suporte geométrico de sobreposição AC∩AVN; revisão manual do setor recomendada.",
+            ].join("\n");
+            sendSSE(res, {
+                type: "progress",
+                step: "finalizing",
+                percent: 97,
+                message: "Conferência geométrica: achado visual AVN sem suporte no shape — rebaixado para inconclusivo.",
+            });
+        }
+    }
 
     // ─── Destaque do achado "área consolidada dentro da AVN" ────────────────
     // Quando a IA confirma o achado (avnDentroShapeAntropizado = SIM), gera uma

@@ -162,6 +162,17 @@ export type AcAvnAnalysisMeta = {
     };
     cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
     auasContext?: AcAvnAuasContext | null;
+    /** Conferência geométrica do achado "uso dentro da AVN": interseção real
+     * AC∩AVN e AVN∩reservatório medidas no shape do recorte. Quando a IA diz
+     * SIM mas aqui dá 0, o achado visual precisa de revisão (tipicamente
+     * confusão com reservatório/água) — o laudo declara isso explicitamente. */
+    geometryCrossCheck?: {
+        acAvnOverlapHa: number;
+        avnAreaHa: number;
+        acAreaHa: number;
+        reservatorioOverlapAvnHa: number;
+        hasReservatorioLayer: boolean;
+    } | null;
 };
 
 export type AcAvnAnalysisResult = {
