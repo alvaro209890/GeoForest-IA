@@ -38,6 +38,7 @@ import {
     parseMarkdownBlocks,
     reportKindSectionTitle,
     splitLongParagraph,
+    imageSourceNote,
     vectorSourceNote,
     type ExecutiveBullet,
     type Finding,
@@ -754,6 +755,16 @@ export async function buildSimcarReportPdfBuffer(args: {
         const origem = vectorSourceNote(args.sourceMode);
         ensureSpace(58);
         calloutBox(origem.label, [origem.detail], "neutral", { compact: true });
+
+        // Idem para as cenas: acervo da IMAP, mosaico da SEMA, ou os dois no
+        // mesmo laudo. Ver imageSourceNote em report-theme.ts.
+        const origemImagens = imageSourceNote(
+            [...args.analysisImages, ...args.auasImages].map((img) => String(img?.caption || "")),
+        );
+        if (origemImagens) {
+            ensureSpace(58);
+            calloutBox(origemImagens.label, [origemImagens.detail], "neutral", { compact: true });
+        }
     }
 
     sectionTitle("Quantitativos por Camada", "Somente camadas com feição recortada dentro do imóvel.");
@@ -1103,6 +1114,14 @@ export async function generateAndPersistSimcarReport(args: {
         if (!analysisText && !auasText) {
             throw new Error("Nenhuma análise IA encontrada para gerar o PDF.");
         }
+        // Uma resolução só para os dois formatos: o DOCX não desenha as figuras,
+        // mas declara a origem das cenas a partir das mesmas legendas.
+        const analysisImages = args.analysisImages?.length
+            ? args.analysisImages
+            : normalizeReportImages(persisted.analysisImages);
+        const auasImages = args.auasImages?.length
+            ? args.auasImages
+            : normalizeReportImages(persisted.auasAnalysisImages);
         const reportFilename = `SIMCAR_Laudo_Tecnico_${jobId.slice(0, 8)}.pdf`;
         const pdfBuffer = await buildSimcarReportPdfBuffer({
             jobId,
@@ -1112,10 +1131,10 @@ export async function generateAndPersistSimcarReport(args: {
             job,
             analysisText,
             analysisMeta: args.analysisMeta || persisted.analysisMeta,
-            analysisImages: args.analysisImages?.length ? args.analysisImages : normalizeReportImages(persisted.analysisImages),
+            analysisImages,
             auasText,
             auasMeta: args.auasMeta || persisted.auasMeta,
-            auasImages: args.auasImages?.length ? args.auasImages : normalizeReportImages(persisted.auasAnalysisImages),
+            auasImages,
         });
         const generatedAt = new Date().toISOString();
         const reportPdfUrl = await uploadRawBufferToCloudinary(
@@ -1140,6 +1159,8 @@ export async function generateAndPersistSimcarReport(args: {
                 analysisMeta: args.analysisMeta || persisted.analysisMeta,
                 auasText,
                 auasMeta: args.auasMeta || persisted.auasMeta,
+                analysisImages,
+                auasImages,
             });
             reportDocxUrl = await uploadRawBufferToCloudinary(
                 docxBuffer,

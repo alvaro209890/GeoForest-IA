@@ -58,6 +58,7 @@ import {
     parseMarkdownBlocks,
     reportKindSectionTitle,
     splitLongParagraph,
+    imageSourceNote,
     vectorSourceNote,
     type Finding,
     type Tone,
@@ -299,6 +300,10 @@ export async function buildSimcarReportDocxBuffer(args: {
     analysisMeta?: any;
     auasText?: string;
     auasMeta?: any;
+    /** Só as legendas interessam aqui: o DOCX não traz anexo fotográfico,
+     *  mas precisa declarar de onde vieram as cenas que a análise usou. */
+    analysisImages?: Array<{ caption?: string }>;
+    auasImages?: Array<{ caption?: string }>;
 }): Promise<Buffer> {
     const summary = args.summary || {};
 
@@ -508,8 +513,13 @@ export async function buildSimcarReportDocxBuffer(args: {
 
     // Mesma nota de origem do PDF: base da SEMA x ZIP vetorizado do RT.
     const origem = vectorSourceNote(args.sourceMode);
+    const origemImagens = imageSourceNote([
+        ...(args.analysisImages || []).map((img) => String(img?.caption || "")),
+        ...(args.auasImages || []).map((img) => String(img?.caption || "")),
+    ]);
     body.push(
         calloutTable(origem.label, [origem.detail], "neutral"),
+        ...(origemImagens ? [calloutTable(origemImagens.label, [origemImagens.detail], "neutral")] : []),
         ...sectionHeading("Quantitativos por Camada", "Somente camadas com feição recortada dentro do imóvel."),
     );
     const withData = layers.filter((l: any) => Number(l?.features || 0) > 0).slice(0, 40);

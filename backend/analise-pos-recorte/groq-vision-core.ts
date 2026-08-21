@@ -34,6 +34,34 @@ export const FALSE_COLOR_PROMPT_NOTE =
   "solo claro).";
 
 /**
+ * Aviso de serie com fontes mistas.
+ *
+ * Desde 21/08/2026 a serie AC/AVN pode misturar duas origens no mesmo laudo:
+ * cena nativa do acervo da IMAP (GeoServer da casa) nos anos em que existe, e
+ * mosaico estadual da SEMA nos anos em que nao existe. As duas sao falsa-cor,
+ * mas tem realce, data de passagem e nitidez diferentes.
+ *
+ * Sem este aviso o modelo le a mudanca de aparencia ENTRE FONTES como mudanca
+ * no chao -- um falso positivo de conversao criado pela infraestrutura, no ano
+ * exato em que a fonte troca. Como quem classifica AC x AVN e o ano da ultima
+ * atividade visivel, esse falso positivo desloca a classificacao inteira.
+ *
+ * A legenda de cada figura declara a origem (`describeSceneProvenance`), entao
+ * o modelo tem como saber onde a troca acontece.
+ */
+export const MIXED_SOURCE_PROMPT_NOTE =
+  "ORIGEM DAS CENAS: a serie pode misturar duas fontes, e a legenda de cada imagem declara qual. " +
+  "'acervo IMAP' = cena Landsat nativa, com data de passagem no rotulo (ex.: 'cena 20/07/2008, " +
+  "orbita/ponto 224/069'). 'mosaico SEMA-MT' = mosaico estadual do ano, sem data exata e " +
+  "reamostrado (menos nitido).\n" +
+  "As duas fontes tem REALCE DE COR E NITIDEZ DIFERENTES. Diferenca de brilho, saturacao, " +
+  "contraste ou definicao de borda entre imagens de fontes distintas e artefato de " +
+  "processamento -- NUNCA prova de mudanca no uso do solo. So conclua que houve conversao " +
+  "quando a GEOMETRIA mudar: talhao novo, limite de desmate que avanca, estrada ou aceiro que " +
+  "aparece. Ao comparar dois anos de fontes diferentes, diga explicitamente que a comparacao e " +
+  "entre fontes distintas e baixe a confianca.";
+
+/**
  * Glossario AC x AUAS para os prompts.
  *
  * AC e AUAS descrevem o MESMO estado do terreno (solo sem vegetacao nativa) e

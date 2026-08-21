@@ -51,6 +51,7 @@ npx firebase deploy --only hosting   # site único: ia-florestal
 | `backend/auth.ts` | requireAuth middleware (Firebase token verification) |
 | `backend/simcar-clip.ts` | SIMCAR Clip module (shapefile, WFS, análise de imagens via Groq Vision) |
 | `backend/simcar/report-theme.ts` | **Conteúdo e cor do laudo** — fonte única dos dois formatos; é aqui que se mexe no texto |
+| `backend/simcar/acervo-local.ts` | Landsat/SPOT do GeoServer da casa no laudo; catálogo `config/acervo-landsat.json` (cenas deslocadas vão `descartado`) |
 | `backend/simcar/report.ts` / `report-docx.ts` | Renderizadores do laudo (PDF e Word). Só desenham |
 | `backend/simcar/constants.ts` | `TEMPLATE_LAYERS` (28) e `EXPORT_EXCLUDED_LAYERS` (fora de tudo que é entregue) |
 | `backend/simcar-lotes/` | Aba "Lotes SIMCAR": recibo do CAR → ZIP com pasta por lote (ver `docs/SIMCAR_LOTES.md`) |

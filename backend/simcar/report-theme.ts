@@ -145,6 +145,64 @@ export function vectorSourceNote(value: unknown): { label: string; detail: strin
     };
 }
 
+/* ─── Origem das imagens ─────────────────────────────────────── */
+
+/** Marca que `describeSceneProvenance` grava na legenda de cada figura. */
+const ACERVO_CAPTION_MARK = "acervo IMAP";
+const SEMA_CAPTION_MARK = "mosaico SEMA-MT";
+
+/**
+ * De onde vieram as imagens do laudo, lido das próprias legendas.
+ *
+ * Desde 21/08/2026 a série pode misturar cena nativa do acervo da IMAP (quando
+ * existe para aquele ano e órbita) com o mosaico estadual da SEMA (quando não
+ * existe). Isso **precisa** estar escrito na peça por dois motivos:
+ *
+ * 1. A cena do acervo tem data de passagem; o mosaico estadual não. Um laudo
+ *    que cita "cena de 20/07/2008" e outro que cita "mosaico 2008" não têm o
+ *    mesmo peso probatório, e o leitor tem direito de saber qual está lendo.
+ * 2. Fontes diferentes têm realce e nitidez diferentes. Quem confere o laudo
+ *    precisa saber que a mudança de aparência no ano da troca é de
+ *    processamento, não do chão — é a mesma ressalva que vai no prompt da IA
+ *    (`MIXED_SOURCE_PROMPT_NOTE`).
+ *
+ * Laudo antigo, gerado antes da proveniência existir, não tem nenhuma das duas
+ * marcas: devolve `null` e nenhum quadro é impresso.
+ */
+export function imageSourceNote(captions: readonly string[]): { label: string; detail: string } | null {
+    const textos = (captions || []).map((item) => String(item || ""));
+    const temAcervo = textos.some((texto) => texto.includes(ACERVO_CAPTION_MARK));
+    const temSema = textos.some((texto) => texto.includes(SEMA_CAPTION_MARK));
+
+    if (temAcervo && temSema) {
+        return {
+            label: "Origem das imagens: séries mistas (acervo IMAP + mosaico SEMA-MT)",
+            detail:
+                "Parte das cenas é do acervo próprio da IMAP, com data de passagem declarada na legenda de cada figura; "
+                + "os anos sem cena própria foram cobertos pelo mosaico estadual da SEMA-MT, que não tem data exata e é reamostrado. "
+                + "As duas fontes têm realce e nitidez distintos: diferença de brilho ou definição entre figuras de fontes "
+                + "diferentes é artefato de processamento, não evidência de alteração no uso do solo.",
+        };
+    }
+    if (temAcervo) {
+        return {
+            label: "Origem das imagens: acervo próprio da IMAP",
+            detail:
+                "As cenas são imagens nativas do acervo da IMAP, com data de passagem e órbita/ponto declarados na legenda "
+                + "de cada figura — e não mosaicos anuais de data indefinida.",
+        };
+    }
+    if (temSema) {
+        return {
+            label: "Origem das imagens: mosaicos estaduais da SEMA-MT",
+            detail:
+                "As cenas são os mosaicos anuais publicados pela SEMA-MT. O mosaico agrega passagens de datas distintas "
+                + "dentro do ano, de modo que a data exata de cada trecho da cena não é determinável.",
+        };
+    }
+    return null;
+}
+
 /* ─── Identificação da etapa ─────────────────────────────────── */
 
 export type ReportKind =

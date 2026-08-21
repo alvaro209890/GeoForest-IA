@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { POUSIO_PROMPT_RULE } from "../analise-pos-recorte/groq-vision-core";
 import {
     AC_VS_AUAS_GLOSSARY,
+    imageSourceNote,
     normalizeVectorSource,
     vectorSourceNote,
     LEGAL_BASIS_LINES,
@@ -484,5 +485,45 @@ describe("origem dos vetores (recorte × ZIP vetorizado)", () => {
 
     it("as duas notas são distintas — senão o box não informa nada", () => {
         expect(vectorSourceNote("vectorized-analysis").label).not.toBe(vectorSourceNote("auto-clip").label);
+    });
+});
+
+/**
+ * Origem das imagens no laudo (21/08/2026).
+ *
+ * A série pode misturar cena nativa do acervo da IMAP com o mosaico estadual da
+ * SEMA. Quem lê o laudo precisa saber qual figura tem data de passagem e qual
+ * não tem — e que diferença de aparência entre fontes é processamento, não chão.
+ */
+describe("imageSourceNote", () => {
+    const ACERVO = "Landsat 5 (2008) — Visão Geral · cena 20/07/2008, órbita/ponto 224/069, acervo IMAP";
+    const SEMA = "Landsat 5 (2005) — Visão Geral · mosaico SEMA-MT";
+
+    it("série mista avisa que a diferença de aparência é de processamento", () => {
+        const nota = imageSourceNote([ACERVO, SEMA]);
+        expect(nota?.label).toContain("mistas");
+        expect(nota?.detail).toMatch(/artefato de processamento/i);
+        expect(nota?.detail).toMatch(/não evidência de alteração no uso do solo/i);
+    });
+
+    it("só acervo destaca que cada figura tem data de passagem", () => {
+        const nota = imageSourceNote([ACERVO]);
+        expect(nota?.label).toContain("acervo próprio da IMAP");
+        expect(nota?.detail).toMatch(/data de passagem/i);
+    });
+
+    it("só SEMA registra que o mosaico não tem data determinável", () => {
+        const nota = imageSourceNote([SEMA]);
+        expect(nota?.label).toContain("SEMA-MT");
+        expect(nota?.detail).toMatch(/não é determinável/i);
+    });
+
+    it("laudo antigo, sem proveniência na legenda, não imprime quadro nenhum", () => {
+        expect(imageSourceNote(["Landsat 5 (2003) — Visão Geral (AC + AVN + AUAS)"])).toBeNull();
+        expect(imageSourceNote([])).toBeNull();
+    });
+
+    it("legenda vazia ou nula não quebra", () => {
+        expect(imageSourceNote(["", undefined as unknown as string])).toBeNull();
     });
 });

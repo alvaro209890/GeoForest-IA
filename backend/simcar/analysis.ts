@@ -37,7 +37,7 @@ import type {
 import { fileURLToPath } from "url";
 
 // Internal modules
-import { AC_AUAS_PROMPT_GLOSSARY, FALSE_COLOR_PROMPT_NOTE, POUSIO_PROMPT_RULE } from "../analise-pos-recorte/groq-vision-core";
+import { AC_AUAS_PROMPT_GLOSSARY, FALSE_COLOR_PROMPT_NOTE, MIXED_SOURCE_PROMPT_NOTE, POUSIO_PROMPT_RULE } from "../analise-pos-recorte/groq-vision-core";
 import { extractZipEntries, detectUtmProj, reprojectBbox, resolveShapefileCrs } from "../geo-utils";
 import {
     buildWfsUrl,
@@ -170,6 +170,14 @@ import {
 import type { AiImage } from "./types";
 import { fetchCarBoundaryByNumber } from "./car-lookup";
 import { SEMA_WMS_AUTHKEY, SEMA_WMS_BASE, toPublicApiUrl } from "./constants";
+import {
+    acervoCandidates,
+    describeSceneProvenance,
+    isMostlyEmptyRender,
+    SEMA_SOURCE,
+    type WmsCandidate,
+    type WmsSource,
+} from "./acervo-local";
 import {
     fetchWfsClipFeatures,
     fetchWfsIntersectsFeatures,
@@ -1150,8 +1158,10 @@ function buildWmsGetMapUrl(
     height = 800,
     format = "image/png",
     crs = "EPSG:4326",
+    /** De onde a cena vem. Sem isso, SEMA — é o comportamento histórico. */
+    source: WmsSource = SEMA_SOURCE,
 ): string {
-    const url = new URL(SEMA_WMS_BASE);
+    const url = new URL(source.base);
     url.searchParams.set("service", "WMS");
     url.searchParams.set("request", "GetMap");
     url.searchParams.set("version", "1.1.1");
@@ -1163,7 +1173,7 @@ function buildWmsGetMapUrl(
     url.searchParams.set("bbox", `${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]}`);
     url.searchParams.set("width", String(width));
     url.searchParams.set("height", String(height));
-    if (SEMA_WMS_AUTHKEY) url.searchParams.set("authkey", SEMA_WMS_AUTHKEY);
+    if (source.authkey) url.searchParams.set("authkey", source.authkey);
     return url.toString();
 }
 
@@ -1178,8 +1188,9 @@ async function fetchWmsImageBufferOnce(
     bbox: [number, number, number, number],
     width = 1200,
     height = 900,
+    source: WmsSource = SEMA_SOURCE,
 ): Promise<Buffer> {
-    const mapUrl = buildWmsGetMapUrl(layers, bbox, width, height);
+    const mapUrl = buildWmsGetMapUrl(layers, bbox, width, height, "image/png", "EPSG:4326", source);
     const controller = new AbortController();
     const dynamicTimeout = calculateWmsTimeout(width, height);
     const timeout = setTimeout(() => controller.abort(), dynamicTimeout);
@@ -1251,6 +1262,7 @@ async function fetchWmsImageBuffer(
     bbox: [number, number, number, number],
     width = 1200,
     height = 900,
+    source: WmsSource = SEMA_SOURCE,
 ): Promise<Buffer> {
     const resolutions = buildWmsResolutionFallbacks(width, height);
     let lastError: unknown = null;
@@ -1258,7 +1270,7 @@ async function fetchWmsImageBuffer(
     for (const [tryW, tryH] of resolutions) {
         for (let attempt = 1; attempt <= WMS_FETCH_RETRY_ATTEMPTS; attempt++) {
             try {
-                const buf = await fetchWmsImageBufferOnce(layers, bbox, tryW, tryH);
+                const buf = await fetchWmsImageBufferOnce(layers, bbox, tryW, tryH, source);
                 if (tryW === width && tryH === height) return buf;
                 return await sharp(buf).resize(width, height, { fit: "fill" }).png().toBuffer();
             } catch (err) {
@@ -1274,6 +1286,73 @@ async function fetchWmsImageBuffer(
     }
 
     throw lastError || new Error("Falha ao buscar imagem WMS.");
+}
+
+export type ResolvedSatelliteImage = {
+    png: Buffer;
+    candidate: WmsCandidate;
+    /** Sufixo de proveniência da figura: `cena 20/07/2008, órbita/ponto 224/069, acervo IMAP`. */
+    provenance: string;
+};
+
+/**
+ * Resolve a imagem de um satélite: **acervo da casa primeiro, SEMA depois.**
+ *
+ * A ordem não é preferência estética. A cena nativa do acervo tem data de
+ * passagem conhecida — o laudo cita "cena de 20/07/2008" no lugar de "mosaico
+ * LANDSAT_5_2008" — e não é reamostrada como o mosaico estadual.
+ *
+ * ⚠️ Candidata do acervo passa por **duas** portas, não uma. Responder HTTP 200
+ * com um PNG não prova cobertura: `spot_sema_canarana_mosaico` tem bbox sobre
+ * imóveis que ele não cobre e devolve 100% preto; tile de carta devolve 60%
+ * branco. Por isso `isMostlyEmptyRender` roda antes de aceitar, e só para o
+ * acervo — o mosaico estadual é contínuo e não tem esse modo de falha.
+ */
+async function fetchSatelliteImage(
+    satelliteKey: string,
+    sat: { wmsLayer: string; wmsAliases?: string[]; label: string; year: number },
+    bbox: [number, number, number, number],
+    width: number,
+    height: number,
+    logPrefix = "SIMCAR ANALYSIS",
+): Promise<ResolvedSatelliteImage | null> {
+    const semaLayers = Array.from(new Set([sat.wmsLayer, ...(sat.wmsAliases || [])].filter(Boolean)));
+    const candidates: WmsCandidate[] = [
+        ...acervoCandidates(satelliteKey, sat.year, bbox),
+        ...semaLayers.map((layer) => ({ layer, source: SEMA_SOURCE })),
+    ];
+
+    let lastError = "unknown";
+    for (const candidate of candidates) {
+        try {
+            const png = await fetchWmsImageBuffer([candidate.layer], bbox, width, height, candidate.source);
+            if (candidate.source.id === "acervo") {
+                const { empty, ratio } = await isMostlyEmptyRender(png);
+                if (empty) {
+                    console.warn(
+                        `[ACERVO] ${sat.label}: ${candidate.layer} sem cobertura útil (${Math.round(ratio * 100)}% vazio); próxima candidata.`,
+                    );
+                    continue;
+                }
+                if (candidate.scene?.revisar) {
+                    console.warn(
+                        `[ACERVO] ${sat.label}: ${candidate.layer} está marcada para revisão no catálogo ` +
+                        `(outra cena da mesma data com bbox divergente — uma das duas está deslocada).`,
+                    );
+                }
+                console.log(`[ACERVO] ${sat.label} servido pelo acervo: ${candidate.layer}`);
+            }
+            return { png, candidate, provenance: describeSceneProvenance(candidate.source, candidate.scene) };
+        } catch (err: any) {
+            lastError = err?.message || String(err);
+            console.warn(`[${logPrefix}] WMS ${sat.label} (${candidate.source.id}:${candidate.layer}) failed: ${lastError}`);
+        }
+    }
+
+    console.warn(
+        `[${logPrefix}] WMS ${sat.label} indisponível em ${candidates.length} candidata(s). Último erro: ${lastError}`,
+    );
+    return null;
 }
 
 /** Convert GeoJSON coordinates to SVG path data. */
@@ -2340,6 +2419,8 @@ function buildSingleSatellitePrompt(
             : []),
         `> **${FALSE_COLOR_PROMPT_NOTE}**`,
         "",
+        `> **${MIXED_SOURCE_PROMPT_NOTE}**`,
+        "",
         `> **${AC_AUAS_PROMPT_GLOSSARY}**`,
         "",
         "**Legenda dos polígonos (contorno forte + preenchimento translúcido de 12%, que não esconde o solo):**",
@@ -2453,6 +2534,8 @@ export function buildAnalysisPrompt(
         "## Regras Técnicas Obrigatórias",
         "",
         `> **${FALSE_COLOR_PROMPT_NOTE}**`,
+        "",
+        `> **${MIXED_SOURCE_PROMPT_NOTE}**`,
         "",
         `> **${AC_AUAS_PROMPT_GLOSSARY}**`,
         "",
@@ -3535,24 +3618,13 @@ async function generateAuasSatelliteImages(
             message: `Baixando imagem ${sat.label} para AUAS...`,
         });
 
-        const candidateLayers = Array.from(new Set([sat.wmsLayer, ...(sat.wmsAliases || [])].filter(Boolean)));
-        let basePng: Buffer | null = null;
-        let lastLayerError = "unknown";
-
-        for (const layerName of candidateLayers) {
-            throwIfClientDisconnected(res);
-            try {
-                basePng = await fetchWmsImageBuffer([layerName], paddedBbox, IMG_W, IMG_H);
-                break;
-            } catch (err: any) {
-                lastLayerError = err.message || String(err);
-                console.warn(`[AUAS ANALYSIS] WMS ${sat.label} (${layerName}) failed: ${lastLayerError}`);
-            }
-        }
+        const resolved = await fetchSatelliteImage(key, sat, paddedBbox, IMG_W, IMG_H, "AUAS ANALYSIS");
+        throwIfClientDisconnected(res);
+        const basePng = resolved?.png || null;
+        const provenance = resolved?.provenance || "";
 
         if (!basePng) {
             missingKeys.push(key);
-            console.warn(`[AUAS ANALYSIS] WMS ${sat.label} unavailable. Last error: ${lastLayerError}`);
             sendSSE(res, {
                 type: "progress", step: "generating_images",
                 percent: 10 + Math.round((step / totalSteps) * 40),
@@ -3588,7 +3660,7 @@ async function generateAuasSatelliteImages(
             ]);
             images.push({
                 dataUrl: await compositeOverlay(basePng, outlineSvg),
-                caption: `${sat.label} — AUAS contorno`,
+                caption: `${sat.label} — AUAS contorno` + (provenance ? ` · ${provenance}` : ""),
             });
 
             // View 2: contextual overlays to improve discrimination between AC/AVN/AUAS
@@ -3599,7 +3671,7 @@ async function generateAuasSatelliteImages(
             ]);
             images.push({
                 dataUrl: await compositeOverlay(basePng, contextSvg),
-                caption: `${sat.label} — AUAS contexto`,
+                caption: `${sat.label} — AUAS contexto` + (provenance ? ` · ${provenance}` : ""),
             });
         } else {
             const propertySvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
@@ -3607,7 +3679,7 @@ async function generateAuasSatelliteImages(
             ]);
             images.push({
                 dataUrl: await compositeOverlay(basePng, propertySvg),
-                caption: `${sat.label} — Propriedade (AUAS nao vetorizada)`,
+                caption: `${sat.label} — Propriedade (AUAS nao vetorizada)` + (provenance ? ` · ${provenance}` : ""),
             });
         }
         step++;
@@ -4982,25 +5054,12 @@ async function generateSatelliteImages(
             message: `Baixando imagem ${sat.label}...`,
         });
 
-        const candidateLayers = Array.from(new Set([sat.wmsLayer, ...(sat.wmsAliases || [])].filter(Boolean)));
-        let basePng: Buffer | null = null;
-        let resolvedLayer = "";
-        let lastLayerError = "unknown";
-
-        for (const layerName of candidateLayers) {
-            throwIfClientDisconnected(res);
-            try {
-                basePng = await fetchWmsImageBuffer([layerName], paddedBbox, IMG_W, IMG_H);
-                resolvedLayer = layerName;
-                break;
-            } catch (err: any) {
-                lastLayerError = err.message || String(err);
-                console.warn(`[SIMCAR ANALYSIS] WMS ${sat.label} (${layerName}) failed: ${lastLayerError}`);
-            }
-        }
+        const resolved = await fetchSatelliteImage(key, sat, paddedBbox, IMG_W, IMG_H, "SIMCAR ANALYSIS");
+        throwIfClientDisconnected(res);
+        const basePng = resolved?.png || null;
+        const provenance = resolved?.provenance || "";
 
         if (!basePng) {
-            console.warn(`[SIMCAR ANALYSIS] WMS ${sat.label} unavailable across candidates: ${candidateLayers.join(", ")}. Last error: ${lastLayerError}`);
             missingKeys.push(key);
             sendSSE(res, {
                 type: "progress", step: "generating_images",
@@ -5011,9 +5070,6 @@ async function generateSatelliteImages(
             continue;
         }
         usedKeys.push(key);
-        if (resolvedLayer && resolvedLayer !== sat.wmsLayer) {
-            console.log(`[SIMCAR ANALYSIS] ${sat.label} using fallback layer ${resolvedLayer} (primary=${sat.wmsLayer})`);
-        }
 
         // Cloud detection on base image
         try {
@@ -5047,7 +5103,15 @@ async function generateSatelliteImages(
         }
         const compositeSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, compositeLayers);
         const hasArl = layerGeos.has("ARL") || layerGeos.has("ARLREM");
-        images.push({ dataUrl: await compositeOverlay(basePng, compositeSvg), caption: `${sat.label} — Visão Geral (AC + AVN + AUAS${hasArl ? " + ARL" : ""})` });
+        // ⚠️ A proveniência é SUFIXO, nunca prefixo: `selectPrincipalReportImages`
+        // e `reduceImageSet` ordenam lendo o começo da legenda (SPOT, ano). Mexer
+        // na frente da string quebra a seleção do anexo em silêncio — já custou o
+        // SPOT 2008 sumir de um laudo (CHANGELOG_2026-08-21_ANEXO_SPOT_SUMIA.md).
+        images.push({
+            dataUrl: await compositeOverlay(basePng, compositeSvg),
+            caption: `${sat.label} — Visão Geral (AC + AVN + AUAS${hasArl ? " + ARL" : ""})`
+                + (provenance ? ` · ${provenance}` : ""),
+        });
         step++;
     }
 

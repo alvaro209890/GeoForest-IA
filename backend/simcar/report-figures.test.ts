@@ -97,3 +97,40 @@ describe("selectPrincipalReportImages", () => {
         expect(selectPrincipalReportImages([], [])).toEqual([]);
     });
 });
+
+/**
+ * Regressão da proveniência (21/08/2026).
+ *
+ * A legenda passou a carregar a origem da cena — `· cena 20/07/2008,
+ * órbita/ponto 224/069, acervo IMAP`. Como a seleção do anexo lê texto da
+ * legenda, esses casos travam a garantia de que o sufixo não desloca nada.
+ */
+describe("selectPrincipalReportImages com proveniência na legenda", () => {
+    const COM_ORIGEM = [
+        "Landsat 5 (2003) — Visão Geral (AC + AVN + AUAS) · cena 07/07/2003, órbita/ponto 224/069, acervo IMAP",
+        "Landsat 5 (2004) — Visão Geral (AC + AVN + AUAS) · cena 23/06/2004, órbita/ponto 224/069, acervo IMAP",
+        "Landsat 5 (2005) — Visão Geral (AC + AVN + AUAS) · mosaico SEMA-MT",
+        "Landsat 5 (2008) — Visão Geral (AC + AVN + AUAS) · cena 20/07/2008, órbita/ponto 224/069, acervo IMAP",
+        "SPOT 2008 — Visão Geral (AC + AVN + AUAS) · mosaico de Querencia, acervo IMAP",
+    ].map((caption, i) => ({ url: `/img/p-${i}.png`, caption }));
+
+    it("o SPOT continua vindo primeiro mesmo com o sufixo de origem", () => {
+        expect(selectPrincipalReportImages(COM_ORIGEM, [])[0].caption).toContain("SPOT");
+    });
+
+    it("a data no sufixo não rouba o ano do rótulo", () => {
+        // `cena 07/07/2003` traz outro '2003'; a ordem tem que sair pelo rótulo.
+        const ordem = selectPrincipalReportImages(COM_ORIGEM, []).map((img) => img.caption);
+        expect(ordem[1]).toContain("Landsat 5 (2008)");
+        expect(ordem[2]).toContain("Landsat 5 (2003)");
+    });
+
+    it("cena de 2004 com data de junho no sufixo não vira cena de 2006", () => {
+        const ordem = selectPrincipalReportImages(COM_ORIGEM, []).map((img) => img.caption);
+        expect(ordem[ordem.length - 1]).toContain("Landsat 5 (2004)");
+    });
+
+    it("nenhuma figura se perde por causa do sufixo", () => {
+        expect(selectPrincipalReportImages(COM_ORIGEM, [])).toHaveLength(COM_ORIGEM.length);
+    });
+});
