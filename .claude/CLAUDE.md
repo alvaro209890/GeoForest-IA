@@ -193,6 +193,15 @@ ficam os testes — **mexa no tema, não nos renderizadores**, senão os formato
 divergem. O DOCX não traz anexo fotográfico nem o gráfico de barras (motivos no
 cabeçalho do módulo). Falha no DOCX não retém a entrega: o PDF vai assim mesmo.
 
+⚠️ **Heurística de legenda não discrimina mais nada.** Desde `0e429b3b` toda
+imagem de análise tem a MESMA legenda (`"<sensor> — Visão Geral (AC + AVN +
+AUAS)"`). Duas funções pontuavam por palavra na legenda e viraram no-op em
+silêncio: `reduceImageSet` (retry de payload) e `selectPrincipalReportImages`
+(anexo do laudo) — esta última **descartava o SPOT 2008**, a cena de maior peso
+probatório. Ambas agora ordenam por **peso probatório** (SPOT → marco 2008 →
+2003 → ano decrescente). Se aparecer outra seleção baseada em texto de legenda,
+suspeite. Detalhe: `docs/CHANGELOG_2026-08-21_ANEXO_SPOT_SUMIA.md`.
+
 O laudo declara a **origem dos vetores** (`vectorSourceNote`): base da SEMA no
 modo recorte, ZIP do RT no modo vetorizado. Isso muda o que "divergência"
 significa e não pode sumir da peça.

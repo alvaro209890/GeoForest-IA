@@ -141,21 +141,62 @@ function reportSingleLineText(value: unknown, maxChars = 120): string {
     return `${clean.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
 }
 
-function selectPrincipalReportImages(acImages: SimcarReportImage[], auasImages: SimcarReportImage[]): SimcarReportImage[] {
-    const scoreImage = (img: SimcarReportImage) => {
-        const cap = img.caption.toLowerCase();
-        let score = 0;
-        if (/vis[aã]o geral|context/i.test(cap)) score += 5;
-        if (/auas|area consolidada|área consolidada|avn|arl/i.test(cap)) score += 3;
-        if (/spot|landsat|sentinel/i.test(cap)) score += 1;
-        return score;
-    };
+/**
+ * Escolhe as cenas que entram no Anexo Fotografico.
+ *
+ * A versao anterior pontuava por PALAVRA na legenda: +5 para "Visao Geral",
+ * +3 para citar AC/AVN/AUAS/ARL, +1 para citar o sensor. Isso discriminava
+ * quando cada satelite gerava 3 vistas com legendas diferentes ("Somente AC",
+ * "Somente AVN"). Desde o commit `0e429b3b` cada satelite gera UM composite
+ * rotulado "<sensor> — Visao Geral (AC + AVN + AUAS)": as tres regras passaram
+ * a valer para TODAS as imagens, todas empataram em 9 pontos e o sort virou
+ * no-op. Com o corte em 4, sobravam as 4 PRIMEIRAS por ordem de array — os anos
+ * mais antigos — e o **SPOT 2008 caia fora do laudo**.
+ *
+ * Isso passou despercebido enquanto a janela tinha 4 cenas (2006, 2007, SPOT,
+ * 2008), porque o corte de 4 nao cortava nada. Ao abrir a janela para 2003-2008
+ * (7 cenas), o furo apareceu — e apareceu justamente na cena de maior peso
+ * juridico. Mesma familia do bug de `reduceImageSet`: heuristica de legenda que
+ * parou de discriminar depois do refactor de composite unico.
+ *
+ * Agora a ordem e por **peso probatorio**, nao por texto:
+ *   1. SPOT 2008 — 2,5 m, base da Nota Tecnica 001/2017 da SEMA-MT;
+ *   2. a cena do marco (2008);
+ *   3. a cena de 2003 — marco do pousio quinquenal;
+ *   4. o resto por ano decrescente (mais perto do marco decide primeiro).
+ *
+ * E o teto da etapa AC/AVN passou a caber a janela inteira: cortar cena da
+ * serie temporal esconde justamente a evidencia que data a conversao.
+ */
+const AC_AVN_FIGURE_LIMIT = 8;
+const AUAS_FIGURE_LIMIT = 5;
+
+function reportImageYear(caption: string): number {
+    return Number(String(caption || "").match(/\b(?:19|20)\d{2}\b/)?.[0] || 0);
+}
+
+function reportImageWeight(caption: string): number {
+    const cap = String(caption || "");
+    if (/spot/i.test(cap)) return 0;
+    if (reportImageYear(cap) === 2008) return 1;
+    if (reportImageYear(cap) === 2003) return 2;
+    return 3;
+}
+
+export function selectPrincipalReportImages(
+    acImages: SimcarReportImage[],
+    auasImages: SimcarReportImage[],
+): SimcarReportImage[] {
     const pick = (images: SimcarReportImage[], limit: number) =>
         images
             .filter((img, idx, arr) => img.url && arr.findIndex((other) => other.url === img.url) === idx)
-            .sort((a, b) => scoreImage(b) - scoreImage(a))
+            .sort((a, b) => {
+                const porPeso = reportImageWeight(a.caption) - reportImageWeight(b.caption);
+                if (porPeso !== 0) return porPeso;
+                return reportImageYear(b.caption) - reportImageYear(a.caption);
+            })
             .slice(0, limit);
-    return [...pick(acImages, 4), ...pick(auasImages, 4)].slice(0, 8);
+    return [...pick(acImages, AC_AVN_FIGURE_LIMIT), ...pick(auasImages, AUAS_FIGURE_LIMIT)];
 }
 
 async function fetchReportImageBuffer(url: string): Promise<Buffer | null> {
@@ -881,11 +922,17 @@ export async function buildSimcarReportPdfBuffer(args: {
 
     /* ─── Anexo fotográfico ──────────────────────────────────── */
 
+    // Cena que não desceu não pode sumir calada: o leitor precisa saber que a
+    // evidência existe e ficou de fora, senão o anexo parece completo.
+    const figurasIndisponiveis: string[] = [];
     if (imageBuffers.some((img) => img.buffer)) {
         sectionTitle("Anexo Fotográfico", "Cenas de satélite com os vetores do CAR sobrepostos.");
         let figureIndex = 0;
         for (const img of imageBuffers) {
-            if (!img.buffer) continue;
+            if (!img.buffer) {
+                figurasIndisponiveis.push(reportSingleLineText(img.caption || "cena sem legenda", 90));
+                continue;
+            }
             try {
                 const pdfImg = (doc as any).openImage(img.buffer);
                 const aspectRatio = pdfImg.width / pdfImg.height;
@@ -912,9 +959,26 @@ export async function buildSimcarReportPdfBuffer(args: {
                 doc.moveDown(1.2);
                 doc.x = margin;
             } catch {
-                // Ignore broken image in report.
+                figurasIndisponiveis.push(reportSingleLineText(img.caption || "cena sem legenda", 90));
             }
         }
+    } else if (imageBuffers.length > 0) {
+        sectionTitle("Anexo Fotográfico", "Cenas de satélite com os vetores do CAR sobrepostos.");
+        for (const img of imageBuffers) {
+            figurasIndisponiveis.push(reportSingleLineText(img.caption || "cena sem legenda", 90));
+        }
+    }
+    if (figurasIndisponiveis.length > 0) {
+        ensureSpace(70);
+        calloutBox(
+            `${figurasIndisponiveis.length} cena(s) não puderam ser anexadas`,
+            [
+                `Não foi possível recuperar a imagem de: ${figurasIndisponiveis.slice(0, 8).join("; ")}.`,
+                "A análise considerou essas cenas; apenas a figura ficou de fora deste PDF. Regerar o laudo costuma resolver.",
+            ],
+            "warn",
+            { compact: true },
+        );
     }
 
     /* ─── Limitações ─────────────────────────────────────────── */
