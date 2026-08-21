@@ -178,6 +178,10 @@ function reportImageYear(caption: string): number {
 
 function reportImageWeight(caption: string): number {
     const cap = String(caption || "");
+    // Destaque do achado (ex.: "SPOT 2008 — Destaque AVN ...") tem prioridade
+    // máxima no anexo: vem antes das demais cenas, pois mostra o local e o ano
+    // do trecho apontado no quadro de achados.
+    if (/destaque avn/i.test(cap)) return -1;
     if (/spot/i.test(cap)) return 0;
     if (reportImageYear(cap) === 2008) return 1;
     if (reportImageYear(cap) === 2003) return 2;

@@ -17,6 +17,7 @@ import sharp from "sharp";
 import { inflateRawSync } from "zlib";
 import {
     area as turfArea,
+    bbox as turfBbox,
     booleanPointInPolygon as turfBooleanPointInPolygon,
     featureCollection as turfFeatureCollection,
     intersect as turfIntersect,
@@ -5209,6 +5210,75 @@ async function generateSatelliteImages(
  *
  * @returns AcAvnAnalysisResult or null if a fatal error occurred (error SSE was already sent).
  */
+/**
+ * Gera a imagem de DESTAQUE do achado "área consolidada dentro da AVN":
+ * zoom no trecho da interseção AC∩AVN (ou na AVN), no satélite de maior peso
+ * (SPOT 2008 se usado), para vir como PRIMEIRA figura do anexo do laudo.
+ * Retorna null se o achado não tiver suporte geométrico/WMS utilizável —
+ * nunca falha a análise (o chamador trata como não-fatal).
+ */
+export async function buildAvnHighlightImage(
+    res: Response,
+    job: CachedJob,
+    usedKeys: string[],
+): Promise<{ dataUrl: string; caption: string } | null> {
+    const acFeature = mergeLayerGeometriesAsFeature(job.clippedGeometries, "AREA_CONSOLIDADA");
+    const avnFeature = mergeLayerGeometriesAsFeature(job.clippedGeometries, "AVN");
+    if (!acFeature || !avnFeature) return null;
+
+    // Bbox do foco: interseção AC∩AVN quando existir; senão a própria AVN.
+    let focusBbox: [number, number, number, number];
+    try {
+        const overlap = turfIntersect(
+            turfFeatureCollection([acFeature, avnFeature]) as FeatureCollection<Polygon | MultiPolygon>,
+        ) as Feature<Polygon | MultiPolygon> | null;
+        focusBbox = overlap
+            ? (turfBbox(overlap) as [number, number, number, number])
+            : (turfBbox(avnFeature) as [number, number, number, number]);
+    } catch {
+        focusBbox = turfBbox(avnFeature) as [number, number, number, number];
+    }
+    const zoomBbox = normalizeRenderBboxAspect(padBbox(focusBbox, 0.12), 2.5);
+    const areaHa = job.areaHa ?? 0;
+    const baseRes = calculateDynamicResolution(areaHa, zoomBbox);
+    const width = Math.max(baseRes.width, 900);
+    const height = Math.max(baseRes.height, 600);
+
+    // Satélite de maior peso probatório: SPOT 2008 (marco 22/07/2008) se usado; senão o primeiro.
+    const key = (usedKeys.includes("spot_2008") ? "spot_2008" : usedKeys[0]);
+    if (!key) return null;
+    const sat = SATELLITE_LAYERS[key];
+    if (!sat) return null;
+
+    sendSSE(res, {
+        type: "progress",
+        step: "generating_images",
+        percent: 61,
+        message: "Gerando destaque do achado AVN (área consolidada dentro do polígono AVN)...",
+    });
+    const resolved = await fetchSatelliteImage(key, sat, zoomBbox, width, height, "SIMCAR ANALYSIS");
+    if (!resolved?.png) return null;
+
+    // Overlay só com AC + AVN + propriedade, no zoom do trecho destacado.
+    const rawLayerGeos: Map<string, Geometry[]> = job.clippedGeometries ?? new Map<string, Geometry[]>();
+    const layerGeos = new Map<string, Geometry[]>();
+    for (const [name, geoms] of rawLayerGeos) {
+        layerGeos.set(name, geoms.map((g: Geometry) => simplifyGeometryForOverlay(g, 1200)));
+    }
+    const svg = buildPolygonOverlaySvg(width, height, zoomBbox, job.polygon!, layerGeos, [
+        { name: "AREA_CONSOLIDADA", stroke: "#FF00FF", fill: "rgba(255,0,255,0.12)", strokeWidth: 3.5 },
+        { name: "AVN", stroke: "#00FFFF", fill: "rgba(0,255,255,0.12)", strokeWidth: 4 },
+    ]);
+    const dataUrl = await compositeOverlay(resolved.png, svg);
+    const provenance = resolved.provenance ? ` · ${resolved.provenance}` : "";
+    return {
+        dataUrl,
+        // A substring "Destaque AVN" garante peso -1 no anexo (reportImageWeight);
+        // o rótulo do satélite fica no início para a leitura por sensor continuar funcionando.
+        caption: `${sat.label} — Destaque AVN (Área Consolidada dentro do polígono AVN)${provenance}`,
+    };
+}
+
 export async function runAcAvnSatelliteAnalysis(
     res: Response,
     job: CachedJob,
@@ -5414,6 +5484,34 @@ export async function runAcAvnSatelliteAnalysis(
         cloudWarnings,
         auasContext: acAvnAuasContext,
     });
+
+    // ─── Destaque do achado "área consolidada dentro da AVN" ────────────────
+    // Quando a IA confirma o achado (avnDentroShapeAntropizado = SIM), gera uma
+    // imagem em zoom no trecho AC∩AVN e a insere como PRIMEIRA figura no anexo.
+    // Fallback silencioso: se o WMS falhar, o laudo segue com as cenas normais.
+    if (normalizedAcAvn.meta?.globalVerdict?.avnDentroShapeAntropizado === "SIM") {
+        try {
+            const highlight = await buildAvnHighlightImage(res, job, usedSatelliteKeys);
+            if (highlight) {
+                const url = await uploadToCloudinary(
+                    highlight.dataUrl,
+                    `simcar_analysis_${tag}_destaque_avn`,
+                    job.uid || "anonymous",
+                );
+                cloudinaryUrls.unshift({ url, caption: highlight.caption });
+                cloudinaryStoredBytes += estimateBytesFromDataUrl(highlight.dataUrl);
+                console.log(`[SIMCAR ANALYSIS] Destaque AVN adicionado como primeira figura: ${url}`);
+                sendSSE(res, {
+                    type: "progress",
+                    step: "finalizing",
+                    percent: 97,
+                    message: "Destaque do achado AVN anexado ao laudo.",
+                });
+            }
+        } catch (highlightErr: any) {
+            console.warn("[SIMCAR ANALYSIS] Destaque AVN não gerado (não-fatal):", highlightErr?.message || highlightErr);
+        }
+    }
 
     return {
         analysisText: normalizedAcAvn.text,

@@ -59,6 +59,18 @@ describe("selectPrincipalReportImages", () => {
         expect(ordem[2]).toContain("2003");
     });
 
+    it("a imagem de Destaque AVN fica ANTES das demais cenas (regressão achado 21/08/2026)", () => {
+        const comDestaque = [
+            ...JANELA_REAL,
+            { url: "/img/destaque-avn.png", caption: "SPOT 2008 — Destaque AVN (Área Consolidada dentro do polígono AVN) · Acervo" },
+        ];
+        const escolhidas = selectPrincipalReportImages(comDestaque, []);
+        expect(escolhidas[0].caption).toContain("Destaque AVN");
+        expect(escolhidas[0].caption).toContain("SPOT");
+        // as demais cenas continuam presentes (janela inteira)
+        expect(escolhidas).toHaveLength(comDestaque.length);
+    });
+
     it("quando precisa cortar, corta o ano mais distante do marco", () => {
         // 12 cenas AC/AVN estouram o teto; o SPOT e os marcos têm que sobreviver.
         const muitas = Array.from({ length: 12 }, (_, i) => ({
