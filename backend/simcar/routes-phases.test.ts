@@ -78,7 +78,7 @@ describe("GET /api/simcar/clip/phases/:jobId", () => {
     expect(requiresAuth("/api/simcar/clip/download/job-1")).toBe(true);
   });
 
-  it("R-03: logo após o recorte devolve Fase 1 disponível e as outras bloqueadas", async () => {
+  it("R-03: logo após o recorte F1 e F2 disponíveis; F3 continua encadeada", async () => {
     hydrated.persisted = {};
     hydrated.job = {
       clippedGeometries: new Map<string, Geometry[]>([
@@ -91,7 +91,7 @@ describe("GET /api/simcar/clip/phases/:jobId", () => {
     expect(res.payload.jobId).toBe("job-1");
     expect(res.payload.layers).toEqual({ auasPolygonCount: 2, acPolygonCount: 1 });
     expect(res.payload.phases.PRE_2008.state).toBe("AVAILABLE");
-    expect(res.payload.phases.POS_2008.state).toBe("BLOCKED");
+    expect(res.payload.phases.POS_2008.state).toBe("AVAILABLE");
     expect(res.payload.phases.AC_VEG.state).toBe("BLOCKED");
   });
 

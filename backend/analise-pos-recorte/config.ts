@@ -76,7 +76,7 @@ export function getAuasV2Config(): AuasV2Config {
   }
   return {
     enabled: readBool("SIMCAR_AUAS_V2_ENABLED", false),
-    phase2Enabled: readBool("SIMCAR_AUAS_POS2008_ENABLED", false),
+    phase2Enabled: readBool("SIMCAR_AUAS_POS2008_ENABLED", true),
     phase3Enabled: readBool("SIMCAR_AC_VEG_ENABLED", false),
     visionModel: readString("SIMCAR_AUAS_VISION_MODEL", "qwen/qwen3.6-27b"),
     textModel: readString("SIMCAR_AUAS_TEXT_MODEL", "deepseek-v4-pro"),

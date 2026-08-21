@@ -45,11 +45,11 @@ const acDone = {
 };
 
 describe("derivePhases", () => {
-  it("F1 disponível quando há AUAS e bloco V2 vazio", () => {
+  it("F1 e F2 disponíveis quando há AUAS — a datação 2008–2019 não exige a Fase 1", () => {
     const phases = derivePhases(base());
     expect(phases.phases.PRE_2008.state).toBe("AVAILABLE");
-    expect(phases.phases.POS_2008.state).toBe("BLOCKED");
-    expect(phases.phases.POS_2008.blockedReason).toBe("requires_PRE_2008");
+    expect(phases.phases.POS_2008.state).toBe("AVAILABLE");
+    expect(phases.phases.AC_VEG.blockedReason).toBe("requires_PRE_2008");
   });
 
   it("sem polígonos AUAS: F1/F2 bloqueiam com layer_empty_AUAS", () => {
@@ -63,11 +63,18 @@ describe("derivePhases", () => {
     expect(phases.phases.AC_VEG.blockedReason).toBe("layer_empty_AREA_CONSOLIDADA");
   });
 
-  it("F1 concluída libera F2 (AVAILABLE); F3 espera POS_2008", () => {
+  it("F1 concluída deixa F2 AVAILABLE; F3 espera POS_2008", () => {
     const phases = derivePhases(base({ auasMeta: phase1Done }));
     expect(phases.phases.PRE_2008.state).toBe("COMPLETED");
     expect(phases.phases.POS_2008.state).toBe("AVAILABLE");
     expect(phases.phases.AC_VEG.blockedReason).toBe("requires_POS_2008");
+  });
+
+  it("F2 pode estar COMPLETED sem a Fase 1 — a datação não espera o pré-2008", () => {
+    const phases = derivePhases(base({ auasPos2008Meta: pos2008Done }));
+    expect(phases.phases.POS_2008.state).toBe("COMPLETED");
+    expect(phases.phases.PRE_2008.state).toBe("AVAILABLE");
+    expect(phases.phases.AC_VEG.blockedReason).toBe("requires_PRE_2008");
   });
 
   it("F2 concluída registra summary e libera F3", () => {
@@ -162,9 +169,10 @@ describe("checkPhaseGate", () => {
     expect(checkPhaseGate(done, "AC_VEG")).toBeNull();
   });
 
-  it("trava com PHASE_NOT_READY quando requer fase anterior", () => {
+  it("F2 sem Fase 1 passa no gate; F3 ainda exige a Fase 2", () => {
     const phases = derivePhases(base());
-    const gate = checkPhaseGate(phases, "POS_2008");
+    expect(checkPhaseGate(phases, "POS_2008")).toBeNull();
+    const gate = checkPhaseGate(phases, "AC_VEG");
     expect(gate?.status).toBe(409);
     expect(gate?.body.code).toBe("PHASE_NOT_READY");
     expect(gate?.body.requires).toBe("PRE_2008");

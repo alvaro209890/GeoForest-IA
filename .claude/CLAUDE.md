@@ -59,7 +59,7 @@ npx firebase deploy --only hosting   # site único: ia-florestal
 | `backend/simcar-oraculo/client.ts` | Cliente SEMA; sessão **por credencial** (`getSimcarTokenFor`) — oráculo e Lotes não se derrubam |
 | `backend/auas-analysis.ts` | AUAS land use classification |
 | `backend/auas-sccon.ts` | AUAS × SCCON: data ABERTURA via alertas de desmate + pontos sem alerta (ver `docs/AUAS_SCCON.md`) |
-| `backend/analise-pos-recorte/` | **3 fases pós-recorte** (F1 pré-2008, `pos2008/` datação 2009–2019, `ac-vegetacao/` vegetação na AC). Gate em `backend/simcar/phases.ts`, rotas em `backend/simcar/phase2-3-handlers.ts`. **Atrás de flag — ver abaixo** |
+| `backend/analise-pos-recorte/` | **3 fases pós-recorte** (F1 pré-2008, `pos2008/` datação 2009–2019, `ac-vegetacao/` vegetação na AC). Gate em `backend/simcar/phases.ts`. **F2 não exige F1.** F3 continua encadeada. |
 | `backend/geometry/` | Erros de geometria SIMCAR — detectores em `detectors/` (plano 04); `geometry-errors.ts` é só o barrel |
 | `backend/cbers/` | Pipeline CBERS-4A WPM + acervo (`archive.ts`) (planos 05/07); `cbers-wpm.ts` é só o barrel |
 | `backend/landsat/` | Pipeline Landsat 8/9 (plano 06) — não existe mais `landsat.ts` |
