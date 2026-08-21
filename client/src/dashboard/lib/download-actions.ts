@@ -107,6 +107,23 @@ export function openSimcarPdfInNewTab(url?: string | null) {
   window.open(resolved, '_blank', 'noopener,noreferrer');
 }
 
+/**
+ * Baixa o DOCX do laudo.
+ *
+ * Vai pelo `file-proxy` em modo `download` porque o navegador abriria o .docx
+ * numa aba em branco (o Word nao renderiza inline) — e porque e o proxy que
+ * carimba o nome do arquivo que o RT vai ver na pasta de downloads.
+ */
+export function downloadSimcarReportDocx(url?: string | null, filename?: string | null) {
+  const resolved = resolveBackendUrl(url || '');
+  if (!resolved) {
+    toast.error('Link do DOCX indisponível. Gere o laudo novamente.');
+    return;
+  }
+  const safeName = String(filename || 'Laudo_Tecnico_SIMCAR.docx').trim() || 'Laudo_Tecnico_SIMCAR.docx';
+  window.open(toFileProxyUrl(resolved, safeName, 'download'), '_blank', 'noopener,noreferrer');
+}
+
 export function downloadSimcarAnalysisImage(image?: SimcarAnalysisImage | null) {
   const resolved = resolveBackendUrl(image?.url || '');
   if (!resolved) {

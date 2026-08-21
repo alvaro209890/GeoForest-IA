@@ -58,12 +58,12 @@ const PHASE_TITLES: Record<PhaseId, { order: 1 | 2 | 3; title: string; question:
   PRE_2008: {
     order: 1,
     title: 'Análise de AUAS (2003–2008)',
-    question: 'Já havia desmate ou antropização antes do marco de 2008?',
+    question: 'O polígono declarado como AUAS já estava em uso antes do marco de 2008 (ou seja, é AC)?',
   },
   POS_2008: {
     order: 2,
-    title: 'Quando ocorreu o desmate (2008–2019)',
-    question: 'Em que ano a vegetação virou uso antrópico?',
+    title: 'Quando ocorreu a supressão (2008–2019)',
+    question: 'Em que ano a vegetação nativa foi suprimida?',
   },
   AC_VEG: {
     order: 3,
@@ -137,7 +137,7 @@ function resultLineFor(id: PhaseId, status: PhaseStatus | undefined): string | n
     const partes = [
       confirmados > 0 ? `${confirmados} ano confirmado` : '',
       intervalos > 0 ? `${intervalos} intervalo` : '',
-      jaAntrop > 0 ? `${jaAntrop} já antropizado em 2009` : '',
+      jaAntrop > 0 ? `${jaAntrop} já em uso em 2009` : '',
     ].filter(Boolean);
     return `${prefixo} — ${partes.join(' · ') || 'sem datação'}`;
   }

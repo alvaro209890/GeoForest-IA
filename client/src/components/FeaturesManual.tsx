@@ -340,7 +340,7 @@ export default function FeaturesManual({
                         A validação AC/AVN usa conjunto técnico fixo e a AUAS usa série temporal iniciando em 2008:
                       </p>
                       <ul className="space-y-2 text-sm text-slate-400">
-                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">AC/AVN fixo:</strong> Landsat 2006, Landsat 2007, SPOT 2008 e Landsat 2008.</li>
+                        <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">AC/AVN fixo:</strong> série contígua 2003&ndash;2008 &mdash; Landsat 5 de 2003 a 2007, SPOT 2008 e Landsat 2008.</li>
                         <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">AUAS temporal:</strong> valida ano provável de supressão e cruza AUAS x AVN.</li>
                         <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Contexto legal:</strong> considera marco de 22/07/2008 para interpretação técnica.</li>
                         <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">&#x2022;</span><strong className="text-slate-300">Robustez:</strong> detecta nuvem/oclusão e marca trechos inconclusivos quando necessário.</li>

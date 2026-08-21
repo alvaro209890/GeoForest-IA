@@ -274,6 +274,12 @@ export type SimcarClipHistoryItem = {
   reportPdfVersion?: string;
   reportPdfStatus?: 'generating' | 'ready' | 'failed';
   reportPdfError?: string;
+  // DOCX editavel do mesmo laudo. Opcional: se o DOCX falhar, o PDF continua
+  // valido, entao o card so esconde o botao de Word.
+  reportDocxUrl?: string;
+  reportDocxDownloadUrl?: string;
+  reportDocxFilename?: string;
+  reportDocxVersion?: string;
   summary?: SimcarClipSummary;
   status?: 'processing' | 'completed' | 'failed' | 'cancelled';
   error?: string;

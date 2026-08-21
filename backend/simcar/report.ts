@@ -21,7 +21,7 @@ import { fileURLToPath } from "url";
 import PDFDocument from "pdfkit";
 import { readPersistedSimcarClipForUid, hydrateCachedJob, persistSimcarClipArtifacts } from "./hydration";
 import { uploadRawBufferToCloudinary } from "./cloudinary";
-import { toPublicApiUrl } from "./constants";
+import { EXPORT_EXCLUDED_LAYERS, isExcludedFromExport, toPublicApiUrl } from "./constants";
 import type { CachedJob } from "./types";
 import {
     PALETTE,
@@ -29,6 +29,7 @@ import {
     LEGAL_BASIS_LINES,
     buildAcAvnFindings,
     buildAuasFindings,
+    AC_VS_AUAS_GLOSSARY,
     buildExecutiveBullets,
     buildTimelineModel,
     buildVerdictPanel,
@@ -44,6 +45,7 @@ import {
     type Tone,
 } from "./report-theme";
 import { createImapTimbrado, IMAP_CONTENT_WIDTH, IMAP_PAGE } from "./report-imap";
+import { buildSimcarReportDocxBuffer, SIMCAR_REPORT_DOCX_VERSION } from "./report-docx";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -60,6 +62,15 @@ export type SimcarReportArtifact = {
     reportPdfGeneratedAt: string;
     reportPdfVersion: string;
     reportPdfStatus: "ready";
+    /**
+     * DOCX do mesmo laudo, para o responsável técnico editar antes de assinar.
+     * Opcional: se a geração do DOCX falhar, o PDF ainda é entregue — o laudo
+     * não fica retido por causa do formato secundário.
+     */
+    reportDocxUrl?: string;
+    reportDocxDownloadUrl?: string;
+    reportDocxFilename?: string;
+    reportDocxVersion?: string;
 };
 
 export type SimcarReportImage = { url: string; caption: string };
@@ -464,11 +475,16 @@ export async function buildSimcarReportPdfBuffer(args: {
     /* ─── Modelo do laudo ────────────────────────────────────── */
 
     const summary = args.summary || {};
-    const layers = Array.isArray(summary.layers) ? summary.layers : (args.job?.layerSummaries || []);
+    // Camadas excluídas da entrega (hoje: TIPOLOGIA_VEGETAL) não entram no laudo
+    // nem nos contadores — senão o laudo anuncia uma sobreposição que o ZIP não
+    // tem. Ver `EXPORT_EXCLUDED_LAYERS` em `constants.ts`.
+    const rawLayers = Array.isArray(summary.layers) ? summary.layers : (args.job?.layerSummaries || []);
+    const layers = rawLayers.filter((l: any) => !isExcludedFromExport(l?.name));
+    const excludedLayerCount = rawLayers.length - layers.length;
     const propertyAreaHa = Number(summary.propertyAreaHa || args.job?.areaHa || 0);
-    const layersWithData = Number(summary.layersWithData || layers.filter((l: any) => Number(l?.features || 0) > 0).length || 0);
-    const totalFeatures = Number(summary.totalFeaturesClipped || layers.reduce((sum: number, l: any) => sum + Number(l?.features || 0), 0));
-    const totalLayers = Number(summary.layersProcessed || layers.length || 0);
+    const layersWithData = layers.filter((l: any) => Number(l?.features || 0) > 0).length;
+    const totalFeatures = layers.reduce((sum: number, l: any) => sum + Number(l?.features || 0), 0);
+    const totalLayers = Math.max(0, Number(summary.layersProcessed || rawLayers.length || 0) - excludedLayerCount);
 
     const auasKind = detectReportKind(args.auasMeta);
     const acAvnFindings: Finding[] = args.analysisText ? buildAcAvnFindings(args.analysisMeta) : [];
@@ -543,10 +559,6 @@ export async function buildSimcarReportPdfBuffer(args: {
     bulletList(
         buildExecutiveBullets({
             jobId: args.jobId,
-            totalLayers,
-            layersWithData,
-            totalFeatures,
-            propertyAreaHa,
             findings,
             timeline,
         }),
@@ -849,6 +861,14 @@ export async function buildSimcarReportPdfBuffer(args: {
     sectionTitle("Fundamentação Legal Aplicada", "Normas que definem os marcos temporais usados nesta análise.");
     bulletList(LEGAL_BASIS_LINES.map((text) => ({ text, tone: "info" as Tone })), { fontSize: 8.6 });
 
+    ensureSpace(70);
+    calloutBox(
+        "Como ler AC, AUAS e AVN neste laudo",
+        AC_VS_AUAS_GLOSSARY,
+        "info",
+        { compact: true },
+    );
+
     /* ─── Anexo fotográfico ──────────────────────────────────── */
 
     if (imageBuffers.some((img) => img.buffer)) {
@@ -889,12 +909,15 @@ export async function buildSimcarReportPdfBuffer(args: {
 
     /* ─── Limitações ─────────────────────────────────────────── */
 
+    // Avisos sobre camada excluída da entrega não fazem sentido no laudo: o
+    // leitor não encontraria a camada no ZIP para conferir o aviso.
     const warnings = [
         ...(Array.isArray(summary.warnings) ? summary.warnings : []),
         ...(Array.isArray(args.job?.warnings) ? args.job!.warnings! : []),
     ]
         .filter(Boolean)
-        .map((item: any) => String(item));
+        .map((item: any) => String(item))
+        .filter((text) => ![...EXPORT_EXCLUDED_LAYERS].some((layer) => text.includes(layer)));
     const metaLimitations = [
         ...(Array.isArray(args.auasMeta?.limitations) ? args.auasMeta.limitations : []),
     ]
@@ -997,6 +1020,33 @@ export async function generateAndPersistSimcarReport(args: {
             "application/pdf",
             uid,
         );
+
+        // O DOCX é o formato editável do MESMO laudo. Falha nele não retém a
+        // entrega: o PDF já está pronto e é a peça final.
+        const docxFilename = `SIMCAR_Laudo_Tecnico_${jobId.slice(0, 8)}.docx`;
+        let reportDocxUrl = "";
+        try {
+            const docxBuffer = await buildSimcarReportDocxBuffer({
+                jobId,
+                filename: String(persisted.filename || persisted.title || `Recorte ${jobId.slice(0, 8)}`),
+                sourceMode: String(persisted.sourceMode || ""),
+                summary,
+                job,
+                analysisText,
+                analysisMeta: args.analysisMeta || persisted.analysisMeta,
+                auasText,
+                auasMeta: args.auasMeta || persisted.auasMeta,
+            });
+            reportDocxUrl = await uploadRawBufferToCloudinary(
+                docxBuffer,
+                docxFilename,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                uid,
+            );
+        } catch (docxError: any) {
+            console.error("[SIMCAR REPORT] DOCX build failed (PDF segue válido):", docxError?.message || docxError);
+        }
+
         const artifact: SimcarReportArtifact = {
             reportPdfUrl,
             reportPdfDownloadUrl: reportPdfUrl,
@@ -1004,6 +1054,14 @@ export async function generateAndPersistSimcarReport(args: {
             reportPdfGeneratedAt: generatedAt,
             reportPdfVersion: SIMCAR_REPORT_VERSION,
             reportPdfStatus: "ready",
+            ...(reportDocxUrl
+                ? {
+                    reportDocxUrl,
+                    reportDocxDownloadUrl: reportDocxUrl,
+                    reportDocxFilename: docxFilename,
+                    reportDocxVersion: SIMCAR_REPORT_DOCX_VERSION,
+                }
+                : {}),
         };
         await persistSimcarClipArtifacts({
             uid,
@@ -1015,6 +1073,7 @@ export async function generateAndPersistSimcarReport(args: {
                     ...(persisted.files || {}),
                     reportPdfUrl,
                     reportPdfDownloadUrl: reportPdfUrl,
+                    ...(reportDocxUrl ? { reportDocxUrl, reportDocxDownloadUrl: reportDocxUrl } : {}),
                 },
             },
         });

@@ -41,6 +41,7 @@ export {
 } from "./simcar/hydration";
 
 export { generateAndPersistSimcarReport, buildSimcarReportPdfBuffer } from "./simcar/report";
+export { buildSimcarReportDocxBuffer } from "./simcar/report-docx";
 export type { SimcarReportArtifact, SimcarReportImage } from "./simcar/report";
 
 export {

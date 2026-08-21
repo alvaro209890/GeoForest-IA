@@ -2,7 +2,10 @@
  * Gera um laudo PDF de amostra, sem rede e sem Firebase, para conferência visual
  * do layout (`simcar-report-v3`, no papel timbrado da IMAP).
  *
- *   npx tsx scripts/preview-laudo-pdf.ts [saida.pdf] [--fase=acavn|pre2008|pos2008|acveg]
+ *   npx tsx scripts/preview-laudo-pdf.ts [saida.pdf] [--fase=acavn|pre2008|pos2008|acveg] [--docx]
+ *
+ * Com `--docx`, gera também o .docx ao lado do .pdf (mesmo nome, outra
+ * extensão) — é o formato editável do mesmo laudo.
  *
  * Os dados são fictícios mas têm a MESMA forma das metas reais das fases, para
  * exercitar semáforo, quadro de achados, linha do tempo e markdown estruturado.
@@ -11,6 +14,7 @@ import fs from "fs";
 import path from "path";
 
 import { buildSimcarReportPdfBuffer } from "../backend/simcar/report";
+import { buildSimcarReportDocxBuffer } from "../backend/simcar/report-docx";
 
 const outPath = path.resolve(process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : "laudo-preview.pdf");
 const fase = (process.argv.find((a) => a.startsWith("--fase="))?.split("=")[1] || "acavn") as
@@ -67,6 +71,7 @@ const analysisMeta = {
     },
     satelliteVerdicts: [
         { key: "landsat5_2003", label: "Landsat 5 (2003)", year: 2003, status: "used" },
+        { key: "landsat5_2004", label: "Landsat 5 (2004)", year: 2004, status: "used" },
         { key: "landsat5_2005", label: "Landsat 5 (2005)", year: 2005, status: "used" },
         { key: "landsat5_2006", label: "Landsat 5 (2006)", year: 2006, status: "missing" },
         { key: "landsat5_2007", label: "Landsat 5 (2007)", year: 2007, status: "used" },
@@ -162,9 +167,12 @@ const auasByFase: Record<string, { text: string; meta: any }> = {
 
 const auas = auasByFase[fase];
 
+const jobId = "9f2c41ab-7de0-4c1a-9b55-preview0001";
+const filename = "Fazenda Santa Clara — recorte SIMCAR (amostra)";
+
 const buffer = await buildSimcarReportPdfBuffer({
-    jobId: "9f2c41ab-7de0-4c1a-9b55-preview0001",
-    filename: "Fazenda Santa Clara — recorte SIMCAR (amostra)",
+    jobId,
+    filename,
     sourceMode: "vectorized-analysis",
     summary,
     analysisText: fase === "acavn" ? analysisText : analysisText,
@@ -177,3 +185,18 @@ const buffer = await buildSimcarReportPdfBuffer({
 
 fs.writeFileSync(outPath, buffer);
 console.log(`PDF de amostra (${fase}): ${outPath} — ${(buffer.length / 1024).toFixed(1)} KB`);
+
+if (process.argv.includes("--docx")) {
+    const docxPath = outPath.replace(/\.pdf$/i, "") + ".docx";
+    const docxBuffer = await buildSimcarReportDocxBuffer({
+        jobId,
+        filename,
+        summary,
+        analysisText: fase === "acavn" ? analysisText : analysisText,
+        analysisMeta,
+        auasText: auas.text || undefined,
+        auasMeta: auas.meta,
+    });
+    fs.writeFileSync(docxPath, docxBuffer);
+    console.log(`DOCX de amostra (${fase}): ${docxPath} — ${(docxBuffer.length / 1024).toFixed(1)} KB`);
+}

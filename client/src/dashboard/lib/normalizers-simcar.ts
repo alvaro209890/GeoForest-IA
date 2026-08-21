@@ -47,6 +47,14 @@ export const normalizeSimcarReportPatch = (raw: any): Partial<SimcarClipHistoryI
   if (raw?.reportPdfFilename) patch.reportPdfFilename = String(raw.reportPdfFilename);
   if (raw?.reportPdfGeneratedAt) patch.reportPdfGeneratedAt = String(raw.reportPdfGeneratedAt);
   if (raw?.reportPdfVersion) patch.reportPdfVersion = String(raw.reportPdfVersion);
+  const reportDocxUrl = String(raw?.reportDocxUrl || raw?.files?.reportDocxUrl || '').trim();
+  const reportDocxDownloadUrl = String(
+    raw?.reportDocxDownloadUrl || raw?.files?.reportDocxDownloadUrl || reportDocxUrl,
+  ).trim();
+  if (reportDocxUrl) patch.reportDocxUrl = reportDocxUrl;
+  if (reportDocxDownloadUrl) patch.reportDocxDownloadUrl = reportDocxDownloadUrl;
+  if (raw?.reportDocxFilename) patch.reportDocxFilename = String(raw.reportDocxFilename);
+  if (raw?.reportDocxVersion) patch.reportDocxVersion = String(raw.reportDocxVersion);
   if (status === 'generating' || status === 'ready' || status === 'failed') {
     patch.reportPdfStatus = status;
   }

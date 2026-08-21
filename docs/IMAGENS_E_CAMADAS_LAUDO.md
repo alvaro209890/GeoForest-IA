@@ -10,13 +10,33 @@
 | Marco | Norma | O que exige do laudo |
 |---|---|---|
 | **22/07/2008** | Lei 12.651/2012, art. 3º, IV e art. 61-A | Área rural consolidada é a de **ocupação antrópica preexistente** a essa data. É a fronteira entre "consolidado" e "desmate que precisa de autorização". |
-| **22/07/2003** | IN SEMA-MT 04/2023, art. 42 e **§6º** (c/c Decreto estadual 288/2023, que alterou o Decreto 1.031/2017) | Área com atividade agrossilvipastoril implantada **até 22/07/2003** que esteja **em pousio** no marco de 2008 continua consolidada. O pousio de até 5 anos é o do art. 3º, XXIV da Lei 12.651/2012. |
+| **22/07/2003** | Lei 12.651/2012, art. 3º, **XXIV**, c/c IN SEMA-MT 04/2023, art. 42 §6º (Decreto estadual 288/2023, que alterou o Decreto 1.031/2017) | Fim da contagem do **pousio quinquenal** medida contra o marco de 2008. É o ano em que a conta de 5 anos fecha. |
+
+### O pousio tem dois lados — e o laudo precisa dos dois
+
+Não existe piso para a consolidação: área aberta em 1990 ou em 2007 é
+igualmente consolidada, porque o art. 3º, IV só exige ocupação **preexistente**
+ao marco. O que o marco de 2003 resolve é outra coisa — **por quanto tempo a
+atividade ficou interrompida antes de 2008**:
+
+| Última atividade visível | Interrupção até 2008 | Classificação |
+|---|---|---|
+| 2004 ou depois | até 4 anos | **AC** — pousio (art. 3º, XXIV) |
+| 2003 | 5 anos | **AC**, mas no limite legal — sinalizar para o responsável técnico |
+| anterior a 2003 (nenhuma atividade na série) | mais de 5 anos | **AVN** — a interrupção descaracterizou a consolidação |
+
+O pousio do art. 3º, XXIV é a interrupção "por no máximo 5 anos". Dentro do
+prazo, capoeira na cena de 2008 **não** tira a consolidação. Passando dele, tira:
+a vegetação regenerada volta a ser AVN, **mesmo que ainda se vejam traços antigos
+de talhão** (bordas retas, estradas remanescentes). Traço de talhão prova que a
+área já foi usada; não prova que o uso continuava dentro da janela de 5 anos.
 
 **Consequência prática:** um laudo que só olha 2006–2008 não consegue distinguir
-*pousio* (área em descanso, legalmente consolidada) de *vegetação nativa* (que
-nunca foi convertida). Os dois aparecem como cobertura vegetal na cena de 2008.
-A única forma de separar é ver a atividade em **2003** e a regeneração jovem em
-2008 — por isso a janela AC/AVN passou a começar em 2003.
+*pousio* (área em descanso, consolidada) de *vegetação nativa regenerada* (que
+passou dos 5 anos). Os dois aparecem como cobertura vegetal na cena de 2008. Só
+a série **contígua de 2003 a 2008** separa os casos, porque quem decide é o **ano
+da última atividade visível** — e um ano faltando pode mover a contagem de um
+lado ao outro do limite.
 
 Outras âncoras que o laudo cita:
 
@@ -59,7 +79,7 @@ Pedir `Mosaicos:Geoportal_Sentinel_2_2021_NIR` em `layers` devolve
 
 | Etapa | Antes | Depois | Motivo |
 |---|---|---|---|
-| AC/AVN (roda em produção) | 2006, 2007, SPOT 2008, 2008 | **2003**, 2005, 2006, 2007, SPOT 2008, 2008 | Sem 2003 não dá para aplicar o pousio do art. 42 §6º |
+| AC/AVN (roda em produção) | 2006, 2007, SPOT 2008, 2008 | **2003, 2004, 2005, 2006, 2007**, SPOT 2008, 2008 | Série contígua: o pousio se mede pelo ano da última atividade, então nenhum ano pode faltar |
 | Série AUAS | 2008–2024, **sem 2012** | 2008–**2025**, sem furo | 2012 é ResourceSat; 2025 é o mosaico mais recente |
 | Catálogo de camadas | L5 1984–2011, L8 2013–2018, S2 2016–2024 | + `landsat7_2002`, + `resourcesat_2012`, + `sentinel2_2025` | Fecha os vãos reais do acervo |
 | Fase 2 (datação) | fixa em 2009–2019 | configurável (`SIMCAR_AUAS_POS2008_SERIES_END`, até 2025) | Ver decisão pendente abaixo |

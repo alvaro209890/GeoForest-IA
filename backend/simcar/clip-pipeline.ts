@@ -85,7 +85,7 @@ import {
 import { buildQuantitativeXlsx, appendLayerWarning, dedupeWarnings } from "./area-calculator";
 import { fetchCarBoundaryByNumber } from "./car-lookup";
 import { fetchWfsBboxFeatures, fetchWfsClipFeatures } from "./wfs-client";
-import { toPublicApiUrl } from "./constants";
+import { isExcludedExportEntry, isExcludedFromExport, toPublicApiUrl } from "./constants";
 import { snapClippedGeometryToBoundary, CLIP_SNAP_TOLERANCE_METERS } from "../simcar-clip-snap";
 import type { CachedJob, ClipResult, ClippedPointResult, ClippedPolygonResult, LayerSummary, PersistedClipContextV1, WfsClipFetchResult, WfsFeature } from "./types";
 
@@ -315,6 +315,7 @@ async function buildOutputZip(
 
         // Add polygon layers (original behavior)
         for (const [layerName, layerData] of clippedLayers) {
+            if (isExcludedFromExport(layerName)) continue;
             const upper = layerName.toUpperCase();
             const prefix = getDirPrefix(upper);
             const { shp, shx } = buildShpAndShx(layerData.records, 5);
@@ -339,6 +340,7 @@ async function buildOutputZip(
 
         // Add point layers (ex: NASCENTE)
         for (const [layerName, layerData] of clippedPointLayers) {
+            if (isExcludedFromExport(layerName)) continue;
             const upper = layerName.toUpperCase();
             const prefix = getDirPrefix(upper);
 
@@ -367,10 +369,13 @@ async function buildOutputZip(
             }
         }
 
-        // Add remaining template files that haven't been replaced
+        // Add remaining template files that haven't been replaced.
+        // O passthrough é o motivo de a exclusão precisar existir aqui: sem
+        // recorte, os arquivos VAZIOS da camada excluída entrariam mesmo assim.
         for (const entry of templateEntries) {
             if (entry.name.endsWith("/")) continue;
             if (handledFiles.has(entry.name.toLowerCase())) continue;
+            if (isExcludedExportEntry(entry.name)) continue;
             archive.append(entry.data, { name: entry.name });
         }
 
@@ -938,7 +943,11 @@ export async function processClip(
     // 6b. Build XLSX quantitative report
     let xlsxBuffer: Buffer | undefined;
     try {
-        xlsxBuffer = await buildQuantitativeXlsx(layerSummaries, areaHa, airIdentificacao);
+        xlsxBuffer = await buildQuantitativeXlsx(
+            layerSummaries.filter((l) => !isExcludedFromExport(l.name)),
+            areaHa,
+            airIdentificacao,
+        );
     } catch (err: any) {
         console.error("[SIMCAR CLIP] XLSX build error:", err.message);
         // Non-fatal: continue without XLSX

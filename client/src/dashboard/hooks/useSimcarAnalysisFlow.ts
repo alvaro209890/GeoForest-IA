@@ -1220,12 +1220,22 @@ if (!imageOnly && !silentOutput) {
               }
               const pdfUrl = String(event.reportPdfUrl || event.pdfUrl || '').trim();
               if (pdfUrl) {
+                const docxUrl = String(event.reportDocxUrl || '').trim();
                 pdfStatus = {
                   reportPdfUrl: pdfUrl,
                   reportPdfDownloadUrl: String(event.reportPdfDownloadUrl || pdfUrl),
                   reportPdfStatus: 'ready',
                   reportPdfGeneratedAt: String(event.reportPdfGeneratedAt || event.generatedAt || new Date().toISOString()),
                   reportPdfVersion: String(event.reportPdfVersion || event.version || ''),
+                  // O DOCX pode faltar sem invalidar o laudo (ver report.ts).
+                  ...(docxUrl
+                    ? {
+                        reportDocxUrl: docxUrl,
+                        reportDocxDownloadUrl: String(event.reportDocxDownloadUrl || docxUrl),
+                        reportDocxFilename: String(event.reportDocxFilename || ''),
+                        reportDocxVersion: String(event.reportDocxVersion || ''),
+                      }
+                    : {}),
                 };
               }
             } else if (event.type === 'billing' && event.billing) {

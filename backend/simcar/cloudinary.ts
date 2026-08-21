@@ -103,13 +103,44 @@ export function buildVisionContentParts(images: AiImage[], prompt: string): any[
 }
 
 /**
- * Reduce image set for retry: keep only overview images (1 per satellite)
- * instead of all 3 views per satellite.
+ * Conjunto reduzido para o retry quando o payload estoura.
+ *
+ * Historicamente bastava filtrar por "Visão Geral", porque cada satélite gerava
+ * 3 vistas. Desde o commit `0e429b3b` cada satélite gera **um único composite**,
+ * já rotulado "Visão Geral" — o filtro deixou de reduzir coisa alguma e o retry
+ * remandava exatamente o mesmo payload. Com a janela AC/AVN contígua de 2003 a
+ * 2008 (7 cenas) isso passou a importar.
+ *
+ * Quando o filtro não reduz, a lista cai para as cenas de maior peso jurídico,
+ * na ordem: **SPOT 2008** (2,5 m, base da Nota Técnica 001/2017 e do marco do
+ * art. 3º, IV), a cena do próprio marco (2008) e a cena de **2003** (marco do
+ * pousio da IN SEMA-MT 04/2023, art. 42 §6º). O resto entra por ano decrescente,
+ * porque o ano mais próximo do marco é o que decide a consolidação.
  */
 export function reduceImageSet(
     images: AiImage[],
+    maxImages = 3,
 ): AiImage[] {
-    return images.filter((img) => img.caption.includes("Visão Geral"));
+    const overview = images.filter((img) => img.caption.includes("Visão Geral"));
+    const pool = overview.length > 0 ? overview : images;
+    if (pool.length < images.length) return pool;
+    if (pool.length <= maxImages) return pool;
+
+    const yearOf = (caption: string): number => Number(caption.match(/\b(?:19|20)\d{2}\b/)?.[0] || 0);
+    const weightOf = (caption: string): number => {
+        if (/spot/i.test(caption)) return 0;
+        if (yearOf(caption) === 2008) return 1;
+        if (yearOf(caption) === 2003) return 2;
+        return 3;
+    };
+
+    return [...pool]
+        .sort((a, b) => {
+            const byWeight = weightOf(a.caption) - weightOf(b.caption);
+            if (byWeight !== 0) return byWeight;
+            return yearOf(b.caption) - yearOf(a.caption);
+        })
+        .slice(0, maxImages);
 }
 
 export function estimateBytesFromDataUrl(dataUrl: string): number {

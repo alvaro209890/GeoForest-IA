@@ -155,6 +155,7 @@ export {
 
 // ── PDF Report ──
 export { generateAndPersistSimcarReport, buildSimcarReportPdfBuffer } from "./report";
+export { buildSimcarReportDocxBuffer, SIMCAR_REPORT_DOCX_VERSION } from "./report-docx";
 
 // ── Hydration & Persistence ──
 export {

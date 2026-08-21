@@ -37,7 +37,7 @@ import type {
 import { fileURLToPath } from "url";
 
 // Internal modules
-import { FALSE_COLOR_PROMPT_NOTE } from "../analise-pos-recorte/groq-vision-core";
+import { AC_AUAS_PROMPT_GLOSSARY, FALSE_COLOR_PROMPT_NOTE, POUSIO_PROMPT_RULE } from "../analise-pos-recorte/groq-vision-core";
 import { extractZipEntries, detectUtmProj, reprojectBbox, resolveShapefileCrs } from "../geo-utils";
 import {
     buildWfsUrl,
@@ -894,15 +894,26 @@ const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]
 /**
  * Janela fixa da análise AC/AVN.
  *
- * Começa em **2003** porque a IN SEMA-MT 04/2023, art. 42 §6º (c/c Decreto
- * estadual 288/2023) reconhece como consolidada a área implantada até
- * 22/07/2003 que esteja em pousio no marco de 2008 — sem a cena de 2003 não dá
- * para distinguir pousio de vegetação nativa. Termina em 2008 (marco do art.
- * 3º, IV da Lei 12.651/2012), com SPOT 2,5 m como cena de maior peso.
+ * Começa em **2003** e termina em **2008** (marco do art. 3º, IV da Lei
+ * 12.651/2012), com o SPOT 2,5 m como cena de maior peso.
+ *
+ * O motivo do 2003 não é haver piso para a consolidação — não há: área aberta
+ * em 1990 é tão consolidada quanto uma aberta em 2007. O 2003 é o fim da
+ * contagem do **pousio quinquenal** (art. 3º, XXIV): interrupção da atividade
+ * por até 5 anos não descaracteriza a AC, mas acima disso descaracteriza, e a
+ * vegetação regenerada volta a ser AVN.
+ *
+ * Por isso a série é **contígua ano a ano** (2003, 2004, 2005, 2006, 2007,
+ * 2008): quem decide a classificação é o **ano da última atividade visível**, e
+ * um ano faltando pode mover a contagem de um lado ao outro do limite de 5
+ * anos. Se nenhum ano da janela mostra atividade, a última é anterior a 2003 —
+ * mais de 5 anos — e o trecho é AVN, não AC em descanso.
+ *
  * Ajustável por `SIMCAR_ACAVN_SATELLITE_KEYS` (lista separada por vírgula).
  */
 const AC_AVN_DEFAULT_KEYS = [
     "landsat5_2003",
+    "landsat5_2004",
     "landsat5_2005",
     "landsat5_2006",
     "landsat5_2007",
@@ -2313,7 +2324,7 @@ function buildSingleSatellitePrompt(
         ...(cloudWarning
             ? [
                 `> ⚠️ **Atenção: Cobertura de nuvens detectada** (score: ${(cloudWarning.cloudScore * 100).toFixed(0)}%).`,
-                "> Áreas ocluídas devem ser classificadas como INCONCLUSIVO, não como uso antrópico.",
+                "> Áreas ocluídas devem ser classificadas como INCONCLUSIVO, não como uso do solo.",
                 "",
             ]
             : []),
@@ -2329,11 +2340,13 @@ function buildSingleSatellitePrompt(
             : []),
         `> **${FALSE_COLOR_PROMPT_NOTE}**`,
         "",
+        `> **${AC_AUAS_PROMPT_GLOSSARY}**`,
+        "",
         "**Legenda dos polígonos (contorno forte + preenchimento translúcido de 12%, que não esconde o solo):**",
         "- 🟥 **Vermelho**: limite da PROPRIEDADE RURAL (ATP)",
-        "- 🟪 **Magenta Neon**: ÁREA CONSOLIDADA (AC) — uso antrópico declarado",
+        "- 🟪 **Magenta Neon**: ÁREA CONSOLIDADA (AC) — uso consolidado declarado (conversão anterior a 22/07/2008)",
         "- 🟦 **Ciano Neon**: VEGETAÇÃO NATIVA (AVN) — vegetação nativa declarada",
-        ...(hasAuas ? ["- 🟧 **Laranja Neon**: AUAS — uso alternativo do solo"] : []),
+        ...(hasAuas ? ["- 🟧 **Laranja Neon**: AUAS — supressão a partir de 22/07/2008 (uso alternativo do solo)"] : []),
         ...(hasArl ? ["- 🟩 **Verde Neon**: RESERVA LEGAL (ARL/ARLREM)"] : []),
         "",
         `**Imagem única (composite):** base ${sat.label} com propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}${hasArl ? " + ARL" : ""} sobrepostos, e a mesma legenda desenhada no canto inferior esquerdo da própria imagem.`,
@@ -2341,23 +2354,24 @@ function buildSingleSatellitePrompt(
         "---",
         "",
         "## Análise da Área Consolidada (AC — contorno magenta)",
-        "- As áreas contornadas em magenta correspondem a uso antrópico visível (pastagem limpa, agricultura, solo exposto, benfeitorias, cicatrizes de fogo, estradas)?",
-        "- Padrão de textura antrópica: pastagem → tonalidade uniforme; agricultura → linhas regulares; solo exposto → tons claros sem estrutura.",
+        "- As áreas contornadas em magenta correspondem a uso consolidado visível (pastagem limpa, agricultura, solo exposto, benfeitorias, cicatrizes de fogo, estradas)?",
+        "- Padrão de textura de uso: pastagem → tonalidade uniforme; agricultura → linhas regulares; solo exposto → tons claros sem estrutura.",
         "- Algum trecho da AC apresenta textura de vegetação nativa (dossel rugoso, gradiente verde-escuro, estrutura de Cerrado/Floresta)?",
-        "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada e manchas arbustivas intercaladas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso antrópico.",
+        "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada e manchas arbustivas intercaladas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso do solo.",
         "- Para cada zona da AC, estimar o percentual (%) relativo de concordância/discordância com a classificação CAR, ao invés de hectares absolutos.",
         "- Indicar localização aproximada dos trechos discordantes: 'porção norte', 'borda leste', 'setor central', etc.",
         ...(isPreMarco
             ? [
-                `- **Pousio (IN SEMA-MT 04/2023, art. 42 §6º):** nesta cena de ${year}, cobertura vegetal jovem e homogênea sobre traçado antigo de talhão (bordas retas, estradas remanescentes) indica área em descanso — o uso implantado até 22/07/2003 mantém a área como CONSOLIDADA. Não classifique pousio como vegetação nativa.`,
+                `- **Pousio — o que reportar nesta cena de ${year}:** registre objetivamente se há (a) atividade agrossilvipastoril EM CURSO (solo exposto, lavoura, pasto manejado, maquinário, estrada em uso) ou (b) apenas cobertura vegetal jovem sobre traçado antigo de talhão (bordas retas, estradas remanescentes). **Não decida AC ou AVN a partir desta cena isolada:** o que separa pousio de vegetação nativa é o ANO DA ÚLTIMA ATIVIDADE ao longo da série, e isso só a análise integrada consegue medir.`,
+                POUSIO_PROMPT_RULE,
             ]
             : []),
         "",
         "## Análise da Vegetação Nativa (AVN — contorno ciano)",
         "- As áreas contornadas em ciano apresentam textura de vegetação nativa contínua (floresta, cerrado, mata ciliar)?",
         "- Distinguir tipologias: Floresta → dossel denso e contínuo; Cerrado → mosaico arbustivo-herbáceo; Campo nativo → tonalidade mais clara com textura variada.",
-        "- Algum trecho de AVN parece antropizado (pastagem limpa, lavoura, estradas rasgadas, desmatamento evidente, cicatriz de fogo)?",
-        "- Avaliar integridade e conectividade: fragmentação, clareiras, bordas antropizadas.",
+        "- Algum trecho de AVN apresenta uso do solo (pastagem limpa, lavoura, estradas rasgadas, solo exposto, cicatriz de fogo)? Nesta janela pré-marco, esse uso é consolidado.",
+        "- Avaliar integridade e conectividade: fragmentação, clareiras, bordas com uso do solo.",
         "- **Bordas de transição AC/AVN:** examinar a faixa de transição entre AC e AVN. Se a borda for gradual (buffer de incerteza), reportar como zona de transição com percentual estimado, não como discordância categórica.",
         ...(hasAuas
             ? [
@@ -2440,21 +2454,24 @@ export function buildAnalysisPrompt(
         "",
         `> **${FALSE_COLOR_PROMPT_NOTE}**`,
         "",
+        `> **${AC_AUAS_PROMPT_GLOSSARY}**`,
+        "",
         "### Área Consolidada (AC — contorno magenta)",
-        "- AC_FORA_SHAPE = **SIM** somente quando houver EVIDÊNCIA VISUAL CLARA de uso antrópico (pastagem, agricultura, solo exposto, estrada, benfeitorias) em área do imóvel que NÃO está coberta pelo polígono AC.",
+        "- AC_FORA_SHAPE = **SIM** somente quando houver EVIDÊNCIA VISUAL CLARA de uso consolidado (pastagem, agricultura, solo exposto, estrada, benfeitorias) em área do imóvel que NÃO está coberta pelo polígono AC. Como toda a janela desta análise é anterior a 22/07/2008, o uso visto aqui é consolidado — constatar isso indica limite de AC subdimensionado, não irregularidade.",
         "- Critério de evidência clara: SPOT 2008 confirmando sozinho É suficiente (2.5m de resolução). Para Landsat, exige concordância de ao menos 2 cenas independentes.",
-        "- **Pousio (IN SEMA-MT 04/2023, art. 42 §6º):** área com atividade agrossilvipastoril visível até 22/07/2003 que apareça em descanso (capoeira/regeneração inicial) na cena de 2008 continua sendo CONSOLIDADA. Se a cena de 2003 mostrar uso antrópico e a de 2008 mostrar cobertura vegetal jovem e homogênea, isso é pousio — NÃO classifique como vegetação nativa.",
+        POUSIO_PROMPT_RULE,
+        "- Antes de decidir AC_FORA_SHAPE em trecho com vegetação jovem, declare explicitamente qual foi o **último ano da série em que houve atividade visível** naquele trecho. É esse ano que aplica a regra acima.",
         "- Distinga regeneração pós-uso (dossel baixo e uniforme, bordas retas herdadas do talhão, estradas remanescentes) de vegetação nativa primária (dossel alto e irregular, bordas sinuosas).",
-        "- Padrão de textura antrópica: tonalidade uniforme sem gradiente de dossel, estrutura regular de lavoura ou pasto limpo, estradas visíveis ou cicatrizes de fogo.",
+        "- Padrão de textura de uso do solo: tonalidade uniforme sem gradiente de dossel, estrutura regular de lavoura ou pasto limpo, estradas visíveis ou cicatrizes de fogo.",
         "- Padrão de vegetação nativa: textura rugosa de copas, gradiente de cor verde-escuro, estrutura irregular de dossel (Floresta), ou manchas herbáceas intercaladas com arbustos (Cerrado).",
-        "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada, manchas arbustivas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso antrópico.",
+        "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada, manchas arbustivas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso do solo.",
         "- Se a área em questão apresentar textura ambígua (campo nativo, palhada, solo seco), classifique como INCONCLUSIVO.",
         "",
         "### Vegetação Nativa (AVN — contorno ciano)",
         "- AVN_FORA_SHAPE = **IGNORAR** sempre. Não reportar vegetação fora do shape AVN.",
-        "- AVN_DENTRO_SHAPE_ANTROPIZADO = **SIM** apenas quando houver área CLARAMENTE antropizada DENTRO do polígono AVN.",
+        "- AVN_DENTRO_SHAPE_ANTROPIZADO = **SIM** apenas quando houver área CLARAMENTE em uso do solo DENTRO do polígono AVN. Como a janela é pré-marco, descreva o achado como uso consolidado dentro da AVN — o código do veredito mantém o nome antigo, mas o texto do laudo não.",
         "- Avalie integridade do dossel, continuidade da cobertura e sinais de fragmentação.",
-        "- Atenção especial em bordas: áreas de borda podem apresentar transição gradual — só classifique como antropizado se a textura antrópica for dominante no trecho.",
+        "- Atenção especial em bordas: áreas de borda podem apresentar transição gradual — só classifique como uso do solo se essa textura for dominante no trecho.",
         "- **Bordas de transição AC/AVN:** se a transição for gradual, reportar como zona de incerteza; não classificar automaticamente como discordância.",
         ...(hasAuas
             ? [
@@ -2835,11 +2852,11 @@ function buildUserFriendlyAcAvnGuidance(
     if (acForaShape === "SIM" && avnDentroShapeAntropizado === "SIM") {
         return [
             "## Resumo para o Usuario",
-            "- Foram identificadas duas inconformidades: area consolidada fora do shape AC e area antropizada dentro do shape AVN.",
+            "- Foram identificadas duas divergencias: uso consolidado fora do shape AC e uso consolidado dentro do shape AVN.",
             hasMissing ? `- ${missingText}` : "",
             "",
             "## Recomendacao Operacional (Ajuste Automatico)",
-            "- Revisar e ampliar o shape de AC para incluir as areas antropizadas detectadas dentro do imovel.",
+            "- Revisar e ampliar o shape de AC para incluir as areas com uso consolidado detectadas dentro do imovel.",
             "- Revisar o shape de AVN e excluir os trechos sem mata detectados dentro do poligono declarado.",
             "- Priorizar conferencia visual nos setores com maior contraste entre satelites (bordas e porcoes centrais).",
         ].filter(Boolean).join("\n");
@@ -2852,7 +2869,7 @@ function buildUserFriendlyAcAvnGuidance(
             hasMissing ? `- ${missingText}` : "",
             "",
             "## Recomendacao Operacional (Ajuste Automatico)",
-            "- Revisar o shape AC e incluir os trechos antropizados detectados fora do poligono atual.",
+            "- Revisar o shape AC e incluir os trechos com uso consolidado detectados fora do poligono atual.",
             "- Manter o criterio AVN como esta, salvo verificacao adicional em campo.",
         ].filter(Boolean).join("\n");
     }
@@ -2864,7 +2881,7 @@ function buildUserFriendlyAcAvnGuidance(
             hasMissing ? `- ${missingText}` : "",
             "",
             "## Recomendacao Operacional (Ajuste Automatico)",
-            "- Revisar o shape AVN e retirar os trechos antropizados detectados no interior do poligono.",
+            "- Revisar o shape AVN e retirar os trechos com uso consolidado detectados no interior do poligono.",
             "- Confirmar os limites com apoio de imagem de melhor resolucao e validacao tecnica.",
         ].filter(Boolean).join("\n");
     }
@@ -2872,7 +2889,7 @@ function buildUserFriendlyAcAvnGuidance(
     if (acForaShape === "NAO" && avnDentroShapeAntropizado === "NAO") {
         return [
             "## Resumo para o Usuario",
-            "- Nao foram identificadas inconformidades principais de AC fora do shape ou de area antropizada dentro de AVN.",
+            "- Nao foram identificadas divergencias principais de AC fora do shape ou de uso consolidado dentro de AVN.",
             hasMissing ? `- ${missingText}` : "",
             "",
             "## Recomendacao Operacional (Ajuste Automatico)",
@@ -2912,8 +2929,8 @@ function explainAcVerdict(value: AcAvnVerdict | undefined | null): string {
 }
 
 function explainAvnVerdict(value: AcAvnVerdict | undefined | null): string {
-    if (value === "SIM") return "há indício de trecho antropizado dentro do polígono AVN declarado.";
-    if (value === "NAO") return "não há indício consistente de antropização dentro do polígono AVN declarado.";
+    if (value === "SIM") return "há indício de trecho com uso consolidado dentro do polígono AVN declarado.";
+    if (value === "NAO") return "não há indício consistente de uso consolidado dentro do polígono AVN declarado.";
     return "as imagens não permitem concluir a integridade da AVN com segurança.";
 }
 
@@ -2931,20 +2948,20 @@ function formatOperationalStatus(value: AcAvnVerdict | undefined | null): string
 
 function buildAcDecisionText(value: AcAvnVerdict): string {
     if (value === "SIM") {
-        return "foi detectado uso antrópico fora do polígono AC. Revisar o limite da AC nos trechos apontados.";
+        return "foi detectado uso consolidado fora do polígono AC. Revisar o limite da AC nos trechos apontados.";
     }
     if (value === "NAO") {
-        return "não foi detectado uso antrópico relevante fora do polígono AC nas imagens avaliadas.";
+        return "não foi detectado uso consolidado relevante fora do polígono AC nas imagens avaliadas.";
     }
-    return "não houve segurança suficiente para confirmar ou descartar uso antrópico fora do polígono AC. Tratar como pendência de revisão, não como erro confirmado.";
+    return "não houve segurança suficiente para confirmar ou descartar uso consolidado fora do polígono AC. Tratar como pendência de revisão, não como erro confirmado.";
 }
 
 function buildAvnDecisionText(value: AcAvnVerdict): string {
     if (value === "SIM") {
-        return "foi detectado trecho antropizado dentro do polígono AVN. Revisar a AVN no setor indicado.";
+        return "foi detectado trecho com uso consolidado dentro do polígono AVN. Revisar a AVN no setor indicado.";
     }
     if (value === "NAO") {
-        return "não foi detectada antropização consistente dentro do polígono AVN declarado.";
+        return "não foi detectado uso consolidado consistente dentro do polígono AVN declarado.";
     }
     return "não houve segurança suficiente para confirmar a integridade da AVN. Revisar com imagem complementar ou checagem técnica.";
 }
@@ -2987,9 +3004,9 @@ function buildSatelliteReadableLine(sat: AcAvnSatelliteVerdict): string {
             ? "AC fora do shape não detectada"
             : "AC fora do shape inconclusiva";
     const avn = sat.avnDentroShapeAntropizado === "SIM"
-        ? "antropização dentro da AVN detectada"
+        ? "uso consolidado dentro da AVN detectado"
         : sat.avnDentroShapeAntropizado === "NAO"
-            ? "antropização dentro da AVN não detectada"
+            ? "uso consolidado dentro da AVN não detectado"
             : "AVN inconclusiva";
     const weight = sat.key.toLowerCase().includes("spot")
         ? "maior peso por melhor resolução"
@@ -3008,7 +3025,7 @@ function buildAcAvnConclusion(args: {
 }): string {
     const lines: string[] = [];
     if (args.acForaShape === "SIM" || args.avnDentroShapeAntropizado === "SIM") {
-        lines.push("Há indicação de ajuste vetorial. Priorize os trechos onde a imagem mostra uso antrópico fora da AC ou dentro da AVN.");
+        lines.push("Há indicação de ajuste vetorial. Priorize os trechos onde a imagem mostra uso consolidado fora da AC ou dentro da AVN.");
     } else if (args.acForaShape === "NAO" && args.avnDentroShapeAntropizado === "NAO") {
         lines.push("Não foi identificado ajuste obrigatório para AC ou AVN com base no conjunto de imagens analisado.");
     } else {
@@ -3033,12 +3050,12 @@ function buildAcAvnRecommendation(args: {
 }): string {
     const lines: string[] = [];
     if (args.acForaShape === "SIM") {
-        lines.push("Revisar e, se confirmado, ampliar o shape AC nos trechos antropizados fora do polígono atual.");
+        lines.push("Revisar e, se confirmado, ampliar o shape AC nos trechos com uso consolidado fora do polígono atual.");
     } else if (args.acForaShape === "INCONCLUSIVO") {
         lines.push("Revisar manualmente as bordas AC/AVN com imagem de maior resolução antes de alterar o shape AC.");
     }
     if (args.avnDentroShapeAntropizado === "SIM") {
-        lines.push("Revisar o shape AVN e excluir trechos claramente antropizados, mantendo registro da evidência visual.");
+        lines.push("Revisar o shape AVN e excluir trechos com uso consolidado evidente, mantendo registro da evidência visual.");
     } else if (args.avnDentroShapeAntropizado === "INCONCLUSIVO") {
         lines.push("Validar a AVN com imagem complementar ou checagem de campo nos setores de textura ambígua.");
     }
@@ -3391,7 +3408,7 @@ function buildSynthesisPrompt(
         "",
         "### 1. Análise por Ano (obrigatória)",
         `Crie um subtítulo para cada ano em **${years.join(", ")}** e descreva os achados de AC/AVN.`,
-        "Em cada ano, inclua: uso antrópico, integridade da vegetação, pontos de dúvida.",
+        "Em cada ano, inclua: uso do solo observado, integridade da vegetação, pontos de dúvida.",
         "",
         "### 2. Conexões Entre os Anos (obrigatória)",
         "Explique a linha do tempo conectando os anos entre si:",
@@ -3401,12 +3418,14 @@ function buildSynthesisPrompt(
         "",
         "### 3. Comparação CAR x Histórico",
         "- A Área Consolidada (AC) já estava consolidada no ano mais antigo?",
-        "- Há AC com sinal de vegetação nativa no passado?",
-        "- Há AVN com sinal de uso antrópico em algum ano?",
+        "- Há AC com sinal de vegetação nativa no passado? Para cada trecho de AC coberto por vegetação, informe o **último ano da série com atividade visível** e aplique a regra do pousio abaixo.",
+        "- Há AVN com sinal de uso do solo em algum ano?",
+        "",
+        POUSIO_PROMPT_RULE,
         "- **Reserva Legal:** se ARL estiver presente, há evidência de uso antrópico dentro da ARL em algum ano?",
         "",
-        "### 4. Marco Temporal (Art. 68, Lei 12.651/2012)",
-        "- Referência: **22/07/2008**.",
+        "### 4. Marco Temporal (art. 3º, IV e art. 61-A da Lei 12.651/2012)",
+        "- Referência: **22/07/2008** — conversão anterior a essa data caracteriza área rural consolidada.",
         "- Relacione explicitamente os anos anteriores e posteriores a 2008.",
         "",
         "### 5. Concordâncias e Discordâncias Consolidadas",
@@ -4196,6 +4215,8 @@ function buildIntegratedAcAvnAuasPrompt(
         "Unifique os resultados de AC/AVN e AUAS em um único parecer claro, natural e objetivo.",
         "Não use linguagem robótica, não repita blocos longos e não copie os textos integralmente.",
         "",
+        AC_AUAS_PROMPT_GLOSSARY,
+        "",
         "## Base AC/AVN",
         acText,
         "",
@@ -4251,10 +4272,12 @@ function buildIntegratedAcAvnAuasPrompt(
         "Regras obrigatórias:",
         "- Escrever em português técnico claro, em frases naturais.",
         "- Não copiar para a resposta final os códigos técnicos AC_FORA_SHAPE, AVN_FORA_SHAPE, AVN_DENTRO_SHAPE_ANTROPIZADO ou AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS.",
-        "- Quando precisar usar os metadados AC/AVN, traduza: AC fora do shape, AVN antropizada dentro do shape, relação AVN x AUAS.",
+        "- Quando precisar usar os metadados AC/AVN, traduza: uso consolidado fora do shape AC, uso consolidado dentro do shape AVN, relação AVN x AUAS.",
         "- Não usar linhas no formato STATUS_FINAL = ...",
         "- Não usar linhas no formato ANO_PROVAVEL_INICIO_DESMATE = ...",
         "- Quando citar ano provável de desmate, escrever em frase corrida.",
+        "- Nunca chamar Área Consolidada de \"área antropizada\", \"desmate\" ou \"supressão\": AC é conversão anterior a 22/07/2008 e é uso regular. Escreva \"uso consolidado\".",
+        "- Reservar \"supressão\" e \"desmate\" para AUAS, isto é, para conversão a partir de 22/07/2008.",
         "- Se AUAS indicar supressão pós-2008, descrever como passivo ambiental identificado na área AUAS (não como invalidação automática da AUAS).",
         "- Quando AUAS vetorizada estiver ausente e houver supressão pós-2008, afirmar explicitamente que há AUAS não vetorizada.",
         "- Quando AUAS vetorizada estiver presente, nunca afirmar AUAS ausente/não vetorizada/não declarada.",
