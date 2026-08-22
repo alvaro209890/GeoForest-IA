@@ -175,6 +175,8 @@ import {
   setDoc,
   serverTimestamp,
 } from '@/lib/localFirestore';
+import SatelliteComparisonView from '@/dashboard/components/SatelliteComparisonView';
+import SatelliteTimelineView from '@/dashboard/components/SatelliteTimelineView';
 import { auth, db } from '@/lib/firebase';
 import { handleLogout, UserProfile } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
@@ -2708,6 +2710,9 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     });
   }, []);
 
+  // Grade / comparador / linha do tempo para as cenas da validação AC/AVN.
+  const [simcarImageView, setSimcarImageView] = useState<'grade' | 'comparar' | 'timeline'>('grade');
+
   const generateSimcarReportPdf = useCallback(
     async (clip?: SimcarClipHistoryItem) => {
       const target = clip || activeSimcarClip;
@@ -2758,6 +2763,76 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
         const failedPatch: Partial<SimcarClipHistoryItem> = {
           reportPdfStatus: 'failed',
           reportPdfError: message,
+        };
+        setSimcarClipHistory((prev) =>
+          prev.map((item) => (item.jobId === jobId ? { ...item, ...failedPatch } : item))
+        );
+        void patchPersistedSimcarClip(jobId, failedPatch).catch(() => undefined);
+        toast.error(message);
+      }
+    },
+    [
+      activeSimcarClip,
+      apiFetch,
+      normalizeSimcarReportPatch,
+      patchPersistedSimcarClip,
+      readApiError,
+      simcarAnalysisMessages.length,
+      simcarAuasMessages.length,
+      simcarClipJobId,
+    ]
+  );
+
+  // Mesmo laudo, em Word. Backend compartilha modelo e timbrado com o PDF.
+  const generateSimcarReportDocx = useCallback(
+    async (clip?: SimcarClipHistoryItem) => {
+      const target = clip || activeSimcarClip;
+      const jobId = String(target?.jobId || simcarClipJobId || '').trim();
+      if (!target || !jobId) {
+        toast.error('Selecione um recorte SIMCAR para gerar o Word.');
+        return;
+      }
+      const hasAnalysis =
+        (Array.isArray(target.analysisMessages) && target.analysisMessages.length > 0) ||
+        (Array.isArray(target.auasAnalysisMessages) && target.auasAnalysisMessages.length > 0) ||
+        simcarAnalysisMessages.length > 0 ||
+        simcarAuasMessages.length > 0;
+      if (!hasAnalysis) {
+        toast.error('Execute a análise por IA antes de gerar o laudo em Word.');
+        return;
+      }
+      const generatingPatch: Partial<SimcarClipHistoryItem> = {
+        reportDocxStatus: 'generating',
+        reportDocxError: undefined,
+      };
+      setSimcarClipHistory((prev) =>
+        prev.map((item) => (item.jobId === jobId ? { ...item, ...generatingPatch } : item))
+      );
+      void patchPersistedSimcarClip(jobId, generatingPatch).catch(() => undefined);
+      try {
+        const response = await apiFetch('/api/simcar/clip/report-docx', {
+          method: 'POST',
+          body: JSON.stringify({
+            jobId,
+            contextUrl: target.contextUrl,
+            outputZipUrl: target.outputZipUrl,
+          }),
+        });
+        const payload = await readApiError(response);
+        if (!response.ok) {
+          throw new Error(payload?.error || `Erro ${response.status}`);
+        }
+        const reportPatch = normalizeSimcarReportPatch(payload);
+        setSimcarClipHistory((prev) =>
+          prev.map((item) => (item.jobId === jobId ? { ...item, ...reportPatch } : item))
+        );
+        await patchPersistedSimcarClip(jobId, reportPatch);
+        toast.success('Laudo em Word gerado.');
+      } catch (err: any) {
+        const message = String(err?.message || 'Falha ao gerar laudo em Word.');
+        const failedPatch: Partial<SimcarClipHistoryItem> = {
+          reportDocxStatus: 'failed',
+          reportDocxError: message,
         };
         setSimcarClipHistory((prev) =>
           prev.map((item) => (item.jobId === jobId ? { ...item, ...failedPatch } : item))
@@ -5828,6 +5903,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 	                      const pdfUrl = resolveBackendUrl(historyEntry?.reportPdfDownloadUrl || historyEntry?.reportPdfUrl || '');
 	                      const isGenerating = historyEntry?.reportPdfStatus === 'generating';
 	                      const failed = historyEntry?.reportPdfStatus === 'failed';
+	                      const docxUrl = resolveBackendUrl(historyEntry?.reportDocxDownloadUrl || historyEntry?.reportDocxUrl || '');
+	                      const isGeneratingDocx = historyEntry?.reportDocxStatus === 'generating';
+	                      const docxFailed = historyEntry?.reportDocxStatus === 'failed';
 	                      return (
 	                        <section className="bg-[#0e1216]/60 backdrop-blur-md border border-cyan-500/20 rounded-2xl p-4 sm:p-5">
 	                          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -5835,9 +5913,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 	                              <FileText size={20} />
 	                            </div>
 	                            <div className="flex-1 min-w-0">
-	                              <h3 className="font-semibold text-white text-sm">PDF Técnico SIMCAR</h3>
+	                              <h3 className="font-semibold text-white text-sm">Laudo Técnico SIMCAR</h3>
 	                              <p className="text-[11px] text-slate-400">
-	                                Relatório executivo com resumo técnico, quantitativos e imagens principais da análise.
+	                                Veredito, quadro de achados, linha do tempo e quantitativos — no papel timbrado da IMAP. Mesmo conteúdo em PDF e Word.
 	                              </p>
 	                              {historyEntry?.reportPdfGeneratedAt && (
 	                                <p className="text-[10px] text-slate-500 mt-1">
@@ -5846,6 +5924,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 	                              )}
 	                              {failed && historyEntry?.reportPdfError && (
 	                                <p className="text-[10px] text-red-300 mt-1">{historyEntry.reportPdfError}</p>
+	                              )}
+	                              {docxFailed && historyEntry?.reportDocxError && (
+	                                <p className="text-[10px] text-red-300 mt-1">Word: {historyEntry.reportDocxError}</p>
 	                              )}
 	                            </div>
 	                            <div className="flex gap-2 w-full sm:w-auto">
@@ -5866,7 +5947,26 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 	                                className="flex-1 sm:flex-none px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-60 disabled:cursor-not-allowed text-slate-100 text-xs font-medium transition-colors flex items-center justify-center gap-2"
 	                              >
 	                                {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
-	                                {pdfUrl ? 'Regenerar' : isGenerating ? 'Gerando...' : 'Gerar PDF'}
+	                                {pdfUrl ? 'Regenerar PDF' : isGenerating ? 'Gerando...' : 'Gerar PDF'}
+	                              </button>
+	                              {docxUrl && (
+	                                <a
+	                                  href={docxUrl}
+	                                  download={historyEntry?.reportDocxFilename || 'laudo-simcar.docx'}
+	                                  className="flex-1 sm:flex-none px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors flex items-center justify-center gap-2"
+	                                >
+	                                  <Download size={14} />
+	                                  Baixar Word
+	                                </a>
+	                              )}
+	                              <button
+	                                type="button"
+	                                onClick={() => void generateSimcarReportDocx(historyEntry)}
+	                                disabled={isGeneratingDocx}
+	                                className="flex-1 sm:flex-none px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-60 disabled:cursor-not-allowed text-slate-100 text-xs font-medium transition-colors flex items-center justify-center gap-2"
+	                              >
+	                                {isGeneratingDocx ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+	                                {docxUrl ? 'Regenerar Word' : isGeneratingDocx ? 'Gerando...' : 'Gerar Word'}
 	                              </button>
 	                            </div>
 	                          </div>
@@ -6304,7 +6404,34 @@ progress={
                                 />
                               </button>
                               {simcarResultImagePanelsOpen.acAvn && (
-                                <div className="px-4 pb-4">
+                                <div className="px-4 pb-4 space-y-3">
+                                  {simcarAnalysisImages.length > 1 && (
+                                    <div className="flex gap-1 p-1 rounded-lg bg-white/5 border border-white/10 w-fit">
+                                      {([
+                                        { key: 'grade', label: 'Grade' },
+                                        { key: 'comparar', label: 'Comparar' },
+                                        { key: 'timeline', label: 'Linha do tempo' },
+                                      ] as const).map((opt) => (
+                                        <button
+                                          key={opt.key}
+                                          type="button"
+                                          onClick={() => setSimcarImageView(opt.key)}
+                                          className={`px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors ${
+                                            simcarImageView === opt.key
+                                              ? 'bg-purple-600/70 text-white'
+                                              : 'text-slate-400 hover:text-slate-200'
+                                          }`}
+                                        >
+                                          {opt.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {simcarImageView === 'comparar' && simcarAnalysisImages.length > 1 ? (
+                                    <SatelliteComparisonView images={simcarAnalysisImages} />
+                                  ) : simcarImageView === 'timeline' && simcarAnalysisImages.length > 1 ? (
+                                    <SatelliteTimelineView images={simcarAnalysisImages} />
+                                  ) : (
                                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                                     {simcarAnalysisImages.map((img, idx) => {
                                       const captionText = normalizeImageCaption(img.caption);
@@ -6331,6 +6458,7 @@ progress={
                                       );
                                     })}
                                   </div>
+                                  )}
                                 </div>
                               )}
                             </div>

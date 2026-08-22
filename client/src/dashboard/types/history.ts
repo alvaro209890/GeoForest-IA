@@ -274,6 +274,14 @@ export type SimcarClipHistoryItem = {
   reportPdfVersion?: string;
   reportPdfStatus?: 'generating' | 'ready' | 'failed';
   reportPdfError?: string;
+  /** Mesmo laudo do PDF, em Word (`/api/simcar/clip/report-docx`). */
+  reportDocxUrl?: string;
+  reportDocxDownloadUrl?: string;
+  reportDocxFilename?: string;
+  reportDocxGeneratedAt?: string;
+  reportDocxVersion?: string;
+  reportDocxStatus?: 'generating' | 'ready' | 'failed';
+  reportDocxError?: string;
   summary?: SimcarClipSummary;
   status?: 'processing' | 'completed' | 'failed' | 'cancelled';
   error?: string;

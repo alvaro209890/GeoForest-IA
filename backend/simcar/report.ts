@@ -44,6 +44,14 @@ import {
     type Tone,
 } from "./report-theme";
 import { createImapTimbrado, IMAP_CONTENT_WIDTH, IMAP_PAGE } from "./report-imap";
+import {
+    extractFirstAiText,
+    normalizeReportImages,
+    reportCleanText,
+    reportPdfSafeText,
+    reportSingleLineText,
+    type SimcarReportImage,
+} from "./report-text";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,72 +70,7 @@ export type SimcarReportArtifact = {
     reportPdfStatus: "ready";
 };
 
-export type SimcarReportImage = { url: string; caption: string };
-
-function extractFirstAiText(messages: unknown): string {
-    if (!Array.isArray(messages)) return "";
-    const found = messages.find((item: any) => item?.role === "ai" && String(item?.text || "").trim());
-    return String((found as any)?.text || "").trim();
-}
-
-function normalizeReportImages(value: unknown): SimcarReportImage[] {
-    if (!Array.isArray(value)) return [];
-    return value
-        .map((item: any) => ({
-            url: String(item?.url || "").trim(),
-            caption: String(item?.caption || "").trim(),
-        }))
-        .filter((item) => item.url);
-}
-
-/**
- * Limpeza de texto para uso fora do renderizador de markdown (o renderizador
- * precisa dos `#` e dos `-`, então não passa por aqui).
- */
-function reportCleanText(value: unknown, maxChars = 5000): string {
-    return String(value || "")
-        .replace(/<think>[\s\S]*?<\/think>/gi, "")
-        .replace(/\r/g, "")
-        .trim()
-        .slice(0, maxChars);
-}
-
-function breakLongPdfToken(token: string, chunkSize = 28): string {
-    if (token.length <= chunkSize) return token;
-    const chunks: string[] = [];
-    for (let i = 0; i < token.length; i += chunkSize) {
-        chunks.push(token.slice(i, i + chunkSize));
-    }
-    return chunks.join(" ");
-}
-
-/** Deixa um trecho seguro para o pdfkit: sem base64, sem URL gigante, sem token infinito. */
-function reportPdfSafeText(value: unknown, maxChars = 5000): string {
-    return String(value || "")
-        .replace(/<think>[\s\S]*?<\/think>/gi, "")
-        .replace(/\r/g, "")
-        .replace(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+/gi, "[imagem incorporada]")
-        .replace(/https?:\/\/\S+/gi, (rawUrl) => {
-            const cleanUrl = rawUrl.replace(/[),.;:]+$/g, "");
-            try {
-                const parsed = new URL(cleanUrl);
-                return `[link: ${parsed.hostname}]`;
-            } catch {
-                return "[link externo]";
-            }
-        })
-        .replace(/[^\s]{42,}/g, (token) => breakLongPdfToken(token))
-        .replace(/[ \t]{2,}/g, " ")
-        .replace(/\n[ \t]+/g, "\n")
-        .trim()
-        .slice(0, maxChars);
-}
-
-function reportSingleLineText(value: unknown, maxChars = 120): string {
-    const clean = reportPdfSafeText(value, maxChars * 2).replace(/\s+/g, " ").trim();
-    if (clean.length <= maxChars) return clean;
-    return `${clean.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
-}
+export type { SimcarReportImage };
 
 function selectPrincipalReportImages(acImages: SimcarReportImage[], auasImages: SimcarReportImage[]): SimcarReportImage[] {
     const scoreImage = (img: SimcarReportImage) => {

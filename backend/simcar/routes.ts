@@ -60,6 +60,7 @@ import {
     parseCachedContextFromOutputZip,
 } from "./hydration";
 import { generateAndPersistSimcarReport } from "./report";
+import { generateAndPersistSimcarReportDocx } from "./report-docx";
 import type { SimcarReportArtifact } from "./report";
 import {
     getFixedAcAvnSatelliteKeys,
@@ -1696,6 +1697,37 @@ export function registerSimcarClipRoutes(app: Express) {
         } catch (err: any) {
             console.error("[SIMCAR REPORT] Error:", err);
             res.status(500).json({ error: err.message || "Falha ao gerar PDF técnico." });
+        }
+    });
+
+    // Mesmo laudo do PDF, em Word. Compartilha o modelo (report-theme) e o
+    // papel timbrado da IMAP — muda só o renderizador.
+    app.post("/api/simcar/clip/report-docx", async (req: Request, res: Response) => {
+        try {
+            const uid = String(req.authUid || "");
+            if (!uid) {
+                res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+                return;
+            }
+            const { jobId, contextUrl, outputZipUrl } = req.body as {
+                jobId?: string;
+                contextUrl?: string;
+                outputZipUrl?: string;
+            };
+            if (!jobId) {
+                res.status(400).json({ error: "jobId é obrigatório." });
+                return;
+            }
+            const artifact = await generateAndPersistSimcarReportDocx({
+                uid,
+                jobId,
+                contextUrl,
+                outputZipUrl,
+            });
+            res.json({ ok: true, ...artifact });
+        } catch (err: any) {
+            console.error("[SIMCAR REPORT DOCX] Error:", err);
+            res.status(500).json({ error: err.message || "Falha ao gerar laudo em Word." });
         }
     });
 

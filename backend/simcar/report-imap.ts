@@ -34,6 +34,12 @@ export const IMAP_COLORS = {
     /** Gradiente vertical do texto do rodapé (`w14:gradFill`, ang 5400000 = 90°). */
     inkFrom: "#000F7F",
     inkTo: "#5C62A1",
+    /**
+     * Meio-termo sólido do gradiente do rodapé. O Word desenha o gradiente por
+     * `w14:textFill`, que a lib `docx` não expõe — no `.docx` o endereço sai
+     * nesta cor chapada, no PDF sai no gradiente de verdade.
+     */
+    inkSolid: "#2E3890",
     /** Título do cabeçalho — no Ofício o run não declara cor (herda preto). */
     headerTitle: "#2B2B2B",
     /** Linha discreta de rastreabilidade do laudo no rodapé. */
