@@ -1,14 +1,13 @@
 /**
- * Leitura do Monitor SIMCAR (https://monitor-car.web.app) — SOMENTE LEITURA.
+ * Leitura do Monitor SIMCAR (https://monitor-car.web.app).
  *
- * O monitor é um Firebase Realtime Database alimentado por um userscript
- * Tampermonkey que roda no navegador de quem loga no SIMCAR com o login
- * compartilhado: grava `presence/simcar/clients/<uid>/<connId>` com heartbeat de
- * 20 s e `onDisconnect().remove()`.
+ * O monitor é um Firebase Realtime Database alimentado por:
+ *  - userscript Tampermonkey no navegador de quem loga no SIMCAR (nome da pessoa);
+ *  - os sistemas da casa (GeoForest, acompanhamento, CLI `imap`) via `presenca.ts`,
+ *    com `who: "Sistema"`.
  *
- * O GeoForest apenas LÊ esse nó para saber se pode logar. Ele NUNCA escreve,
- * atualiza ou apaga nada em `presence/*` — o bot precisa ser invisível para os
- * outros usuários do monitor (requisito R2 do plano docs/planos/simcar-monitor/).
+ * Aqui só LÊ `presence/simcar/clients` para decidir se pode logar. A escrita
+ * (aparecer no painel como Sistema) mora em `presenca.ts`.
  *
  * Fail-open: se o monitor não responde, o download segue. Perder um monitor não
  * pode travar o trabalho de ninguém (decisão G4).
@@ -86,9 +85,15 @@ function rotulo(valor: unknown): string | undefined {
 /**
  * Lê `presence/simcar/clients` (+ fallback `current`) e decide se o SIMCAR está
  * em uso, com a mesma regra do site do monitor.
+ *
+ * `ignorarConnIds` tira a nossa própria presença da conta — senão o GeoForest
+ * esperaria para sempre por ele mesmo depois de gravar `who: "Sistema"`.
  */
-export async function lerOcupacaoSimcar(): Promise<MonitorSimcarStatus> {
+export async function lerOcupacaoSimcar(opts?: {
+  ignorarConnIds?: string[];
+}): Promise<MonitorSimcarStatus> {
   const checadoEm = Date.now();
+  const ignorar = new Set(opts?.ignorarConnIds || []);
   try {
     const clients = await lerJson("presence/simcar/clients.json");
     const limite = staleMs() + MARGEM_SKEW_MS;
@@ -96,7 +101,8 @@ export async function lerOcupacaoSimcar(): Promise<MonitorSimcarStatus> {
     let maisRecente: { lastSeen: number; who?: string; since?: number } | null = null;
 
     for (const porUid of Object.values(clients || {})) {
-      for (const conexao of Object.values((porUid || {}) as Record<string, any>)) {
+      for (const [connId, conexao] of Object.entries((porUid || {}) as Record<string, any>)) {
+        if (ignorar.has(connId)) continue;
         const lastSeen = numero((conexao as any)?.lastSeen);
         if (!lastSeen || checadoEm - lastSeen > limite) continue; // fantasma (stale)
         conexoes += 1;

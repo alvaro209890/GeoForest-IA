@@ -168,7 +168,7 @@ const FIELD_LABELS: Record<string, string> = {
   inconclusiveCount: 'inconclusivos',
   confirmedYearCount: 'anos confirmados',
   intervalCount: 'intervalos',
-  alreadyAnthropizedCount: 'antropizado em 2009',
+  alreadyAnthropizedCount: 'já em uso em 2009',
   noChangeCount: 'sem alteração',
   totalAuasAreaHa: 'área AUAS (ha)',
 };

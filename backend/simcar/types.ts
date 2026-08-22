@@ -162,6 +162,32 @@ export type AcAvnAnalysisMeta = {
     };
     cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
     auasContext?: AcAvnAuasContext | null;
+    /** Conferência geométrica do achado "uso dentro da AVN": interseção real
+     * AC∩AVN e AVN∩reservatório medidas no shape do recorte. Quando a IA diz
+     * SIM mas aqui dá 0, o achado visual precisa de revisão (tipicamente
+     * confusão com reservatório/água) — o laudo declara isso explicitamente. */
+    geometryCrossCheck?: {
+        acAvnOverlapHa: number;
+        avnAreaHa: number;
+        acAreaHa: number;
+        reservatorioOverlapAvnHa: number;
+        hasReservatorioLayer: boolean;
+    } | null;
+    /** Análise dos reservatórios artificiais do recorte — lâmina d'água,
+     * sobreposição com AC/AUAS/AVN e enquadramento legal (Lei 12.651/2012,
+     * art. 4º III, §1º e §4º). */
+    reservoirAnalysis?: {
+        hasReservoir: boolean;
+        totalFeatures: number;
+        totalAreaHa: number;
+        overlapAcHa: number;
+        overlapAuasHa: number;
+        overlapAvnHa: number;
+        outsideDeclaredHa: number;
+        pctOfProperty: number;
+        minFeatureHa: number;
+        maxFeatureHa: number;
+    } | null;
 };
 
 export type AcAvnAnalysisResult = {

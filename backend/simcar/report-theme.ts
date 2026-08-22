@@ -61,21 +61,147 @@ export function worstTone(tones: Tone[]): Tone {
 export const MARCO_CODIGO_FLORESTAL_YEAR = 2008;
 
 /**
- * Marco do pousio quinquenal: a IN SEMA-MT 04/2023, art. 42 §6º (na redação
- * dada pelo Decreto estadual 288/2023, que alterou o Decreto 1.031/2017)
- * reconhece como consolidada a área com atividade agrossilvipastoril
- * implantada até **22/07/2003** que esteja em pousio no marco de 2008.
- * É por isso que a série de imagens do laudo começa em 2003.
+ * Marco do pousio quinquenal.
+ *
+ * O pousio do art. 3º, XXIV da Lei 12.651/2012 é a interrupção da atividade por
+ * **no máximo 5 anos** — dentro desse prazo o uso segue consolidado, mesmo que
+ * a cena de 2008 mostre capoeira. Passando de 5 anos, a interrupção
+ * **descaracteriza** o uso consolidado e a vegetação regenerada volta a ser
+ * classificada como AVN.
+ *
+ * 2003 é o ano em que essa conta fecha contra o marco de 2008. Por isso a série
+ * do laudo começa nele e precisa ser contígua: quem decide é o **ano da última
+ * atividade visível**, e um ano faltando pode mover a contagem de um lado ao
+ * outro do limite. Se nenhum ano de 2003 a 2008 mostra atividade, a última é
+ * anterior a 2003 — mais de 5 anos — e o trecho é AVN, não AC em descanso.
+ *
+ * Reconhecimento estadual: IN SEMA-MT 04/2023, art. 42 §6º (redação do Decreto
+ * estadual 288/2023, que alterou o Decreto 1.031/2017).
  */
 export const MARCO_POUSIO_YEAR = 2003;
 
+/** Teto legal do pousio, em anos (Lei 12.651/2012, art. 3º, XXIV). */
+export const POUSIO_MAX_YEARS = 5;
+
+/**
+ * Glossário AC × AUAS — a confusão que mais estraga a redação do laudo.
+ *
+ * As duas camadas são **a mesma coisa** (solo sem vegetação nativa) separadas
+ * só pelo marco de 22/07/2008. Chamar AC de "área antropizada" é tecnicamente
+ * defensável (a lei fala em "ocupação antrópica"), mas no vocabulário do SIMCAR
+ * "antropizado" puxa para AUAS — isto é, para supressão que exigia autorização.
+ * Em laudo que vai para a SEMA, essa ambiguidade lê como acusação.
+ *
+ * Regra de escrita: **AC → "uso consolidado"; AUAS → "supressão pós-2008".**
+ */
+export const AC_VS_AUAS_GLOSSARY: string[] = [
+    "AC (Área Consolidada) — ocupação anterior a 22/07/2008. É uso regular por força do art. 3º, IV da Lei 12.651/2012; no laudo, escreva \"uso consolidado\".",
+    "AUAS (Área de Uso Alternativo do Solo) — supressão de vegetação nativa a partir de 22/07/2008. Depende de autorização prévia (art. 26); no laudo, escreva \"supressão pós-2008\".",
+    "AVN (Área de Vegetação Nativa) — remanescente nunca convertido, ou área cuja atividade foi interrompida por mais de 5 anos antes do marco (ver pousio abaixo).",
+    `Pousio (art. 3º, XXIV) — interrupção da atividade por no máximo ${POUSIO_MAX_YEARS} anos não descaracteriza a AC: a área segue consolidada mesmo coberta por capoeira em 2008. Acima desse prazo, a interrupção descaracteriza e a vegetação regenerada volta a ser AVN.`,
+    `Quem decide é o ano da última atividade visível na série ${MARCO_POUSIO_YEAR}–${MARCO_CODIGO_FLORESTAL_YEAR}: se nenhum ano do período mostra atividade, a última é anterior a ${MARCO_POUSIO_YEAR} e o trecho é AVN — traço antigo de talhão, sozinho, não sustenta AC.`,
+];
+
 export const LEGAL_BASIS_LINES: string[] = [
     "Lei federal 12.651/2012 (Código Florestal), art. 3º, IV — área rural consolidada é a de ocupação antrópica preexistente a 22/07/2008, com edificações, benfeitorias ou atividades agrossilvipastoris.",
-    "Lei federal 12.651/2012, art. 3º, XXIV e art. 61-A — pousio de até 5 anos não descaracteriza o uso consolidado; APP consolidada segue as faixas do art. 61-A.",
+    "Lei federal 12.651/2012, art. 3º, XXIV — pousio é a interrupção da atividade por no máximo 5 anos: dentro do prazo o uso segue consolidado; acima dele a interrupção descaracteriza a consolidação e a vegetação regenerada volta a ser vegetação nativa (AVN).",
+    "Lei federal 12.651/2012, art. 61-A — APP consolidada segue as faixas de recomposição por módulo fiscal.",
     "Lei federal 12.651/2012, art. 26 — supressão de vegetação nativa para uso alternativo do solo depende de autorização prévia do órgão estadual (AUAS/AUTEX).",
-    "IN SEMA-MT 04/2023, art. 42 e §6º (c/c Decreto estadual 288/2023 e Decreto 1.031/2017) — área implantada até 22/07/2003 e em pousio no marco de 2008 é considerada consolidada; art. 44 admite imagem de satélite como meio de prova.",
+    "IN SEMA-MT 04/2023, art. 42 e §6º (c/c Decreto estadual 288/2023 e Decreto 1.031/2017) — reconhece o pousio no marco de 2008; art. 44 admite imagem de satélite como meio de prova da consolidação.",
     "Nota Técnica 001/2017/CGMA/SRMA/SEMA-MT (revisada em 2018) — metodologia oficial de interpretação de imagem para delimitar área consolidada, com base SPOT 2008 (2,5 m).",
 ];
+
+/* ─── Origem dos vetores ─────────────────────────────────────── */
+
+/**
+ * De onde vieram as geometrias do laudo.
+ *
+ * Isto muda o que os números significam e precisa estar escrito na peça:
+ * - `auto-clip` — recorte feito contra o WFS da SEMA. Os polígonos de AC, AVN e
+ *   AUAS são os que **estão publicados** na base estadual.
+ * - `vectorized-analysis` — ZIP do modelo já vetorizado, enviado pelo usuário.
+ *   Os polígonos são os que **o responsável técnico desenhou** e ainda não
+ *   necessariamente foram submetidos. Um "AC fora do shape" aqui aponta erro na
+ *   vetorização em revisão, não divergência contra o cadastro vigente.
+ */
+export type VectorSource = "auto-clip" | "vectorized-analysis";
+
+export function normalizeVectorSource(value: unknown): VectorSource {
+    return String(value || "").trim() === "vectorized-analysis" ? "vectorized-analysis" : "auto-clip";
+}
+
+export function vectorSourceNote(value: unknown): { label: string; detail: string } {
+    if (normalizeVectorSource(value) === "vectorized-analysis") {
+        return {
+            label: "Origem dos vetores: ZIP vetorizado enviado pelo responsável técnico",
+            detail:
+                "As camadas analisadas vieram do ZIP do modelo SIMCAR enviado, não da base estadual — não houve recorte WFS. Os quantitativos refletem a vetorização em revisão; divergências apontadas são de desenho, não do cadastro publicado na SEMA.",
+        };
+    }
+    return {
+        label: "Origem dos vetores: recorte automático contra a base da SEMA-MT",
+        detail:
+            "As camadas ambientais foram recortadas do WFS estadual para o perímetro do imóvel; os quantitativos refletem o que está publicado na base.",
+    };
+}
+
+/* ─── Origem das imagens ─────────────────────────────────────── */
+
+/** Marca que `describeSceneProvenance` grava na legenda de cada figura. */
+const ACERVO_CAPTION_MARK = "acervo IMAP";
+const SEMA_CAPTION_MARK = "mosaico SEMA-MT";
+
+/**
+ * De onde vieram as imagens do laudo, lido das próprias legendas.
+ *
+ * Desde 21/08/2026 a série pode misturar cena nativa do acervo da IMAP (quando
+ * existe para aquele ano e órbita) com o mosaico estadual da SEMA (quando não
+ * existe). Isso **precisa** estar escrito na peça por dois motivos:
+ *
+ * 1. A cena do acervo tem data de passagem; o mosaico estadual não. Um laudo
+ *    que cita "cena de 20/07/2008" e outro que cita "mosaico 2008" não têm o
+ *    mesmo peso probatório, e o leitor tem direito de saber qual está lendo.
+ * 2. Fontes diferentes têm realce e nitidez diferentes. Quem confere o laudo
+ *    precisa saber que a mudança de aparência no ano da troca é de
+ *    processamento, não do chão — é a mesma ressalva que vai no prompt da IA
+ *    (`MIXED_SOURCE_PROMPT_NOTE`).
+ *
+ * Laudo antigo, gerado antes da proveniência existir, não tem nenhuma das duas
+ * marcas: devolve `null` e nenhum quadro é impresso.
+ */
+export function imageSourceNote(captions: readonly string[]): { label: string; detail: string } | null {
+    const textos = (captions || []).map((item) => String(item || ""));
+    const temAcervo = textos.some((texto) => texto.includes(ACERVO_CAPTION_MARK));
+    const temSema = textos.some((texto) => texto.includes(SEMA_CAPTION_MARK));
+
+    if (temAcervo && temSema) {
+        return {
+            label: "Origem das imagens: séries mistas (acervo IMAP + mosaico SEMA-MT)",
+            detail:
+                "Parte das cenas é do acervo próprio da IMAP, com data de passagem declarada na legenda de cada figura; "
+                + "os anos sem cena própria foram cobertos pelo mosaico estadual da SEMA-MT, que não tem data exata e é reamostrado. "
+                + "As duas fontes têm realce e nitidez distintos: diferença de brilho ou definição entre figuras de fontes "
+                + "diferentes é artefato de processamento, não evidência de alteração no uso do solo.",
+        };
+    }
+    if (temAcervo) {
+        return {
+            label: "Origem das imagens: acervo próprio da IMAP",
+            detail:
+                "As cenas são imagens nativas do acervo da IMAP, com data de passagem e órbita/ponto declarados na legenda "
+                + "de cada figura — e não mosaicos anuais de data indefinida.",
+        };
+    }
+    if (temSema) {
+        return {
+            label: "Origem das imagens: mosaicos estaduais da SEMA-MT",
+            detail:
+                "As cenas são os mosaicos anuais publicados pela SEMA-MT. O mosaico agrega passagens de datas distintas "
+                + "dentro do ano, de modo que a data exata de cada trecho da cena não é determinável.",
+        };
+    }
+    return null;
+}
 
 /* ─── Identificação da etapa ─────────────────────────────────── */
 
@@ -153,7 +279,14 @@ export function confidenceLabel(value: unknown): string {
     return "Inconclusiva";
 }
 
-/** Achados da análise AC/AVN (etapa que roda hoje em produção). */
+/**
+ * Achados da análise AC/AVN (etapa que roda hoje em produção).
+ *
+ * Vocabulário: a janela desta etapa é 2003–2008, **toda anterior ao marco**.
+ * Logo, uso do solo visto nessas cenas é **uso consolidado** — não "uso
+ * antrópico" genérico, que no SIMCAR remete à AUAS (supressão posterior a
+ * 22/07/2008). Ver {@link AC_VS_AUAS_GLOSSARY}.
+ */
 export function buildAcAvnFindings(analysisMeta: any): Finding[] {
     const verdict = analysisMeta?.globalVerdict;
     if (!verdict) return [];
@@ -164,20 +297,20 @@ export function buildAcAvnFindings(analysisMeta: any): Finding[] {
             tone: verdictTone(verdict.acForaShape),
             detail:
                 verdict.acForaShape === "SIM"
-                    ? "Imagem mostra uso antrópico fora da AC declarada — revisar o limite da AC."
+                    ? "Imagem mostra uso consolidado fora da AC declarada — revisar o limite da AC."
                     : verdict.acForaShape === "NAO"
-                        ? "Nenhum uso antrópico relevante fora da AC declarada nas cenas avaliadas."
+                        ? "Nenhum uso consolidado relevante fora da AC declarada nas cenas avaliadas."
                         : "As cenas não permitem confirmar nem descartar uso fora da AC — pendência de revisão.",
         },
         {
-            label: "Antropização dentro do polígono AVN",
+            label: "Uso consolidado dentro do polígono AVN",
             status: verdictStatus(verdict.avnDentroShapeAntropizado),
             tone: verdictTone(verdict.avnDentroShapeAntropizado),
             detail:
                 verdict.avnDentroShapeAntropizado === "SIM"
-                    ? "Há trecho antropizado dentro da AVN declarada — revisar o setor apontado."
+                    ? "Há trecho com uso consolidado dentro da AVN declarada — revisar o setor apontado."
                     : verdict.avnDentroShapeAntropizado === "NAO"
-                        ? "Nenhuma antropização consistente dentro da AVN declarada."
+                        ? "Nenhum uso consolidado consistente dentro da AVN declarada."
                         : "Integridade da AVN inconclusiva — validar com imagem complementar.",
         },
     ];
@@ -225,7 +358,10 @@ const PRE2008_STATUS_LABEL: Record<string, string> = {
 const POS2008_STATUS_LABEL: Record<string, string> = {
     CONFIRMADO_ANO: "Ano confirmado",
     CONFIRMADO_INTERVALO: "Intervalo confirmado",
-    JA_ANTROPIZADO_NO_INICIO_DA_SERIE: "Já antropizado no início da série",
+    // O código é `JA_ANTROPIZADO...`, mas o rótulo diz "em uso": na Fase 2 a
+    // série começa em 2009 e "já antropizado no início" significa que a
+    // conversão é anterior — ou seja, provável AC, não supressão pós-marco.
+    JA_ANTROPIZADO_NO_INICIO_DA_SERIE: "Já em uso no início da série",
     SEM_MUDANCA_OBSERVADA: "Sem mudança observada",
     INCONCLUSIVO: "Inconclusivo",
 };
@@ -237,12 +373,12 @@ export function buildAuasFindings(auasMeta: any, kind = detectReportKind(auasMet
         const alert = auasMeta?.pre2008Alert === true;
         const findings: Finding[] = [
             {
-                label: "Antropização anterior a 22/07/2008",
+                label: "Uso do solo anterior a 22/07/2008 em polígono AUAS",
                 status: PRE2008_STATUS_LABEL[String(auasMeta?.status || "")] || "Não informado",
                 tone: alert ? "danger" : auasMeta?.status === "SEM_EVIDENCIA_PRE_2008" ? "ok" : "warn",
                 detail: alert
-                    ? "Há polígono AUAS com sinal de uso antrópico antes do marco — a declaração como AUAS deve ser reavaliada."
-                    : "Nenhum polígono AUAS apresentou sinal consistente de antropização antes do marco de 2008.",
+                    ? "Há polígono declarado como AUAS com uso já implantado antes do marco — se confirmado, a área é consolidada (AC), não supressão pós-2008."
+                    : "Nenhum polígono AUAS apresentou uso do solo antes do marco de 2008 — coerente com supressão posterior.",
             },
             {
                 label: "Polígonos AUAS analisados",
@@ -269,16 +405,16 @@ export function buildAuasFindings(auasMeta: any, kind = detectReportKind(auasMet
         const inconclusive = Number(summary.inconclusiveCount || 0);
         return [
             {
-                label: "Conversões datadas na série",
+                label: "Supressões datadas na série",
                 status: `${confirmed + interval} de ${Number(summary.polygonCount || 0)}`,
                 tone: confirmed + interval > 0 ? "warn" : "neutral",
-                detail: `${confirmed} com ano confirmado e ${interval} com intervalo observado.`,
+                detail: `${confirmed} com ano confirmado e ${interval} com intervalo observado — supressão posterior ao marco depende de AUAS/AUTEX emitida.`,
             },
             {
-                label: "Já antropizados no início da série",
+                label: "Já em uso no início da série",
                 status: String(Number(summary.alreadyAnthropizedCount || 0)),
                 tone: Number(summary.alreadyAnthropizedCount || 0) > 0 ? "info" : "ok",
-                detail: "Coerente com evento anterior ao primeiro ano observável — confirmar na Fase 1.",
+                detail: "Uso anterior ao primeiro ano observável — indício de área consolidada (AC); confirmar na Fase 1.",
             },
             {
                 label: "Sem mudança observada",
@@ -406,21 +542,19 @@ export function buildVerdictPanel(args: {
 
 export type ExecutiveBullet = { text: string; tone: Tone };
 
+/**
+ * Bullets do resumo executivo.
+ *
+ * Não repete área do imóvel, contagem de camadas nem de feições: os quatro
+ * cartões de métrica no topo do laudo já trazem esses números, e repetir em
+ * bullet só empurrava o achado relevante para baixo.
+ */
 export function buildExecutiveBullets(args: {
     jobId: string;
-    totalLayers: number;
-    layersWithData: number;
-    totalFeatures: number;
-    propertyAreaHa: number;
     findings: Finding[];
     timeline?: TimelineModel | null;
 }): ExecutiveBullet[] {
-    const bullets: ExecutiveBullet[] = [
-        {
-            text: `Imóvel de ${args.propertyAreaHa.toFixed(2)} ha; ${args.layersWithData} de ${args.totalLayers} camada(s) ambiental(is) com sobreposição e ${args.totalFeatures} feição(ões) recortada(s).`,
-            tone: "info",
-        },
-    ];
+    const bullets: ExecutiveBullet[] = [];
     if (args.timeline && args.timeline.years.length > 0) {
         const usable = args.timeline.years.filter((y) => y.state !== "missing").length;
         bullets.push({

@@ -19,12 +19,21 @@ export function isoFromDateCompact(dateCompact: string): string {
   return Number.isFinite(new Date(iso).getTime()) ? iso : "";
 }
 
+/**
+ * ⚠️ Os limites usam lookaround, não `\b`.
+ *
+ * `_` é caractere de palavra em JS, então `\bl7\b` **nunca** casa em
+ * `landsat_224_069_2003_l7_etm_...` — que é exatamente como o GeoServer da casa
+ * nomeia as camadas. O efeito era todo o acervo voltar com plataforma
+ * indefinida, e a escolha de cena do laudo acabou premiando uma cena Landsat 7
+ * pós-falha do SLC (com faixas de vazio) por ela estar mais perto do 22/07.
+ */
 export function platformFromText(value: string): string | undefined {
   const text = String(value || "").toLowerCase();
-  if (/lc09|landsat[_\s-]*9|\bl9\b/.test(text)) return "landsat-9";
-  if (/lc08|landsat[_\s-]*8|\bl8\b|lo8/.test(text)) return "landsat-8";
-  if (/le07|landsat[_\s-]*7|\bl7\b/.test(text)) return "landsat-7";
-  if (/lt05|landsat[_\s-]*5|\bl5\b|lt5/.test(text)) return "landsat-5";
+  if (/lc09|landsat[_\s-]*9|(?<![a-z0-9])l9(?![a-z0-9])/.test(text)) return "landsat-9";
+  if (/lc08|landsat[_\s-]*8|(?<![a-z0-9])l8(?![a-z0-9])|lo8/.test(text)) return "landsat-8";
+  if (/le07|landsat[_\s-]*7|(?<![a-z0-9])l7(?![a-z0-9])/.test(text)) return "landsat-7";
+  if (/lt05|landsat[_\s-]*5|lc[_\s-]+5|(?<![a-z0-9])l5(?![a-z0-9])|lt5/.test(text)) return "landsat-5";
   return undefined;
 }
 

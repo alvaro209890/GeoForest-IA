@@ -94,6 +94,7 @@ import {
   inferSimcarStageFromEndpoint,
   downloadSimcarZip,
   openSimcarPdfInNewTab,
+  downloadSimcarReportDocx,
   downloadSimcarAnalysisImage,
   type DashboardView,
   type ChatMessage,
@@ -206,7 +207,13 @@ const SimcarLotesPanel = lazy(() => import('@/components/SimcarLotesPanel'));
 type DocumentReference = ReturnType<typeof doc>;
 
 const SIMCAR_MANDATORY_LAYERS = new Set(['AIR', 'ATP']);
+// Janela AC/AVN: 2003 -> 22/07/2008, ano a ano. Espelha AC_AVN_DEFAULT_KEYS em
+// backend/simcar/analysis.ts -- o backend so cai na janela dele quando esta lista
+// vai vazia, entao ela e quem manda de fato na serie analisada.
 const SIMCAR_FIXED_AC_AVN_SATELLITES: Array<{ key: string; label: string; sensor: string; year: number }> = [
+  { key: 'landsat5_2003', label: 'Landsat 2003', sensor: 'Landsat 5', year: 2003 },
+  { key: 'landsat5_2004', label: 'Landsat 2004', sensor: 'Landsat 5', year: 2004 },
+  { key: 'landsat5_2005', label: 'Landsat 2005', sensor: 'Landsat 5', year: 2005 },
   { key: 'landsat5_2006', label: 'Landsat 2006', sensor: 'Landsat 5', year: 2006 },
   { key: 'landsat5_2007', label: 'Landsat 2007', sensor: 'Landsat 5', year: 2007 },
   { key: 'spot_2008', label: 'SPOT 2008', sensor: 'SPOT', year: 2008 },
@@ -4670,17 +4677,35 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   }}
                   extraActions={
                     clip.reportPdfStatus === 'ready' && (clip.reportPdfDownloadUrl || clip.reportPdfUrl) ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openSimcarPdfInNewTab(clip.reportPdfDownloadUrl || clip.reportPdfUrl);
-                        }}
-                        className="p-2 rounded-lg text-cyan-300 hover:text-white hover:bg-cyan-500/20 transition-colors opacity-0 group-hover:opacity-100"
-                        title="Abrir PDF técnico em nova aba"
-                      >
-                        <FileDown size={14} />
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openSimcarPdfInNewTab(clip.reportPdfDownloadUrl || clip.reportPdfUrl);
+                          }}
+                          className="p-2 rounded-lg text-cyan-300 hover:text-white hover:bg-cyan-500/20 transition-colors opacity-0 group-hover:opacity-100"
+                          title="Abrir PDF técnico em nova aba"
+                        >
+                          <FileDown size={14} />
+                        </button>
+                        {(clip.reportDocxDownloadUrl || clip.reportDocxUrl) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              downloadSimcarReportDocx(
+                                clip.reportDocxDownloadUrl || clip.reportDocxUrl,
+                                clip.reportDocxFilename,
+                              );
+                            }}
+                            className="p-2 rounded-lg text-blue-300 hover:text-white hover:bg-blue-500/20 transition-colors opacity-0 group-hover:opacity-100"
+                            title="Baixar laudo em Word (editável)"
+                          >
+                            <FileText size={14} />
+                          </button>
+                        )}
+                      </>
                     ) : undefined
                   }
                   onDelete={async () => {
@@ -5901,9 +5926,9 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 	                        Boolean(historyEntry?.auasAnalysisMessages?.length);
 	                      if (!hasAnalysis) return null;
 	                      const pdfUrl = resolveBackendUrl(historyEntry?.reportPdfDownloadUrl || historyEntry?.reportPdfUrl || '');
+	                      const docxUrl = resolveBackendUrl(historyEntry?.reportDocxDownloadUrl || historyEntry?.reportDocxUrl || '');
 	                      const isGenerating = historyEntry?.reportPdfStatus === 'generating';
 	                      const failed = historyEntry?.reportPdfStatus === 'failed';
-	                      const docxUrl = resolveBackendUrl(historyEntry?.reportDocxDownloadUrl || historyEntry?.reportDocxUrl || '');
 	                      const isGeneratingDocx = historyEntry?.reportDocxStatus === 'generating';
 	                      const docxFailed = historyEntry?.reportDocxStatus === 'failed';
 	                      return (
@@ -5915,7 +5940,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 	                            <div className="flex-1 min-w-0">
 	                              <h3 className="font-semibold text-white text-sm">Laudo Técnico SIMCAR</h3>
 	                              <p className="text-[11px] text-slate-400">
-	                                Veredito, quadro de achados, linha do tempo e quantitativos — no papel timbrado da IMAP. Mesmo conteúdo em PDF e Word.
+                                Veredito, quadro de achados, linha do tempo e quantitativos — no papel timbrado da IMAP. O <strong className="text-slate-300">PDF</strong> é a peça final; o <strong className="text-slate-300">Word</strong> sai igual, para o responsável técnico editar antes de assinar.
 	                              </p>
 	                              {historyEntry?.reportPdfGeneratedAt && (
 	                                <p className="text-[10px] text-slate-500 mt-1">
@@ -5940,6 +5965,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 	                                  Baixar PDF
 	                                </button>
 	                              )}
+	                              {docxUrl && (
+	                                <button
+	                                  type="button"
+	                                  onClick={() => downloadSimcarReportDocx(docxUrl, historyEntry?.reportDocxFilename)}
+	                                  className="flex-1 sm:flex-none px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors flex items-center justify-center gap-2"
+	                                  title="Baixar o laudo em Word (editável)"
+	                                >
+	                                  <FileText size={14} />
+	                                  Baixar DOCX
+	                                </button>
+	                              )}
 	                              <button
 	                                type="button"
 	                                onClick={() => void generateSimcarReportPdf(historyEntry)}
@@ -5947,27 +5983,17 @@ Arquivo de imagem previamente anexado pelo usuário.`;
 	                                className="flex-1 sm:flex-none px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-60 disabled:cursor-not-allowed text-slate-100 text-xs font-medium transition-colors flex items-center justify-center gap-2"
 	                              >
 	                                {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
-	                                {pdfUrl ? 'Regenerar PDF' : isGenerating ? 'Gerando...' : 'Gerar PDF'}
-	                              </button>
-	                              {docxUrl && (
-	                                <a
-	                                  href={docxUrl}
-	                                  download={historyEntry?.reportDocxFilename || 'laudo-simcar.docx'}
-	                                  className="flex-1 sm:flex-none px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors flex items-center justify-center gap-2"
-	                                >
-	                                  <Download size={14} />
-	                                  Baixar Word
-	                                </a>
-	                              )}
-	                              <button
-	                                type="button"
-	                                onClick={() => void generateSimcarReportDocx(historyEntry)}
-	                                disabled={isGeneratingDocx}
-	                                className="flex-1 sm:flex-none px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-60 disabled:cursor-not-allowed text-slate-100 text-xs font-medium transition-colors flex items-center justify-center gap-2"
-	                              >
-	                                {isGeneratingDocx ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
-	                                {docxUrl ? 'Regenerar Word' : isGeneratingDocx ? 'Gerando...' : 'Gerar Word'}
-	                              </button>
+                                {pdfUrl ? 'Regenerar PDF' : isGenerating ? 'Gerando...' : 'Gerar laudo'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void generateSimcarReportDocx(historyEntry)}
+                                disabled={isGeneratingDocx}
+                                className="flex-1 sm:flex-none px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-60 disabled:cursor-not-allowed text-slate-100 text-xs font-medium transition-colors flex items-center justify-center gap-2"
+                              >
+                                {isGeneratingDocx ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+                                {docxUrl ? 'Regenerar Word' : isGeneratingDocx ? 'Gerando...' : 'Gerar só o Word'}
+                              </button>
 	                            </div>
 	                          </div>
 	                        </section>
@@ -6017,7 +6043,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                               ))}
                             </div>
                             <p className="mt-2 text-[10px] text-slate-500">
-                              Conjunto fixo para validação técnica: Landsat 2006, Landsat 2007, SPOT 2008 e Landsat 2008.
+                              Série contígua de 2003 a 2008 (marco do Código Florestal, 22/07/2008): Landsat 5 de 2003 a 2007, SPOT 2008 (2,5 m) e Landsat 2008. Conversão vista dentro dessa janela é anterior ao marco — área consolidada.
                             </p>
                           </div>
                         </div>
@@ -6294,9 +6320,11 @@ progress={
                           }
                           const confidence = formatSimcarAcAvnConfidence(globalVerdict?.confidence);
                           const verdictRows = [
-                            { label: 'AC fora do shape', value: globalVerdict?.acForaShape },
-                            { label: 'AVN antropizada', value: globalVerdict?.avnDentroShapeAntropizado },
-                            { label: 'AVN fora em AUAS', value: globalVerdict?.avnParcialForaShapeMasEmAuas },
+                            // AC e uso CONSOLIDADO (anterior a 22/07/2008); 'antropizado'
+                            // no vocabulario SIMCAR puxa para AUAS (supressao pos-marco).
+                            { label: 'Uso consolidado fora da AC', value: globalVerdict?.acForaShape },
+                            { label: 'Uso consolidado dentro da AVN', value: globalVerdict?.avnDentroShapeAntropizado },
+                            { label: 'Vegetação fora da AVN, dentro da AUAS', value: globalVerdict?.avnParcialForaShapeMasEmAuas },
                           ];
                           return (
                             <div className="px-6 pt-4">
@@ -6354,7 +6382,7 @@ progress={
                                           <span
                                             key={sat.key}
                                             className="px-2 py-1 rounded-md border border-white/10 bg-white/[0.03] text-[10px] text-slate-300"
-                                            title={`AC fora: ${ac.label} | AVN antropizada: ${avn.label}`}
+                                            title={`Uso consolidado fora da AC: ${ac.label} | Uso consolidado dentro da AVN: ${avn.label}`}
                                           >
                                             {sat.label || sat.key} · {sat.year}
                                           </span>

@@ -2,7 +2,10 @@
  * Gera um laudo PDF de amostra, sem rede e sem Firebase, para conferência visual
  * do layout (`simcar-report-v3`, no papel timbrado da IMAP).
  *
- *   npx tsx scripts/preview-laudo-pdf.ts [saida.pdf] [--fase=acavn|pre2008|pos2008|acveg] [--docx]
+ *   npx tsx scripts/preview-laudo-pdf.ts [saida.pdf] [--fase=acavn|pre2008|pos2008|acveg] [--docx] [--vetorizado]
+ *
+ * `--vetorizado` simula a aba "Análise de vetorização" (ZIP enviado pelo RT em
+ * vez de recorte WFS) — muda a nota de origem dos vetores no laudo.
  *
  * Com `--docx` grava também o `.docx` ao lado, do MESMO modelo — serve para
  * conferir que os dois formatos dizem a mesma coisa e saem no mesmo timbrado.
@@ -71,6 +74,7 @@ const analysisMeta = {
     },
     satelliteVerdicts: [
         { key: "landsat5_2003", label: "Landsat 5 (2003)", year: 2003, status: "used" },
+        { key: "landsat5_2004", label: "Landsat 5 (2004)", year: 2004, status: "used" },
         { key: "landsat5_2005", label: "Landsat 5 (2005)", year: 2005, status: "used" },
         { key: "landsat5_2006", label: "Landsat 5 (2006)", year: 2006, status: "missing" },
         { key: "landsat5_2007", label: "Landsat 5 (2007)", year: 2007, status: "used" },
@@ -166,10 +170,12 @@ const auasByFase: Record<string, { text: string; meta: any }> = {
 
 const auas = auasByFase[fase];
 
+const SOURCE_MODE = process.argv.includes("--vetorizado") ? "vectorized-analysis" : "auto-clip";
+
 const entrada = {
     jobId: "9f2c41ab-7de0-4c1a-9b55-preview0001",
     filename: "Fazenda Santa Clara — recorte SIMCAR (amostra)",
-    sourceMode: "vectorized-analysis",
+    sourceMode: SOURCE_MODE,
     summary,
     analysisText,
     analysisMeta,

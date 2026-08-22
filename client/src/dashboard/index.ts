@@ -58,6 +58,7 @@ export {
 export {
   downloadSimcarZip,
   openSimcarPdfInNewTab,
+  downloadSimcarReportDocx,
   downloadSimcarAnalysisImage,
 } from './lib/download-actions';
 export { DashboardSidebarTabs, DASHBOARD_TABS } from './components/DashboardSidebarTabs';

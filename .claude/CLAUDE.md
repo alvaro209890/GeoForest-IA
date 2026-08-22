@@ -50,12 +50,16 @@ npx firebase deploy --only hosting   # site único: ia-florestal
 | `backend/billing.ts` | Billing disabled (all costs return 0 BRL) |
 | `backend/auth.ts` | requireAuth middleware (Firebase token verification) |
 | `backend/simcar-clip.ts` | SIMCAR Clip module (shapefile, WFS, análise de imagens via Groq Vision) |
+| `backend/simcar/report-theme.ts` | **Conteúdo e cor do laudo** — fonte única dos dois formatos; é aqui que se mexe no texto |
+| `backend/simcar/acervo-local.ts` | Landsat/SPOT do GeoServer da casa no laudo; catálogo `config/acervo-landsat.json` (cenas deslocadas vão `descartado`) |
+| `backend/simcar/report.ts` / `report-docx.ts` | Renderizadores do laudo (PDF e Word). Só desenham |
+| `backend/simcar/constants.ts` | `TEMPLATE_LAYERS` (28) e `EXPORT_EXCLUDED_LAYERS` (fora de tudo que é entregue) |
 | `backend/simcar-lotes/` | Aba "Lotes SIMCAR": recibo do CAR → ZIP com pasta por lote (ver `docs/SIMCAR_LOTES.md`) |
 | `backend/simcar-lotes/monitor.ts` | Monitor SIMCAR (RTDB do monitor-car) — **só leitura**; job espera o SIMCAR livre e retoma lote interrompido |
 | `backend/simcar-oraculo/client.ts` | Cliente SEMA; sessão **por credencial** (`getSimcarTokenFor`) — oráculo e Lotes não se derrubam |
 | `backend/auas-analysis.ts` | AUAS land use classification |
 | `backend/auas-sccon.ts` | AUAS × SCCON: data ABERTURA via alertas de desmate + pontos sem alerta (ver `docs/AUAS_SCCON.md`) |
-| `backend/analise-pos-recorte/` | **3 fases pós-recorte** (F1 pré-2008, `pos2008/` datação 2009–2019, `ac-vegetacao/` vegetação na AC). Gate em `backend/simcar/phases.ts`, rotas em `backend/simcar/phase2-3-handlers.ts`. **Atrás de flag — ver abaixo** |
+| `backend/analise-pos-recorte/` | **3 fases pós-recorte** (F1 pré-2008, `pos2008/` datação 2009–2019, `ac-vegetacao/` vegetação na AC). Gate em `backend/simcar/phases.ts`. **F2 não exige F1.** F3 continua encadeada. |
 | `backend/geometry/` | Erros de geometria SIMCAR — detectores em `detectors/` (plano 04); `geometry-errors.ts` é só o barrel |
 | `backend/cbers/` | Pipeline CBERS-4A WPM + acervo (`archive.ts`) (planos 05/07); `cbers-wpm.ts` é só o barrel |
 | `backend/landsat/` | Pipeline Landsat 8/9 (plano 06) — não existe mais `landsat.ts` |
@@ -161,11 +165,51 @@ Terceiro, sobre a suíte: um teste que falha em `pnpm test` mas passa isolado é
 **timeout sob carga** (o default do vitest é 5 s e `processar-projeto.test.ts` leva ~108 s),
 não bug de lógica.
 
-## Laudo PDF e janela temporal
+## Aba "Análise de vetorização" (modo `vectorized-analysis`)
 
-O laudo é o `simcar-report-v3` (`backend/simcar/report.ts` desenha;
-`backend/simcar/report-theme.ts` decide conteúdo e cor, e é onde ficam os testes).
-Amostra local sem rede: `npx tsx scripts/preview-laudo-pdf.ts /tmp/laudo.pdf --fase=acavn`.
+Recebe o ZIP do modelo SIMCAR **já vetorizado** e roda a mesma análise de IA do
+pós-recorte, **sem consulta WFS** — o imóvel é reconstruído do ATP/AIR do próprio
+ZIP (`parseCachedContextFromOutputZip`). O cliente encadeia AC/AVN → AUAS sozinho
+e consolida um laudo único.
+
+- **Persiste no mesmo documento do recorte** (`users/<uid>/simcar_clips/<jobId>`),
+  por merge incremental. Testes em `vectorized-persistence.test.ts`.
+- **O laudo é gerado DUAS vezes por rodada** (fim do AC/AVN e fim do AUAS). É de
+  propósito: se o AUAS falhar, o laudo parcial é o que sobra. O órfão que isso
+  gerava no storage foi resolvido por `discardSupersededReportFiles`.
+- ⚠️ **`status: "completed"` é gravado já no import**, antes de a análise rodar.
+  O cliente compensa com `!hasVectorizedFinalReport`. Não confie nesse status
+  sozinho para saber se a análise terminou.
+- Validação completa e hipóteses já descartadas (AVN/ARL idênticas, área maior
+  que o imóvel): `docs/VALIDACAO_2026-08-21_ABA_VETORIZADA.md`. **Leia antes de
+  "consertar" área de camada** — o comportamento é o mesmo do modo recorte.
+
+## Laudo (PDF + DOCX) e janela temporal
+
+O laudo sai em **dois formatos do mesmo conteúdo**: `simcar-report-v3` em PDF
+(`backend/simcar/report.ts`) e `simcar-report-docx-v1` em Word
+(`backend/simcar/report-docx.ts`, para o RT editar antes de assinar). Os dois
+consomem `backend/simcar/report-theme.ts`, que decide conteúdo e cor e é onde
+ficam os testes — **mexa no tema, não nos renderizadores**, senão os formatos
+divergem. O DOCX não traz anexo fotográfico nem o gráfico de barras (motivos no
+cabeçalho do módulo). Falha no DOCX não retém a entrega: o PDF vai assim mesmo.
+
+⚠️ **Heurística de legenda não discrimina mais nada.** Desde `0e429b3b` toda
+imagem de análise tem a MESMA legenda (`"<sensor> — Visão Geral (AC + AVN +
+AUAS)"`). Duas funções pontuavam por palavra na legenda e viraram no-op em
+silêncio: `reduceImageSet` (retry de payload) e `selectPrincipalReportImages`
+(anexo do laudo) — esta última **descartava o SPOT 2008**, a cena de maior peso
+probatório. Ambas agora ordenam por **peso probatório** (SPOT → marco 2008 →
+2003 → ano decrescente). Se aparecer outra seleção baseada em texto de legenda,
+suspeite. Detalhe: `docs/CHANGELOG_2026-08-21_ANEXO_SPOT_SUMIA.md`.
+
+O laudo declara a **origem dos vetores** (`vectorSourceNote`): base da SEMA no
+modo recorte, ZIP do RT no modo vetorizado. Isso muda o que "divergência"
+significa e não pode sumir da peça.
+
+Amostra local sem rede, os dois formatos de uma vez:
+`npx tsx scripts/preview-laudo-pdf.ts /tmp/laudo.pdf --fase=acavn --docx`
+(some `--vetorizado` para simular a aba de vetorização).
 
 **O laudo sai no papel timbrado oficial da IMAP** — o MESMO PNG e as MESMAS
 margens/cabeçalho/rodapé que o sistema de acompanhamento de processos usa nos
@@ -177,14 +221,39 @@ atualizado no acompanhamento, copiar o PNG de novo para cá: os dois sistemas de
 sair no mesmo papel.
 
 A janela de imagens nasce de dois marcos legais: **22/07/2008** (Lei 12.651/2012,
-art. 3º, IV) e **22/07/2003** (pousio — IN SEMA-MT 04/2023, art. 42 §6º). Por isso
-a análise AC/AVN começa em 2003, e não em 2006. Inventário do acervo da SEMA,
+art. 3º, IV) e **22/07/2003** (pousio — art. 3º, XXIV c/c IN SEMA-MT 04/2023,
+art. 42 §6º). A série é **contígua ano a ano** de 2003 a 2008 e precisa continuar
+sendo: quem classifica AC × AVN é o **ano da última atividade visível**, e um ano
+faltando move a contagem de um lado ao outro do limite de 5 anos do pousio.
+
+⚠️ **A lista do frontend é quem manda na janela, não o backend.** O backend só
+usa `getFixedAcAvnSatelliteKeys()` quando `selectedLayers` chega vazio — e o
+Dashboard sempre manda `SIMCAR_FIXED_AC_AVN_SATELLITES`. Expandir a janela só no
+backend não tem efeito nenhum (foi o que aconteceu entre 20 e 21/08/2026).
+
+⚠️ **Pousio tem dois lados.** Interrupção de até 5 anos mantém a AC; acima disso
+descaracteriza e a vegetação regenerada volta a ser AVN — inclusive quando ainda
+se vê traço antigo de talhão. A regra única é `POUSIO_PROMPT_RULE`
+(`backend/analise-pos-recorte/groq-vision-core.ts`).
+
+⚠️ **AC não é "área antropizada".** AC e AUAS são o mesmo estado do terreno
+separados pelo marco: AC → escreva "uso consolidado"; AUAS → "supressão
+pós-2008". No SIMCAR "antropizado" puxa para AUAS e o laudo passa a ler como
+acusação. Fonte única nos prompts: `AC_AUAS_PROMPT_GLOSSARY`; no laudo:
+`AC_VS_AUAS_GLOSSARY` (`report-theme.ts`).
+
+⚠️ **`TIPOLOGIA_VEGETAL` não sai em nada que é entregue** — ZIP, XLSX, PDF e
+DOCX. Fonte única: `EXPORT_EXCLUDED_LAYERS` (`backend/simcar/constants.ts`). É
+filtro de **saída**: a camada continua em `TEMPLATE_LAYERS` e continua sendo
+recortada para as fases que a consultam. O ZIP repassa todo o `Modelo.zip`, então
+sem `isExcludedExportEntry` os arquivos VAZIOS da camada entrariam pelo
+passthrough. Inventário do acervo da SEMA,
 camadas vetoriais úteis ainda não integradas e o que fazer com MapBiomas/PRODES/
 DETER: `docs/IMAGENS_E_CAMADAS_LAUDO.md`.
 
 | Env | Efeito | Default |
 |---|---|---|
-| `SIMCAR_ACAVN_SATELLITE_KEYS` | Cenas da análise AC/AVN (1 imagem de visão cada — mexe no custo) | 2003, 2005, 2006, 2007, SPOT 2008, 2008 |
+| `SIMCAR_ACAVN_SATELLITE_KEYS` | Cenas da análise AC/AVN (1 imagem de visão cada — mexe no custo) | 2003, 2004, 2005, 2006, 2007, SPOT 2008, 2008 |
 | `SIMCAR_AUAS_POS2008_SERIES_START` / `_END` | Série visual da Fase 2; as janelas são geradas a partir dela | 2009 / 2019 |
 
 ⚠️ **Buracos reais do acervo da SEMA:** 2001 não existe, 2002 só tem Landsat 7 e

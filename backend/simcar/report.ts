@@ -19,9 +19,9 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import PDFDocument from "pdfkit";
-import { readPersistedSimcarClipForUid, hydrateCachedJob, persistSimcarClipArtifacts } from "./hydration";
-import { uploadRawBufferToCloudinary } from "./cloudinary";
-import { toPublicApiUrl } from "./constants";
+import { readPersistedSimcarClipForUid, hydrateCachedJob, persistSimcarClipArtifacts, storagePathBelongsToUid } from "./hydration";
+import { deleteFromCloudinary, uploadRawBufferToCloudinary } from "./cloudinary";
+import { EXPORT_EXCLUDED_LAYERS, isExcludedFromExport, toPublicApiUrl } from "./constants";
 import type { CachedJob } from "./types";
 import {
     PALETTE,
@@ -29,6 +29,7 @@ import {
     LEGAL_BASIS_LINES,
     buildAcAvnFindings,
     buildAuasFindings,
+    AC_VS_AUAS_GLOSSARY,
     buildExecutiveBullets,
     buildTimelineModel,
     buildVerdictPanel,
@@ -37,6 +38,8 @@ import {
     parseMarkdownBlocks,
     reportKindSectionTitle,
     splitLongParagraph,
+    imageSourceNote,
+    vectorSourceNote,
     type ExecutiveBullet,
     type Finding,
     type MarkdownBlock,
@@ -44,6 +47,7 @@ import {
     type Tone,
 } from "./report-theme";
 import { createImapTimbrado, IMAP_CONTENT_WIDTH, IMAP_PAGE } from "./report-imap";
+import { buildSimcarReportDocxBuffer, SIMCAR_REPORT_DOCX_VERSION } from "./report-docx";
 import {
     extractFirstAiText,
     normalizeReportImages,
@@ -68,25 +72,79 @@ export type SimcarReportArtifact = {
     reportPdfGeneratedAt: string;
     reportPdfVersion: string;
     reportPdfStatus: "ready";
+    /**
+     * DOCX do mesmo laudo, para o responsável técnico editar antes de assinar.
+     * Opcional: se a geração do DOCX falhar, o PDF ainda é entregue — o laudo
+     * não fica retido por causa do formato secundário.
+     */
+    reportDocxUrl?: string;
+    reportDocxDownloadUrl?: string;
+    reportDocxFilename?: string;
+    reportDocxVersion?: string;
 };
 
 export type { SimcarReportImage };
 
-function selectPrincipalReportImages(acImages: SimcarReportImage[], auasImages: SimcarReportImage[]): SimcarReportImage[] {
-    const scoreImage = (img: SimcarReportImage) => {
-        const cap = img.caption.toLowerCase();
-        let score = 0;
-        if (/vis[aã]o geral|context/i.test(cap)) score += 5;
-        if (/auas|area consolidada|área consolidada|avn|arl/i.test(cap)) score += 3;
-        if (/spot|landsat|sentinel/i.test(cap)) score += 1;
-        return score;
-    };
+/**
+ * Escolhe as cenas que entram no Anexo Fotografico.
+ *
+ * A versao anterior pontuava por PALAVRA na legenda: +5 para "Visao Geral",
+ * +3 para citar AC/AVN/AUAS/ARL, +1 para citar o sensor. Isso discriminava
+ * quando cada satelite gerava 3 vistas com legendas diferentes ("Somente AC",
+ * "Somente AVN"). Desde o commit `0e429b3b` cada satelite gera UM composite
+ * rotulado "<sensor> — Visao Geral (AC + AVN + AUAS)": as tres regras passaram
+ * a valer para TODAS as imagens, todas empataram em 9 pontos e o sort virou
+ * no-op. Com o corte em 4, sobravam as 4 PRIMEIRAS por ordem de array — os anos
+ * mais antigos — e o **SPOT 2008 caia fora do laudo**.
+ *
+ * Isso passou despercebido enquanto a janela tinha 4 cenas (2006, 2007, SPOT,
+ * 2008), porque o corte de 4 nao cortava nada. Ao abrir a janela para 2003-2008
+ * (7 cenas), o furo apareceu — e apareceu justamente na cena de maior peso
+ * juridico. Mesma familia do bug de `reduceImageSet`: heuristica de legenda que
+ * parou de discriminar depois do refactor de composite unico.
+ *
+ * Agora a ordem e por **peso probatorio**, nao por texto:
+ *   1. SPOT 2008 — 2,5 m, base da Nota Tecnica 001/2017 da SEMA-MT;
+ *   2. a cena do marco (2008);
+ *   3. a cena de 2003 — marco do pousio quinquenal;
+ *   4. o resto por ano decrescente (mais perto do marco decide primeiro).
+ *
+ * E o teto da etapa AC/AVN passou a caber a janela inteira: cortar cena da
+ * serie temporal esconde justamente a evidencia que data a conversao.
+ */
+const AC_AVN_FIGURE_LIMIT = 8;
+const AUAS_FIGURE_LIMIT = 5;
+
+function reportImageYear(caption: string): number {
+    return Number(String(caption || "").match(/\b(?:19|20)\d{2}\b/)?.[0] || 0);
+}
+
+function reportImageWeight(caption: string): number {
+    const cap = String(caption || "");
+    // Destaques do achado (ex.: "SPOT 2008 — Destaque AVN ..." / "SPOT 2008 —
+    // Destaque Reservatório ...") têm prioridade máxima no anexo: vêm antes das
+    // demais cenas, pois mostram o local e o ano do trecho apontado no laudo.
+    if (/destaque avn|destaque reservatório/i.test(cap)) return -1;
+    if (/spot/i.test(cap)) return 0;
+    if (reportImageYear(cap) === 2008) return 1;
+    if (reportImageYear(cap) === 2003) return 2;
+    return 3;
+}
+
+export function selectPrincipalReportImages(
+    acImages: SimcarReportImage[],
+    auasImages: SimcarReportImage[],
+): SimcarReportImage[] {
     const pick = (images: SimcarReportImage[], limit: number) =>
         images
             .filter((img, idx, arr) => img.url && arr.findIndex((other) => other.url === img.url) === idx)
-            .sort((a, b) => scoreImage(b) - scoreImage(a))
+            .sort((a, b) => {
+                const porPeso = reportImageWeight(a.caption) - reportImageWeight(b.caption);
+                if (porPeso !== 0) return porPeso;
+                return reportImageYear(b.caption) - reportImageYear(a.caption);
+            })
             .slice(0, limit);
-    return [...pick(acImages, 4), ...pick(auasImages, 4)].slice(0, 8);
+    return [...pick(acImages, AC_AVN_FIGURE_LIMIT), ...pick(auasImages, AUAS_FIGURE_LIMIT)];
 }
 
 async function fetchReportImageBuffer(url: string): Promise<Buffer | null> {
@@ -407,11 +465,16 @@ export async function buildSimcarReportPdfBuffer(args: {
     /* ─── Modelo do laudo ────────────────────────────────────── */
 
     const summary = args.summary || {};
-    const layers = Array.isArray(summary.layers) ? summary.layers : (args.job?.layerSummaries || []);
+    // Camadas excluídas da entrega (hoje: TIPOLOGIA_VEGETAL) não entram no laudo
+    // nem nos contadores — senão o laudo anuncia uma sobreposição que o ZIP não
+    // tem. Ver `EXPORT_EXCLUDED_LAYERS` em `constants.ts`.
+    const rawLayers = Array.isArray(summary.layers) ? summary.layers : (args.job?.layerSummaries || []);
+    const layers = rawLayers.filter((l: any) => !isExcludedFromExport(l?.name));
+    const excludedLayerCount = rawLayers.length - layers.length;
     const propertyAreaHa = Number(summary.propertyAreaHa || args.job?.areaHa || 0);
-    const layersWithData = Number(summary.layersWithData || layers.filter((l: any) => Number(l?.features || 0) > 0).length || 0);
-    const totalFeatures = Number(summary.totalFeaturesClipped || layers.reduce((sum: number, l: any) => sum + Number(l?.features || 0), 0));
-    const totalLayers = Number(summary.layersProcessed || layers.length || 0);
+    const layersWithData = layers.filter((l: any) => Number(l?.features || 0) > 0).length;
+    const totalFeatures = layers.reduce((sum: number, l: any) => sum + Number(l?.features || 0), 0);
+    const totalLayers = Math.max(0, Number(summary.layersProcessed || rawLayers.length || 0) - excludedLayerCount);
 
     const auasKind = detectReportKind(args.auasMeta);
     const acAvnFindings: Finding[] = args.analysisText ? buildAcAvnFindings(args.analysisMeta) : [];
@@ -486,10 +549,6 @@ export async function buildSimcarReportPdfBuffer(args: {
     bulletList(
         buildExecutiveBullets({
             jobId: args.jobId,
-            totalLayers,
-            layersWithData,
-            totalFeatures,
-            propertyAreaHa,
             findings,
             timeline,
         }),
@@ -636,6 +695,25 @@ export async function buildSimcarReportPdfBuffer(args: {
 
     // O cabeçalho preto da tabela precisa caber junto com o título da seção.
     ensureSpace(146);
+    {
+        // O leitor precisa saber se os polígonos são da base da SEMA ou da
+        // vetorização que o próprio RT enviou — muda o que "divergência" quer
+        // dizer. Ver `vectorSourceNote` em report-theme.ts.
+        const origem = vectorSourceNote(args.sourceMode);
+        ensureSpace(58);
+        calloutBox(origem.label, [origem.detail], "neutral", { compact: true });
+
+        // Idem para as cenas: acervo da IMAP, mosaico da SEMA, ou os dois no
+        // mesmo laudo. Ver imageSourceNote em report-theme.ts.
+        const origemImagens = imageSourceNote(
+            [...args.analysisImages, ...args.auasImages].map((img) => String(img?.caption || "")),
+        );
+        if (origemImagens) {
+            ensureSpace(58);
+            calloutBox(origemImagens.label, [origemImagens.detail], "neutral", { compact: true });
+        }
+    }
+
     sectionTitle("Quantitativos por Camada", "Somente camadas com feição recortada dentro do imóvel.");
     const withData = layers.filter((l: any) => Number(l?.features || 0) > 0).slice(0, 24);
     if (withData.length === 0) {
@@ -787,18 +865,58 @@ export async function buildSimcarReportPdfBuffer(args: {
         markdownBody(args.auasText, 9000);
     }
 
+    /* ─── Reservatórios artificiais: quadro explícito ─────────── */
+
+    // O encarte digital do CAR não transfere a lâmina d'água para a área
+    // consolidada/AUAS automaticamente (regressão real: Lote 81, 21/08/2026).
+    // Quando há reservatório no recorte, o laudo declara os números em quadro
+    // próprio, além do texto gerado pela análise.
+    const reservoirAnalysis: any = args.analysisMeta?.reservoirAnalysis || null;
+    if (reservoirAnalysis?.hasReservoir) {
+        ensureSpace(120);
+        sectionTitle(
+            "Reservatórios Artificiais — Enquadramento Legal",
+            "Lâmina d'água presente no recorte e tratamento no CAR/SIMCAR.",
+        );
+        const feats = Number(reservoirAnalysis.totalFeatures || 0);
+        const linhas: string[] = [
+            `${feats} feição(ões) de reservatório artificial, total de ${Number(reservoirAnalysis.totalAreaHa || 0).toFixed(4)} ha (${Number(reservoirAnalysis.pctOfProperty || 0).toFixed(2)}% do imóvel).`,
+            `Sobre Área Consolidada declarada: ${Number(reservoirAnalysis.overlapAcHa || 0).toFixed(4)} ha · Sobre AUAS declarada: ${Number(reservoirAnalysis.overlapAuasHa || 0).toFixed(4)} ha · Sobre AVN: ${Number(reservoirAnalysis.overlapAvnHa || 0).toFixed(4)} ha · Fora de camada declarada: ${Number(reservoirAnalysis.outsideDeclaredHa || 0).toFixed(4)} ha.`,
+            "Lei 12.651/2012, art. 4º, III e §1º: reservatório artificial que NÃO decorre de barramento/represamento de curso d'água natural NÃO gera APP de entorno — a lâmina d'água enquadra-se como uso antrópico (área consolidada/AUAS).",
+            "Art. 4º, §4º: acumulações naturais ou artificiais com superfície inferior a 1 ha ficam dispensadas da faixa de APP de entorno (vedada nova supressão de vegetação nativa).",
+            "Manual do Projeto Geográfico do SIMCAR (SEMA-MT, 2018): seção 8.9 define AUAS = Área de Uso ANTROPIZADO do Solo (características originais alteradas por atividade humana); seção 8.14 define reservatório artificial = decorrente de barramento/represamento de curso d'água natural; Anexo 01 marca ÁREA INUNDADA sobre AUAS/AVN/AC como VALIDAÇÃO IMPEDITIVA.",
+            "Lei 12.651/2012, art. 4º, §1º e §4º + Decreto 7.830/2012: reservatório artificial sem barramento não é APP de entorno; lâmina enquadra-se como AUAS/consolidada; acumulação < 1 ha dispensa faixa de APP.",
+            "O encarte digital do CAR (origem deste recorte) NÃO transfere automaticamente a lâmina d'água para a área consolidada/AUAS — a validação impeditiva do SIMCAR bloqueia a sobreposição; a adequação do perímetro no CAR/SIMCAR deve ser feita pelo responsável técnico.",
+        ];
+        calloutBox("Reservatório artificial detectado", linhas, "info", { compact: false });
+    }
+
     /* ─── Fundamentação legal ────────────────────────────────── */
 
     sectionTitle("Fundamentação Legal Aplicada", "Normas que definem os marcos temporais usados nesta análise.");
     bulletList(LEGAL_BASIS_LINES.map((text) => ({ text, tone: "info" as Tone })), { fontSize: 8.6 });
 
+    ensureSpace(70);
+    calloutBox(
+        "Como ler AC, AUAS e AVN neste laudo",
+        AC_VS_AUAS_GLOSSARY,
+        "info",
+        { compact: true },
+    );
+
     /* ─── Anexo fotográfico ──────────────────────────────────── */
 
+    // Cena que não desceu não pode sumir calada: o leitor precisa saber que a
+    // evidência existe e ficou de fora, senão o anexo parece completo.
+    const figurasIndisponiveis: string[] = [];
     if (imageBuffers.some((img) => img.buffer)) {
         sectionTitle("Anexo Fotográfico", "Cenas de satélite com os vetores do CAR sobrepostos.");
         let figureIndex = 0;
         for (const img of imageBuffers) {
-            if (!img.buffer) continue;
+            if (!img.buffer) {
+                figurasIndisponiveis.push(reportSingleLineText(img.caption || "cena sem legenda", 90));
+                continue;
+            }
             try {
                 const pdfImg = (doc as any).openImage(img.buffer);
                 const aspectRatio = pdfImg.width / pdfImg.height;
@@ -825,19 +943,39 @@ export async function buildSimcarReportPdfBuffer(args: {
                 doc.moveDown(1.2);
                 doc.x = margin;
             } catch {
-                // Ignore broken image in report.
+                figurasIndisponiveis.push(reportSingleLineText(img.caption || "cena sem legenda", 90));
             }
         }
+    } else if (imageBuffers.length > 0) {
+        sectionTitle("Anexo Fotográfico", "Cenas de satélite com os vetores do CAR sobrepostos.");
+        for (const img of imageBuffers) {
+            figurasIndisponiveis.push(reportSingleLineText(img.caption || "cena sem legenda", 90));
+        }
+    }
+    if (figurasIndisponiveis.length > 0) {
+        ensureSpace(70);
+        calloutBox(
+            `${figurasIndisponiveis.length} cena(s) não puderam ser anexadas`,
+            [
+                `Não foi possível recuperar a imagem de: ${figurasIndisponiveis.slice(0, 8).join("; ")}.`,
+                "A análise considerou essas cenas; apenas a figura ficou de fora deste PDF. Regerar o laudo costuma resolver.",
+            ],
+            "warn",
+            { compact: true },
+        );
     }
 
     /* ─── Limitações ─────────────────────────────────────────── */
 
+    // Avisos sobre camada excluída da entrega não fazem sentido no laudo: o
+    // leitor não encontraria a camada no ZIP para conferir o aviso.
     const warnings = [
         ...(Array.isArray(summary.warnings) ? summary.warnings : []),
         ...(Array.isArray(args.job?.warnings) ? args.job!.warnings! : []),
     ]
         .filter(Boolean)
-        .map((item: any) => String(item));
+        .map((item: any) => String(item))
+        .filter((text) => ![...EXPORT_EXCLUDED_LAYERS].some((layer) => text.includes(layer)));
     const metaLimitations = [
         ...(Array.isArray(args.auasMeta?.limitations) ? args.auasMeta.limitations : []),
     ]
@@ -872,6 +1010,36 @@ export async function buildSimcarReportPdfBuffer(args: {
 
     doc.end();
     return done;
+}
+
+/**
+ * Remove do storage o PDF/DOCX da geração anterior deste mesmo job.
+ *
+ * Silencioso de propósito: falhar em apagar um arquivo velho não pode derrubar
+ * a entrega do laudo novo, que já está pronto e persistido.
+ */
+async function discardSupersededReportFiles(
+    uid: string,
+    persisted: any,
+    atuais: { reportPdfUrl: string; reportDocxUrl: string },
+): Promise<void> {
+    const anteriores = [
+        String(persisted?.reportPdfUrl || ""),
+        String(persisted?.files?.reportPdfUrl || ""),
+        String(persisted?.reportDocxUrl || ""),
+        String(persisted?.files?.reportDocxUrl || ""),
+    ];
+    const manter = new Set([atuais.reportPdfUrl, atuais.reportDocxUrl].filter(Boolean));
+    const alvos = Array.from(new Set(anteriores.filter(Boolean)))
+        .filter((url) => !manter.has(url))
+        .filter((url) => storagePathBelongsToUid(uid, url));
+    for (const url of alvos) {
+        try {
+            await deleteFromCloudinary(url, "raw");
+        } catch (err: any) {
+            console.warn("[SIMCAR REPORT] não deu para apagar laudo anterior:", err?.message || err);
+        }
+    }
 }
 
 export async function generateAndPersistSimcarReport(args: {
@@ -919,6 +1087,14 @@ export async function generateAndPersistSimcarReport(args: {
         if (!analysisText && !auasText) {
             throw new Error("Nenhuma análise IA encontrada para gerar o PDF.");
         }
+        // Uma resolução só para os dois formatos: o DOCX não desenha as figuras,
+        // mas declara a origem das cenas a partir das mesmas legendas.
+        const analysisImages = args.analysisImages?.length
+            ? args.analysisImages
+            : normalizeReportImages(persisted.analysisImages);
+        const auasImages = args.auasImages?.length
+            ? args.auasImages
+            : normalizeReportImages(persisted.auasAnalysisImages);
         const reportFilename = `SIMCAR_Laudo_Tecnico_${jobId.slice(0, 8)}.pdf`;
         const pdfBuffer = await buildSimcarReportPdfBuffer({
             jobId,
@@ -928,10 +1104,10 @@ export async function generateAndPersistSimcarReport(args: {
             job,
             analysisText,
             analysisMeta: args.analysisMeta || persisted.analysisMeta,
-            analysisImages: args.analysisImages?.length ? args.analysisImages : normalizeReportImages(persisted.analysisImages),
+            analysisImages,
             auasText,
             auasMeta: args.auasMeta || persisted.auasMeta,
-            auasImages: args.auasImages?.length ? args.auasImages : normalizeReportImages(persisted.auasAnalysisImages),
+            auasImages,
         });
         const generatedAt = new Date().toISOString();
         const reportPdfUrl = await uploadRawBufferToCloudinary(
@@ -940,6 +1116,35 @@ export async function generateAndPersistSimcarReport(args: {
             "application/pdf",
             uid,
         );
+
+        // O DOCX é o formato editável do MESMO laudo. Falha nele não retém a
+        // entrega: o PDF já está pronto e é a peça final.
+        const docxFilename = `SIMCAR_Laudo_Tecnico_${jobId.slice(0, 8)}.docx`;
+        let reportDocxUrl = "";
+        try {
+            const docxBuffer = await buildSimcarReportDocxBuffer({
+                jobId,
+                filename: String(persisted.filename || persisted.title || `Recorte ${jobId.slice(0, 8)}`),
+                sourceMode: String(persisted.sourceMode || ""),
+                summary,
+                job,
+                analysisText,
+                analysisMeta: args.analysisMeta || persisted.analysisMeta,
+                auasText,
+                auasMeta: args.auasMeta || persisted.auasMeta,
+                analysisImages,
+                auasImages,
+            });
+            reportDocxUrl = await uploadRawBufferToCloudinary(
+                docxBuffer,
+                docxFilename,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                uid,
+            );
+        } catch (docxError: any) {
+            console.error("[SIMCAR REPORT] DOCX build failed (PDF segue válido):", docxError?.message || docxError);
+        }
+
         const artifact: SimcarReportArtifact = {
             reportPdfUrl,
             reportPdfDownloadUrl: reportPdfUrl,
@@ -947,7 +1152,21 @@ export async function generateAndPersistSimcarReport(args: {
             reportPdfGeneratedAt: generatedAt,
             reportPdfVersion: SIMCAR_REPORT_VERSION,
             reportPdfStatus: "ready",
+            ...(reportDocxUrl
+                ? {
+                    reportDocxUrl,
+                    reportDocxDownloadUrl: reportDocxUrl,
+                    reportDocxFilename: docxFilename,
+                    reportDocxVersion: SIMCAR_REPORT_DOCX_VERSION,
+                }
+                : {}),
         };
+        // Cada geração sobe um arquivo novo (o nome leva `Date.now()`), então sem
+        // isto o laudo anterior fica órfão no storage para sempre — e o fluxo
+        // vetorizado gera DUAS vezes por rodada (uma ao fim do AC/AVN, outra ao
+        // fim do AUAS), o que dobrava o lixo a cada análise.
+        await discardSupersededReportFiles(uid, persisted, { reportPdfUrl, reportDocxUrl });
+
         await persistSimcarClipArtifacts({
             uid,
             jobId,
@@ -958,6 +1177,7 @@ export async function generateAndPersistSimcarReport(args: {
                     ...(persisted.files || {}),
                     reportPdfUrl,
                     reportPdfDownloadUrl: reportPdfUrl,
+                    ...(reportDocxUrl ? { reportDocxUrl, reportDocxDownloadUrl: reportDocxUrl } : {}),
                 },
             },
         });

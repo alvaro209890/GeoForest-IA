@@ -25,12 +25,21 @@ describe("janela AC/AVN (marco de 22/07/2008)", () => {
         expect(keys).toContain("landsat5_2003");
     });
 
+    it("não pula nenhum ano entre 2003 e 2008 — desmate datável exige série contígua", () => {
+        const years = new Set(getFixedAcAvnSatelliteKeys().map(YEAR_OF_KEY));
+        for (let year = 2003; year <= 2008; year += 1) {
+            expect(years.has(year), `ano ${year} fora da janela AC/AVN`).toBe(true);
+        }
+    });
+
     it("mantém o SPOT 2008 como cena de maior peso (2,5 m, base da Nota Técnica 001/2017)", () => {
         expect(getFixedAcAvnSatelliteKeys()).toContain("spot_2008");
     });
 
-    it("não estoura o custo: no máximo 6 cenas por análise", () => {
-        expect(getFixedAcAvnSatelliteKeys().length).toBeLessThanOrEqual(6);
+    it("não estoura o custo: no máximo 8 cenas por análise", () => {
+        // 6 anos (2003-2008) + a segunda cena de 2008 (SPOT) = 7. O teto de 8
+        // deixa uma folga para fechar algum vão do acervo sem virar análise cara.
+        expect(getFixedAcAvnSatelliteKeys().length).toBeLessThanOrEqual(8);
     });
 
     it("aceita override por env e ignora chave inexistente", () => {

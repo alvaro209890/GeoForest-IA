@@ -5,6 +5,7 @@
 import { scramble } from "./scramble";
 import { getSimcarOraculoConfig } from "./config";
 import type { SimcarArquivoUpload } from "./types";
+import { adquirirPresenca, soltarPresenca } from "../simcar-lotes/presenca";
 
 const BROWSER_HEADERS: Record<string, string> = {
   "User-Agent":
@@ -204,15 +205,23 @@ export async function withSimcarAuthRetryFor<T>(
   operation: (token: string) => Promise<T>,
   options: { onRetry?: () => void | Promise<void> } = {},
 ): Promise<T> {
-  const token = await getSimcarTokenFor(cpf, senha);
+  await adquirirPresenca({
+    app: "GeoForest-IA",
+    href: "https://ia-florestal.web.app",
+  });
   try {
-    return await operation(token);
-  } catch (error) {
-    if (!isUnauthorized(error)) throw error;
-    clearSimcarTokenCache(simcarCredentialKey(cpf, senha));
-    await options.onRetry?.();
-    const renewedToken = await getSimcarTokenFor(cpf, senha);
-    return operation(renewedToken);
+    const token = await getSimcarTokenFor(cpf, senha);
+    try {
+      return await operation(token);
+    } catch (error) {
+      if (!isUnauthorized(error)) throw error;
+      clearSimcarTokenCache(simcarCredentialKey(cpf, senha));
+      await options.onRetry?.();
+      const renewedToken = await getSimcarTokenFor(cpf, senha);
+      return operation(renewedToken);
+    }
+  } finally {
+    await soltarPresenca();
   }
 }
 

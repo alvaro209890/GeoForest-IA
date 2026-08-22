@@ -93,7 +93,7 @@ import {
     deleteFromCloudinary,
     getCloudinaryAiUrl,
 } from "./cloudinary";
-import { CACHE_TTL_MS, DIRECT_COPY_LAYERS, SIMCAR_OPERATION_BILLING_MODEL, TEMPLATE_LAYERS } from "./constants";
+import { CACHE_TTL_MS, DIRECT_COPY_LAYERS, isExcludedFromExport, SIMCAR_OPERATION_BILLING_MODEL, TEMPLATE_LAYERS } from "./constants";
 import type { CachedJob, LayerSummary, PersistedClipContextV1 } from "./types";
 import type { Geometry } from "geojson";
 import { toPublicApiUrl } from "./constants";
@@ -1148,9 +1148,11 @@ export function registerSimcarClipRoutes(app: Express) {
 
             if (aiAnalysis) {
                 const satelliteFactor = Math.max(1, layers.length + 1);
-                // More accurate reserve: account for 3 images/satellite (1024x768)
-                // plus prompt text tokens and output tokens
-                const imagesPerSat = 3;
+                // Reserva por cena: desde o commit `0e429b3b` cada satelite gera
+                // UM composite (1024x768) com AC + AVN + AUAS + ARL sobrepostos,
+                // nao as 3 vistas antigas. Com a janela AC/AVN de 2003 a 2008 sao
+                // 7 cenas — manter o 3 aqui inflava a reserva em 3x.
+                const imagesPerSat = 1;
                 const totalImages = layers.length * imagesPerSat;
                 const promptTextTokens = 4_500; // buildAnalysisPrompt generates ~4.5k tokens
                 const outputTokensPerCall = 6_000;
@@ -1734,7 +1736,10 @@ export function registerSimcarClipRoutes(app: Express) {
     // Layer list endpoint (for frontend checkbox list)
     app.get("/api/simcar/layers", (_req: Request, res: Response) => {
         res.json({
-            layers: TEMPLATE_LAYERS.map((name) => ({
+            // TIPOLOGIA_VEGETAL não é oferecida: ela não sai em artefato
+            // entregue (ver EXPORT_EXCLUDED_LAYERS), então marcá-la aqui só
+            // criaria a expectativa de encontrá-la no ZIP.
+            layers: TEMPLATE_LAYERS.filter((name) => !isExcludedFromExport(name)).map((name) => ({
                 name,
                 category: DIRECT_COPY_LAYERS.has(name) ? "property" : "wfs",
             })),
@@ -1790,6 +1795,9 @@ export function registerSimcarClipRoutes(app: Express) {
             queueDelete(cached?.outputZipUrl || outputZipUrl, "raw");
             queueDelete(cached?.contextJsonUrl || contextUrl, "raw");
             queueDelete(reportPdfUrl || String(readPersistedSimcarClipForUid(uid, jobId)?.reportPdfUrl || ""), "raw");
+            // O DOCX do laudo é gerado junto do PDF e precisa morrer junto: sem
+            // isto o Word ficava órfão no storage depois de apagar o card.
+            queueDelete(String(readPersistedSimcarClipForUid(uid, jobId)?.reportDocxUrl || ""), "raw");
 
             // Delete analysis images from Cloudinary (image type)
             if (Array.isArray(imageUrls)) {

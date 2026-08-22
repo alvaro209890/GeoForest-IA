@@ -31,7 +31,7 @@ import sharp from "sharp";
 
 import { readPersistedSimcarClipForUid, hydrateCachedJob, persistSimcarClipArtifacts } from "./hydration";
 import { uploadRawBufferToCloudinary } from "./cloudinary";
-import { toPublicApiUrl } from "./constants";
+import { EXPORT_EXCLUDED_LAYERS, isExcludedFromExport, toPublicApiUrl } from "./constants";
 import type { CachedJob } from "./types";
 import {
     extractFirstAiText,
@@ -42,6 +42,7 @@ import {
     type SimcarReportImage,
 } from "./report-text";
 import {
+    AC_VS_AUAS_GLOSSARY,
     LEGAL_BASIS_LINES,
     PALETTE,
     TONES,
@@ -52,8 +53,10 @@ import {
     buildVerdictPanel,
     classifyLayerNature,
     detectReportKind,
+    imageSourceNote,
     parseMarkdownBlocks,
     reportKindSectionTitle,
+    vectorSourceNote,
     type Finding,
     type TimelineModel,
     type Tone,
@@ -61,6 +64,7 @@ import {
 import { imapDocxFooter, imapDocxHeader, imapDocxPageProperties } from "./report-imap-docx";
 
 const SIMCAR_REPORT_DOCX_VERSION = "simcar-report-docx-v1";
+export { SIMCAR_REPORT_DOCX_VERSION };
 const REPORT_HEADER_TITLE = "LAUDO TÉCNICO SIMCAR";
 
 /** OOXML não aceita `#` em cor. */
@@ -422,8 +426,47 @@ function linhaDoTempoBlocks(model: TimelineModel | null): Block[] {
     return blocks;
 }
 
-function camadasBlocks(layers: any[], propertyAreaHa: number): Block[] {
+/** Nota em caixa neutra sem borda (origem dos dados, origem das imagens, glossário). */
+function notaCallout(note: { label: string; detail: string | string[] }): Table {
+    const details = Array.isArray(note.detail) ? note.detail : [note.detail];
+    return fullWidthTable(
+        [
+            new TableRow({
+                children: [
+                    cell(
+                        [
+                            new Paragraph({
+                                spacing: { after: 60 },
+                                children: [new TextRun({ text: note.label, bold: true, size: 19, color: hex(TONES.neutral.fg) })],
+                            }),
+                            ...details.map((detail, i) =>
+                                new Paragraph({
+                                    spacing: { after: i === details.length - 1 ? 0 : 60 },
+                                    children: [new TextRun({ text: detail, size: 18, color: hex(PALETTE.text) })],
+                                }),
+                            ),
+                        ],
+                        { fill: TONES.neutral.bg },
+                    ),
+                ],
+            }),
+        ],
+        { borderless: true },
+    );
+}
+
+function camadasBlocks(
+    layers: any[],
+    propertyAreaHa: number,
+    opts: { sourceMode?: string; imageCaptions?: string[] } = {},
+): Block[] {
+    // Mesma nota de origem do PDF: base da SEMA x ZIP vetorizado do RT,
+    // mais a origem das cenas de satélite usadas pela análise.
+    const origem = vectorSourceNote(opts.sourceMode);
+    const origemImagens = imageSourceNote(opts.imageCaptions || []);
     const blocks: Block[] = [
+        notaCallout(origem),
+        ...(origemImagens ? [notaCallout(origemImagens)] : []),
         ...sectionTitle("Quantitativos por Camada", "Somente camadas com feição recortada dentro do imóvel."),
     ];
     const withData = layers.filter((l: any) => Number(l?.features || 0) > 0).slice(0, 24);
@@ -433,7 +476,13 @@ function camadasBlocks(layers: any[], propertyAreaHa: number): Block[] {
                 new TableRow({
                     children: [
                         cell(
-                            [bodyParagraph("Nenhuma camada ambiental estadual ou federal apresentou sobreposição com a área do imóvel analisado.")],
+                            [
+                                new Paragraph({
+                                    spacing: { after: 60 },
+                                    children: [new TextRun({ text: "Nenhuma sobreposição encontrada", bold: true, size: 19, color: hex(TONES.ok.fg) })],
+                                }),
+                                bodyParagraph("Nenhuma camada ambiental estadual ou federal apresentou sobreposição com a área do imóvel analisado."),
+                            ],
                             { fill: TONES.ok.bg },
                         ),
                     ],
@@ -608,17 +657,26 @@ export async function buildSimcarReportDocxBuffer(args: {
     job?: CachedJob;
     analysisText?: string;
     analysisMeta?: any;
-    analysisImages: SimcarReportImage[];
+    /** Só as legendas interessam no glossário; as imagens entram no anexo. */
+    analysisImages?: SimcarReportImage[];
     auasText?: string;
     auasMeta?: any;
-    auasImages: SimcarReportImage[];
+    auasImages?: SimcarReportImage[];
 }): Promise<Buffer> {
     const summary = args.summary || {};
-    const layers = Array.isArray(summary.layers) ? summary.layers : (args.job?.layerSummaries || []);
+    const analysisImages = args.analysisImages || [];
+    const auasImages = args.auasImages || [];
+
+    // Mesma exclusão do PDF e do ZIP: o laudo não anuncia camada que a entrega
+    // não contém. Ver `EXPORT_EXCLUDED_LAYERS` em `constants.ts`.
+    const rawLayers: any[] = Array.isArray(summary.layers) ? summary.layers : (args.job?.layerSummaries || []);
+    const layers = rawLayers.filter((l: any) => !isExcludedFromExport(l?.name));
+    const excludedLayerCount = rawLayers.length - layers.length;
     const propertyAreaHa = Number(summary.propertyAreaHa || args.job?.areaHa || 0);
-    const layersWithData = Number(summary.layersWithData || layers.filter((l: any) => Number(l?.features || 0) > 0).length || 0);
-    const totalFeatures = Number(summary.totalFeaturesClipped || layers.reduce((sum: number, l: any) => sum + Number(l?.features || 0), 0));
-    const totalLayers = Number(summary.layersProcessed || layers.length || 0);
+    // Mesmos quantitativos do PDF (`report.ts`) — os dois formatos não podem divergir.
+    const layersWithData = layers.filter((l: any) => Number(l?.features || 0) > 0).length;
+    const totalFeatures = layers.reduce((sum: number, l: any) => sum + Number(l?.features || 0), 0);
+    const totalLayers = Math.max(0, Number(summary.layersProcessed || rawLayers.length || 0) - excludedLayerCount);
 
     const auasKind = detectReportKind(args.auasMeta);
     const findings: Finding[] = [
@@ -628,7 +686,7 @@ export async function buildSimcarReportDocxBuffer(args: {
     const timeline = buildTimelineModel({ analysisMeta: args.analysisMeta, auasMeta: args.auasMeta });
     const verdict = buildVerdictPanel({ findings, kind: auasKind, analysisMeta: args.analysisMeta, auasMeta: args.auasMeta });
 
-    const selecionadas = [...args.analysisImages, ...args.auasImages]
+    const selecionadas = [...analysisImages, ...auasImages]
         .filter((img, idx, arr) => img.url && arr.findIndex((o) => o.url === img.url) === idx)
         .slice(0, 8);
     const imagens = await Promise.all(
@@ -642,16 +700,15 @@ export async function buildSimcarReportDocxBuffer(args: {
         ...sectionTitle("Resumo Executivo", "Leitura rápida: o que a análise encontrou e o que exige ação."),
         ...buildExecutiveBullets({
             jobId: args.jobId,
-            totalLayers,
-            layersWithData,
-            totalFeatures,
-            propertyAreaHa,
             findings,
             timeline,
         }).map((item) => toneBullet(reportPdfSafeText(item.text, 700), item.tone)),
         ...achadosBlocks(findings),
         ...linhaDoTempoBlocks(timeline),
-        ...camadasBlocks(layers, propertyAreaHa),
+        ...camadasBlocks(layers, propertyAreaHa, {
+            sourceMode: args.sourceMode,
+            imageCaptions: [...analysisImages, ...auasImages].map((img) => String(img?.caption || "")),
+        }),
     ];
 
     if (args.analysisText) {
@@ -670,13 +727,18 @@ export async function buildSimcarReportDocxBuffer(args: {
     blocks.push(
         ...sectionTitle("Fundamentação Legal Aplicada", "Normas que definem os marcos temporais usados nesta análise."),
         ...LEGAL_BASIS_LINES.map((text) => toneBullet(text, "info", 16)),
+        notaCallout({ label: "Como ler AC, AUAS e AVN neste laudo", detail: [...AC_VS_AUAS_GLOSSARY] }),
     );
     blocks.push(...(await anexoBlocks(imagens)));
 
     const warnings = [
         ...(Array.isArray(summary.warnings) ? summary.warnings : []),
         ...(Array.isArray(args.job?.warnings) ? args.job!.warnings! : []),
-    ].filter(Boolean).map(String);
+    ]
+        .filter(Boolean)
+        .map(String)
+        // Mesmo filtro do PDF: o laudo não comenta camada que a entrega não contém.
+        .filter((item) => ![...EXPORT_EXCLUDED_LAYERS].some((layer) => item.includes(layer)));
     const metaLimitations = (Array.isArray(args.auasMeta?.limitations) ? args.auasMeta.limitations : []).filter(Boolean).map(String);
 
     blocks.push(...sectionTitle("Limitações e Observações Técnicas"));

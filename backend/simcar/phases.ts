@@ -7,8 +7,10 @@
  * os blocos já persistidos no histórico do job e devolve o payload da rota
  * `GET /api/simcar/clip/phases/:jobId` (contrato do doc 08 §1).
  *
- * Nesta rodada só a Fase 1 está implementada; as fases 2 e 3 aparecem com
- * `state: "BLOCKED"` e motivo explícito, nunca escondidas.
+ * A Fase 2 (datação 2008–2019) **não exige** a Fase 1: as duas perguntas são
+ * independentes (pré-marco vs. quando a AUAS foi aberta). Sem a Fase 1, a
+ * datação trata todos os polígonos AUAS; com ela, os que já tinham alerta
+ * pré-2008 entram como contexto. A Fase 3 continua encadeada na Fase 2.
  */
 
 export type PhaseId = "PRE_2008" | "POS_2008" | "AC_VEG";
@@ -258,12 +260,12 @@ function derivePhase1(input: DerivePhasesInput): PhaseStatus {
 }
 
 /**
- * Fase 2 — datação 2009–2019 das AUAS. Estados reais a partir do bloco
- * `auasPos2008Meta` persistido. O gate via rota ainda é o que manda.
+ * Fase 2 — datação 2009–2019 das AUAS. Não depende da Fase 1: dá para datar
+ * a supressão sem ter classificado o pré-2008. Se a Fase 1 já rodou, o
+ * orquestrador usa o alerta como contexto (`alreadyAnthropized`).
  */
 function derivePhase2(input: DerivePhasesInput): PhaseStatus {
   if (input.auasPolygonCount <= 0) return blocked("layer_empty_AUAS");
-  if (!isPhase1Completed(input.auasMeta)) return blocked("requires_PRE_2008");
 
   const meta = isPlainObject(input.auasPos2008Meta) ? (input.auasPos2008Meta as Record<string, unknown>) : null;
   const completedAt = meta ? readString(meta.completedAt) : null;

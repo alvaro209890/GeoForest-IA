@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import { POUSIO_PROMPT_RULE } from "../analise-pos-recorte/groq-vision-core";
 import {
+    AC_VS_AUAS_GLOSSARY,
+    imageSourceNote,
+    normalizeVectorSource,
+    vectorSourceNote,
+    LEGAL_BASIS_LINES,
+    POUSIO_MAX_YEARS,
     buildAcAvnFindings,
     buildAuasFindings,
     buildExecutiveBullets,
@@ -241,13 +248,9 @@ describe("buildTimelineModel", () => {
 });
 
 describe("buildExecutiveBullets", () => {
-    it("abre com o quantitativo e fecha com o aviso de revisão", () => {
+    it("abre pela janela temporal e fecha com o aviso de revisão", () => {
         const bullets = buildExecutiveBullets({
             jobId: "job-1",
-            totalLayers: 28,
-            layersWithData: 6,
-            totalFeatures: 42,
-            propertyAreaHa: 1234.5,
             findings: [{ label: "AC fora", status: "Revisar", tone: "danger", detail: "detalhe" }],
             timeline: {
                 years: [{ year: 2003, state: "used" }, { year: 2008, state: "used" }],
@@ -258,10 +261,21 @@ describe("buildExecutiveBullets", () => {
                 caption: "",
             },
         });
-        expect(bullets[0].text).toContain("1234.50 ha");
-        expect(bullets[1].text).toContain("2003–2008");
+        expect(bullets[0].text).toContain("2003–2008");
         expect(bullets.some((b) => b.text.includes("AC fora") && b.tone === "danger")).toBe(true);
         expect(bullets[bullets.length - 1].text).toContain("responsável técnico");
+    });
+
+    it("não repete os quantitativos que já estão nos cartões de métrica", () => {
+        const bullets = buildExecutiveBullets({
+            jobId: "job-1",
+            findings: [],
+            timeline: null,
+        });
+        const texto = bullets.map((b) => b.text).join(" ");
+        expect(texto).not.toMatch(/Im[oó]vel de/i);
+        expect(texto).not.toMatch(/camada\(s\) ambiental/i);
+        expect(texto).not.toMatch(/fei[cç][aã]o\(/i);
     });
 
     it("limita a 5 achados para o resumo não virar texto massante", () => {
@@ -271,14 +285,7 @@ describe("buildExecutiveBullets", () => {
             tone: "warn" as const,
             detail: "d",
         }));
-        const bullets = buildExecutiveBullets({
-            jobId: "j",
-            totalLayers: 1,
-            layersWithData: 1,
-            totalFeatures: 1,
-            propertyAreaHa: 1,
-            findings,
-        });
+        const bullets = buildExecutiveBullets({ jobId: "j", findings });
         expect(bullets.filter((b) => b.text.startsWith("Achado")).length).toBe(5);
     });
 });
@@ -348,5 +355,175 @@ describe("marcos legais", () => {
     it("mantém as duas datas que definem a janela do laudo", () => {
         expect(MARCO_CODIGO_FLORESTAL_YEAR).toBe(2008);
         expect(MARCO_POUSIO_YEAR).toBe(2003);
+    });
+});
+
+describe("vocabulário AC × AUAS no laudo", () => {
+    /**
+     * AC e AUAS descrevem o mesmo estado do terreno e se separam só pelo marco
+     * de 22/07/2008. Chamar AC de "antropizada" empurra o leitor para AUAS —
+     * isto é, para supressão que dependia de autorização. Num laudo que vai
+     * para a SEMA isso lê como acusação, então o texto de AC diz "consolidado".
+     */
+    const acAvnMeta = (ac: string, avn: string) => ({
+        globalVerdict: { acForaShape: ac, avnDentroShapeAntropizado: avn, confidence: "ALTA" },
+        coherence: { isCoherent: true, notes: [] },
+    });
+
+    it("nunca chama uso de AC de 'antrópico' ou 'antropizado'", () => {
+        for (const [ac, avn] of [["SIM", "SIM"], ["NAO", "NAO"], ["INCONCLUSIVO", "INCONCLUSIVO"]]) {
+            const texto = buildAcAvnFindings(acAvnMeta(ac, avn))
+                .map((f) => `${f.label} ${f.status} ${f.detail}`)
+                .join(" ");
+            expect(texto, `veredito ${ac}/${avn}`).not.toMatch(/antr[oó]pic|antropiz/i);
+        }
+    });
+
+    it("descreve o achado de AC como uso consolidado", () => {
+        const findings = buildAcAvnFindings(acAvnMeta("NAO", "NAO"));
+        const ac = findings.find((f) => f.label.includes("fora do polígono AC"))!;
+        expect(ac.detail).toContain("uso consolidado");
+        expect(ac.detail).toBe("Nenhum uso consolidado relevante fora da AC declarada nas cenas avaliadas.");
+    });
+
+    it("na Fase 1, polígono AUAS com uso pré-marco é apontado como AC, não como AUAS válida", () => {
+        const findings = buildAuasFindings({
+            schemaVersion: 2,
+            status: "ALERTA_PRE_2008",
+            pre2008Alert: true,
+            summary: { polygonCount: 2, alertCount: 1, inconclusiveCount: 0, totalAuasAreaHa: 9 },
+        });
+        expect(findings[0].detail).toContain("consolidada (AC)");
+        expect(findings[0].detail).not.toMatch(/antr[oó]pic|antropiz/i);
+    });
+
+    it("reserva 'supressão' para a Fase 2, que é a etapa pós-marco", () => {
+        const findings = buildAuasFindings({
+            phase: "POS_2008",
+            summary: { polygonCount: 3, confirmedYearCount: 1, intervalCount: 1, alreadyAnthropizedCount: 1, noChangeCount: 0, inconclusiveCount: 0 },
+        });
+        expect(findings[0].label).toContain("Supressões");
+        expect(findings.find((f) => f.label.includes("início da série"))!.detail).toContain("consolidada (AC)");
+    });
+
+    it("o glossário define os dois marcos e vai impresso no laudo", () => {
+        const texto = AC_VS_AUAS_GLOSSARY.join(" ");
+        expect(texto).toContain("22/07/2008");
+        expect(texto).toContain("uso consolidado");
+        expect(texto).toContain("supressão pós-2008");
+        expect(AC_VS_AUAS_GLOSSARY).toHaveLength(5);
+    });
+});
+
+describe("regra do pousio quinquenal", () => {
+    /**
+     * A versão anterior era de uma via só: regeneração sobre traçado de talhão
+     * = pousio = AC, "nunca classifique como vegetação nativa". Faltava o outro
+     * lado: passando de 5 anos de interrupção, a área deixa de ser consolidada
+     * e a vegetação regenerada volta a ser AVN.
+     */
+    it("o teto do pousio é de 5 anos", () => {
+        expect(POUSIO_MAX_YEARS).toBe(5);
+    });
+
+    it("a janela do laudo fecha exatamente o teto contra o marco de 2008", () => {
+        expect(MARCO_CODIGO_FLORESTAL_YEAR - MARCO_POUSIO_YEAR).toBe(POUSIO_MAX_YEARS);
+    });
+
+    it("o glossário impresso diz que passar de 5 anos devolve a área para AVN", () => {
+        const texto = AC_VS_AUAS_GLOSSARY.join(" ");
+        expect(texto).toContain("volta a ser AVN");
+        expect(texto).toContain("não sustenta AC");
+    });
+
+    it("a fundamentação legal não vende o pousio como regra de mão única", () => {
+        const pousio = LEGAL_BASIS_LINES.find((line) => line.includes("art. 3º, XXIV"))!;
+        expect(pousio).toContain("no máximo 5 anos");
+        expect(pousio).toContain("descaracteriza");
+    });
+
+    it("o prompt manda o modelo classificar como AVN quando não há atividade na série", () => {
+        expect(POUSIO_PROMPT_RULE).toContain("SUPERIOR a 5 ANOS descaracteriza");
+        expect(POUSIO_PROMPT_RULE).toContain("classifique como AVN");
+        expect(POUSIO_PROMPT_RULE).toContain("ANO DA ULTIMA ATIVIDADE VISIVEL");
+        // o traço de talhão prova uso passado, não uso dentro da janela
+        expect(POUSIO_PROMPT_RULE).toContain("nao sustenta AC");
+    });
+
+    it("o prompt não repete a instrução antiga de nunca classificar como vegetação nativa", () => {
+        expect(POUSIO_PROMPT_RULE).not.toMatch(/N[AÃ]O classifique pousio como vegeta/i);
+    });
+});
+
+describe("origem dos vetores (recorte × ZIP vetorizado)", () => {
+    /**
+     * A aba "Análise de vetorização" analisa o que o RT desenhou, não o que
+     * está publicado na SEMA. Sem essa distinção impressa, um "AC fora do
+     * shape" no laudo do modo vetorizado lê como divergência contra o cadastro
+     * vigente — quando é erro de desenho ainda em revisão.
+     */
+    it("reconhece o modo vetorizado e trata o resto como recorte", () => {
+        expect(normalizeVectorSource("vectorized-analysis")).toBe("vectorized-analysis");
+        expect(normalizeVectorSource("auto-clip")).toBe("auto-clip");
+        expect(normalizeVectorSource("")).toBe("auto-clip");
+        expect(normalizeVectorSource(undefined)).toBe("auto-clip");
+        expect(normalizeVectorSource("qualquer-coisa")).toBe("auto-clip");
+    });
+
+    it("no modo vetorizado, diz que os vetores são do RT e que não houve recorte WFS", () => {
+        const nota = vectorSourceNote("vectorized-analysis");
+        expect(nota.label).toContain("ZIP vetorizado");
+        expect(nota.detail).toContain("não houve recorte WFS");
+        expect(nota.detail).toContain("vetorização em revisão");
+    });
+
+    it("no modo recorte, diz que os vetores vieram da base estadual", () => {
+        const nota = vectorSourceNote("auto-clip");
+        expect(nota.label).toContain("base da SEMA-MT");
+        expect(nota.detail).toContain("WFS estadual");
+    });
+
+    it("as duas notas são distintas — senão o box não informa nada", () => {
+        expect(vectorSourceNote("vectorized-analysis").label).not.toBe(vectorSourceNote("auto-clip").label);
+    });
+});
+
+/**
+ * Origem das imagens no laudo (21/08/2026).
+ *
+ * A série pode misturar cena nativa do acervo da IMAP com o mosaico estadual da
+ * SEMA. Quem lê o laudo precisa saber qual figura tem data de passagem e qual
+ * não tem — e que diferença de aparência entre fontes é processamento, não chão.
+ */
+describe("imageSourceNote", () => {
+    const ACERVO = "Landsat 5 (2008) — Visão Geral · cena 20/07/2008, órbita/ponto 224/069, acervo IMAP";
+    const SEMA = "Landsat 5 (2005) — Visão Geral · mosaico SEMA-MT";
+
+    it("série mista avisa que a diferença de aparência é de processamento", () => {
+        const nota = imageSourceNote([ACERVO, SEMA]);
+        expect(nota?.label).toContain("mistas");
+        expect(nota?.detail).toMatch(/artefato de processamento/i);
+        expect(nota?.detail).toMatch(/não evidência de alteração no uso do solo/i);
+    });
+
+    it("só acervo destaca que cada figura tem data de passagem", () => {
+        const nota = imageSourceNote([ACERVO]);
+        expect(nota?.label).toContain("acervo próprio da IMAP");
+        expect(nota?.detail).toMatch(/data de passagem/i);
+    });
+
+    it("só SEMA registra que o mosaico não tem data determinável", () => {
+        const nota = imageSourceNote([SEMA]);
+        expect(nota?.label).toContain("SEMA-MT");
+        expect(nota?.detail).toMatch(/não é determinável/i);
+    });
+
+    it("laudo antigo, sem proveniência na legenda, não imprime quadro nenhum", () => {
+        expect(imageSourceNote(["Landsat 5 (2003) — Visão Geral (AC + AVN + AUAS)"])).toBeNull();
+        expect(imageSourceNote([])).toBeNull();
+    });
+
+    it("legenda vazia ou nula não quebra", () => {
+        expect(imageSourceNote(["", undefined as unknown as string])).toBeNull();
     });
 });

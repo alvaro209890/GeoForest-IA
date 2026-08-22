@@ -274,7 +274,9 @@ export type SimcarClipHistoryItem = {
   reportPdfVersion?: string;
   reportPdfStatus?: 'generating' | 'ready' | 'failed';
   reportPdfError?: string;
-  /** Mesmo laudo do PDF, em Word (`/api/simcar/clip/report-docx`). */
+  // DOCX editavel do mesmo laudo (endpoint `/api/simcar/clip/report-docx` e
+  // geracao junto com o PDF). Opcional: se o DOCX falhar, o PDF continua
+  // valido, entao o card so esconde o botao de Word.
   reportDocxUrl?: string;
   reportDocxDownloadUrl?: string;
   reportDocxFilename?: string;

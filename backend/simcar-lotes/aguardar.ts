@@ -8,6 +8,7 @@
  */
 import { isCancelRequested } from "../processing-jobs";
 import { lerOcupacaoSimcar, monitorHabilitado, monitorPollMs } from "./monitor";
+import { CONN_ID_PRESENCA } from "./presenca";
 import { progress } from "./sse";
 
 export type MotivoEspera = "antes_de_logar" | "sessao_interrompida";
@@ -43,7 +44,7 @@ export async function aguardarSimcarLivre(args: {
   for (;;) {
     if (isCancelRequested(args.jobId)) return { interrompido: true, esperou };
 
-    const status = await lerOcupacaoSimcar();
+    const status = await lerOcupacaoSimcar({ ignorarConnIds: [CONN_ID_PRESENCA] });
     if (!status.ocupado) return { interrompido: false, esperou };
 
     esperou = true;

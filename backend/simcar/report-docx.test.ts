@@ -8,7 +8,9 @@
  *    formatos não podem discordar do veredito;
  *  - a tabela de quantitativos entra mesmo no documento. O rascunho original
  *    montava a tabela e nunca a inseria: a seção saía só com o título, e isso
- *    passava despercebido porque o arquivo abria normalmente.
+ *    passava despercebido porque o arquivo abria normalmente;
+ *  - camada excluída da entrega (`EXPORT_EXCLUDED_LAYERS`) não vaza no laudo e
+ *    os contadores descontam a exclusão — mesma regra do PDF.
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import JSZip from "jszip";
@@ -51,6 +53,35 @@ const entrada = {
     auasImages: [],
 };
 
+/** Fixture do modelo compartilhado: exercita exclusão de camada e markdown da IA. */
+const baseArgs = () => ({
+    jobId: "job-docx-1",
+    filename: "Recorte Fazenda Teste",
+    summary: {
+        propertyAreaHa: 1000,
+        layersProcessed: 28,
+        layers: [
+            { name: "AREA_CONSOLIDADA", features: 12, areaHa: 620.5 },
+            { name: "AVN", features: 4, areaHa: 300.25 },
+            { name: "TIPOLOGIA_VEGETAL", features: 50000, areaHa: 998.4 },
+        ],
+        warnings: ["Camada TIPOLOGIA_VEGETAL truncada em 50.000 feições pelo WFS."],
+    },
+    analysisText: [
+        "## Veredito Objetivo",
+        "- **AC fora do shape:** conforme.",
+        "Parágrafo de conclusão técnica do laudo.",
+    ].join("\n"),
+    analysisMeta: {
+        globalVerdict: { acForaShape: "NAO", avnDentroShapeAntropizado: "NAO", confidence: "ALTA" },
+        coherence: { isCoherent: true, notes: [] },
+        satelliteVerdicts: [
+            { key: "landsat5_2003", label: "Landsat 5 (2003)", year: 2003, status: "used" },
+            { key: "spot_2008", label: "SPOT 2008", year: 2008, status: "used" },
+        ],
+    },
+});
+
 let zip: JSZip;
 let documentXml: string;
 let headerXml: string;
@@ -65,6 +96,13 @@ beforeAll(async () => {
     headerXml = await zip.file(nomes.find((n) => /^word\/header\d+\.xml$/.test(n))!)!.async("string");
     footerXml = await zip.file(nomes.find((n) => /^word\/footer\d+\.xml$/.test(n))!)!.async("string");
 }, 60_000);
+
+/** Extrai o texto corrido do `document.xml`, que é onde o corpo do laudo vive. */
+async function docxText(buffer: Buffer): Promise<string> {
+    const loaded = await JSZip.loadAsync(buffer);
+    const xml = (await loaded.file("word/document.xml")?.async("string")) || "";
+    return xml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+}
 
 const semCerquilha = (cor: string) => cor.replace("#", "").toUpperCase();
 
@@ -144,5 +182,73 @@ describe("conteúdo vindo do report-theme", () => {
         // Sem achados o painel muda de rótulo — é o report-theme decidindo.
         expect(semIa).toContain("Sem análise de IA");
         expect(semIa).toContain("Quantitativos por Camada");
+    });
+});
+
+describe("buildSimcarReportDocxBuffer — modelo compartilhado com o PDF", () => {
+    it("gera um .docx válido (OOXML zipado, com o document.xml no lugar)", async () => {
+        const buffer = await buildSimcarReportDocxBuffer(baseArgs());
+        expect(buffer.length).toBeGreaterThan(1000);
+        // Assinatura de ZIP — .docx é um ZIP com o pacote OOXML dentro.
+        expect(buffer.subarray(0, 2).toString("latin1")).toBe("PK");
+        expect((await JSZip.loadAsync(buffer)).file("word/document.xml")).toBeTruthy();
+    });
+
+    it("traz o mesmo conteúdo estrutural do PDF", async () => {
+        const texto = await docxText(await buildSimcarReportDocxBuffer(baseArgs()));
+        expect(texto).toContain("Laudo Técnico SIMCAR");
+        expect(texto).toContain("VEREDITO GERAL DA ANÁLISE");
+        expect(texto).toContain("Resumo Executivo");
+        expect(texto).toContain("Quadro de Achados");
+        expect(texto).toContain("Quantitativos por Camada");
+        expect(texto).toContain("Fundamentação Legal Aplicada");
+        expect(texto).toContain("Como ler AC, AUAS e AVN neste laudo");
+    });
+
+    it("não vaza TIPOLOGIA_VEGETAL — nem na tabela, nem nos avisos", async () => {
+        const texto = await docxText(await buildSimcarReportDocxBuffer(baseArgs()));
+        expect(texto).not.toContain("TIPOLOGIA_VEGETAL");
+        // o aviso de truncamento da camada excluída também não faz sentido aqui
+        expect(texto).not.toContain("truncada em 50.000");
+    });
+
+    it("os contadores descontam a camada excluída", async () => {
+        const texto = await docxText(await buildSimcarReportDocxBuffer(baseArgs()));
+        // 28 camadas do template - 1 excluída = 27; 2 delas com dados.
+        expect(texto).toContain("2/27");
+        // 12 + 4 feições, sem as 50.000 da tipologia
+        expect(texto).toContain("16");
+    });
+
+    it("preserva a estrutura markdown que a IA produziu", async () => {
+        const texto = await docxText(await buildSimcarReportDocxBuffer(baseArgs()));
+        // O renderizador pode aplicar estilo próprio ao título da seção
+        // (caixa alta), então a comparação ignora a caixa.
+        expect(texto.toUpperCase()).toContain("VEREDITO OBJETIVO");
+        expect(texto).toContain("AC fora do shape");
+        expect(texto).toContain("Parágrafo de conclusão técnica do laudo.");
+    });
+
+    it("usa o vocabulário corrigido: AC é uso consolidado", async () => {
+        const texto = await docxText(await buildSimcarReportDocxBuffer(baseArgs()));
+        expect(texto).toContain("uso consolidado");
+    });
+
+    it("mostra a janela temporal 2003–2008 na linha do tempo", async () => {
+        const texto = await docxText(await buildSimcarReportDocxBuffer(baseArgs()));
+        expect(texto).toContain("Linha do Tempo da Análise");
+        expect(texto).toContain("2003");
+        expect(texto).toContain("2008");
+    });
+
+    it("não quebra quando não há análise nenhuma", async () => {
+        const buffer = await buildSimcarReportDocxBuffer({
+            jobId: "job-vazio",
+            filename: "Recorte sem análise",
+            summary: { propertyAreaHa: 10, layersProcessed: 28, layers: [] },
+        } as any);
+        const texto = await docxText(buffer);
+        expect(texto).toContain("Nenhuma sobreposição encontrada");
+        expect(texto).toContain("Sem análise de IA");
     });
 });

@@ -19,6 +19,11 @@ import { finishJob, isCancelRequested } from "../processing-jobs";
 import { aguardarSimcarLivre } from "./aguardar";
 import { baixarArtefatosDoLote } from "./downloader";
 import { lerOcupacaoSimcar, monitorHabilitado, monitorMaxRetry } from "./monitor";
+import {
+  adquirirPresenca,
+  liberarPresencaForcado,
+  soltarPresenca,
+} from "./presenca";
 import { extrairPdfsDoEnvio, parseReciboPdf } from "./recibo-parse";
 import { resolverCar } from "./resolver";
 import { comSessaoExclusiva } from "./session-queue";
@@ -107,6 +112,13 @@ export async function runLotesJob(args: {
         cancelado = true;
         return;
       }
+
+      // Já esperamos o humano sair: agora o painel interno mostra "Sistema".
+      await adquirirPresenca({
+        app: "GeoForest-IA",
+        href: "https://ia-florestal.web.app",
+        esperar: false,
+      });
 
       progress(uid, jobId, {
         status: "processing",
@@ -211,8 +223,12 @@ export async function runLotesJob(args: {
             }
 
             // Sessão nova na próxima tentativa (a atual acabou de ser derrubada).
+            // Some do monitor para o humano aparecer; reaparece quando retomar.
             clearSimcarTokenCache(simcarCredentialKey(cpf, senha));
-            const ocupacao = await lerOcupacaoSimcar();
+            await liberarPresencaForcado();
+            const ocupacao = await lerOcupacaoSimcar({
+              ignorarConnIds: [],
+            });
             const espera = await aguardarSimcarLivre({
               uid,
               jobId,
@@ -225,6 +241,11 @@ export async function runLotesJob(args: {
               linha.erro = mensagemDeErro(error);
               break;
             }
+            await adquirirPresenca({
+              app: "GeoForest-IA",
+              href: "https://ia-florestal.web.app",
+              esperar: false,
+            });
             if (espera.esperou) {
               esperasPorInterrupcao += 1;
               continue;
@@ -243,7 +264,11 @@ export async function runLotesJob(args: {
         progress(uid, jobId, { relatorio, lotesConcluidos: relatorio.length, totalLotes });
       }
     };
-    if (!cancelado) await comSessaoExclusiva(cpf, senha, rodarLotes);
+    try {
+      if (!cancelado) await comSessaoExclusiva(cpf, senha, rodarLotes);
+    } finally {
+      await soltarPresenca();
+    }
 
     if (!pastas.length && relatorio.every((l) => l.erro)) {
       throw new Error(relatorio[0]?.erro || "Nenhum documento pôde ser baixado.");

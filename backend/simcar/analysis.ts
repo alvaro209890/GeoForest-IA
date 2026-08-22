@@ -17,6 +17,7 @@ import sharp from "sharp";
 import { inflateRawSync } from "zlib";
 import {
     area as turfArea,
+    bbox as turfBbox,
     booleanPointInPolygon as turfBooleanPointInPolygon,
     featureCollection as turfFeatureCollection,
     intersect as turfIntersect,
@@ -37,7 +38,7 @@ import type {
 import { fileURLToPath } from "url";
 
 // Internal modules
-import { FALSE_COLOR_PROMPT_NOTE } from "../analise-pos-recorte/groq-vision-core";
+import { AC_AUAS_PROMPT_GLOSSARY, FALSE_COLOR_PROMPT_NOTE, MIXED_SOURCE_PROMPT_NOTE, POUSIO_PROMPT_RULE } from "../analise-pos-recorte/groq-vision-core";
 import { extractZipEntries, detectUtmProj, reprojectBbox, resolveShapefileCrs } from "../geo-utils";
 import {
     buildWfsUrl,
@@ -170,6 +171,19 @@ import {
 import type { AiImage } from "./types";
 import { fetchCarBoundaryByNumber } from "./car-lookup";
 import { SEMA_WMS_AUTHKEY, SEMA_WMS_BASE, toPublicApiUrl } from "./constants";
+import {
+    acervoCandidates,
+    describeSceneProvenance,
+    isMostlyEmptyRender,
+    SEMA_SOURCE,
+    type WmsCandidate,
+    type WmsSource,
+} from "./acervo-local";
+import {
+    calculateDynamicResolution as calculateSensorDynamicResolution,
+    expandBboxForContext,
+    sensorGroundResolutionM,
+} from "../analise-pos-recorte/wms-scenes";
 import {
     fetchWfsClipFeatures,
     fetchWfsIntersectsFeatures,
@@ -866,7 +880,7 @@ function buildSatLayer(sensor: string, year: number, wmsPrefix: string, labelPre
  * Buracos reais da série estadual: **2001 e 2002 não têm Landsat 5** (2002 é
  * coberto por Landsat 7) e **2012 não tem Landsat** (é ResourceSat).
  */
-const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]; label: string; year: number }> = {
+export const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]; label: string; year: number }> = {
     // SPOT (high-res 2.5m) — base oficial do marco de 2008 (Nota Técnica 001/2017 SEMA-MT)
     spot_2008: { wmsLayer: SPOT_LAYER, label: "SPOT 2008", year: 2008 },
     // Landsat 5 (30m) — 1984-2011 (sem 2001 e 2002 no acervo da SEMA)
@@ -894,15 +908,26 @@ const SATELLITE_LAYERS: Record<string, { wmsLayer: string; wmsAliases?: string[]
 /**
  * Janela fixa da análise AC/AVN.
  *
- * Começa em **2003** porque a IN SEMA-MT 04/2023, art. 42 §6º (c/c Decreto
- * estadual 288/2023) reconhece como consolidada a área implantada até
- * 22/07/2003 que esteja em pousio no marco de 2008 — sem a cena de 2003 não dá
- * para distinguir pousio de vegetação nativa. Termina em 2008 (marco do art.
- * 3º, IV da Lei 12.651/2012), com SPOT 2,5 m como cena de maior peso.
+ * Começa em **2003** e termina em **2008** (marco do art. 3º, IV da Lei
+ * 12.651/2012), com o SPOT 2,5 m como cena de maior peso.
+ *
+ * O motivo do 2003 não é haver piso para a consolidação — não há: área aberta
+ * em 1990 é tão consolidada quanto uma aberta em 2007. O 2003 é o fim da
+ * contagem do **pousio quinquenal** (art. 3º, XXIV): interrupção da atividade
+ * por até 5 anos não descaracteriza a AC, mas acima disso descaracteriza, e a
+ * vegetação regenerada volta a ser AVN.
+ *
+ * Por isso a série é **contígua ano a ano** (2003, 2004, 2005, 2006, 2007,
+ * 2008): quem decide a classificação é o **ano da última atividade visível**, e
+ * um ano faltando pode mover a contagem de um lado ao outro do limite de 5
+ * anos. Se nenhum ano da janela mostra atividade, a última é anterior a 2003 —
+ * mais de 5 anos — e o trecho é AVN, não AC em descanso.
+ *
  * Ajustável por `SIMCAR_ACAVN_SATELLITE_KEYS` (lista separada por vírgula).
  */
 const AC_AVN_DEFAULT_KEYS = [
     "landsat5_2003",
+    "landsat5_2004",
     "landsat5_2005",
     "landsat5_2006",
     "landsat5_2007",
@@ -1139,8 +1164,10 @@ function buildWmsGetMapUrl(
     height = 800,
     format = "image/png",
     crs = "EPSG:4326",
+    /** De onde a cena vem. Sem isso, SEMA — é o comportamento histórico. */
+    source: WmsSource = SEMA_SOURCE,
 ): string {
-    const url = new URL(SEMA_WMS_BASE);
+    const url = new URL(source.base);
     url.searchParams.set("service", "WMS");
     url.searchParams.set("request", "GetMap");
     url.searchParams.set("version", "1.1.1");
@@ -1152,7 +1179,7 @@ function buildWmsGetMapUrl(
     url.searchParams.set("bbox", `${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]}`);
     url.searchParams.set("width", String(width));
     url.searchParams.set("height", String(height));
-    if (SEMA_WMS_AUTHKEY) url.searchParams.set("authkey", SEMA_WMS_AUTHKEY);
+    if (source.authkey) url.searchParams.set("authkey", source.authkey);
     return url.toString();
 }
 
@@ -1167,42 +1194,47 @@ async function fetchWmsImageBufferOnce(
     bbox: [number, number, number, number],
     width = 1200,
     height = 900,
+    source: WmsSource = SEMA_SOURCE,
+    timeoutMsOverride?: number,
 ): Promise<Buffer> {
-    const mapUrl = buildWmsGetMapUrl(layers, bbox, width, height);
+    const mapUrl = buildWmsGetMapUrl(layers, bbox, width, height, "image/png", "EPSG:4326", source);
     const controller = new AbortController();
-    const dynamicTimeout = calculateWmsTimeout(width, height);
+    const dynamicTimeout = Math.max(1_000, timeoutMsOverride ?? calculateWmsTimeout(width, height));
     const timeout = setTimeout(() => controller.abort(), dynamicTimeout);
-    const response = await fetch(mapUrl, { signal: controller.signal });
-    clearTimeout(timeout);
+    try {
+        const response = await fetch(mapUrl, { signal: controller.signal });
 
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`WMS error ${response.status}: ${text.slice(0, 200)}`);
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`WMS error ${response.status}: ${text.slice(0, 200)}`);
+        }
+
+        // Check Content-Type header
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("xml") || contentType.includes("html") || contentType.includes("text")) {
+            const text = await response.text();
+            throw new Error(`WMS retornou ${contentType} em vez de imagem: ${text.slice(0, 200)}`);
+        }
+
+        const arr = await response.arrayBuffer();
+        const buf = Buffer.from(arr);
+
+        // Validate buffer starts with PNG or JPEG magic bytes
+        if (buf.length < 4) {
+            throw new Error(`WMS retornou buffer muito pequeno (${buf.length} bytes)`);
+        }
+        const isPng = buf.subarray(0, 4).equals(PNG_MAGIC);
+        const isJpeg = buf.subarray(0, 3).equals(JPEG_MAGIC);
+        if (!isPng && !isJpeg) {
+            // Likely an XML/text error response with 200 status
+            const preview = buf.toString("utf8", 0, Math.min(200, buf.length));
+            throw new Error(`WMS retornou formato inválido (não é PNG/JPEG): ${preview.slice(0, 150)}`);
+        }
+
+        return buf;
+    } finally {
+        clearTimeout(timeout);
     }
-
-    // Check Content-Type header
-    const contentType = response.headers.get("content-type") || "";
-    if (contentType.includes("xml") || contentType.includes("html") || contentType.includes("text")) {
-        const text = await response.text();
-        throw new Error(`WMS retornou ${contentType} em vez de imagem: ${text.slice(0, 200)}`);
-    }
-
-    const arr = await response.arrayBuffer();
-    const buf = Buffer.from(arr);
-
-    // Validate buffer starts with PNG or JPEG magic bytes
-    if (buf.length < 4) {
-        throw new Error(`WMS retornou buffer muito pequeno (${buf.length} bytes)`);
-    }
-    const isPng = buf.subarray(0, 4).equals(PNG_MAGIC);
-    const isJpeg = buf.subarray(0, 3).equals(JPEG_MAGIC);
-    if (!isPng && !isJpeg) {
-        // Likely an XML/text error response with 200 status
-        const preview = buf.toString("utf8", 0, Math.min(200, buf.length));
-        throw new Error(`WMS retornou formato inválido (não é PNG/JPEG): ${preview.slice(0, 150)}`);
-    }
-
-    return buf;
 }
 
 function isRetryableWmsError(error: unknown): boolean {
@@ -1219,8 +1251,11 @@ function isRetryableWmsError(error: unknown): boolean {
     );
 }
 
-function buildWmsResolutionFallbacks(width: number, height: number): Array<[number, number]> {
-    const factors = [1, 0.85, 0.7, 0.55];
+function buildWmsResolutionFallbacks(
+    width: number,
+    height: number,
+    factors = [1, 0.85, 0.7, 0.55],
+): Array<[number, number]> {
     const seen = new Set<string>();
     const out: Array<[number, number]> = [];
     for (const factor of factors) {
@@ -1234,27 +1269,49 @@ function buildWmsResolutionFallbacks(width: number, height: number): Array<[numb
     return out;
 }
 
+type WmsFetchOptions = {
+    timeoutMs?: number;
+    maxDurationMs?: number;
+    retryAttempts?: number;
+    fallbackFactors?: number[];
+};
+
 /** Fetch WMS with retry and resolution fallback. Always returns at target width/height. */
 async function fetchWmsImageBuffer(
     layers: string[],
     bbox: [number, number, number, number],
     width = 1200,
     height = 900,
+    source: WmsSource = SEMA_SOURCE,
+    options: WmsFetchOptions = {},
 ): Promise<Buffer> {
-    const resolutions = buildWmsResolutionFallbacks(width, height);
+    const resolutions = buildWmsResolutionFallbacks(width, height, options.fallbackFactors);
+    const retryAttempts = Math.max(1, options.retryAttempts ?? WMS_FETCH_RETRY_ATTEMPTS);
+    const deadline = Number.isFinite(options.maxDurationMs) && (options.maxDurationMs || 0) > 0
+        ? Date.now() + Number(options.maxDurationMs)
+        : Number.POSITIVE_INFINITY;
     let lastError: unknown = null;
 
     for (const [tryW, tryH] of resolutions) {
-        for (let attempt = 1; attempt <= WMS_FETCH_RETRY_ATTEMPTS; attempt++) {
+        if (Date.now() >= deadline) break;
+        for (let attempt = 1; attempt <= retryAttempts; attempt++) {
+            const remainingMs = deadline - Date.now();
+            if (remainingMs <= 0) break;
             try {
-                const buf = await fetchWmsImageBufferOnce(layers, bbox, tryW, tryH);
+                const requestTimeout = Math.max(
+                    1,
+                    Math.min(options.timeoutMs ?? calculateWmsTimeout(tryW, tryH), remainingMs),
+                );
+                const buf = await fetchWmsImageBufferOnce(layers, bbox, tryW, tryH, source, requestTimeout);
                 if (tryW === width && tryH === height) return buf;
                 return await sharp(buf).resize(width, height, { fit: "fill" }).png().toBuffer();
             } catch (err) {
                 lastError = err;
                 const retryable = isRetryableWmsError(err);
-                if (retryable && attempt < WMS_FETCH_RETRY_ATTEMPTS) {
-                    await sleepMs(WMS_RETRY_BASE_DELAY_MS * attempt);
+                if (retryable && attempt < retryAttempts) {
+                    const delay = Math.min(WMS_RETRY_BASE_DELAY_MS * attempt, Math.max(0, deadline - Date.now()));
+                    if (delay <= 0) break;
+                    await sleepMs(delay);
                     continue;
                 }
                 break;
@@ -1263,6 +1320,91 @@ async function fetchWmsImageBuffer(
     }
 
     throw lastError || new Error("Falha ao buscar imagem WMS.");
+}
+
+export type ResolvedSatelliteImage = {
+    png: Buffer;
+    candidate: WmsCandidate;
+    /** Sufixo de proveniência da figura: `cena 20/07/2008, órbita/ponto 224/069, acervo IMAP`. */
+    provenance: string;
+};
+
+/**
+ * Resolve a imagem de um satélite: **acervo da casa primeiro, SEMA depois.**
+ *
+ * A ordem não é preferência estética. A cena nativa do acervo tem data de
+ * passagem conhecida — o laudo cita "cena de 20/07/2008" no lugar de "mosaico
+ * LANDSAT_5_2008" — e não é reamostrada como o mosaico estadual.
+ *
+ * ⚠️ Candidata do acervo passa por **duas** portas, não uma. Responder HTTP 200
+ * com um PNG não prova cobertura: `spot_sema_canarana_mosaico` tem bbox sobre
+ * imóveis que ele não cobre e devolve 100% preto; tile de carta devolve 60%
+ * branco. Por isso `isMostlyEmptyRender` roda antes de aceitar, e só para o
+ * acervo — o mosaico estadual é contínuo e não tem esse modo de falha.
+ */
+export async function fetchSatelliteImage(
+    satelliteKey: string,
+    sat: { wmsLayer: string; wmsAliases?: string[]; label: string; year: number },
+    bbox: [number, number, number, number],
+    width: number,
+    height: number,
+    logPrefix = "SIMCAR ANALYSIS",
+): Promise<ResolvedSatelliteImage | null> {
+    const semaLayers = Array.from(new Set([sat.wmsLayer, ...(sat.wmsAliases || [])].filter(Boolean)));
+    const candidates: WmsCandidate[] = [
+        ...acervoCandidates(satelliteKey, sat.year, bbox),
+        ...semaLayers.map((layer) => ({ layer, source: SEMA_SOURCE })),
+    ];
+
+    const isSpot = satelliteKey.toLowerCase().startsWith("spot");
+    const spotDeadline = isSpot ? Date.now() + 35_000 : Number.POSITIVE_INFINITY;
+    let lastError = "unknown";
+    for (const candidate of candidates) {
+        const remainingSpotMs = spotDeadline - Date.now();
+        if (remainingSpotMs <= 0) break;
+        try {
+            const png = await fetchWmsImageBuffer(
+                [candidate.layer],
+                bbox,
+                width,
+                height,
+                candidate.source,
+                isSpot
+                    ? {
+                        timeoutMs: 20_000,
+                        maxDurationMs: remainingSpotMs,
+                        retryAttempts: 1,
+                        fallbackFactors: [1, 0.6],
+                    }
+                    : undefined,
+            );
+            if (candidate.source.id === "acervo") {
+                const { empty, ratio } = await isMostlyEmptyRender(png);
+                if (empty) {
+                    console.warn(
+                        `[ACERVO] ${sat.label}: ${candidate.layer} sem cobertura útil (${Math.round(ratio * 100)}% vazio); próxima candidata.`,
+                    );
+                    continue;
+                }
+                if (candidate.scene?.revisar) {
+                    console.warn(
+                        `[ACERVO] ${sat.label}: ${candidate.layer} está marcada para revisão no catálogo ` +
+                        `(outra cena da mesma data com bbox divergente — uma das duas está deslocada).`,
+                    );
+                }
+                console.log(`[ACERVO] ${sat.label} servido pelo acervo: ${candidate.layer}`);
+            }
+            return { png, candidate, provenance: describeSceneProvenance(candidate.source, candidate.scene) };
+        } catch (err: any) {
+            lastError = err?.message || String(err);
+            console.warn(`[${logPrefix}] WMS ${sat.label} (${candidate.source.id}:${candidate.layer}) failed: ${lastError}`);
+        }
+    }
+
+    console.warn(
+        `[${logPrefix}] WMS ${sat.label} indisponível em ${candidates.length} candidata(s). Último erro: ${lastError}`,
+    );
+    return null;
 }
 
 /** Convert GeoJSON coordinates to SVG path data. */
@@ -1323,7 +1465,7 @@ function geometriesToSvgPaths(
 }
 
 /** Build a complete SVG overlay with all polygon layers. */
-function buildPolygonOverlaySvg(
+export function buildPolygonOverlaySvg(
     width: number,
     height: number,
     bbox: [number, number, number, number],
@@ -2210,6 +2352,35 @@ function buildRenderBbox(
     return normalizeRenderBboxAspect(padBbox(bbox, paddingPercent), maxAspectRatio);
 }
 
+type SatelliteSceneFrame = {
+    bbox: [number, number, number, number];
+    width: number;
+    height: number;
+};
+
+/**
+ * O mosaico SPOT é muito mais pesado que as camadas Landsat. Para ele, usa-se
+ * somente a janela local da propriedade, com contexto limitado a 5 km, e não
+ * uma resolução artificialmente maior que a informação nativa do sensor.
+ */
+function buildSatelliteSceneFrame(
+    satelliteKey: string,
+    areaHa: number,
+    propertyBbox: [number, number, number, number],
+    defaultBbox: [number, number, number, number],
+    defaultWidth: number,
+    defaultHeight: number,
+): SatelliteSceneFrame {
+    if (!satelliteKey.toLowerCase().startsWith("spot")) {
+        return { bbox: defaultBbox, width: defaultWidth, height: defaultHeight };
+    }
+
+    const groundResolutionM = sensorGroundResolutionM("SPOT");
+    const bbox = expandBboxForContext(propertyBbox, groundResolutionM);
+    const { width, height } = calculateSensorDynamicResolution(areaHa, bbox, groundResolutionM);
+    return { bbox, width, height };
+}
+
 /** Build shared context block (property info + quantitative table). */
 function buildPropertyContext(
     areaHa: number,
@@ -2313,7 +2484,7 @@ function buildSingleSatellitePrompt(
         ...(cloudWarning
             ? [
                 `> ⚠️ **Atenção: Cobertura de nuvens detectada** (score: ${(cloudWarning.cloudScore * 100).toFixed(0)}%).`,
-                "> Áreas ocluídas devem ser classificadas como INCONCLUSIVO, não como uso antrópico.",
+                "> Áreas ocluídas devem ser classificadas como INCONCLUSIVO, não como uso do solo.",
                 "",
             ]
             : []),
@@ -2329,11 +2500,15 @@ function buildSingleSatellitePrompt(
             : []),
         `> **${FALSE_COLOR_PROMPT_NOTE}**`,
         "",
+        `> **${MIXED_SOURCE_PROMPT_NOTE}**`,
+        "",
+        `> **${AC_AUAS_PROMPT_GLOSSARY}**`,
+        "",
         "**Legenda dos polígonos (contorno forte + preenchimento translúcido de 12%, que não esconde o solo):**",
         "- 🟥 **Vermelho**: limite da PROPRIEDADE RURAL (ATP)",
-        "- 🟪 **Magenta Neon**: ÁREA CONSOLIDADA (AC) — uso antrópico declarado",
+        "- 🟪 **Magenta Neon**: ÁREA CONSOLIDADA (AC) — uso consolidado declarado (conversão anterior a 22/07/2008)",
         "- 🟦 **Ciano Neon**: VEGETAÇÃO NATIVA (AVN) — vegetação nativa declarada",
-        ...(hasAuas ? ["- 🟧 **Laranja Neon**: AUAS — uso alternativo do solo"] : []),
+        ...(hasAuas ? ["- 🟧 **Laranja Neon**: AUAS — supressão a partir de 22/07/2008 (uso alternativo do solo)"] : []),
         ...(hasArl ? ["- 🟩 **Verde Neon**: RESERVA LEGAL (ARL/ARLREM)"] : []),
         "",
         `**Imagem única (composite):** base ${sat.label} com propriedade + AC + AVN${hasAuas ? " + AUAS" : ""}${hasArl ? " + ARL" : ""} sobrepostos, e a mesma legenda desenhada no canto inferior esquerdo da própria imagem.`,
@@ -2341,23 +2516,24 @@ function buildSingleSatellitePrompt(
         "---",
         "",
         "## Análise da Área Consolidada (AC — contorno magenta)",
-        "- As áreas contornadas em magenta correspondem a uso antrópico visível (pastagem limpa, agricultura, solo exposto, benfeitorias, cicatrizes de fogo, estradas)?",
-        "- Padrão de textura antrópica: pastagem → tonalidade uniforme; agricultura → linhas regulares; solo exposto → tons claros sem estrutura.",
+        "- As áreas contornadas em magenta correspondem a uso consolidado visível (pastagem limpa, agricultura, solo exposto, benfeitorias, cicatrizes de fogo, estradas)?",
+        "- Padrão de textura de uso: pastagem → tonalidade uniforme; agricultura → linhas regulares; solo exposto → tons claros sem estrutura.",
         "- Algum trecho da AC apresenta textura de vegetação nativa (dossel rugoso, gradiente verde-escuro, estrutura de Cerrado/Floresta)?",
-        "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada e manchas arbustivas intercaladas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso antrópico.",
+        "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada e manchas arbustivas intercaladas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso do solo.",
         "- Para cada zona da AC, estimar o percentual (%) relativo de concordância/discordância com a classificação CAR, ao invés de hectares absolutos.",
         "- Indicar localização aproximada dos trechos discordantes: 'porção norte', 'borda leste', 'setor central', etc.",
         ...(isPreMarco
             ? [
-                `- **Pousio (IN SEMA-MT 04/2023, art. 42 §6º):** nesta cena de ${year}, cobertura vegetal jovem e homogênea sobre traçado antigo de talhão (bordas retas, estradas remanescentes) indica área em descanso — o uso implantado até 22/07/2003 mantém a área como CONSOLIDADA. Não classifique pousio como vegetação nativa.`,
+                `- **Pousio — o que reportar nesta cena de ${year}:** registre objetivamente se há (a) atividade agrossilvipastoril EM CURSO (solo exposto, lavoura, pasto manejado, maquinário, estrada em uso) ou (b) apenas cobertura vegetal jovem sobre traçado antigo de talhão (bordas retas, estradas remanescentes). **Não decida AC ou AVN a partir desta cena isolada:** o que separa pousio de vegetação nativa é o ANO DA ÚLTIMA ATIVIDADE ao longo da série, e isso só a análise integrada consegue medir.`,
+                POUSIO_PROMPT_RULE,
             ]
             : []),
         "",
         "## Análise da Vegetação Nativa (AVN — contorno ciano)",
         "- As áreas contornadas em ciano apresentam textura de vegetação nativa contínua (floresta, cerrado, mata ciliar)?",
         "- Distinguir tipologias: Floresta → dossel denso e contínuo; Cerrado → mosaico arbustivo-herbáceo; Campo nativo → tonalidade mais clara com textura variada.",
-        "- Algum trecho de AVN parece antropizado (pastagem limpa, lavoura, estradas rasgadas, desmatamento evidente, cicatriz de fogo)?",
-        "- Avaliar integridade e conectividade: fragmentação, clareiras, bordas antropizadas.",
+        "- Algum trecho de AVN apresenta uso do solo (pastagem limpa, lavoura, estradas rasgadas, solo exposto, cicatriz de fogo)? Nesta janela pré-marco, esse uso é consolidado.",
+        "- Avaliar integridade e conectividade: fragmentação, clareiras, bordas com uso do solo.",
         "- **Bordas de transição AC/AVN:** examinar a faixa de transição entre AC e AVN. Se a borda for gradual (buffer de incerteza), reportar como zona de transição com percentual estimado, não como discordância categórica.",
         ...(hasAuas
             ? [
@@ -2440,21 +2616,26 @@ export function buildAnalysisPrompt(
         "",
         `> **${FALSE_COLOR_PROMPT_NOTE}**`,
         "",
+        `> **${MIXED_SOURCE_PROMPT_NOTE}**`,
+        "",
+        `> **${AC_AUAS_PROMPT_GLOSSARY}**`,
+        "",
         "### Área Consolidada (AC — contorno magenta)",
-        "- AC_FORA_SHAPE = **SIM** somente quando houver EVIDÊNCIA VISUAL CLARA de uso antrópico (pastagem, agricultura, solo exposto, estrada, benfeitorias) em área do imóvel que NÃO está coberta pelo polígono AC.",
+        "- AC_FORA_SHAPE = **SIM** somente quando houver EVIDÊNCIA VISUAL CLARA de uso consolidado (pastagem, agricultura, solo exposto, estrada, benfeitorias) em área do imóvel que NÃO está coberta pelo polígono AC. Como toda a janela desta análise é anterior a 22/07/2008, o uso visto aqui é consolidado — constatar isso indica limite de AC subdimensionado, não irregularidade.",
         "- Critério de evidência clara: SPOT 2008 confirmando sozinho É suficiente (2.5m de resolução). Para Landsat, exige concordância de ao menos 2 cenas independentes.",
-        "- **Pousio (IN SEMA-MT 04/2023, art. 42 §6º):** área com atividade agrossilvipastoril visível até 22/07/2003 que apareça em descanso (capoeira/regeneração inicial) na cena de 2008 continua sendo CONSOLIDADA. Se a cena de 2003 mostrar uso antrópico e a de 2008 mostrar cobertura vegetal jovem e homogênea, isso é pousio — NÃO classifique como vegetação nativa.",
+        POUSIO_PROMPT_RULE,
+        "- Antes de decidir AC_FORA_SHAPE em trecho com vegetação jovem, declare explicitamente qual foi o **último ano da série em que houve atividade visível** naquele trecho. É esse ano que aplica a regra acima.",
         "- Distinga regeneração pós-uso (dossel baixo e uniforme, bordas retas herdadas do talhão, estradas remanescentes) de vegetação nativa primária (dossel alto e irregular, bordas sinuosas).",
-        "- Padrão de textura antrópica: tonalidade uniforme sem gradiente de dossel, estrutura regular de lavoura ou pasto limpo, estradas visíveis ou cicatrizes de fogo.",
+        "- Padrão de textura de uso do solo: tonalidade uniforme sem gradiente de dossel, estrutura regular de lavoura ou pasto limpo, estradas visíveis ou cicatrizes de fogo.",
         "- Padrão de vegetação nativa: textura rugosa de copas, gradiente de cor verde-escuro, estrutura irregular de dossel (Floresta), ou manchas herbáceas intercaladas com arbustos (Cerrado).",
-        "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada, manchas arbustivas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso antrópico.",
+        "- **Atenção campo nativo:** em Cerrado, distinguir campo nativo (tonalidade clara com textura variada, manchas arbustivas) de pastagem degradada (tonalidade uniforme sem arbustos). Campo nativo NÃO é uso do solo.",
         "- Se a área em questão apresentar textura ambígua (campo nativo, palhada, solo seco), classifique como INCONCLUSIVO.",
         "",
         "### Vegetação Nativa (AVN — contorno ciano)",
         "- AVN_FORA_SHAPE = **IGNORAR** sempre. Não reportar vegetação fora do shape AVN.",
-        "- AVN_DENTRO_SHAPE_ANTROPIZADO = **SIM** apenas quando houver área CLARAMENTE antropizada DENTRO do polígono AVN.",
+        "- AVN_DENTRO_SHAPE_ANTROPIZADO = **SIM** apenas quando houver área CLARAMENTE em uso do solo DENTRO do polígono AVN. Como a janela é pré-marco, descreva o achado como uso consolidado dentro da AVN — o código do veredito mantém o nome antigo, mas o texto do laudo não.",
         "- Avalie integridade do dossel, continuidade da cobertura e sinais de fragmentação.",
-        "- Atenção especial em bordas: áreas de borda podem apresentar transição gradual — só classifique como antropizado se a textura antrópica for dominante no trecho.",
+        "- Atenção especial em bordas: áreas de borda podem apresentar transição gradual — só classifique como uso do solo se essa textura for dominante no trecho.",
         "- **Bordas de transição AC/AVN:** se a transição for gradual, reportar como zona de incerteza; não classificar automaticamente como discordância.",
         ...(hasAuas
             ? [
@@ -2553,6 +2734,22 @@ export type AcAvnAnalysisMeta = {
     };
     cloudWarnings: Array<{ satellite: string; cloudScore: number }>;
     auasContext?: AcAvnAuasContext | null;
+    /** Conferência geométrica do achado "uso dentro da AVN": AC∩AVN e
+     * AVN∩reservatório medidos no shape do recorte. Se a IA diz SIM mas aqui
+     * dá 0, o achado visual é falso positivo (reservatório/água) — o laudo
+     * rebaixa para INCONCLUSIVO com nota.  */
+    geometryCrossCheck?: {
+        acAvnOverlapHa: number;
+        avnAreaHa: number;
+        acAreaHa: number;
+        reservatorioOverlapAvnHa: number;
+        hasReservatorioLayer: boolean;
+    } | null;
+    /** Análise dos reservatórios artificiais do recorte — lâmina d'água,
+     * sobreposição com AC/AUAS/AVN e enquadramento legal (Lei 12.651/2012,
+     * art. 4º III, §1º e §4º). Declarada no laudo porque o encarte digital do
+     * CAR não transfere a lâmina para a área consolidada/AUAS automaticamente. */
+    reservoirAnalysis?: ReservoirAnalysis | null;
 };
 
 export type AcAvnAnalysisResult = {
@@ -2835,11 +3032,11 @@ function buildUserFriendlyAcAvnGuidance(
     if (acForaShape === "SIM" && avnDentroShapeAntropizado === "SIM") {
         return [
             "## Resumo para o Usuario",
-            "- Foram identificadas duas inconformidades: area consolidada fora do shape AC e area antropizada dentro do shape AVN.",
+            "- Foram identificadas duas divergencias: uso consolidado fora do shape AC e uso consolidado dentro do shape AVN.",
             hasMissing ? `- ${missingText}` : "",
             "",
             "## Recomendacao Operacional (Ajuste Automatico)",
-            "- Revisar e ampliar o shape de AC para incluir as areas antropizadas detectadas dentro do imovel.",
+            "- Revisar e ampliar o shape de AC para incluir as areas com uso consolidado detectadas dentro do imovel.",
             "- Revisar o shape de AVN e excluir os trechos sem mata detectados dentro do poligono declarado.",
             "- Priorizar conferencia visual nos setores com maior contraste entre satelites (bordas e porcoes centrais).",
         ].filter(Boolean).join("\n");
@@ -2852,7 +3049,7 @@ function buildUserFriendlyAcAvnGuidance(
             hasMissing ? `- ${missingText}` : "",
             "",
             "## Recomendacao Operacional (Ajuste Automatico)",
-            "- Revisar o shape AC e incluir os trechos antropizados detectados fora do poligono atual.",
+            "- Revisar o shape AC e incluir os trechos com uso consolidado detectados fora do poligono atual.",
             "- Manter o criterio AVN como esta, salvo verificacao adicional em campo.",
         ].filter(Boolean).join("\n");
     }
@@ -2864,7 +3061,7 @@ function buildUserFriendlyAcAvnGuidance(
             hasMissing ? `- ${missingText}` : "",
             "",
             "## Recomendacao Operacional (Ajuste Automatico)",
-            "- Revisar o shape AVN e retirar os trechos antropizados detectados no interior do poligono.",
+            "- Revisar o shape AVN e retirar os trechos com uso consolidado detectados no interior do poligono.",
             "- Confirmar os limites com apoio de imagem de melhor resolucao e validacao tecnica.",
         ].filter(Boolean).join("\n");
     }
@@ -2872,7 +3069,7 @@ function buildUserFriendlyAcAvnGuidance(
     if (acForaShape === "NAO" && avnDentroShapeAntropizado === "NAO") {
         return [
             "## Resumo para o Usuario",
-            "- Nao foram identificadas inconformidades principais de AC fora do shape ou de area antropizada dentro de AVN.",
+            "- Nao foram identificadas divergencias principais de AC fora do shape ou de uso consolidado dentro de AVN.",
             hasMissing ? `- ${missingText}` : "",
             "",
             "## Recomendacao Operacional (Ajuste Automatico)",
@@ -2912,8 +3109,8 @@ function explainAcVerdict(value: AcAvnVerdict | undefined | null): string {
 }
 
 function explainAvnVerdict(value: AcAvnVerdict | undefined | null): string {
-    if (value === "SIM") return "há indício de trecho antropizado dentro do polígono AVN declarado.";
-    if (value === "NAO") return "não há indício consistente de antropização dentro do polígono AVN declarado.";
+    if (value === "SIM") return "há indício de trecho com uso consolidado dentro do polígono AVN declarado.";
+    if (value === "NAO") return "não há indício consistente de uso consolidado dentro do polígono AVN declarado.";
     return "as imagens não permitem concluir a integridade da AVN com segurança.";
 }
 
@@ -2931,20 +3128,20 @@ function formatOperationalStatus(value: AcAvnVerdict | undefined | null): string
 
 function buildAcDecisionText(value: AcAvnVerdict): string {
     if (value === "SIM") {
-        return "foi detectado uso antrópico fora do polígono AC. Revisar o limite da AC nos trechos apontados.";
+        return "foi detectado uso consolidado fora do polígono AC. Revisar o limite da AC nos trechos apontados.";
     }
     if (value === "NAO") {
-        return "não foi detectado uso antrópico relevante fora do polígono AC nas imagens avaliadas.";
+        return "não foi detectado uso consolidado relevante fora do polígono AC nas imagens avaliadas.";
     }
-    return "não houve segurança suficiente para confirmar ou descartar uso antrópico fora do polígono AC. Tratar como pendência de revisão, não como erro confirmado.";
+    return "não houve segurança suficiente para confirmar ou descartar uso consolidado fora do polígono AC. Tratar como pendência de revisão, não como erro confirmado.";
 }
 
 function buildAvnDecisionText(value: AcAvnVerdict): string {
     if (value === "SIM") {
-        return "foi detectado trecho antropizado dentro do polígono AVN. Revisar a AVN no setor indicado.";
+        return "foi detectado trecho com uso consolidado dentro do polígono AVN. Revisar a AVN no setor indicado.";
     }
     if (value === "NAO") {
-        return "não foi detectada antropização consistente dentro do polígono AVN declarado.";
+        return "não foi detectado uso consolidado consistente dentro do polígono AVN declarado.";
     }
     return "não houve segurança suficiente para confirmar a integridade da AVN. Revisar com imagem complementar ou checagem técnica.";
 }
@@ -2987,9 +3184,9 @@ function buildSatelliteReadableLine(sat: AcAvnSatelliteVerdict): string {
             ? "AC fora do shape não detectada"
             : "AC fora do shape inconclusiva";
     const avn = sat.avnDentroShapeAntropizado === "SIM"
-        ? "antropização dentro da AVN detectada"
+        ? "uso consolidado dentro da AVN detectado"
         : sat.avnDentroShapeAntropizado === "NAO"
-            ? "antropização dentro da AVN não detectada"
+            ? "uso consolidado dentro da AVN não detectado"
             : "AVN inconclusiva";
     const weight = sat.key.toLowerCase().includes("spot")
         ? "maior peso por melhor resolução"
@@ -3008,7 +3205,7 @@ function buildAcAvnConclusion(args: {
 }): string {
     const lines: string[] = [];
     if (args.acForaShape === "SIM" || args.avnDentroShapeAntropizado === "SIM") {
-        lines.push("Há indicação de ajuste vetorial. Priorize os trechos onde a imagem mostra uso antrópico fora da AC ou dentro da AVN.");
+        lines.push("Há indicação de ajuste vetorial. Priorize os trechos onde a imagem mostra uso consolidado fora da AC ou dentro da AVN.");
     } else if (args.acForaShape === "NAO" && args.avnDentroShapeAntropizado === "NAO") {
         lines.push("Não foi identificado ajuste obrigatório para AC ou AVN com base no conjunto de imagens analisado.");
     } else {
@@ -3033,12 +3230,12 @@ function buildAcAvnRecommendation(args: {
 }): string {
     const lines: string[] = [];
     if (args.acForaShape === "SIM") {
-        lines.push("Revisar e, se confirmado, ampliar o shape AC nos trechos antropizados fora do polígono atual.");
+        lines.push("Revisar e, se confirmado, ampliar o shape AC nos trechos com uso consolidado fora do polígono atual.");
     } else if (args.acForaShape === "INCONCLUSIVO") {
         lines.push("Revisar manualmente as bordas AC/AVN com imagem de maior resolução antes de alterar o shape AC.");
     }
     if (args.avnDentroShapeAntropizado === "SIM") {
-        lines.push("Revisar o shape AVN e excluir trechos claramente antropizados, mantendo registro da evidência visual.");
+        lines.push("Revisar o shape AVN e excluir trechos com uso consolidado evidente, mantendo registro da evidência visual.");
     } else if (args.avnDentroShapeAntropizado === "INCONCLUSIVO") {
         lines.push("Validar a AVN com imagem complementar ou checagem de campo nos setores de textura ambígua.");
     }
@@ -3344,6 +3541,136 @@ function normalizeAcAvnAnalysisOutput(
     };
 }
 
+function computeAcAvnGeometryCrossCheck(job: CachedJob): AcAvnAnalysisMeta["geometryCrossCheck"] {
+    const acFeature = mergeLayerGeometriesAsFeature(job.clippedGeometries, "AREA_CONSOLIDADA");
+    const avnFeature = mergeLayerGeometriesAsFeature(job.clippedGeometries, "AVN");
+    if (!acFeature || !avnFeature) return null;
+    const acAreaHa = turfArea(acFeature) / 10000;
+    const avnAreaHa = turfArea(avnFeature) / 10000;
+    let acAvnOverlapHa = 0;
+    try {
+        const overlap = turfIntersect(
+            turfFeatureCollection([acFeature, avnFeature]) as FeatureCollection<Polygon | MultiPolygon>,
+        ) as Feature<Polygon | MultiPolygon> | null;
+        if (overlap) acAvnOverlapHa = turfArea(overlap) / 10000;
+    } catch {
+        acAvnOverlapHa = 0;
+    }
+    let reservatorioOverlapAvnHa = 0;
+    let hasReservatorioLayer = false;
+    const reservFeature = mergeLayerGeometriesAsFeature(job.clippedGeometries, "RESERVATORIO_ARTIFICIAL");
+    if (reservFeature) {
+        hasReservatorioLayer = true;
+        try {
+            const overlap = turfIntersect(
+                turfFeatureCollection([reservFeature, avnFeature]) as FeatureCollection<Polygon | MultiPolygon>,
+            ) as Feature<Polygon | MultiPolygon> | null;
+            if (overlap) reservatorioOverlapAvnHa = turfArea(overlap) / 10000;
+        } catch {
+            reservatorioOverlapAvnHa = 0;
+        }
+    }
+    return {
+        acAvnOverlapHa: Number(acAvnOverlapHa.toFixed(4)),
+        avnAreaHa: Number(avnAreaHa.toFixed(4)),
+        acAreaHa: Number(acAreaHa.toFixed(4)),
+        reservatorioOverlapAvnHa: Number(reservatorioOverlapAvnHa.toFixed(4)),
+        hasReservatorioLayer,
+    };
+}
+
+/**
+ * Análise dos reservatórios artificiais do recorte.
+ *
+ * O encarte digital do CAR/SICAR (de onde o recorte sai) NÃO soma a lâmina
+ * d'água do reservatório à área consolidada/AUAS automaticamente. Pela Lei
+ * 12.651/2012, art. 4º, III e §1º, reservatório artificial que NÃO decorre de
+ * barramento/represamento de curso d'água natural NÃO gera APP de entorno —
+ * a lâmina fica como uso antrópico (AUAS/consolidada), e §4º dispensa faixa
+ * de APP para acumulações naturais/artificiais com superfície < 1 ha.
+ */
+export type ReservoirAnalysis = {
+    hasReservoir: boolean;
+    totalFeatures: number;
+    totalAreaHa: number;
+    /** Área do reservatório que cai sobre AREA_CONSOLIDADA declarada. */
+    overlapAcHa: number;
+    /** Área do reservatório que cai sobre AUAS declarada. */
+    overlapAuasHa: number;
+    /** Área do reservatório sobre AVN (conflito — precisa de revisão). */
+    overlapAvnHa: number;
+    /** Área do reservatório fora de AC/AUAS/AVN (lâmina "solta"). */
+    outsideDeclaredHa: number;
+    /** Percentual da área total do imóvel ocupado por reservatórios. */
+    pctOfProperty: number;
+    /** Menor e maior feição, para dimensionar a narrativa. */
+    minFeatureHa: number;
+    maxFeatureHa: number;
+};
+
+export function computeReservoirAnalysis(job: CachedJob, propertyAreaHa = 0): ReservoirAnalysis {
+    const reservGeoms = job.clippedGeometries?.get("RESERVATORIO_ARTIFICIAL") || [];
+    if (reservGeoms.length === 0) {
+        return {
+            hasReservoir: false,
+            totalFeatures: 0,
+            totalAreaHa: 0,
+            overlapAcHa: 0,
+            overlapAuasHa: 0,
+            overlapAvnHa: 0,
+            outsideDeclaredHa: 0,
+            pctOfProperty: 0,
+            minFeatureHa: 0,
+            maxFeatureHa: 0,
+        };
+    }
+    const merged = mergeLayerGeometriesAsFeature(job.clippedGeometries, "RESERVATORIO_ARTIFICIAL");
+    const totalAreaHa = merged ? turfArea(merged) / 10000 : 0;
+
+    const overlapWith = (layerName: string): number => {
+        const other = mergeLayerGeometriesAsFeature(job.clippedGeometries, layerName);
+        if (!other || !merged) return 0;
+        try {
+            const overlap = turfIntersect(
+                turfFeatureCollection([merged, other]) as FeatureCollection<Polygon | MultiPolygon>,
+            ) as Feature<Polygon | MultiPolygon> | null;
+            return overlap ? turfArea(overlap) / 10000 : 0;
+        } catch {
+            return 0;
+        }
+    };
+
+    const overlapAcHa = overlapWith("AREA_CONSOLIDADA");
+    const overlapAuasHa = overlapWith("AUAS");
+    const overlapAvnHa = overlapWith("AVN");
+    const outsideDeclaredHa = Math.max(0, totalAreaHa - (overlapAcHa + overlapAuasHa + overlapAvnHa));
+
+    let minFeatureHa = Infinity;
+    let maxFeatureHa = 0;
+    for (const geom of reservGeoms) {
+        const polyLike = toPolygonOrMultiFeature(geom);
+        if (!polyLike) continue;
+        const a = turfArea(polyLike) / 10000;
+        if (a > 0) {
+            minFeatureHa = Math.min(minFeatureHa, a);
+            maxFeatureHa = Math.max(maxFeatureHa, a);
+        }
+    }
+
+    return {
+        hasReservoir: true,
+        totalFeatures: reservGeoms.length,
+        totalAreaHa: Number(totalAreaHa.toFixed(4)),
+        overlapAcHa: Number(overlapAcHa.toFixed(4)),
+        overlapAuasHa: Number(overlapAuasHa.toFixed(4)),
+        overlapAvnHa: Number(overlapAvnHa.toFixed(4)),
+        outsideDeclaredHa: Number(outsideDeclaredHa.toFixed(4)),
+        pctOfProperty: propertyAreaHa > 0 ? Number(((totalAreaHa / propertyAreaHa) * 100).toFixed(2)) : 0,
+        minFeatureHa: Number((minFeatureHa === Infinity ? 0 : minFeatureHa).toFixed(4)),
+        maxFeatureHa: Number(maxFeatureHa.toFixed(4)),
+    };
+}
+
 function toSynthesisExcerpt(text: string, maxChars = SIMCAR_SYNTHESIS_MAX_CHARS_PER_SAT): string {
     const visible = splitThinkProgress(String(text || "")).answerText || String(text || "");
     return clampTextMiddle(visible, Math.max(700, maxChars));
@@ -3391,7 +3718,7 @@ function buildSynthesisPrompt(
         "",
         "### 1. Análise por Ano (obrigatória)",
         `Crie um subtítulo para cada ano em **${years.join(", ")}** e descreva os achados de AC/AVN.`,
-        "Em cada ano, inclua: uso antrópico, integridade da vegetação, pontos de dúvida.",
+        "Em cada ano, inclua: uso do solo observado, integridade da vegetação, pontos de dúvida.",
         "",
         "### 2. Conexões Entre os Anos (obrigatória)",
         "Explique a linha do tempo conectando os anos entre si:",
@@ -3401,12 +3728,14 @@ function buildSynthesisPrompt(
         "",
         "### 3. Comparação CAR x Histórico",
         "- A Área Consolidada (AC) já estava consolidada no ano mais antigo?",
-        "- Há AC com sinal de vegetação nativa no passado?",
-        "- Há AVN com sinal de uso antrópico em algum ano?",
+        "- Há AC com sinal de vegetação nativa no passado? Para cada trecho de AC coberto por vegetação, informe o **último ano da série com atividade visível** e aplique a regra do pousio abaixo.",
+        "- Há AVN com sinal de uso do solo em algum ano?",
+        "",
+        POUSIO_PROMPT_RULE,
         "- **Reserva Legal:** se ARL estiver presente, há evidência de uso antrópico dentro da ARL em algum ano?",
         "",
-        "### 4. Marco Temporal (Art. 68, Lei 12.651/2012)",
-        "- Referência: **22/07/2008**.",
+        "### 4. Marco Temporal (art. 3º, IV e art. 61-A da Lei 12.651/2012)",
+        "- Referência: **22/07/2008** — conversão anterior a essa data caracteriza área rural consolidada.",
         "- Relacione explicitamente os anos anteriores e posteriores a 2008.",
         "",
         "### 5. Concordâncias e Discordâncias Consolidadas",
@@ -3509,6 +3838,7 @@ async function generateAuasSatelliteImages(
         throwIfClientDisconnected(res);
         const sat = SATELLITE_LAYERS[key];
         if (!sat) { step++; continue; }
+        const frame = buildSatelliteSceneFrame(key, areaHa, bbox!, paddedBbox, IMG_W, IMG_H);
 
         sendSSE(res, {
             type: "progress", step: "generating_images",
@@ -3516,24 +3846,13 @@ async function generateAuasSatelliteImages(
             message: `Baixando imagem ${sat.label} para AUAS...`,
         });
 
-        const candidateLayers = Array.from(new Set([sat.wmsLayer, ...(sat.wmsAliases || [])].filter(Boolean)));
-        let basePng: Buffer | null = null;
-        let lastLayerError = "unknown";
-
-        for (const layerName of candidateLayers) {
-            throwIfClientDisconnected(res);
-            try {
-                basePng = await fetchWmsImageBuffer([layerName], paddedBbox, IMG_W, IMG_H);
-                break;
-            } catch (err: any) {
-                lastLayerError = err.message || String(err);
-                console.warn(`[AUAS ANALYSIS] WMS ${sat.label} (${layerName}) failed: ${lastLayerError}`);
-            }
-        }
+        const resolved = await fetchSatelliteImage(key, sat, frame.bbox, frame.width, frame.height, "AUAS ANALYSIS");
+        throwIfClientDisconnected(res);
+        const basePng = resolved?.png || null;
+        const provenance = resolved?.provenance || "";
 
         if (!basePng) {
             missingKeys.push(key);
-            console.warn(`[AUAS ANALYSIS] WMS ${sat.label} unavailable. Last error: ${lastLayerError}`);
             sendSSE(res, {
                 type: "progress", step: "generating_images",
                 percent: 10 + Math.round((step / totalSteps) * 40),
@@ -3562,33 +3881,33 @@ async function generateAuasSatelliteImages(
         // AUAS overlay when available; otherwise analyze full property for potential non-vectorized AUAS
         if (hasAuasLayer) {
             // View 1: AUAS outline with very light fill to preserve texture for visual reading
-            const outlineSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+            const outlineSvg = buildPolygonOverlaySvg(frame.width, frame.height, frame.bbox, propertyPolygon!, layerGeos, [
                 { name: "AUAS", stroke: "#FFFFFF", fill: "rgba(255, 255, 255, 0.05)", strokeWidth: 3.0 },
                 { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.00)", strokeWidth: 1.4 },
                 { name: "AREA_CONSOLIDADA", stroke: "#A855F7", fill: "rgba(168, 85, 247, 0.00)", strokeWidth: 1.4 },
             ]);
             images.push({
                 dataUrl: await compositeOverlay(basePng, outlineSvg),
-                caption: `${sat.label} — AUAS contorno`,
+                caption: `${sat.label} — AUAS contorno` + (provenance ? ` · ${provenance}` : ""),
             });
 
             // View 2: contextual overlays to improve discrimination between AC/AVN/AUAS
-            const contextSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+            const contextSvg = buildPolygonOverlaySvg(frame.width, frame.height, frame.bbox, propertyPolygon!, layerGeos, [
                 { name: "AUAS", stroke: "#FFFFFF", fill: "rgba(255, 255, 255, 0.20)", strokeWidth: 2.2 },
                 { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.14)", strokeWidth: 1.3 },
                 { name: "AREA_CONSOLIDADA", stroke: "#A855F7", fill: "rgba(168, 85, 247, 0.12)", strokeWidth: 1.3 },
             ]);
             images.push({
                 dataUrl: await compositeOverlay(basePng, contextSvg),
-                caption: `${sat.label} — AUAS contexto`,
+                caption: `${sat.label} — AUAS contexto` + (provenance ? ` · ${provenance}` : ""),
             });
         } else {
-            const propertySvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, [
+            const propertySvg = buildPolygonOverlaySvg(frame.width, frame.height, frame.bbox, propertyPolygon!, layerGeos, [
                 { name: "AVN", stroke: "#EAB308", fill: "rgba(234, 179, 8, 0.20)", strokeWidth: 1.8 },
             ]);
             images.push({
                 dataUrl: await compositeOverlay(basePng, propertySvg),
-                caption: `${sat.label} — Propriedade (AUAS nao vetorizada)`,
+                caption: `${sat.label} — Propriedade (AUAS nao vetorizada)` + (provenance ? ` · ${provenance}` : ""),
             });
         }
         step++;
@@ -4196,6 +4515,8 @@ function buildIntegratedAcAvnAuasPrompt(
         "Unifique os resultados de AC/AVN e AUAS em um único parecer claro, natural e objetivo.",
         "Não use linguagem robótica, não repita blocos longos e não copie os textos integralmente.",
         "",
+        AC_AUAS_PROMPT_GLOSSARY,
+        "",
         "## Base AC/AVN",
         acText,
         "",
@@ -4251,10 +4572,12 @@ function buildIntegratedAcAvnAuasPrompt(
         "Regras obrigatórias:",
         "- Escrever em português técnico claro, em frases naturais.",
         "- Não copiar para a resposta final os códigos técnicos AC_FORA_SHAPE, AVN_FORA_SHAPE, AVN_DENTRO_SHAPE_ANTROPIZADO ou AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS.",
-        "- Quando precisar usar os metadados AC/AVN, traduza: AC fora do shape, AVN antropizada dentro do shape, relação AVN x AUAS.",
+        "- Quando precisar usar os metadados AC/AVN, traduza: uso consolidado fora do shape AC, uso consolidado dentro do shape AVN, relação AVN x AUAS.",
         "- Não usar linhas no formato STATUS_FINAL = ...",
         "- Não usar linhas no formato ANO_PROVAVEL_INICIO_DESMATE = ...",
         "- Quando citar ano provável de desmate, escrever em frase corrida.",
+        "- Nunca chamar Área Consolidada de \"área antropizada\", \"desmate\" ou \"supressão\": AC é conversão anterior a 22/07/2008 e é uso regular. Escreva \"uso consolidado\".",
+        "- Reservar \"supressão\" e \"desmate\" para AUAS, isto é, para conversão a partir de 22/07/2008.",
         "- Se AUAS indicar supressão pós-2008, descrever como passivo ambiental identificado na área AUAS (não como invalidação automática da AUAS).",
         "- Quando AUAS vetorizada estiver ausente e houver supressão pós-2008, afirmar explicitamente que há AUAS não vetorizada.",
         "- Quando AUAS vetorizada estiver presente, nunca afirmar AUAS ausente/não vetorizada/não declarada.",
@@ -4953,31 +5276,20 @@ async function generateSatelliteImages(
     for (const key of validKeys) {
         throwIfClientDisconnected(res);
         const sat = SATELLITE_LAYERS[key];
+        if (!sat) { step++; continue; }
+        const frame = buildSatelliteSceneFrame(key, areaHa, bbox!, paddedBbox, IMG_W, IMG_H);
         sendSSE(res, {
             type: "progress", step: "generating_images",
             percent: 10 + Math.round((step / totalSteps) * 40),
             message: `Baixando imagem ${sat.label}...`,
         });
 
-        const candidateLayers = Array.from(new Set([sat.wmsLayer, ...(sat.wmsAliases || [])].filter(Boolean)));
-        let basePng: Buffer | null = null;
-        let resolvedLayer = "";
-        let lastLayerError = "unknown";
-
-        for (const layerName of candidateLayers) {
-            throwIfClientDisconnected(res);
-            try {
-                basePng = await fetchWmsImageBuffer([layerName], paddedBbox, IMG_W, IMG_H);
-                resolvedLayer = layerName;
-                break;
-            } catch (err: any) {
-                lastLayerError = err.message || String(err);
-                console.warn(`[SIMCAR ANALYSIS] WMS ${sat.label} (${layerName}) failed: ${lastLayerError}`);
-            }
-        }
+        const resolved = await fetchSatelliteImage(key, sat, frame.bbox, frame.width, frame.height, "SIMCAR ANALYSIS");
+        throwIfClientDisconnected(res);
+        const basePng = resolved?.png || null;
+        const provenance = resolved?.provenance || "";
 
         if (!basePng) {
-            console.warn(`[SIMCAR ANALYSIS] WMS ${sat.label} unavailable across candidates: ${candidateLayers.join(", ")}. Last error: ${lastLayerError}`);
             missingKeys.push(key);
             sendSSE(res, {
                 type: "progress", step: "generating_images",
@@ -4988,9 +5300,6 @@ async function generateSatelliteImages(
             continue;
         }
         usedKeys.push(key);
-        if (resolvedLayer && resolvedLayer !== sat.wmsLayer) {
-            console.log(`[SIMCAR ANALYSIS] ${sat.label} using fallback layer ${resolvedLayer} (primary=${sat.wmsLayer})`);
-        }
 
         // Cloud detection on base image
         try {
@@ -5022,9 +5331,17 @@ async function generateSatelliteImages(
             compositeLayers.push({ name: "ARL", stroke: "#00FF00", fill: "rgba(0,255,0,0.12)", strokeWidth: 2.5 }); // Neon Green
             compositeLayers.push({ name: "ARLREM", stroke: "#32CD32", fill: "rgba(50,205,50,0.12)", strokeWidth: 2.5 });
         }
-        const compositeSvg = buildPolygonOverlaySvg(IMG_W, IMG_H, paddedBbox, propertyPolygon!, layerGeos, compositeLayers);
+        const compositeSvg = buildPolygonOverlaySvg(frame.width, frame.height, frame.bbox, propertyPolygon!, layerGeos, compositeLayers);
         const hasArl = layerGeos.has("ARL") || layerGeos.has("ARLREM");
-        images.push({ dataUrl: await compositeOverlay(basePng, compositeSvg), caption: `${sat.label} — Visão Geral (AC + AVN + AUAS${hasArl ? " + ARL" : ""})` });
+        // ⚠️ A proveniência é SUFIXO, nunca prefixo: `selectPrincipalReportImages`
+        // e `reduceImageSet` ordenam lendo o começo da legenda (SPOT, ano). Mexer
+        // na frente da string quebra a seleção do anexo em silêncio — já custou o
+        // SPOT 2008 sumir de um laudo (CHANGELOG_2026-08-21_ANEXO_SPOT_SUMIA.md).
+        images.push({
+            dataUrl: await compositeOverlay(basePng, compositeSvg),
+            caption: `${sat.label} — Visão Geral (AC + AVN + AUAS${hasArl ? " + ARL" : ""})`
+                + (provenance ? ` · ${provenance}` : ""),
+        });
         step++;
     }
 
@@ -5039,6 +5356,157 @@ async function generateSatelliteImages(
  *
  * @returns AcAvnAnalysisResult or null if a fatal error occurred (error SSE was already sent).
  */
+/**
+ * Gera a imagem de DESTAQUE do achado "área consolidada dentro da AVN":
+ * zoom no trecho da interseção AC∩AVN (ou na AVN), no satélite de maior peso
+ * (SPOT 2008 se usado), para vir como PRIMEIRA figura do anexo do laudo.
+ * Retorna null se o achado não tiver suporte geométrico/WMS utilizável —
+ * nunca falha a análise (o chamador trata como não-fatal).
+ */
+export async function buildAvnHighlightImage(
+    res: Response,
+    job: CachedJob,
+    usedKeys: string[],
+): Promise<{ dataUrl: string; caption: string } | null> {
+    const acFeature = mergeLayerGeometriesAsFeature(job.clippedGeometries, "AREA_CONSOLIDADA");
+    const avnFeature = mergeLayerGeometriesAsFeature(job.clippedGeometries, "AVN");
+    if (!acFeature || !avnFeature) return null;
+
+    // Bbox do foco: interseção AC∩AVN quando existir; senão a própria AVN.
+    let focusBbox: [number, number, number, number];
+    try {
+        const overlap = turfIntersect(
+            turfFeatureCollection([acFeature, avnFeature]) as FeatureCollection<Polygon | MultiPolygon>,
+        ) as Feature<Polygon | MultiPolygon> | null;
+        focusBbox = overlap
+            ? (turfBbox(overlap) as [number, number, number, number])
+            : (turfBbox(avnFeature) as [number, number, number, number]);
+    } catch {
+        focusBbox = turfBbox(avnFeature) as [number, number, number, number];
+    }
+    const zoomBbox = normalizeRenderBboxAspect(padBbox(focusBbox, 0.12), 2.5);
+    const areaHa = job.areaHa ?? 0;
+    const baseRes = calculateDynamicResolution(areaHa, zoomBbox);
+    const width = Math.max(baseRes.width, 900);
+    const height = Math.max(baseRes.height, 600);
+
+    // Satélite de maior peso probatório: SPOT 2008 (marco 22/07/2008) se usado; senão o primeiro.
+    const key = (usedKeys.includes("spot_2008") ? "spot_2008" : usedKeys[0]);
+    if (!key) return null;
+    const sat = SATELLITE_LAYERS[key];
+    if (!sat) return null;
+
+    sendSSE(res, {
+        type: "progress",
+        step: "generating_images",
+        percent: 61,
+        message: "Gerando destaque do achado AVN (área consolidada dentro do polígono AVN)...",
+    });
+    const resolved = await fetchSatelliteImage(key, sat, zoomBbox, width, height, "SIMCAR ANALYSIS");
+    if (!resolved?.png) return null;
+
+    // Overlay só com AC + AVN + propriedade, no zoom do trecho destacado.
+    const rawLayerGeos: Map<string, Geometry[]> = job.clippedGeometries ?? new Map<string, Geometry[]>();
+    const layerGeos = new Map<string, Geometry[]>();
+    for (const [name, geoms] of rawLayerGeos) {
+        layerGeos.set(name, geoms.map((g: Geometry) => simplifyGeometryForOverlay(g, 1200)));
+    }
+    const svg = buildPolygonOverlaySvg(width, height, zoomBbox, job.polygon!, layerGeos, [
+        { name: "AREA_CONSOLIDADA", stroke: "#FF00FF", fill: "rgba(255,0,255,0.12)", strokeWidth: 3.5 },
+        { name: "AVN", stroke: "#00FFFF", fill: "rgba(0,255,255,0.12)", strokeWidth: 4 },
+    ]);
+    const dataUrl = await compositeOverlay(resolved.png, svg);
+    const provenance = resolved.provenance ? ` · ${resolved.provenance}` : "";
+    return {
+        dataUrl,
+        // A substring "Destaque AVN" garante peso -1 no anexo (reportImageWeight);
+        // o rótulo do satélite fica no início para a leitura por sensor continuar funcionando.
+        caption: `${sat.label} — Destaque AVN (Área Consolidada dentro do polígono AVN)${provenance}`,
+    };
+}
+
+/**
+ * Gera a imagem de DESTAQUE do(s) reservatório(s) artificial(is) do recorte:
+ * zoom no bbox do reservatório (ou no imóvel inteiro se o reservatório for
+ * pontual demais), na cena de maior peso (SPOT 2008), com overlay
+ * AC+AUAS+RESERVATÓRIO+propriedade — vira a PRIMEIRA figura do anexo quando o
+ * laudo tem reservatório, deixando explícita a lâmina d'água (regressão real:
+ * Lote 81, 21/08/2026 — a visão confundiu reservatório com "uso na AVN").
+ */
+export async function buildReservoirHighlightImage(
+    res: Response,
+    job: CachedJob,
+    usedKeys: string[],
+): Promise<{ dataUrl: string; caption: string } | null> {
+    const reservoirGeoms = job.clippedGeometries?.get("RESERVATORIO_ARTIFICIAL") || [];
+    if (reservoirGeoms.length === 0) return null;
+
+    // Bbox do reservatório com padding. Se o reservatório for menor que ~0,5 ha
+    // (pontual), expande para caber um contexto útil da propriedade.
+    const feats: number[][] = [];
+    for (const g of reservoirGeoms) {
+        if (g.type === "Polygon") { for (const ring of g.coordinates) for (const c of ring) feats.push(c); }
+        else if (g.type === "MultiPolygon") { for (const poly of g.coordinates) for (const ring of poly) for (const c of ring) feats.push(c); }
+    }
+    if (feats.length === 0) return null;
+    let [minX, minY, maxX, maxY] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const [x, y] of feats) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
+    let focusBbox: [number, number, number, number] = [minX, minY, maxX, maxY];
+    const wSpan = maxX - minX, hSpan = maxY - minY;
+    const isTiny = wSpan < 0.003 || hSpan < 0.003; // ~ <300m de lado em graus
+    if (isTiny) {
+        // Expande para o imóvel inteiro, preservando o contexto.
+        const polyGeom = job.polygon?.geometry;
+        const pFeats: number[][] = [];
+        if (polyGeom?.type === "Polygon") for (const ring of polyGeom.coordinates) for (const c of ring) pFeats.push(c);
+        else if (polyGeom?.type === "MultiPolygon") for (const gp of polyGeom.coordinates) for (const ring of gp) for (const c of ring) pFeats.push(c);
+        if (pFeats.length > 0) {
+            let [px, py, qx, qy] = [Infinity, Infinity, -Infinity, -Infinity];
+            for (const [x, y] of pFeats) { px = Math.min(px, x); py = Math.min(py, y); qx = Math.max(qx, x); qy = Math.max(qy, y); }
+            focusBbox = [px, py, qx, qy];
+        }
+    }
+    const zoomBbox = normalizeRenderBboxAspect(padBbox(focusBbox, 0.12), 2.5);
+    const areaHa = job.areaHa ?? 0;
+    const baseRes = calculateDynamicResolution(areaHa, zoomBbox);
+    const width = Math.max(baseRes.width, 900);
+    const height = Math.max(baseRes.height, 600);
+
+    const key = (usedKeys.includes("spot_2008") ? "spot_2008" : usedKeys[0]);
+    if (!key) return null;
+    const sat = SATELLITE_LAYERS[key];
+    if (!sat) return null;
+
+    sendSSE(res, {
+        type: "progress",
+        step: "generating_images",
+        percent: 61,
+        message: "Gerando destaque visual dos reservatórios artificiais do recorte...",
+    });
+    const resolved = await fetchSatelliteImage(key, sat, zoomBbox, width, height, "SIMCAR ANALYSIS");
+    if (!resolved?.png) return null;
+
+    const rawLayerGeos: Map<string, Geometry[]> = job.clippedGeometries ?? new Map<string, Geometry[]>();
+    const layerGeos = new Map<string, Geometry[]>();
+    for (const [name, geoms] of rawLayerGeos) {
+        layerGeos.set(name, geoms.map((g: Geometry) => simplifyGeometryForOverlay(g, 1200)));
+    }
+    const svg = buildPolygonOverlaySvg(width, height, zoomBbox, job.polygon!, layerGeos, [
+        { name: "RESERVATORIO_ARTIFICIAL", stroke: "#0044FF", fill: "rgba(0,0,255,0.35)", strokeWidth: 4 },
+        { name: "AREA_CONSOLIDADA", stroke: "#FF00FF", fill: "rgba(255,0,255,0.12)", strokeWidth: 3.5 },
+        { name: "AUAS", stroke: "#FFA500", fill: "rgba(255,165,0,0.14)", strokeWidth: 3.5 },
+        { name: "AVN", stroke: "#00FFFF", fill: "rgba(0,255,255,0.14)", strokeWidth: 3.5 },
+    ]);
+    const dataUrl = await compositeOverlay(resolved.png, svg);
+    const provenance = resolved.provenance ? ` · ${resolved.provenance}` : "";
+    return {
+        dataUrl,
+        // "Destaque Reservatório" também recebe peso -1 no anexo (reportImageWeight)
+        // para vir antes das demais cenas; o rótulo do satélite fica no início.
+        caption: `${sat.label} — Destaque Reservatório Artificial (lâmina d'água do recorte)${provenance}`,
+    };
+}
+
 export async function runAcAvnSatelliteAnalysis(
     res: Response,
     job: CachedJob,
@@ -5244,6 +5712,118 @@ export async function runAcAvnSatelliteAnalysis(
         cloudWarnings,
         auasContext: acAvnAuasContext,
     });
+
+    // ─── Conferência geométrica do achado AVN ────────────────────────────────
+    // A visão pode confundir reservatório/água com "uso consolidado dentro da
+    // AVN" (falso positivo). Medimos AC∩AVN e AVN∩reservatório no shape real:
+    // se a IA diz SIM mas não há sobreposição geométrica, o achado é rebaixado
+    // para INCONCLUSIVO com nota explicativa — e o destaque não entra.
+    const geometryCrossCheck = computeAcAvnGeometryCrossCheck(job);
+    if (geometryCrossCheck) {
+        normalizedAcAvn.meta.geometryCrossCheck = geometryCrossCheck;
+        const avnVerdict = normalizedAcAvn.meta.globalVerdict?.avnDentroShapeAntropizado;
+        const noGeometricOverlap =
+            geometryCrossCheck.acAvnOverlapHa <= 0.0001 && geometryCrossCheck.avnAreaHa > 0.0001;
+        if (avnVerdict === "SIM" && noGeometricOverlap) {
+            console.warn(
+                "[SIMCAR ANALYSIS] Achado visual AVN sem suporte geométrico (AC∩AVN = 0). Rebaixando para INCONCLUSIVO.",
+            );
+            normalizedAcAvn.meta.globalVerdict.avnDentroShapeAntropizado = "INCONCLUSIVO";
+            const reservNote = geometryCrossCheck.hasReservatorioLayer && geometryCrossCheck.reservatorioOverlapAvnHa > 0.0001
+                ? `Há ${geometryCrossCheck.reservatorioOverlapAvnHa.toFixed(4)} ha de reservatório artificial sobreposto à AVN — a feição apontada como uso pode ser reservatório/água.`
+                : "A área apontada como uso pode ser reservatório artificial, lâmina d'água ou sombra de relevo.";
+            normalizedAcAvn.text += [
+                "",
+                "## Conferência Geométrica do Achado AVN",
+                `- Interseção AC∩AVN no shape do recorte: ${geometryCrossCheck.acAvnOverlapHa.toFixed(4)} ha.`,
+                `- AVN total: ${geometryCrossCheck.avnAreaHa.toFixed(4)} ha | AC total: ${geometryCrossCheck.acAreaHa.toFixed(4)} ha.`,
+                `- ${reservNote}`,
+                "- Veredito visual rebaixado para INCONCLUSIVO: sem suporte geométrico de sobreposição AC∩AVN; revisão manual do setor recomendada.",
+            ].join("\n");
+            sendSSE(res, {
+                type: "progress",
+                step: "finalizing",
+                percent: 97,
+                message: "Conferência geométrica: achado visual AVN sem suporte no shape — rebaixado para inconclusivo.",
+            });
+        }
+    }
+
+    // ─── Reservatórios artificiais: narrativa explícita ──────────────────────
+    // O encarte digital do CAR não soma a lâmina d'água à área consolidada/AUAS
+    // automaticamente. Medimos e declaramos no laudo: área total, nº de feições,
+    // sobreposição com AC/AUAS/AVN e o enquadramento legal (Lei 12.651/2012).
+    const reservoirAnalysis = computeReservoirAnalysis(job, areaHa);
+    if (reservoirAnalysis.hasReservoir) {
+        normalizedAcAvn.meta.reservoirAnalysis = reservoirAnalysis;
+        normalizedAcAvn.text += [
+            "",
+            "## Reservatórios Artificiais — Enquadramento Legal",
+            `- ${reservoirAnalysis.totalFeatures} feição(ões), total de ${reservoirAnalysis.totalAreaHa.toFixed(4)} ha (${reservoirAnalysis.pctOfProperty.toFixed(2)}% do imóvel).`,
+            `- Sobre AC declarada: ${reservoirAnalysis.overlapAcHa.toFixed(4)} ha | Sobre AUAS declarada: ${reservoirAnalysis.overlapAuasHa.toFixed(4)} ha | Sobre AVN: ${reservoirAnalysis.overlapAvnHa.toFixed(4)} ha | Fora de camada declarada: ${reservoirAnalysis.outsideDeclaredHa.toFixed(4)} ha.`,
+            "- Lei 12.651/2012, art. 4º, III e §1º: reservatório artificial que NÃO decorre de barramento/represamento de curso d'água natural NÃO gera APP de entorno — a lâmina d'água enquadra-se como uso antrópico (área consolidada/AUAS).",
+            "- Art. 4º, §4º: acumulações naturais ou artificiais com superfície inferior a 1 ha ficam dispensadas da faixa de APP de entorno (vedada nova supressão de vegetação nativa).",
+            "- Manual de Elaboração do Projeto Geográfico do SIMCAR (SEMA-MT, atual. 07/11/2018), seção 8.9: 'AUAS – Área de Uso ANTROPIZADO do Solo: áreas cujas características originais (solo, vegetação, relevo e regime hídrico) foram alteradas por consequência de atividade humana' (estradas, lavouras, mineração) — a lâmina d'água de reservatório sem barramento enquadra-se nessa categoria.",
+            "- Manual do SIMCAR, seção 8.14: 'São reservatórios d'água artificiais, decorrentes de barramento ou represamento de cursos d'água naturais dentro do imóvel' — e o Anexo 01 (Validações GEO) marca sobreposição de ÁREA INUNDADA com AUAS/AVN/AREA CONSOLIDADA como VALIDAÇÃO IMPEDITIVA.",
+            "- Lei 12.651/2012, art. 4º, §1º e §4º + Decreto 7.830/2012: reservatório artificial sem barramento não é APP de entorno; acumulação < 1 ha dispensa faixa de APP.",
+            "- O encarte digital do CAR, de onde o recorte é extraído, NÃO transfere automaticamente a lâmina d'água para a área consolidada/AUAS — a validação impeditiva do SIMCAR impede a sobreposição, então a adequação do perímetro no CAR/SIMCAR deve ser feita pelo responsável técnico.",
+            "- Recomendação: conferir a titularidade/outorga do reservatório e o cruzamento com a área consolidada declarada; ajustar o shape do CAR se a lâmina estiver sobre uso consolidado/AUAS não declarado.",
+        ].join("\n");
+    }
+
+    // ─── Destaque do achado "área consolidada dentro da AVN" ────────────────
+    // Quando a IA confirma o achado (avnDentroShapeAntropizado = SIM), gera uma
+    // imagem em zoom no trecho AC∩AVN e a insere como PRIMEIRA figura no anexo.
+    // Fallback silencioso: se o WMS falhar, o laudo segue com as cenas normais.
+    if (normalizedAcAvn.meta?.globalVerdict?.avnDentroShapeAntropizado === "SIM") {
+        try {
+            const highlight = await buildAvnHighlightImage(res, job, usedSatelliteKeys);
+            if (highlight) {
+                const url = await uploadToCloudinary(
+                    highlight.dataUrl,
+                    `simcar_analysis_${tag}_destaque_avn`,
+                    job.uid || "anonymous",
+                );
+                cloudinaryUrls.unshift({ url, caption: highlight.caption });
+                cloudinaryStoredBytes += estimateBytesFromDataUrl(highlight.dataUrl);
+                console.log(`[SIMCAR ANALYSIS] Destaque AVN adicionado como primeira figura: ${url}`);
+                sendSSE(res, {
+                    type: "progress",
+                    step: "finalizing",
+                    percent: 97,
+                    message: "Destaque do achado AVN anexado ao laudo.",
+                });
+            }
+        } catch (highlightErr: any) {
+            console.warn("[SIMCAR ANALYSIS] Destaque AVN não gerado (não-fatal):", highlightErr?.message || highlightErr);
+        }
+    }
+
+    // ─── Destaque dos reservatórios artificiais ──────────────────────────────
+    // Quando o recorte tem reservatório artificial, gera uma imagem em zoom na
+    // lâmina d'água e a insere como PRIMEIRA figura do anexo (peso -1 no
+    // report). Deixa explícita a realidade física que a visão pode confundir
+    // com "uso consolidado dentro da AVN" (regressão real Lote 81).
+    if (reservoirAnalysis.hasReservoir) {
+        try {
+            const reservHighlight = await buildReservoirHighlightImage(res, job, usedSatelliteKeys);
+            if (reservHighlight) {
+                const url = await uploadToCloudinary(
+                    reservHighlight.dataUrl,
+                    `simcar_analysis_${tag}_destaque_reservatorio`,
+                    job.uid || "anonymous",
+                );
+                cloudinaryUrls.unshift({ url, caption: reservHighlight.caption });
+                cloudinaryStoredBytes += estimateBytesFromDataUrl(reservHighlight.dataUrl);
+                console.log(`[SIMCAR ANALYSIS] Destaque Reservatório adicionado como primeira figura: ${url}`);
+            }
+        } catch (reservHighlightErr: any) {
+            console.warn(
+                "[SIMCAR ANALYSIS] Destaque Reservatório não gerado (não-fatal):",
+                reservHighlightErr?.message || reservHighlightErr,
+            );
+        }
+    }
 
     return {
         analysisText: normalizedAcAvn.text,

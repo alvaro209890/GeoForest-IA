@@ -71,6 +71,40 @@ export const TEMPLATE_LAYERS = [
 
 export const DIRECT_COPY_LAYERS = new Set(["AIR", "ATP"]);
 
+/**
+ * Camadas que **não saem em nenhum artefato entregue** — ZIP, XLSX de
+ * quantitativos, laudo PDF e laudo DOCX.
+ *
+ * `TIPOLOGIA_VEGETAL` é o mapa de tipologia do imóvel inteiro: cobre ~100% da
+ * área, vem truncada pelo WFS em 50.000 feições e não é declaração de nada (ver
+ * o gotcha registrado em `.claude/CLAUDE.md` — somá-la à área declarada fazia
+ * 100% dos polígonos saírem com alerta ALTO na Fase 3). No pacote entregue ao
+ * cliente ela só polui: ocupa a maior parte do ZIP e domina a tabela do laudo
+ * com um número que não significa sobreposição.
+ *
+ * Isto é filtro de **saída**, não de análise: a camada continua sendo recortada
+ * e continua disponível internamente para as fases que a consultam.
+ */
+export const EXPORT_EXCLUDED_LAYERS = new Set(["TIPOLOGIA_VEGETAL"]);
+
+/** `true` quando a camada não deve aparecer em artefato entregue. */
+export function isExcludedFromExport(layerName: unknown): boolean {
+    return EXPORT_EXCLUDED_LAYERS.has(String(layerName || "").trim().toUpperCase());
+}
+
+/**
+ * Remove do ZIP os arquivos das camadas excluídas.
+ *
+ * Precisa existir porque o ZIP de saída repassa **todo** o template do
+ * `Modelo.zip`: mesmo sem recorte, os `.shp/.shx/.dbf/.prj` vazios de
+ * `TIPOLOGIA_VEGETAL` entrariam pelo passthrough.
+ */
+export function isExcludedExportEntry(entryName: unknown): boolean {
+    const base = String(entryName || "").split("/").pop() || "";
+    const stem = base.replace(/\.[^.]+$/, "").trim().toUpperCase();
+    return EXPORT_EXCLUDED_LAYERS.has(stem);
+}
+
 /** Camadas de rio: buscadas por BBOX e recortadas com margem além da divisa (500m). */
 export const RIVER_CLIP_LAYERS = new Set([
     "RIO_ATE_10",
