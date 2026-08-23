@@ -166,6 +166,10 @@ export async function requestDeepseekAuasReport(
 
 const STATUS_LABEL: Record<string, string> = {
   ALERTA_PRE_2008: "Alerta pré-2008",
+  // Faltava desde que o status nasceu: o laudo determinístico imprimia o enum
+  // cru ("SINAL_DE_DUVIDA") justamente na linha que o RT lê para saber se houve
+  // desmate parcial/vegetação mexida no polígono.
+  SINAL_DE_DUVIDA: "Sinal de dúvida (área passível de discussão)",
   SEM_EVIDENCIA_PRE_2008: "Sem evidência pré-2008",
   INCONCLUSIVO_NO_MARCO_2008: "Inconclusivo no marco 2008",
   INCONCLUSIVO: "Inconclusivo",
@@ -179,7 +183,7 @@ export function buildDeterministicFallbackReport(input: DeepseekAuasReportInput)
   const summaryMarkdown = [
     `## Resumo executivo (relatório determinístico — DeepSeek indisponível)`,
     `Status agregado: **${STATUS_LABEL[input.aggregateStatus] || input.aggregateStatus}**.`,
-    `Polígonos analisados: ${input.summary.polygonCount}. Com alerta: ${input.summary.alertCount}. Inconclusivos: ${input.summary.inconclusiveCount}. Sem evidência: ${input.summary.noEvidenceCount}.`,
+    `Polígonos analisados: ${input.summary.polygonCount}. Com alerta: ${input.summary.alertCount}. Com sinal de dúvida: ${input.summary.doubtCount ?? 0}. Inconclusivos: ${input.summary.inconclusiveCount}. Sem evidência: ${input.summary.noEvidenceCount}.`,
     `Área total AUAS analisada: ${input.summary.totalAuasAreaHa.toFixed(2)} ha. Área em alerta: ${input.summary.alertAreaHa.toFixed(2)} ha.`,
     `Fontes usadas: ${input.sources.used.join(", ") || "nenhuma"}. Fontes ausentes: ${input.sources.missing.join(", ") || "nenhuma"}.`,
     input.limitations.length > 0 ? `Limitações: ${input.limitations.join("; ")}.` : "",
@@ -195,6 +199,11 @@ export function buildDeterministicFallbackReport(input: DeepseekAuasReportInput)
       `Área: ${p.areaHa.toFixed(2)} ha.`,
       p.observedInterval ? `Intervalo observado: ${p.observedInterval.wording}` : "Nenhum intervalo determinado.",
       p.evidence.length > 0 ? `Evidência: ${p.evidence.join("; ")}.` : "",
+      // Os sinais de dúvida dizem EM QUE polígono a vegetação foi mexida — sem
+      // isto eles só existiam na seção visual, não no corpo do laudo.
+      Array.isArray(p.doubtSignals) && p.doubtSignals.length > 0
+        ? `Sinais de dúvida: ${p.doubtSignals.join("; ")}.`
+        : "",
       p.limitations.length > 0 ? `Limitações: ${p.limitations.join("; ")}.` : "",
     ]
       .filter(Boolean)

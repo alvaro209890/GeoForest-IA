@@ -29,25 +29,32 @@ O Dashboard só renderiza `<AnalisePosRecortePanel jobId={...} />`.
 │      17 polígonos AUAS · 6 imagens cada · ~45 min                │
 │      ✅ Concluída em 05/08 14:20 — 3 com evidência pré-2008      │
 │                                                                  │
-│  ②  Quando ocorreu o desmate (2008–2019)            [ Continuar ]│
+│      📄 Laudo desta análise (PDF)  ·  Word                       │
+│                                                                  │
+│  ②  Quando ocorreu o desmate (2008–2019)            [ Analisar ] │
 │      17 polígonos · 11 anos · 5 janelas cada · ~1 h 20           │
-│      🔒 Conclua a Fase 1 para liberar                            │
 │                                                                  │
 │  ③  Vegetação dentro da Área Consolidada            [ Analisar ] │
 │      9 polígonos de AC · ~9 min                                  │
-│      🔒 Conclua a Fase 2 para liberar                            │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-Regras:
+Regras (**atualizadas em 23/08/2026** — ver
+[FLUXO_3_ANALISES_INDEPENDENTES.md](FLUXO_3_ANALISES_INDEPENDENTES.md)):
 
 - **Os três aparecem sempre**, desde que o recorte tenha concluído. Nada surge do nada.
-- Bloqueado = `disabled` + cadeado + **motivo em texto** ("Conclua a Fase 2 para
-  liberar"), nunca um botão morto sem explicação.
+- **As três são independentes**: cada uma só precisa da camada que lê (`AUAS` para
+  ① e ②, `AREA_CONSOLIDADA` para ③). Nenhuma espera a outra.
+- Bloqueado = `disabled` + cadeado + **motivo em texto**, nunca um botão morto sem
+  explicação. Os motivos que sobraram são: camada vazia, flag desligada e
+  "aguardando a fase em execução".
 - Só uma fase roda por vez: enquanto uma está em execução, as outras ficam desabilitadas
-  com "Aguardando a Fase N terminar".
-- Botão de fase concluída vira **"Refazer"** (secundário, com confirmação), porque
-  refazer a Fase 1 invalida as fases 2 e 3 — ver §6.
+  com "Aguardando a Fase N terminar" — **inclusive as já concluídas**, cujo "Refazer"
+  dispararia uma segunda análise gravando o mesmo JSON do job.
+- Botão de fase concluída vira **"Refazer"**. Refazer uma fase **não** invalida as
+  outras.
+- Cada fase concluída mostra o **seu** laudo (PDF + Word), guardado em
+  `phaseReports[fase]` — rodar a ③ não apaga o laudo da ①.
 
 ## 3. Prévia antes do clique (obrigatória)
 

@@ -32,7 +32,8 @@ Resposta que o painel usa para montar os três cards sem baixar os laudos inteir
                    "summary": { "alertCount": 3, "inconclusiveCount": 2 } },
     "POS_2008":  { "state": "AVAILABLE", "blockedReason": null,
                    "estimate": { "polygons": 17, "windowsPerPolygon": 5, "etaSeconds": 4800 } },
-    "AC_VEG":    { "state": "BLOCKED", "blockedReason": "requires_POS_2008" }
+    "AC_VEG":    { "state": "AVAILABLE", "blockedReason": null,
+                   "report": { "pdfUrl": "…", "docxUrl": "…", "generatedAt": "…", "filename": "…" } }
   }
 }
 ```
@@ -42,9 +43,14 @@ Resposta que o painel usa para montar os três cards sem baixar os laudos inteir
 > **Implementado em 2026-08-05** (`backend/simcar/phases.ts`): cada fase devolve, além
 > do acima, `blockedMessage` (o motivo já em pt-BR, para o botão), `rulesVersion` e
 > `stale`. `blockedReason` é um código estável: `layer_empty_AUAS`,
-> `layer_empty_AREA_CONSOLIDADA`, `requires_PRE_2008`, `requires_POS_2008`,
-> `phase_not_implemented`, `phase_running`, `other_phase_running`. Enquanto as fases 2 e
-> 3 não existirem, elas respondem `phase_not_implemented`.
+> `layer_empty_AREA_CONSOLIDADA`, `phase_not_implemented`, `phase_running`,
+> `other_phase_running`. Fase com a flag desligada responde `phase_not_implemented`.
+>
+> **Atualizado em 23/08/2026:** os códigos `requires_PRE_2008`, `requires_POS_2008`,
+> `previous_phase_stale` e `phase_stale` **deixaram de existir** — as 3 fases são
+> independentes. Cada fase ganhou `report` (`pdfUrl`, `docxUrl`, `generatedAt`,
+> `filename`), lido de `phaseReports[fase]` no JSON do job: cada análise guarda o seu
+> laudo. Ver [FLUXO_3_ANALISES_INDEPENDENTES.md](FLUXO_3_ANALISES_INDEPENDENTES.md).
 
 ## 2. Códigos de erro
 

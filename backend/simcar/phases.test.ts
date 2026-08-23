@@ -1,6 +1,7 @@
 /**
  * Testes do estado das 3 fases da análise pós-recorte (tarefa F0.5).
- * `derivePhases` é pura — o foco está no encadeamento de gates F1→F2→F3.
+ * `derivePhases` é pura — o foco está na **independência** das 3 fases: nenhuma
+ * tranca a outra, cada uma só precisa da sua camada (pedido do Álvaro, 23/08/2026).
  */
 import { describe, expect, it } from "vitest";
 
@@ -45,11 +46,21 @@ const acDone = {
 };
 
 describe("derivePhases", () => {
-  it("F1 e F2 disponíveis quando há AUAS — a datação 2008–2019 não exige a Fase 1", () => {
+  it("as 3 fases nascem AVAILABLE juntas — nenhuma espera outra", () => {
     const phases = derivePhases(base());
     expect(phases.phases.PRE_2008.state).toBe("AVAILABLE");
     expect(phases.phases.POS_2008.state).toBe("AVAILABLE");
-    expect(phases.phases.AC_VEG.blockedReason).toBe("requires_PRE_2008");
+    expect(phases.phases.AC_VEG.state).toBe("AVAILABLE");
+    expect(checkPhaseGate(phases, "PRE_2008")).toBeNull();
+    expect(checkPhaseGate(phases, "POS_2008")).toBeNull();
+    expect(checkPhaseGate(phases, "AC_VEG")).toBeNull();
+  });
+
+  it("F3 sozinha: sem F1 e sem F2 concluídas, continua liberada", () => {
+    const phases = derivePhases(base({ auasPolygonCount: 0, acPolygonCount: 4 }));
+    expect(phases.phases.AC_VEG.state).toBe("AVAILABLE");
+    expect(phases.phases.AC_VEG.estimate?.polygons).toBe(4);
+    expect(checkPhaseGate(phases, "AC_VEG")).toBeNull();
   });
 
   it("sem polígonos AUAS: F1/F2 bloqueiam com layer_empty_AUAS", () => {
@@ -63,21 +74,29 @@ describe("derivePhases", () => {
     expect(phases.phases.AC_VEG.blockedReason).toBe("layer_empty_AREA_CONSOLIDADA");
   });
 
-  it("F1 concluída deixa F2 AVAILABLE; F3 espera POS_2008", () => {
+  it("F1 concluída não muda o estado das outras duas", () => {
     const phases = derivePhases(base({ auasMeta: phase1Done }));
     expect(phases.phases.PRE_2008.state).toBe("COMPLETED");
     expect(phases.phases.POS_2008.state).toBe("AVAILABLE");
-    expect(phases.phases.AC_VEG.blockedReason).toBe("requires_POS_2008");
+    expect(phases.phases.AC_VEG.state).toBe("AVAILABLE");
   });
 
   it("F2 pode estar COMPLETED sem a Fase 1 — a datação não espera o pré-2008", () => {
     const phases = derivePhases(base({ auasPos2008Meta: pos2008Done }));
     expect(phases.phases.POS_2008.state).toBe("COMPLETED");
     expect(phases.phases.PRE_2008.state).toBe("AVAILABLE");
-    expect(phases.phases.AC_VEG.blockedReason).toBe("requires_PRE_2008");
+    expect(phases.phases.AC_VEG.state).toBe("AVAILABLE");
   });
 
-  it("F2 concluída registra summary e libera F3", () => {
+  it("F3 pode estar COMPLETED sozinha, sem F1 nem F2", () => {
+    const phases = derivePhases(base({ acVegetacaoMeta: acDone }));
+    expect(phases.phases.AC_VEG.state).toBe("COMPLETED");
+    expect(phases.phases.AC_VEG.summary?.declaredVegetationCount).toBe(1);
+    expect(phases.phases.PRE_2008.state).toBe("AVAILABLE");
+    expect(phases.phases.POS_2008.state).toBe("AVAILABLE");
+  });
+
+  it("F2 concluída registra summary e F3 segue liberada", () => {
     const phases = derivePhases(base({ auasMeta: phase1Done, auasPos2008Meta: pos2008Done }));
     expect(phases.phases.POS_2008.state).toBe("COMPLETED");
     expect(phases.phases.POS_2008.summary?.confirmedYearCount).toBe(1);
@@ -91,34 +110,22 @@ describe("derivePhases", () => {
     expect(phases.phases.AC_VEG.summary?.totalAcAreaHa).toBe(10);
   });
 
-  it("fase refeita depois invalida a seguinte (stale)", () => {
+  it("refazer a F1 NÃO invalida a F2 nem a F3", () => {
+    // Antes a F2 virava STALE e a F3 herdava `previous_phase_stale` (barrada).
+    // As perguntas são independentes: refazer o pré-2008 não muda em que ano a
+    // supressão ocorreu, nem se sobrou vegetação dentro da AC.
     const phases = derivePhases(
       base({
         auasMeta: { ...phase1Done, completedAt: "2026-02-01T00:00:00.000Z" },
         auasPos2008Meta: pos2008Done,
+        acVegetacaoMeta: acDone,
       })
     );
-    expect(phases.phases.POS_2008.state).toBe("STALE");
-    expect(phases.phases.POS_2008.stale).toBe(true);
-  });
-
-  it("a invalidação é transitiva até a Fase 3", () => {
-    const phases = derivePhases(
-      base({
-        auasMeta: { ...phase1Done, completedAt: "2026-02-01T00:00:00.000Z" },
-        auasPos2008Meta: {
-          ...pos2008Done,
-          pre2008JobRef: { completedAt: phase1Done.completedAt, rulesVersion: phase1Done.rulesVersion },
-        },
-        acVegetacaoMeta: {
-          ...acDone,
-          pos2008JobRef: { completedAt: pos2008Done.completedAt, rulesVersion: pos2008Done.rulesVersion },
-        },
-      }),
-    );
-    expect(phases.phases.POS_2008.state).toBe("STALE");
-    expect(phases.phases.AC_VEG.state).toBe("STALE");
-    expect(checkPhaseGate(phases, "AC_VEG")?.body.code).toBe("PHASE_NOT_READY");
+    expect(phases.phases.POS_2008.state).toBe("COMPLETED");
+    expect(phases.phases.POS_2008.stale).toBe(false);
+    expect(phases.phases.AC_VEG.state).toBe("COMPLETED");
+    expect(phases.phases.AC_VEG.stale).toBe(false);
+    expect(checkPhaseGate(phases, "AC_VEG")).toBeNull();
   });
 
   it("flags independentes mantêm F2 e F3 bloqueadas sem apagar resultados concluídos", () => {
@@ -169,13 +176,19 @@ describe("checkPhaseGate", () => {
     expect(checkPhaseGate(done, "AC_VEG")).toBeNull();
   });
 
-  it("F2 sem Fase 1 passa no gate; F3 ainda exige a Fase 2", () => {
+  it("nenhuma fase devolve PHASE_NOT_READY por causa de outra", () => {
     const phases = derivePhases(base());
-    expect(checkPhaseGate(phases, "POS_2008")).toBeNull();
+    for (const phase of ["PRE_2008", "POS_2008", "AC_VEG"] as const) {
+      expect(checkPhaseGate(phases, phase)).toBeNull();
+    }
+  });
+
+  it("flag desligada é o único PHASE_NOT_READY que sobra", () => {
+    const phases = derivePhases(base({ acVegetacaoEnabled: false }));
     const gate = checkPhaseGate(phases, "AC_VEG");
     expect(gate?.status).toBe(409);
     expect(gate?.body.code).toBe("PHASE_NOT_READY");
-    expect(gate?.body.requires).toBe("PRE_2008");
+    expect(gate?.body.requires).toBeUndefined();
   });
 
   it("trava com PHASE_ALREADY_RUNNING", () => {
@@ -188,43 +201,58 @@ describe("checkPhaseGate", () => {
   });
 });
 
-describe("STALE não pode virar deadlock", () => {
-  /** F1 refeita depois da F2 ⇒ o resultado da F2 envelheceu. */
-  const staleF2 = base({
+describe("nenhuma fase tranca a outra", () => {
+  const todasConcluidas = base({
     auasMeta: { ...phase1Done, completedAt: "2026-02-01T00:00:00.000Z" },
     auasPos2008Meta: pos2008Done,
+    acVegetacaoMeta: acDone,
   });
 
-  it("STALE do próprio resultado libera a re-execução da fase", () => {
-    // Regressão: o estado dizia "Refaça esta fase" e o gate respondia 409
-    // PHASE_NOT_READY. Refazer a F1 só deixava a F2 ainda mais velha — a fase
-    // ficava trancada para sempre.
-    const phases = derivePhases(staleF2);
-    expect(phases.phases.POS_2008.state).toBe("STALE");
-    expect(phases.phases.POS_2008.blockedReason).toBe("phase_stale");
-    expect(checkPhaseGate(phases, "POS_2008")).toBeNull();
+  it("as 3 podem ser refeitas em qualquer ordem", () => {
+    const phases = derivePhases(todasConcluidas);
+    for (const phase of ["PRE_2008", "POS_2008", "AC_VEG"] as const) {
+      expect(phases.phases[phase].state).toBe("COMPLETED");
+      expect(checkPhaseGate(phases, phase)).toBeNull();
+    }
   });
 
-  it("STALE herdado da fase anterior continua barrado, com motivo próprio", () => {
-    const phases = derivePhases(staleF2);
-    expect(phases.phases.AC_VEG.state).toBe("STALE");
-    expect(phases.phases.AC_VEG.blockedReason).toBe("previous_phase_stale");
-    expect(checkPhaseGate(phases, "AC_VEG")?.body.code).toBe("PHASE_NOT_READY");
+  it("nenhum blockedReason de dependência sobra no payload", () => {
+    const payload = JSON.stringify(derivePhases(todasConcluidas)) + JSON.stringify(derivePhases(base()));
+    expect(payload).not.toContain("requires_");
+    expect(payload).not.toContain("previous_phase_stale");
+    expect(payload).not.toContain("phase_stale");
   });
 
-  it("refeita a F2, a F3 volta a liberar", () => {
-    const phases = derivePhases(
-      base({
-        auasMeta: { ...phase1Done, completedAt: "2026-02-01T00:00:00.000Z" },
-        auasPos2008Meta: {
-          ...pos2008Done,
-          completedAt: "2026-02-02T00:00:00.000Z",
-          pre2008JobRef: { completedAt: "2026-02-01T00:00:00.000Z", rulesVersion: phase1Done.rulesVersion },
-        },
-      }),
-    );
-    expect(phases.phases.POS_2008.state).toBe("COMPLETED");
-    expect(phases.phases.AC_VEG.state).toBe("AVAILABLE");
-    expect(checkPhaseGate(phases, "AC_VEG")).toBeNull();
+  it("uma fase por vez: o gate recusa até fase já COMPLETED enquanto outra roda", () => {
+    // A fase concluída continua COMPLETED (o resultado existe), então quem
+    // recusa a segunda execução é o gate — as duas gravariam o mesmo JSON do job.
+    const rodando = derivePhases({ ...todasConcluidas, runningPhase: "PRE_2008" });
+    expect(rodando.phases.PRE_2008.state).toBe("RUNNING");
+    expect(rodando.phases.POS_2008.state).toBe("COMPLETED");
+    expect(checkPhaseGate(rodando, "POS_2008")?.body.code).toBe("PHASE_ALREADY_RUNNING");
+    expect(checkPhaseGate(rodando, "AC_VEG")?.body.code).toBe("PHASE_ALREADY_RUNNING");
+  });
+
+  it("as 3 fases reagem igual a uma execução alheia (COMPLETED continua COMPLETED)", () => {
+    // A F3 tinha a checagem de `other_phase_running` ANTES da de COMPLETED e,
+    // sozinha entre as três, virava BLOCKED — o card perdia o resumo e o laudo
+    // enquanto outra fase rodava.
+    const rodando = derivePhases({ ...todasConcluidas, runningPhase: "POS_2008" });
+    expect(rodando.phases.PRE_2008.state).toBe("COMPLETED");
+    expect(rodando.phases.AC_VEG.state).toBe("COMPLETED");
+    expect(rodando.phases.AC_VEG.summary).not.toBeNull();
+  });
+
+  it("fase ainda não rodada mostra other_phase_running enquanto outra roda", () => {
+    const rodando = derivePhases(base({ runningPhase: "PRE_2008" }));
+    expect(rodando.phases.POS_2008.blockedReason).toBe("other_phase_running");
+    expect(rodando.phases.AC_VEG.blockedReason).toBe("other_phase_running");
+  });
+
+  it("terminada a execução, as 3 voltam a liberar", () => {
+    const parado = derivePhases(todasConcluidas);
+    for (const phase of ["PRE_2008", "POS_2008", "AC_VEG"] as const) {
+      expect(checkPhaseGate(parado, phase)).toBeNull();
+    }
   });
 });

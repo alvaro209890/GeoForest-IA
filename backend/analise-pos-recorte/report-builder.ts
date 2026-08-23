@@ -28,6 +28,7 @@ function toDeepseekInput(input: BuildAuasReportInput): DeepseekAuasReportInput {
       observedInterval: p.observedInterval,
       confidence: p.confidence,
       evidence: p.evidence,
+      doubtSignals: p.doubtSignals,
       limitations: p.limitations,
     })),
     limitations: input.limitations,

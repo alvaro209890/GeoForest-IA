@@ -15,6 +15,7 @@
 | [10-deploy-e-ops.md](10-deploy-e-ops.md) | Variáveis de ambiente, deploy no `server-desktop`, rollout por flag, observabilidade |
 | [11-riscos-e-decisoes-abertas.md](11-riscos-e-decisoes-abertas.md) | Riscos com mitigação + decisões A1–A10 que precisam do Álvaro |
 | [12-tarefas-implementacao.md](12-tarefas-implementacao.md) | Tarefas bite-sized em ordem (F0 → F3), com gate de teste por tarefa |
+| [FLUXO_3_ANALISES_INDEPENDENTES.md](FLUXO_3_ANALISES_INDEPENDENTES.md) | **As 3 análises são independentes** (23/08/2026): sem encadeamento F1→F2→F3, Fase 3 ligada, e um laudo baixável por análise |
 | [FASE1_V2_SINAL_DUVIDA.md](FASE1_V2_SINAL_DUVIDA.md) | Fase 1 v2: status `SINAL_DE_DUVIDA`, zoom por polígono AUAS e anexo fotográfico no DOCX/PDF |
 | [FASE1_V2_SPOT_MARCO_2008.md](FASE1_V2_SPOT_MARCO_2008.md) | Por que a IA não lia o SPOT 2008 (modelo de visão travado em literal) e as 5 correções |
 | [STATUS.md](STATUS.md) | Status do plano e histórico |
@@ -22,9 +23,14 @@
 ## Fluxo do usuário (resumo)
 
 ```
-Recorte → AC/AVN → [Fase 1: 2003–2008] → [Fase 2: 2008–2019] → [Fase 3: vegetação na AC]
-                        destrava ─────────┘        destrava ─────────┘
+                        ┌─ [Fase 1: AUAS 2003–2008]      é mesmo AUAS?
+Recorte → AC/AVN ───────┼─ [Fase 2: AUAS 2008–2019]      em que ano foi o desmate?
+                        └─ [Fase 3: vegetação na AC]     sobrou nativa dentro da AC?
 ```
+
+As 3 são **independentes**: cada uma só precisa da sua camada e nenhuma espera a
+outra (23/08/2026 — ver [FLUXO_3_ANALISES_INDEPENDENTES.md](FLUXO_3_ANALISES_INDEPENDENTES.md)).
+A única exclusão é **uma fase por vez no mesmo job**.
 
 ## Ações imediatas sugeridas
 

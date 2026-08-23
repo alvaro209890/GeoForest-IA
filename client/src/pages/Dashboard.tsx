@@ -6088,9 +6088,10 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </section>
                     )}
 
-                    {/* ── Painel "Análise pós-recorte": 3 fases encadeadas (substitui o botão
-                         solto de AUAS). Só a Fase 1 está ligada; as demais aparecem
-                         desabilitadas com motivo. Ver docs/planos/analise-pos-recorte/. ── */}
+                    {/* ── Painel "Análise pós-recorte": as 3 análises abaixo do recorte.
+                         Desde 23/08/2026 são INDEPENDENTES — nenhuma espera a outra, e
+                         cada uma tem o seu laudo baixável. A única exclusão é uma fase
+                         por vez no mesmo job. Ver docs/planos/analise-pos-recorte/. ── */}
                     {(simcarClipMode === 'auto-clip' || simcarClipMode === 'vectorized-analysis') && simcarClipJobId && (() => {
                       const historyEntry = simcarClipHistory.find((c) => c.jobId === simcarClipJobId);
                       return (

@@ -5145,6 +5145,7 @@ export async function handleAuasAnalyzeV2Route(
                 auasText: result.auasMeta.report.markdown,
                 auasImages: [],
                 auasMeta: result.auasMeta,
+                phase: "PRE_2008",
             });
         } catch (reportErr: any) {
             console.warn("[SIMCAR REPORT] AUAS V2 report generation failed:", reportErr?.message || reportErr);

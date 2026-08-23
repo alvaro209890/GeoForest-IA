@@ -297,6 +297,7 @@ export async function handlePos2008Route(
                 jobId: ctx.jobId,
                 auasText: result.report.markdown,
                 auasMeta: result,
+                phase: "POS_2008",
             });
         } catch (reportErr: any) {
             console.warn("[POS2008] report generation failed:", reportErr?.message || reportErr);
@@ -436,6 +437,7 @@ export async function handleAcVegetacaoRoute(
                 jobId: ctx.jobId,
                 auasText: result.report.markdown,
                 auasMeta: result,
+                phase: "AC_VEG",
             });
         } catch (reportErr: any) {
             console.warn("[AC_VEG] report generation failed:", reportErr?.message || reportErr);

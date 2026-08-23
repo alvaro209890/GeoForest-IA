@@ -1,4 +1,6 @@
-import { Layers, Lock, Loader2, CheckCircle2, X } from 'lucide-react';
+import { Layers, Lock, Loader2, CheckCircle2, X, FileText, FileDown } from 'lucide-react';
+
+import { downloadSimcarReportDocx, openSimcarPdfInNewTab } from '@/dashboard/lib/download-actions';
 
 import type { PhaseCard } from './phase-state';
 
@@ -62,6 +64,31 @@ export function FaseCard({ card, onRun, progress, onCancel, children }: FaseCard
         <p className="text-[11px] text-amber-200/90">
           ⚠ Resultado de uma execução anterior — refaça a fase para atualizar.
         </p>
+      )}
+
+      {card.report && !running && (
+        // Cada fase guarda o SEU laudo (`phaseReports` no JSON do job): rodar a
+        // Fase 3 não apaga mais o PDF da Fase 1.
+        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          <button
+            type="button"
+            onClick={() => openSimcarPdfInNewTab(card.report?.pdfUrl)}
+            className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+          >
+            <FileText size={11} />
+            Laudo desta análise (PDF)
+          </button>
+          {card.report.docxUrl && (
+            <button
+              type="button"
+              onClick={() => downloadSimcarReportDocx(card.report?.docxUrl, card.report?.filename?.replace(/\.pdf$/i, '.docx'))}
+              className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              <FileDown size={11} />
+              Word
+            </button>
+          )}
+        </div>
       )}
 
       {card.blockedMessage && !running && (

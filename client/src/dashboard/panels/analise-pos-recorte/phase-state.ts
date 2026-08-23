@@ -1,5 +1,6 @@
 /**
- * Estado de exibição das 3 fases da análise pós-recorte SIMCAR.
+ * Estado de exibição das 3 análises pós-recorte SIMCAR — **independentes entre
+ * si** desde 23/08/2026: nenhuma espera a outra e cada uma tem o seu laudo.
  *
  * A regra de desbloqueio é do backend (`GET /api/simcar/clip/phases/:jobId`) —
  * aqui só se traduz o payload em cards. Nada de decidir liberação no front:
@@ -18,6 +19,14 @@ export type PhaseEstimate = {
   etaSeconds: number;
 };
 
+/** Laudo já gerado por esta fase — cada uma das 3 guarda o seu. */
+export type PhaseReportLinks = {
+  pdfUrl: string;
+  docxUrl: string | null;
+  generatedAt: string | null;
+  filename: string | null;
+};
+
 export type PhaseStatus = {
   state: PhaseState;
   blockedReason: string | null;
@@ -27,6 +36,7 @@ export type PhaseStatus = {
   stale: boolean;
   summary: Record<string, number | string | boolean> | null;
   estimate: PhaseEstimate | null;
+  report: PhaseReportLinks | null;
 };
 
 export type PhasesResponse = {
@@ -52,6 +62,8 @@ export type PhaseCard = {
   /** `true` quando a fase ainda não existe nesta versão (não é bloqueio do usuário). */
   notImplemented: boolean;
   stale: boolean;
+  /** Laudo desta fase, quando já gerado. */
+  report: PhaseReportLinks | null;
 };
 
 const PHASE_TITLES: Record<PhaseId, { order: 1 | 2 | 3; title: string; question: string }> = {
@@ -212,17 +224,21 @@ export function buildPhaseCards(
       state = 'RUNNING';
       actionEnabled = false;
       blockedMessage = null;
-    } else if (otherRunning && state !== 'COMPLETED') {
+    } else if (otherRunning) {
+      // Vale também para fase COMPLETED: o "Refazer" dela iniciaria uma segunda
+      // análise no mesmo job, e as duas gravam o mesmo JSON (lost update). O
+      // backend recusa com PHASE_ALREADY_RUNNING; aqui o botão nem acende.
       actionEnabled = false;
       blockedMessage = `Aguardando a Fase ${PHASE_TITLES[options.runningPhase as PhaseId].order} terminar.`;
     }
 
     if (notImplemented) actionEnabled = false;
 
+    // "Continuar" era herança do fluxo encadeado (a fase 2/3 continuava a 1).
+    // Agora as 3 são independentes: todas começam com "Analisar".
     let actionLabel = 'Analisar';
     if (running) actionLabel = 'Analisando…';
     else if (state === 'COMPLETED' || state === 'STALE') actionLabel = 'Refazer';
-    else if (id !== 'PRE_2008') actionLabel = 'Continuar';
 
     return {
       id,
@@ -237,6 +253,7 @@ export function buildPhaseCards(
       actionEnabled,
       notImplemented,
       stale: status?.stale === true,
+      report: status?.report ?? null,
     };
   });
 }

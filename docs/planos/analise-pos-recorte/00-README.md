@@ -1,4 +1,9 @@
-# Plano — Análise pós-recorte SIMCAR em 3 fases encadeadas
+# Plano — Análise pós-recorte SIMCAR em 3 fases
+
+> ⚠️ **Atualização 23/08/2026:** as 3 fases deixaram de ser encadeadas — cada uma
+> é desbloqueada por conta própria e tem laudo próprio. A decisão **A6** (F3 exige
+> F2) foi revogada pelo Álvaro. Ver
+> [FLUXO_3_ANALISES_INDEPENDENTES.md](FLUXO_3_ANALISES_INDEPENDENTES.md).
 
 > **Status:** 🚧 EM IMPLEMENTAÇÃO — a fundação (F0.3–F0.6) já está no `main`; as fases 2
 > e 3 ainda não existem. Ver [`docs/CHANGELOG_2026-08-05_ANALISE_POS_RECORTE_F0.md`](../../CHANGELOG_2026-08-05_ANALISE_POS_RECORTE_F0.md).
@@ -14,7 +19,7 @@
 ## Objetivo (1 frase)
 
 Transformar o que hoje é **um botão solto de "Análise de AUAS"** depois do recorte
-SIMCAR em um **fluxo guiado de três análises encadeadas**, cada uma destravada pela
+SIMCAR em um **fluxo de três análises independentes**, cada uma destravada pela
 anterior: (1) desmate anterior a 2008 nas AUAS, (2) datação do desmate nas AUAS entre
 2008 e 2019, (3) vegetação remanescente dentro da Área Consolidada.
 

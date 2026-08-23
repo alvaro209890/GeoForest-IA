@@ -798,6 +798,7 @@ export function registerSimcarClipRoutes(app: Express) {
                     acVegetacaoMeta: (persisted as Record<string, unknown>).acVegetacaoMeta,
                     pos2008Enabled: phaseConfig.phase2Enabled,
                     acVegetacaoEnabled: phaseConfig.phase3Enabled,
+                    phaseReports: (persisted as Record<string, unknown>).phaseReports,
                 }),
             );
         } catch (err: any) {

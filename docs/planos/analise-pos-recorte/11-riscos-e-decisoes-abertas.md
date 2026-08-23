@@ -28,7 +28,7 @@
 | **A3** | Na Fase 3, qual o **limiar de vegetação declarada** que dispara alerta ALTO, e o tamanho de sliver a descartar? | **≥ 1% da AC ou ≥ 0,5 ha** (o que vier primeiro); slivers < 500 m² descartados |
 | **A4** | Existe **teto de polígonos** por job (para não travar a fila com um imóvel de 200 AUAS)? | **Sem teto (`0`)**, mas com prévia de ETA e aviso quando passar de ~30 polígonos |
 | **A5** | O que acontece com o **fluxo V1 (2008–2024)** quando a Fase 1 ligar? | **Legado somente-leitura**: cards antigos abrem, mas nenhuma análise nova usa V1 |
-| **A6** | A Fase 3 **precisa mesmo** da Fase 2 concluída, ou pode ser liberada logo após a Fase 1? | **Manter o pedido original** (exige Fase 2). Nota técnica: ela não depende de dado da Fase 2 — é escolha de fluxo, e pode ser afrouxada depois sem retrabalho |
+| **A6** | A Fase 3 **precisa mesmo** da Fase 2 concluída, ou pode ser liberada logo após a Fase 1? | ~~Manter o pedido original (exige Fase 2)~~ → **REVOGADA em 23/08/2026**: as 3 fases são independentes. A nota técnica de então estava certa — a F3 nunca dependeu de dado da F2, era só escolha de fluxo, e o afrouxamento saiu sem retrabalho |
 | **A7** | Quando a Fase 2 der `SEM_MUDANCA_OBSERVADA`, o sistema deve **encadear automaticamente** a consulta SCCON (≥2019) ou só sugerir a aba? | **Só sugerir**, com link para a aba AUAS × SCCON |
 | **A8** | As **cenas** analisadas devem ser guardadas para o usuário rever, ou só o hash/proveniência? | **Só proveniência + hash**; guardar imagem apenas dos polígonos com alerta |
 | **A9** | O laudo em PDF deve trazer as **três fases num documento só** ou um PDF por fase? | **Um documento só**, com três seções e sumário |

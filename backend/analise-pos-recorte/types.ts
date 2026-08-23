@@ -235,6 +235,8 @@ export type DeepseekAuasReportInput = {
     observedInterval: AuasPolygonResult["observedInterval"];
     confidence: AuasPolygonResult["confidence"];
     evidence: string[];
+    /** Sinais de desmate parcial/gradual ou inconsistência de declaração. */
+    doubtSignals?: string[];
     limitations: string[];
   }>;
   limitations: string[];

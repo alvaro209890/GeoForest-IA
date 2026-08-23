@@ -186,3 +186,48 @@ describe("reduceAuasAggregate v2 — contagem de dúvida", () => {
     expect(agg.doubtCount).toBe(1);
   });
 });
+
+describe("o laudo determinístico conta o sinal de dúvida", () => {
+  it("rotula SINAL_DE_DUVIDA e lista os sinais na seção do polígono", async () => {
+    // Regressão: o STATUS_LABEL não conhecia SINAL_DE_DUVIDA, então o laudo
+    // imprimia o enum cru — e os sinais (que dizem EM QUE polígono a vegetação
+    // foi mexida) só existiam na seção visual, nunca no corpo do texto.
+    const { buildDeterministicFallbackReport } = await import("./deepseek-text-client");
+    const report = buildDeterministicFallbackReport({
+      rulesVersion: "auas-pre2008-v2",
+      aggregateStatus: "SINAL_DE_DUVIDA",
+      pre2008Alert: false,
+      summary: {
+        polygonCount: 1,
+        alertCount: 0,
+        doubtCount: 1,
+        doubtAreaHa: 3.5,
+        inconclusiveCount: 0,
+        noEvidenceCount: 0,
+        totalAuasAreaHa: 3.5,
+        alertAreaHa: 0,
+      } as any,
+      sources: { required: [], used: [], missing: [] },
+      polygons: [
+        {
+          polygonId: "AUAS-0007",
+          areaHa: 3.5,
+          status: "SINAL_DE_DUVIDA",
+          evidenceKind: "PARTIAL_CLEARING_SIGNAL" as any,
+          observedInterval: null,
+          confidence: "MEDIUM",
+          evidence: [],
+          doubtSignals: ["Estado MISTO observado em 2005 (~40% com sinal de uso/solo exposto)."],
+          limitations: [],
+        },
+      ],
+      limitations: [],
+    });
+
+    const secao = report.polygonSections.find((s) => s.polygonId === "AUAS-0007")!;
+    expect(secao.markdown).toContain("Sinal de dúvida (área passível de discussão)");
+    expect(secao.markdown).not.toContain("SINAL_DE_DUVIDA");
+    expect(secao.markdown).toContain("Estado MISTO observado em 2005");
+    expect(report.summaryMarkdown).toContain("Com sinal de dúvida: 1");
+  });
+});

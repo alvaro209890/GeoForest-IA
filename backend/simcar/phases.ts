@@ -7,35 +7,49 @@
  * os blocos já persistidos no histórico do job e devolve o payload da rota
  * `GET /api/simcar/clip/phases/:jobId` (contrato do doc 08 §1).
  *
- * A Fase 2 (datação 2008–2019) **não exige** a Fase 1: as duas perguntas são
- * independentes (pré-marco vs. quando a AUAS foi aberta). Sem a Fase 1, a
- * datação trata todos os polígonos AUAS; com ela, os que já tinham alerta
- * pré-2008 entram como contexto. A Fase 3 continua encadeada na Fase 2.
+ * **As 3 fases são independentes entre si** (pedido do Álvaro, 2026-08-23):
+ * cada uma responde a uma pergunta própria e nenhuma tranca a outra.
+ *   F1  o polígono AUAS já era usado antes de 22/07/2008?
+ *   F2  em que ano a supressão ocorreu (2009–2019)?
+ *   F3  sobrou vegetação nativa dentro da Área Consolidada declarada?
+ * O único pré-requisito de cada fase é a **camada que ela lê** (AUAS para F1/F2,
+ * AREA_CONSOLIDADA para F3) e não haver outra fase rodando no mesmo job.
+ *
+ * Quando uma fase vizinha já rodou, o resultado dela entra como **contexto**
+ * (a F2 usa o alerta pré-2008 da F1; a F3 usa a data da F2 quando existe, e
+ * `null` quando não existe) — contexto opcional, nunca requisito.
  */
 
 export type PhaseId = "PRE_2008" | "POS_2008" | "AC_VEG";
 
+/**
+ * `STALE` sobrevive no contrato (o front já o trata e payloads antigos podem
+ * trazê-lo), mas nada mais o emite: ele só existia para invalidação cruzada
+ * entre fases, que acabou junto com o encadeamento.
+ */
 export type PhaseState = "BLOCKED" | "AVAILABLE" | "RUNNING" | "COMPLETED" | "FAILED" | "STALE";
 
 /** Códigos estáveis de bloqueio — o front escolhe o texto, mas já vem um pronto. */
 export type PhaseBlockedReason =
   | "layer_empty_AUAS"
   | "layer_empty_AREA_CONSOLIDADA"
-  | "requires_PRE_2008"
-  | "requires_POS_2008"
   | "phase_not_implemented"
   | "phase_running"
-  | "other_phase_running"
-  /** O resultado DESTA fase envelheceu — pode ser refeita agora. */
-  | "phase_stale"
-  /** A fase ANTERIOR envelheceu — refazer aquela primeiro; esta continua trancada. */
-  | "previous_phase_stale";
+  | "other_phase_running";
 
 export type PhaseEstimate = {
   polygons: number;
   scenesPerPolygon: number;
   windowsPerPolygon: number;
   etaSeconds: number;
+};
+
+/** Laudo já gerado por esta fase (`phaseReports[fase]` no JSON do job). */
+export type PhaseReportLinks = {
+  pdfUrl: string;
+  docxUrl: string | null;
+  generatedAt: string | null;
+  filename: string | null;
 };
 
 export type PhaseStatus = {
@@ -48,6 +62,8 @@ export type PhaseStatus = {
   stale: boolean;
   summary: Record<string, number | string | boolean> | null;
   estimate: PhaseEstimate | null;
+  /** `null` enquanto a fase não gerou laudo. Cada fase guarda o seu. */
+  report: PhaseReportLinks | null;
 };
 
 export type PhasesResponse = {
@@ -69,6 +85,8 @@ export type DerivePhasesInput = {
   /** Flags de disponibilidade; ausentes preservam o comportamento puro/offline. */
   pos2008Enabled?: boolean;
   acVegetacaoEnabled?: boolean;
+  /** `phaseReports` do JSON do job — laudo já gerado por fase. */
+  phaseReports?: unknown;
 };
 
 /** Fase 1: 3 janelas de visão por polígono sobre 6 cenas (2003–2007 + SPOT 2008). */
@@ -93,13 +111,9 @@ export const PHASE3_SECONDS_PER_POLYGON = 60;
 const BLOCKED_MESSAGES: Record<PhaseBlockedReason, string> = {
   layer_empty_AUAS: "Este recorte não tem camada AUAS com polígonos.",
   layer_empty_AREA_CONSOLIDADA: "Este recorte não tem Área Consolidada.",
-  requires_PRE_2008: "Conclua a Fase 1 (AUAS 2003–2008) para liberar.",
-  requires_POS_2008: "Conclua a Fase 2 (AUAS 2008–2019) para liberar.",
   phase_not_implemented: "Fase ainda não disponível nesta versão do GeoForest.",
   phase_running: "Análise desta fase em andamento.",
   other_phase_running: "Aguardando a fase em execução terminar.",
-  phase_stale: "O resultado anterior ficou desatualizado. Refaça esta fase.",
-  previous_phase_stale: "A fase anterior ficou desatualizada. Refaça a fase anterior para liberar esta.",
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -145,6 +159,7 @@ function blocked(reason: PhaseBlockedReason, extra: Partial<PhaseStatus> = {}): 
     stale: false,
     summary: null,
     estimate: null,
+    report: null,
     ...extra,
   };
 }
@@ -242,6 +257,7 @@ function derivePhase1(input: DerivePhasesInput): PhaseStatus {
       rulesVersion: readString(meta.rulesVersion),
       completedAt: readString(meta.completedAt),
       stale: false,
+      report: null,
       summary: phase1Summary(meta),
       estimate: estimatePhase1(input.auasPolygonCount),
     };
@@ -254,6 +270,7 @@ function derivePhase1(input: DerivePhasesInput): PhaseStatus {
     rulesVersion: null,
     completedAt: null,
     stale: false,
+    report: null,
     summary: null,
     estimate: estimatePhase1(input.auasPolygonCount),
   };
@@ -280,17 +297,8 @@ function derivePhase2(input: DerivePhasesInput): PhaseStatus {
 
   if (meta && completedAt) {
     const summary = phase2Summary(meta);
-    const stale = isStaleAfter(meta, input.auasMeta, "pre2008JobRef");
-    if (stale) {
-      return blocked("phase_stale", {
-        state: "STALE",
-        stale: true,
-        rulesVersion: readString(meta.rulesVersion),
-        completedAt,
-        summary,
-        estimate: estimatePhase2(input.auasPolygonCount),
-      });
-    }
+    // Refazer a Fase 1 não invalida esta datação: são perguntas independentes
+    // (pré-marco vs. em que ano). O botão continua "Refazer" para quem quiser.
     return {
       state: "COMPLETED",
       blockedReason: null,
@@ -298,6 +306,7 @@ function derivePhase2(input: DerivePhasesInput): PhaseStatus {
       rulesVersion: readString(meta.rulesVersion),
       completedAt,
       stale: false,
+      report: null,
       summary,
       estimate: estimatePhase2(input.auasPolygonCount),
     };
@@ -312,29 +321,21 @@ function derivePhase2(input: DerivePhasesInput): PhaseStatus {
     rulesVersion: null,
     completedAt: null,
     stale: false,
+    report: null,
     summary: null,
     estimate: estimatePhase2(input.auasPolygonCount),
   };
 }
 
+/**
+ * Fase 3 — vegetação remanescente na Área Consolidada. Depende só da camada
+ * AREA_CONSOLIDADA: o orquestrador já aceita `pos2008CompletedAt: null` quando
+ * a Fase 2 não rodou (ele apenas não carimba a referência de datação no laudo).
+ * Antes ela exigia F1 **e** F2 concluídas — trancava a pergunta mais simples
+ * das três atrás de ~7 min de análise que não respondem a ela.
+ */
 function derivePhase3(input: DerivePhasesInput): PhaseStatus {
   if (input.acPolygonCount <= 0) return blocked("layer_empty_AREA_CONSOLIDADA");
-  if (!isPhase1Completed(input.auasMeta)) return blocked("requires_PRE_2008");
-
-  const pos2008Meta = isPlainObject(input.auasPos2008Meta) ? (input.auasPos2008Meta as Record<string, unknown>) : null;
-  if (!pos2008Meta || !readString(pos2008Meta.completedAt)) return blocked("requires_POS_2008");
-
-  if (input.runningPhase && input.runningPhase !== "AC_VEG") return blocked("other_phase_running");
-  // Fase 2 envelhecida: a Fase 3 consumiria uma datação que já não corresponde ao
-  // recorte. Motivo próprio (`previous_phase_stale`) porque, ao contrário do
-  // `phase_stale`, refazer ESTA fase não resolve — quem tem de rodar é a Fase 2.
-  if (isStaleAfter(pos2008Meta, input.auasMeta, "pre2008JobRef")) {
-    return blocked("previous_phase_stale", {
-      state: "STALE",
-      stale: true,
-      estimate: estimatePhase3(input.acPolygonCount),
-    });
-  }
 
   const meta = isPlainObject(input.acVegetacaoMeta) ? (input.acVegetacaoMeta as Record<string, unknown>) : null;
   const hasAcCompleted = meta && readString(meta.completedAt);
@@ -348,17 +349,6 @@ function derivePhase3(input: DerivePhasesInput): PhaseStatus {
   }
 
   if (meta && hasAcCompleted) {
-    const stale = isStaleAfter(meta, pos2008Meta, "pos2008JobRef");
-    if (stale) {
-      return blocked("phase_stale", {
-        state: "STALE",
-        stale: true,
-        rulesVersion: readString(meta.rulesVersion),
-        completedAt: hasAcCompleted,
-        summary: acSummary(meta),
-        estimate: estimatePhase3(input.acPolygonCount),
-      });
-    }
     return {
       state: "COMPLETED",
       blockedReason: null,
@@ -366,6 +356,7 @@ function derivePhase3(input: DerivePhasesInput): PhaseStatus {
       rulesVersion: readString(meta.rulesVersion),
       completedAt: hasAcCompleted,
       stale: false,
+      report: null,
       summary: acSummary(meta),
       estimate: estimatePhase3(input.acPolygonCount),
     };
@@ -380,31 +371,31 @@ function derivePhase3(input: DerivePhasesInput): PhaseStatus {
     rulesVersion: null,
     completedAt: null,
     stale: false,
+    report: null,
     summary: null,
     estimate: estimatePhase3(input.acPolygonCount),
   };
 }
 
-/**
- * Bloco desta fase existe mas a fase anterior foi refeita (completedAt mais
- * recente) ⇒ resultado já não reflete o recorte atual.
- */
-function isStaleAfter(
-  meta: unknown,
-  previousMeta: unknown,
-  referenceKey: "pre2008JobRef" | "pos2008JobRef",
-): boolean {
-  if (!isPlainObject(meta) || !isPlainObject(previousMeta)) return false;
-  const thisCompleted = readString(meta.completedAt);
-  const prevCompleted = readString(previousMeta.completedAt);
-  if (!thisCompleted || !prevCompleted) return false;
-  const reference = isPlainObject(meta[referenceKey]) ? meta[referenceKey] : null;
-  const referencedCompleted = reference ? readString(reference.completedAt) : null;
-  if (referencedCompleted) return referencedCompleted !== prevCompleted;
-  return new Date(prevCompleted).getTime() > new Date(thisCompleted).getTime();
+export function readPhaseReport(phaseReports: unknown, phase: PhaseId): PhaseReportLinks | null {
+  if (!isPlainObject(phaseReports)) return null;
+  const artifact = phaseReports[phase];
+  if (!isPlainObject(artifact)) return null;
+  const pdfUrl = readString(artifact.reportPdfUrl);
+  if (!pdfUrl) return null;
+  return {
+    pdfUrl,
+    docxUrl: readString(artifact.reportDocxUrl),
+    generatedAt: readString(artifact.reportPdfGeneratedAt),
+    filename: readString(artifact.reportPdfFilename),
+  };
 }
 
 export function derivePhases(input: DerivePhasesInput): PhasesResponse {
+  const withReport = (phase: PhaseId, status: PhaseStatus): PhaseStatus => ({
+    ...status,
+    report: readPhaseReport(input.phaseReports, phase),
+  });
   return {
     jobId: input.jobId,
     layers: {
@@ -412,9 +403,9 @@ export function derivePhases(input: DerivePhasesInput): PhasesResponse {
       acPolygonCount: input.acPolygonCount,
     },
     phases: {
-      PRE_2008: derivePhase1(input),
-      POS_2008: derivePhase2(input),
-      AC_VEG: derivePhase3(input),
+      PRE_2008: withReport("PRE_2008", derivePhase1(input)),
+      POS_2008: withReport("POS_2008", derivePhase2(input)),
+      AC_VEG: withReport("AC_VEG", derivePhase3(input)),
     },
   };
 }
@@ -428,26 +419,28 @@ export function checkPhaseGate(
   phase: PhaseId
 ): { status: number; body: { error: string; code: string; requires?: PhaseId } } | null {
   const status = phases.phases[phase];
+  // Uma fase por job, sempre. Com as 3 independentes esta é a ÚNICA exclusão que
+  // resta — e ela virou obrigatória aqui: uma fase já COMPLETED continua
+  // COMPLETED enquanto outra roda (o resultado existe), então sem esta checagem
+  // o "Refazer" dela iniciaria uma segunda análise em paralelo, e as duas
+  // gravam o mesmo JSON do job (`persistSimcarClipArtifacts`) — lost update.
+  const outraRodando = (Object.keys(phases.phases) as PhaseId[]).some(
+    (id) => id !== phase && phases.phases[id].state === "RUNNING"
+  );
+  if (outraRodando) {
+    return {
+      status: 409,
+      body: { error: BLOCKED_MESSAGES.other_phase_running, code: "PHASE_ALREADY_RUNNING" },
+    };
+  }
   if (status.state === "AVAILABLE" || status.state === "COMPLETED") return null;
-  // STALE do próprio resultado libera: o estado diz "Refaça esta fase", então a
-  // rota tem de aceitar a re-execução. Recusar trancava a fase para sempre —
-  // refazer a fase anterior só deixava esta ainda mais velha. Já o STALE herdado
-  // (`previous_phase_stale`) continua barrado: quem precisa rodar é a fase de trás.
-  if (status.state === "STALE" && status.blockedReason === "phase_stale") return null;
+  // Nenhuma fase depende de outra, então STALE só pode ser do próprio resultado
+  // e sempre libera a re-execução — recusar trancaria a fase para sempre.
+  if (status.state === "STALE") return null;
   if (status.blockedReason === "phase_running") {
     return {
       status: 409,
       body: { error: BLOCKED_MESSAGES.phase_running, code: "PHASE_ALREADY_RUNNING" },
-    };
-  }
-  if (status.blockedReason === "requires_PRE_2008" || status.blockedReason === "requires_POS_2008") {
-    return {
-      status: 409,
-      body: {
-        error: status.blockedMessage || "Fase anterior não concluída.",
-        code: "PHASE_NOT_READY",
-        requires: status.blockedReason === "requires_PRE_2008" ? "PRE_2008" : "POS_2008",
-      },
     };
   }
   return {

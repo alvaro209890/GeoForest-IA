@@ -1113,27 +1113,64 @@ export async function buildSimcarReportPdfBuffer(args: {
     return done;
 }
 
+/** Todas as URLs de laudo guardadas por fase (`phaseReports`). */
+function phaseReportUrls(persisted: any, exceptPhase?: string): string[] {
+    const reports = persisted?.phaseReports;
+    if (!reports || typeof reports !== "object") return [];
+    const urls: string[] = [];
+    for (const [phase, artifact] of Object.entries(reports as Record<string, any>)) {
+        if (exceptPhase && phase === exceptPhase) continue;
+        urls.push(String(artifact?.reportPdfUrl || ""), String(artifact?.reportDocxUrl || ""));
+    }
+    return urls.filter(Boolean);
+}
+
 /**
- * Remove do storage o PDF/DOCX da geração anterior deste mesmo job.
+ * Remove do storage o PDF/DOCX da geração anterior **desta mesma fase**.
+ *
+ * O slot de topo (`reportPdfUrl`) aponta sempre para o laudo mais recente, seja
+ * de qual fase for. Enquanto as 3 fases eram encadeadas isso bastava; agora que
+ * rodam soltas, apagar "o anterior do job" destruía o laudo de outra fase — o
+ * usuário rodava a Fase 3 e perdia o PDF da Fase 1. Por isso o que se preserva
+ * é a união de tudo que está registrado em `phaseReports`.
  *
  * Silencioso de propósito: falhar em apagar um arquivo velho não pode derrubar
  * a entrega do laudo novo, que já está pronto e persistido.
  */
-async function discardSupersededReportFiles(
+export function computeSupersededReportUrls(
     uid: string,
     persisted: any,
     atuais: { reportPdfUrl: string; reportDocxUrl: string },
-): Promise<void> {
+    phase?: string,
+): string[] {
+    const anteriorDaFase = phase
+        ? [
+            String(persisted?.phaseReports?.[phase]?.reportPdfUrl || ""),
+            String(persisted?.phaseReports?.[phase]?.reportDocxUrl || ""),
+        ]
+        : [];
     const anteriores = [
         String(persisted?.reportPdfUrl || ""),
         String(persisted?.files?.reportPdfUrl || ""),
         String(persisted?.reportDocxUrl || ""),
         String(persisted?.files?.reportDocxUrl || ""),
+        ...anteriorDaFase,
     ];
-    const manter = new Set([atuais.reportPdfUrl, atuais.reportDocxUrl].filter(Boolean));
-    const alvos = Array.from(new Set(anteriores.filter(Boolean)))
+    const manter = new Set(
+        [atuais.reportPdfUrl, atuais.reportDocxUrl, ...phaseReportUrls(persisted, phase)].filter(Boolean),
+    );
+    return Array.from(new Set(anteriores.filter(Boolean)))
         .filter((url) => !manter.has(url))
         .filter((url) => storagePathBelongsToUid(uid, url));
+}
+
+async function discardSupersededReportFiles(
+    uid: string,
+    persisted: any,
+    atuais: { reportPdfUrl: string; reportDocxUrl: string },
+    phase?: string,
+): Promise<void> {
+    const alvos = computeSupersededReportUrls(uid, persisted, atuais, phase);
     for (const url of alvos) {
         try {
             await deleteFromCloudinary(url, "raw");
@@ -1154,6 +1191,13 @@ export async function generateAndPersistSimcarReport(args: {
     auasText?: string;
     auasImages?: SimcarReportImage[];
     auasMeta?: any;
+    /**
+     * Fase que pediu o laudo. Com ela o artefato também é guardado em
+     * `phaseReports[fase]`, para que cada uma das 3 análises tenha o SEU
+     * laudo baixável — antes existia um slot só por job e a fase seguinte
+     * apagava o PDF da anterior.
+     */
+    phase?: "PRE_2008" | "POS_2008" | "AC_VEG";
 }): Promise<SimcarReportArtifact> {
     const uid = String(args.uid || "").trim();
     const jobId = String(args.jobId || "").trim();
@@ -1266,7 +1310,7 @@ export async function generateAndPersistSimcarReport(args: {
         // isto o laudo anterior fica órfão no storage para sempre — e o fluxo
         // vetorizado gera DUAS vezes por rodada (uma ao fim do AC/AVN, outra ao
         // fim do AUAS), o que dobrava o lixo a cada análise.
-        await discardSupersededReportFiles(uid, persisted, { reportPdfUrl, reportDocxUrl });
+        await discardSupersededReportFiles(uid, persisted, { reportPdfUrl, reportDocxUrl }, args.phase);
 
         await persistSimcarClipArtifacts({
             uid,
@@ -1280,6 +1324,14 @@ export async function generateAndPersistSimcarReport(args: {
                     reportPdfDownloadUrl: reportPdfUrl,
                     ...(reportDocxUrl ? { reportDocxUrl, reportDocxDownloadUrl: reportDocxUrl } : {}),
                 },
+                ...(args.phase
+                    ? {
+                        phaseReports: {
+                            ...(persisted.phaseReports || {}),
+                            [args.phase]: artifact,
+                        },
+                    }
+                    : {}),
             },
         });
         return artifact;

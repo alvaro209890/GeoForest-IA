@@ -22,6 +22,7 @@ function status(overrides: Partial<PhaseStatus> = {}): PhaseStatus {
     stale: false,
     summary: null,
     estimate: null,
+    report: null,
     ...overrides,
   };
 }
@@ -155,5 +156,45 @@ describe('isPhase1MetaCompleted', () => {
     expect(isPhase1MetaCompleted({ schemaVersion: 2, completedAt: '' })).toBe(false);
     expect(isPhase1MetaCompleted({ finalStatus: 'AUAS_VALIDA' })).toBe(false);
     expect(isPhase1MetaCompleted(undefined)).toBe(false);
+  });
+});
+
+describe('as 3 análises são independentes no card', () => {
+  it('nenhuma fase mostra rótulo de continuação — todas começam com "Analisar"', () => {
+    const estado = payload({
+      PRE_2008: status({ state: 'AVAILABLE' }),
+      POS_2008: status({ state: 'AVAILABLE' }),
+      AC_VEG: status({ state: 'AVAILABLE' }),
+    });
+    const cards = buildPhaseCards(estado, {});
+    for (const card of cards) {
+      expect(card.actionLabel).toBe('Analisar');
+      expect(card.actionEnabled).toBe(true);
+    }
+  });
+
+  it('fase COMPLETED tem o botão desabilitado enquanto outra roda', () => {
+    // Sem isto o "Refazer" dispararia uma segunda análise no mesmo job.
+    const estado = payload({
+      PRE_2008: status({ state: 'AVAILABLE' }),
+      POS_2008: status({ state: 'COMPLETED', completedAt: '2026-08-23T12:00:00.000Z' }),
+      AC_VEG: status({ state: 'AVAILABLE' }),
+    });
+    const cards = buildPhaseCards(estado, { runningPhase: 'PRE_2008' });
+    const f2 = cards.find((c) => c.id === 'POS_2008')!;
+    expect(f2.actionEnabled).toBe(false);
+    expect(f2.blockedMessage).toContain('Aguardando a Fase 1');
+  });
+
+  it('o laudo de cada fase aparece no card dela', () => {
+    const links = { pdfUrl: 'https://s/f3.pdf', docxUrl: 'https://s/f3.docx', generatedAt: null, filename: 'f3.pdf' };
+    const estado = payload({
+      PRE_2008: status({ state: 'AVAILABLE' }),
+      POS_2008: status({ state: 'AVAILABLE' }),
+      AC_VEG: status({ state: 'COMPLETED', report: links }),
+    });
+    const cards = buildPhaseCards(estado, {});
+    expect(cards.find((c) => c.id === 'AC_VEG')!.report?.pdfUrl).toBe('https://s/f3.pdf');
+    expect(cards.find((c) => c.id === 'PRE_2008')!.report).toBeNull();
   });
 });
