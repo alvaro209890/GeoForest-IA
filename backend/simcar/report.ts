@@ -865,6 +865,98 @@ export async function buildSimcarReportPdfBuffer(args: {
         markdownBody(args.auasText, 9000);
     }
 
+    /* ─── Fase 1 v2 (AUAS pré-2008): dúvidas + galeria por polígono/ano ── */
+
+    // Mesma mecânica do DOCX (report-docx-auas.ts): seção "Áreas Passíveis de
+    // Discussão" + anexo com TODAS as cenas de cada polígono AUAS por ano.
+    if (args.auasMeta && auasKind === "AUAS_PRE2008") {
+        try {
+            const doubtPolygons: any[] = (Array.isArray(args.auasMeta.polygons) ? args.auasMeta.polygons : [])
+                .filter((p: any) => p?.status === "SINAL_DE_DUVIDA" || Number(p?.geometryChecks?.overlapAcHa || 0) > 0.01 || Number(p?.geometryChecks?.overlapAvnHa || 0) > 0.01);
+
+            if (doubtPolygons.length > 0) {
+                ensureSpace(160);
+                sectionTitle(
+                    "Áreas Passíveis de Discussão",
+                    "Sinal de desmate parcial/gradual ou inconsistência de declaração — conferência visual recomendada.",
+                );
+                for (const p of doubtPolygons) {
+                    const signals = Array.isArray(p.doubtSignals) && p.doubtSignals.length > 0
+                        ? p.doubtSignals.slice(0, 6)
+                        : ["Sinal sutil registrado sem detalhamento adicional."];
+                    calloutBox(
+                        `${reportSingleLineText(p.polygonId, 40)} — ${Number(p.areaHa || 0).toFixed(4)} ha`,
+                        signals.map((s: string) => reportSingleLineText(String(s), 300)),
+                        "warn",
+                        { compact: false },
+                    );
+                }
+            }
+
+            const scenes: any[] = Array.isArray(args.auasMeta.scenes) ? args.auasMeta.scenes : [];
+            const scenesWithUrl = scenes.filter((s: any) => s.publicImageUrl);
+            if (scenesWithUrl.length > 0) {
+                ensureSpace(140);
+                sectionTitle(
+                    "Anexo Fotográfico — Cenas por Polígono AUAS (série 2003–2008)",
+                    "Landsat 5 falsa-cor 2003–2007 · SPOT cor natural 2008. Overlay vermelho = perímetro declarado; a diferença de paleta entre sensores não é mudança de cobertura.",
+                );
+                const order = new Map<string, number>(
+                    (doubtPolygons.length > 0 ? doubtPolygons : args.auasMeta.polygons || []).map((p: any, i: number) => [String(p.polygonId), i]),
+                );
+                const grouped = new Map<string, any[]>();
+                for (const s of scenesWithUrl) {
+                    const list = grouped.get(String(s.polygonId)) || [];
+                    list.push(s);
+                    grouped.set(String(s.polygonId), list);
+                }
+                const sortedIds = [...grouped.keys()].sort(
+                    (a, b) => (order.get(a) ?? 999) - (order.get(b) ?? 999) || a.localeCompare(b),
+                );
+                let figuraF1 = 0;
+                for (const polygonId of sortedIds) {
+                    ensureSpace(60);
+                    sectionTitle(`Polígono ${reportSingleLineText(polygonId, 40)}`);
+                    for (const scene of grouped.get(polygonId)!.sort((a, b) => a.year - b.year)) {
+                        try {
+                            const buffer = await fetchReportImageBuffer(scene.publicImageUrl);
+                            if (!buffer) throw new Error("cena indisponível");
+                            const pdfImg = (doc as any).openImage(buffer);
+                            const aspectRatio = pdfImg.width / pdfImg.height;
+                            const MAX_HEIGHT = 360;
+                            let targetWidth = contentW - 4;
+                            let targetHeight = targetWidth / aspectRatio;
+                            if (targetHeight > MAX_HEIGHT) {
+                                targetHeight = MAX_HEIGHT;
+                                targetWidth = targetHeight * aspectRatio;
+                            }
+                            ensureSpace(targetHeight + 40);
+                            figuraF1 += 1;
+                            const imgY = doc.y;
+                            const offsetX = margin + 2 + (contentW - 4 - targetWidth) / 2;
+                            doc.rect(margin, imgY, contentW, targetHeight + 4).fillAndStroke(colors.bg, colors.border);
+                            doc.image(buffer, offsetX, imgY + 2, { width: targetWidth, height: targetHeight });
+                            doc.y = imgY + targetHeight + 10;
+                            const frac = typeof scene.anthropizedFraction === "number" ? ` · ~${Math.round(scene.anthropizedFraction * 100)}% c/ sinal de uso` : "";
+                            doc.font("Helvetica-Oblique").fontSize(8.5).fillColor(colors.lightText).text(
+                                `Figura ${figuraF1} — ${reportSingleLineText(polygonId, 30)}, ano ${scene.year} (${scene.sensor})${frac}`,
+                                margin,
+                                doc.y,
+                                { width: contentW, align: "center" },
+                            );
+                            doc.moveDown(1.2);
+                            doc.x = margin;
+                        } catch {
+                            console.warn("[SIMCAR PDF] cena F1 não baixada (não-fatal):", scene.sceneId);
+                        }
+                    }
+                }
+            }
+        } catch (auasPdfErr) {
+            console.warn("[SIMCAR PDF] blocos AUAS F1 v2 falharam (não-fatal):", auasPdfErr instanceof Error ? auasPdfErr.message : auasPdfErr);
+        }
+    }
+
     /* ─── Reservatórios artificiais: quadro explícito ─────────── */
 
     // O encarte digital do CAR não transfere a lâmina d'água para a área
