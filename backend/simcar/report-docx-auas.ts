@@ -2,13 +2,14 @@ import { Paragraph, TextRun, ImageRun, AlignmentType } from "docx";
 import sharp from "sharp";
 
 /**
- * Blocos DOCX específicos da Fase 1 v2 (AUAS pré-2008):
+ * Blocos DOCX do anexo das análises pós-recorte:
  *  1. Seção "Áreas passíveis de discussão" — polígonos SINAL_DE_DUVIDA com os
  *     sinais que motivaram a classificação (desmate parcial/gradual, estado
  *     misto, sobreposição geométrica com AC/AVN).
- *  2. Anexo fotográfico por polígono — TODOS os anos da série (2003–2008) de
- *     cada polígono AUAS, com as cenas persistidas no storage (`publicImageUrl`),
- *     legenda por figura e nota de estado observado pela IA naquele ano.
+ *  2. Anexo fotográfico por polígono — TODOS os anos da série de cada polígono,
+ *     com as cenas persistidas no storage (`publicImageUrl`), legenda por figura
+ *     e nota de estado observado pela IA naquele ano. Vale para as TRÊS fases:
+ *     o cabeçalho (série e leitura de cor) vem por parâmetro.
  *
  * Usado pelo `report-docx.ts` (papel timbrado IMAP). PDF continua igual.
  */
@@ -20,6 +21,8 @@ export type AuasScenePublic = {
     sensor: string;
     usability: string;
     publicImageUrl?: string;
+    /** Fase 2: cena de outra camada usada só para calibrar a troca de sensor. */
+    bridge?: boolean;
 };
 
 export type AuasPolygonDoubt = {
@@ -38,6 +41,31 @@ export type AuasPolygonDoubt = {
 
 const LARGURA_MAX = 560; // px — largura útil do Ofício com margem
 const ALTURA_MAX = 380;
+
+/**
+ * Comprime a cena antes de embutir no documento.
+ *
+ * As cenas do WMS em zoom alto chegam a 1,2 MB em PNG cada. Com o anexo agora
+ * nas TRÊS fases (a Fase 2 tem 11 anos por polígono), embutir o PNG cru faz o
+ * laudo de um imóvel com muitos polígonos passar de centenas de MB — medido:
+ * 6 figuras já davam 5,5 MB de PDF. Em JPEG q82, na resolução em que a figura é
+ * de fato desenhada, a mesma imagem fica legível com uma fração dos bytes.
+ *
+ * Falha de compressão devolve o original: figura pesada é melhor que anexo sem
+ * figura.
+ */
+async function comprimirFigura(buffer: Buffer, larguraAlvo: number): Promise<{ data: Buffer; tipo: "jpg" | "png" }> {
+    try {
+        const data = await sharp(buffer)
+            .resize({ width: Math.max(720, Math.round(larguraAlvo * 2)), withoutEnlargement: true })
+            .flatten({ background: "#ffffff" })
+            .jpeg({ quality: 82, mozjpeg: true })
+            .toBuffer();
+        return { data, tipo: "jpg" };
+    } catch {
+        return { data: buffer, tipo: "png" };
+    }
+}
 
 function fetchImageBufferLocal(url: string): Promise<Buffer> {
     // URL pública servida pelo próprio backend (storage local): caminho absoluto.
@@ -120,12 +148,14 @@ export function auasDoubtBlocks(doubtPolygons: AuasPolygonDoubt[]): Array<Paragr
 }
 
 /**
- * Anexo fotográfico Fase 1: para cada polígono (priorizando os em dúvida), uma
- * linha por ano com a cena persistida. Estados observados entram na legenda.
+ * Anexo fotográfico: para cada polígono (priorizando os em dúvida, quando a fase
+ * os tem), uma linha por ano com a cena persistida. Estados observados entram na
+ * legenda. `heading` define o título/subtítulo da fase; sem ele cai no da Fase 1.
  */
 export async function auasScenesGalleryBlocks(
     scenes: AuasScenePublic[],
     polygons: AuasPolygonDoubt[],
+    heading?: { title: string; subtitle: string },
 ): Promise<Array<Paragraph | any>> {
     const usable = scenes.filter((s) => s.publicImageUrl);
     if (usable.length === 0) return [];
@@ -146,7 +176,8 @@ export async function auasScenesGalleryBlocks(
                     children: [],
                 }),
                 new TextRun({
-                    text: "Anexo Fotográfico — Cenas por Polígono AUAS (série 2003–2008, zoom individual)",
+                    text: heading?.title
+                        || "Anexo Fotográfico — Cenas por Polígono AUAS (série 2003–2008, zoom individual)",
                     bold: true,
                     size: 22,
                 }),
@@ -157,7 +188,8 @@ export async function auasScenesGalleryBlocks(
             children: [
                 new TextRun({
                     size: 17,
-                    text: "Cenas WMS SEMA-MT (Landsat 5 falsa-cor 2003–2007 · SPOT cor natural 2008) recortadas por polígono com margem reduzida. Overlay vermelho = perímetro do polígono declarado. A diferença de paleta entre sensores não é mudança na cobertura do solo.",
+                    text: heading?.subtitle
+                        || "Cenas WMS SEMA-MT (Landsat 5 falsa-cor 2003–2007 · SPOT cor natural 2008) recortadas por polígono com margem reduzida. Overlay vermelho = perímetro do polígono declarado. A diferença de paleta entre sensores não é mudança na cobertura do solo.",
                 }),
             ],
         }),
@@ -210,6 +242,7 @@ export async function auasScenesGalleryBlocks(
                 } catch {
                     // metadata indisponível: mantém tamanho padrão
                 }
+                const figuraImg = await comprimirFigura(buffer, largura);
                 figura += 1;
                 const info = byYearState.get(`${scene.polygonId}:${scene.year}`);
                 const fracTxt = typeof info?.fraction === "number" ? ` · ~${Math.round(info.fraction * 100)}% c/ sinal de uso` : "";
@@ -217,14 +250,14 @@ export async function auasScenesGalleryBlocks(
                     new Paragraph({
                         alignment: AlignmentType.CENTER,
                         spacing: { before: 120, after: 40 },
-                        children: [new ImageRun({ type: "png", data: buffer, transformation: { width: largura, height: altura } })],
+                        children: [new ImageRun({ type: figuraImg.tipo, data: figuraImg.data, transformation: { width: largura, height: altura } })],
                     }),
                     new Paragraph({
                         alignment: AlignmentType.CENTER,
                         spacing: { after: 140 },
                         children: [
                             new TextRun({
-                                text: `Figura ${figura} — ${scene.polygonId}, ano ${scene.year} (${scene.sensor})${fracTxt}`,
+                                text: `Figura ${figura} — ${scene.polygonId}, ano ${scene.year} (${scene.sensor})${scene.bridge ? " · janela-ponte" : ""}${fracTxt}`,
                                 italics: true,
                                 size: 16,
                             }),

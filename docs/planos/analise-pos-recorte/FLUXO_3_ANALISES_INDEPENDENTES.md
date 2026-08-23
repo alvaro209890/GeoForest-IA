@@ -162,6 +162,77 @@ dizem *em qual polígono* a vegetação foi mexida — existiam só na seção v
 nunca no corpo do texto. Corrigidos os dois, com o `doubtCount` no resumo
 executivo.
 
+## Anexo fotográfico nas 3 fases (23/08/2026, 2ª rodada)
+
+O laudo da Fase 1 tinha anexo com as cenas por polígono/ano; os das Fases 2 e 3
+saíam **sem figura nenhuma**. A causa: só o orquestrador da Fase 1 persistia o
+`imageBuffer` da cena (a imagem **com o overlay vermelho** que a visão analisou).
+As outras duas guardavam apenas `storedImageUrl` — a URL crua do WMS, sem
+overlay e sem garantia de devolver o mesmo recorte depois.
+
+**O que mudou:**
+
+- `backend/analise-pos-recorte/scene-persistence.ts` (novo) — o trecho que a
+  Fase 1 tinha inline virou helper único (`persistSceneForReport`), usado pelas
+  três. Persiste o que a visão consegue olhar (`USABLE`, `CLOUD_OR_OCCLUSION`,
+  `LOW_RESOLUTION`); `MISSING`/`INVALID`/`BELOW_MIN_RESOLUTION` não viram figura.
+  Falhar aqui é não-fatal: perde-se a figura, não a análise.
+  *Efeito colateral desejado na Fase 1:* ela persistia só `USABLE`, então agora
+  a cena nublada que a IA olhou também aparece no anexo — é o que explica um
+  veredicto inconclusivo.
+- Os orquestradores das Fases 2 e 3 chamam o helper (incluindo a **janela-ponte**
+  da Fase 2), e `uid` passou a ser dependência delas — sem dono não há storage.
+- `reportPhotoAnnexHeading(kind)` em `report-theme.ts` dá título e subtítulo por
+  fase. O subtítulo sempre avisa da **falsa-cor** e do overlay vermelho: sem
+  isso o RT lê o mosaico como foto aérea.
+- PDF (`report.ts`) e DOCX (`report-docx-auas.ts`) trocaram o gate
+  `kind === "AUAS_PRE2008"` por `reportPhotoAnnexHeading(kind) !== null`. A seção
+  **"Áreas Passíveis de Discussão"** continua exclusiva da Fase 1 — só ela tem
+  `doubtSignals`.
+
+### Compressão da figura (necessária, não cosmética)
+
+A cena do WMS em zoom alto chega a **1,2 MB em PNG**. Com o anexo nas três
+fases — e a Fase 2 tendo **11 anos por polígono** — o laudo estourava: medido,
+**6 figuras davam 5,55 MB de PDF**, e um imóvel de 17 polígonos na Fase 2 daria
+187 figuras. As figuras passaram a ser recomprimidas em **JPEG q82** na hora de
+embutir (`compressReportFigure` no PDF, `comprimirFigura` no DOCX), sem corte de
+resolução útil. Falha de compressão devolve o original — figura pesada é melhor
+que anexo vazio.
+
+| Laudo | Figuras | Antes | Depois |
+|---|---|---|---|
+| Fase 1 | 12 | 1,77 MB | **0,48 MB** |
+| Fase 2 | 24 | 1,91 MB | **0,49 MB** |
+| Fase 3 |  6 | 5,55 MB | **0,62 MB** |
+
+Conferido visualmente: a figura da Fase 3 depois da compressão é indistinguível
+da anterior (overlay vermelho nítido, limite entre floresta e talhão legível).
+
+### Cena da janela-ponte marcada na legenda
+
+A Fase 2 pode ter **duas cenas do mesmo ano** por polígono: a da série preferida
+e a da **janela-ponte** — outra camada, usada só para calibrar a troca de
+sensor. No anexo isso aparecia como figura repetida sem explicação. A legenda
+agora traz `· janela-ponte`:
+
+```
+Figura 10 — AUAS-0001, ano 2018 (LANDSAT_8)
+Figura 11 — AUAS-0001, ano 2018 (SENTINEL_2) · janela-ponte
+Figura 12 — AUAS-0001, ano 2019 (SENTINEL_2)
+```
+
+### Rodada real (job `27ca02d3`)
+
+| Fase | Cenas persistidas | Figuras no anexo | PDF |
+|---|---|---|---|
+| 1 — AUAS 2003–2008 | 12/12 | 12 (2003→2008 por polígono) | 0,48 MB · 10 págs |
+| 2 — Datação 2009–2019 | 24/24 | 24 (2009→2019 + ponte) | 0,49 MB · 15 págs |
+| 3 — Vegetação na AC | 6/6 | 6 (SPOT 2008 + Sentinel 2024/2025) | 0,62 MB · 6 págs |
+
+O DOCX de cada uma carrega as mesmas figuras (conferido no da Fase 3: 6 imagens
+JPEG embutidas, seção e legendas presentes).
+
 ## Testes
 
 - `backend/simcar/phases.test.ts` (24) — reescrito para a regra nova: as 3

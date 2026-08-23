@@ -55,6 +55,10 @@ Regras (**atualizadas em 23/08/2026** — ver
   outras.
 - Cada fase concluída mostra o **seu** laudo (PDF + Word), guardado em
   `phaseReports[fase]` — rodar a ③ não apaga o laudo da ①.
+- **As três** trazem anexo fotográfico com as cenas por polígono/ano (a mesma
+  imagem que a visão analisou, com o overlay vermelho do perímetro). A seção
+  "Áreas Passíveis de Discussão" é exclusiva da ①, que é a única com
+  `doubtSignals`.
 
 ## 3. Prévia antes do clique (obrigatória)
 

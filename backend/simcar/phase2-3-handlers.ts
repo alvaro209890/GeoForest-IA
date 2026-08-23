@@ -246,6 +246,7 @@ export async function handlePos2008Route(
                 },
                 {
                     checkpointStore,
+                    uid: ctx.uid,
                     onProgress: (progress) => {
                         if (isSseConnectionClosed(res)) throw new ClientAbortError("Cliente desconectou.");
                         sendSSE(res, { type: "progress", phase: "POS_2008", ...progress });
@@ -396,6 +397,7 @@ export async function handleAcVegetacaoRoute(
                     polygons: acPolygons,
                 },
                 {
+                    uid: ctx.uid,
                     onProgress: (progress) => {
                         if (isSseConnectionClosed(res)) throw new ClientAbortError("Cliente desconectou.");
                         sendSSE(res, { type: "progress", phase: "AC_VEG", ...progress });

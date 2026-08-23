@@ -223,6 +223,37 @@ export function detectReportKind(auasMeta: any): ReportKind {
     return "GENERICO";
 }
 
+/**
+ * Cabeçalho do anexo fotográfico de cada fase. As três anexam a MESMA imagem que
+ * a visão analisou (overlay vermelho do polígono já desenhado); o que muda é a
+ * série e a leitura de cor, e é isso que o subtítulo tem de avisar — senão o RT
+ * lê falsa-cor como se fosse foto aérea.
+ */
+export function reportPhotoAnnexHeading(kind: ReportKind): { title: string; subtitle: string } | null {
+    switch (kind) {
+        case "AUAS_PRE2008":
+            return {
+                title: "Anexo Fotográfico — Cenas por Polígono AUAS (série 2003–2008)",
+                subtitle:
+                    "Landsat 5 falsa-cor 2003–2007 · SPOT cor natural 2008. Overlay vermelho = perímetro declarado; a diferença de paleta entre sensores não é mudança de cobertura.",
+            };
+        case "AUAS_POS2008":
+            return {
+                title: "Anexo Fotográfico — Cenas por Polígono AUAS (série 2009–2019)",
+                subtitle:
+                    "Série anual dos mosaicos da SEMA-MT, em falsa-cor (vegetação densa em verde forte/neon). Overlay vermelho = perímetro declarado; a troca de sensor ao longo da série não é mudança de cobertura.",
+            };
+        case "AC_VEG":
+            return {
+                title: "Anexo Fotográfico — Cenas por Polígono de Área Consolidada",
+                subtitle:
+                    "Cena atual e infravermelho do mosaico da SEMA-MT. Overlay vermelho = perímetro da AC declarada; vegetação nativa remanescente aparece em verde forte/neon na composição falsa-cor.",
+            };
+        default:
+            return null;
+    }
+}
+
 export function reportKindSectionTitle(kind: ReportKind): string {
     switch (kind) {
         case "AUAS_PRE2008":

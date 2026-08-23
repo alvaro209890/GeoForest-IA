@@ -37,6 +37,7 @@ import {
     detectReportKind,
     parseMarkdownBlocks,
     reportKindSectionTitle,
+    reportPhotoAnnexHeading,
     splitLongParagraph,
     imageSourceNote,
     vectorSourceNote,
@@ -53,6 +54,7 @@ import {
     normalizeReportImages,
     reportCleanText,
     reportPdfSafeText,
+    compressReportFigure,
     reportPdfWinAnsiText,
     reportSingleLineText,
     type SimcarReportImage,
@@ -874,13 +876,17 @@ export async function buildSimcarReportPdfBuffer(args: {
         markdownBody(args.auasText, 9000);
     }
 
-    /* ─── Fase 1 v2 (AUAS pré-2008): dúvidas + galeria por polígono/ano ── */
+    /* ─── Dúvidas (F1) + anexo fotográfico (as 3 fases) ─────────── */
 
-    // Mesma mecânica do DOCX (report-docx-auas.ts): seção "Áreas Passíveis de
-    // Discussão" + anexo com TODAS as cenas de cada polígono AUAS por ano.
-    if (args.auasMeta && auasKind === "AUAS_PRE2008") {
+    // Mesma mecânica do DOCX (report-docx-auas.ts). A seção "Áreas Passíveis de
+    // Discussão" é da Fase 1 (só ela tem `doubtSignals`); o anexo com as cenas
+    // por polígono/ano vale para as três — todas guardam a imagem que a visão
+    // analisou em `scenes[].publicImageUrl`.
+    const annexHeading = reportPhotoAnnexHeading(auasKind);
+    if (args.auasMeta && annexHeading) {
         try {
-            const doubtPolygons: any[] = (Array.isArray(args.auasMeta.polygons) ? args.auasMeta.polygons : [])
+            const doubtPolygons: any[] = auasKind !== "AUAS_PRE2008" ? [] :
+                (Array.isArray(args.auasMeta.polygons) ? args.auasMeta.polygons : [])
                 .filter((p: any) => p?.status === "SINAL_DE_DUVIDA" || Number(p?.geometryChecks?.overlapAcHa || 0) > 0.01 || Number(p?.geometryChecks?.overlapAvnHa || 0) > 0.01);
 
             if (doubtPolygons.length > 0) {
@@ -906,10 +912,7 @@ export async function buildSimcarReportPdfBuffer(args: {
             const scenesWithUrl = scenes.filter((s: any) => s.publicImageUrl);
             if (scenesWithUrl.length > 0) {
                 ensureSpace(140);
-                sectionTitle(
-                    "Anexo Fotográfico — Cenas por Polígono AUAS (série 2003–2008)",
-                    "Landsat 5 falsa-cor 2003–2007 · SPOT cor natural 2008. Overlay vermelho = perímetro declarado; a diferença de paleta entre sensores não é mudança de cobertura.",
-                );
+                sectionTitle(annexHeading.title, annexHeading.subtitle);
                 const order = new Map<string, number>(
                     (doubtPolygons.length > 0 ? doubtPolygons : args.auasMeta.polygons || []).map((p: any, i: number) => [String(p.polygonId), i]),
                 );
@@ -928,8 +931,13 @@ export async function buildSimcarReportPdfBuffer(args: {
                     sectionTitle(`Polígono ${reportSingleLineText(polygonId, 40)}`);
                     for (const scene of grouped.get(polygonId)!.sort((a, b) => a.year - b.year)) {
                         try {
-                            const buffer = await fetchReportImageBuffer(scene.publicImageUrl);
-                            if (!buffer) throw new Error("cena indisponível");
+                            const original = await fetchReportImageBuffer(scene.publicImageUrl);
+                            if (!original) throw new Error("cena indisponível");
+                            // Cena do WMS em zoom alto chega a 1,2 MB em PNG. Com o
+                            // anexo nas 3 fases (a Fase 2 tem 11 anos por polígono),
+                            // embutir o PNG cru estoura o tamanho do laudo — medido:
+                            // 6 figuras davam 5,5 MB. JPEG q82 mantém a legibilidade.
+                            const buffer = await compressReportFigure(original);
                             const pdfImg = (doc as any).openImage(buffer);
                             const aspectRatio = pdfImg.width / pdfImg.height;
                             const MAX_HEIGHT = 360;
@@ -947,8 +955,13 @@ export async function buildSimcarReportPdfBuffer(args: {
                             doc.image(buffer, offsetX, imgY + 2, { width: targetWidth, height: targetHeight });
                             doc.y = imgY + targetHeight + 10;
                             const frac = typeof scene.anthropizedFraction === "number" ? ` · ~${Math.round(scene.anthropizedFraction * 100)}% c/ sinal de uso` : "";
+                            // A Fase 2 pode ter DUAS cenas do mesmo ano: a da série
+                            // preferida e a da janela-ponte (outra camada, usada só
+                            // para calibrar a troca de sensor). Sem a marca, o par
+                            // aparece como figura repetida sem explicação.
+                            const ponte = scene.bridge ? " · janela-ponte" : "";
                             doc.font("Helvetica-Oblique").fontSize(8.5).fillColor(colors.lightText).text(
-                                `Figura ${figuraF1} — ${reportSingleLineText(polygonId, 30)}, ano ${scene.year} (${scene.sensor})${frac}`,
+                                `Figura ${figuraF1} — ${reportSingleLineText(polygonId, 30)}, ano ${scene.year} (${scene.sensor})${ponte}${frac}`,
                                 margin,
                                 doc.y,
                                 { width: contentW, align: "center" },
@@ -956,13 +969,13 @@ export async function buildSimcarReportPdfBuffer(args: {
                             doc.moveDown(1.2);
                             doc.x = margin;
                         } catch {
-                            console.warn("[SIMCAR PDF] cena F1 não baixada (não-fatal):", scene.sceneId);
+                            console.warn(`[SIMCAR PDF] cena ${auasKind} não baixada (não-fatal):`, scene.sceneId);
                         }
                     }
                 }
             }
         } catch (auasPdfErr) {
-            console.warn("[SIMCAR PDF] blocos AUAS F1 v2 falharam (não-fatal):", auasPdfErr instanceof Error ? auasPdfErr.message : auasPdfErr);
+            console.warn(`[SIMCAR PDF] anexo fotográfico de ${auasKind} falhou (não-fatal):`, auasPdfErr instanceof Error ? auasPdfErr.message : auasPdfErr);
         }
     }
 

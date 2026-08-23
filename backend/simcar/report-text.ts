@@ -134,3 +134,25 @@ export function reportPdfWinAnsiText(value: string): string {
             .replace(/[ \t]{2,}/g, " ")
     );
 }
+
+/**
+ * Comprime a figura do anexo fotográfico antes de embutir no PDF.
+ *
+ * Mesma razão do `comprimirFigura` do DOCX: a cena do WMS em zoom alto chega a
+ * 1,2 MB em PNG, e o anexo agora existe nas três fases. Downscale para ~1600 px
+ * de largura (bem acima do que a figura ocupa no A4) + JPEG q82.
+ *
+ * Falha devolve o buffer original — figura pesada é melhor que anexo vazio.
+ */
+export async function compressReportFigure(buffer: Buffer): Promise<Buffer> {
+    try {
+        const sharp = (await import("sharp")).default;
+        return await sharp(buffer)
+            .resize({ width: 1600, withoutEnlargement: true })
+            .flatten({ background: "#ffffff" })
+            .jpeg({ quality: 82, mozjpeg: true })
+            .toBuffer();
+    } catch {
+        return buffer;
+    }
+}

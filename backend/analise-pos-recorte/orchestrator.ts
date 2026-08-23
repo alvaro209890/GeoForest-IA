@@ -16,6 +16,7 @@ import { requestGroqVisionWindow, type GroqVisionDeps } from "./groq-vision-clie
 import { buildAuasReport, type BuildAuasReportInput } from "./report-builder";
 import type { DeepseekTextDeps } from "./deepseek-text-client";
 import { buildAuasScene, type BuildAuasSceneDeps } from "./wms-scenes";
+import { persistSceneForReport } from "./scene-persistence";
 import type {
   AuasPolygonIdentity,
   AuasPre2008AnalysisV2,
@@ -231,22 +232,9 @@ export async function runAuasPre2008Analysis(
       throwIfCancelled(signal);
       const scene = await buildAuasScene(polygon, source.year, deps.sceneDeps);
 
-      // Persiste a cena utilizável no storage local do usuário — vira figura no
-      // DOCX/laudo (pedido do Álvaro: cada polígono, todos os anos, com zoom).
-      if (scene.imageBuffer && scene.usability === "USABLE") {
-        try {
-          const { saveUserBuffer } = await import("../local-storage");
-          const saved = saveUserBuffer({
-            uid: deps.uid || "anonymous",
-            area: "simcar/analysis",
-            filename: `${Date.now()}_auas_f1_${polygon.polygonId.replace(/[^a-zA-Z0-9_-]/g, "_")}_${source.year}.png`,
-            buffer: scene.imageBuffer,
-          });
-          scene.publicImageUrl = saved.publicUrl;
-        } catch (persistErr) {
-          console.warn("[AUAS V2] persistência da cena falhou (não-fatal):", persistErr);
-        }
-      }
+      // Persiste a cena no storage local do usuário — vira figura no anexo
+      // fotográfico do laudo (cada polígono, todos os anos, com zoom).
+      await persistSceneForReport(scene, { uid: deps.uid, phase: "auas_f1" });
 
       scenesByYear.set(source.year, scene);
       allScenes.push(sceneToPublic(scene));

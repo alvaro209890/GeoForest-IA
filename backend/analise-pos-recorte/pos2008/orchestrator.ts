@@ -14,6 +14,7 @@ import { resolvePos2008Catalog, type PosCatalog } from "./catalog";
 import { buildTimelinePlan, getPos2008Series } from "./timeline";
 import { reducePos2008Aggregate, reducePos2008Polygon, type Pos2008ReducerWindowInput } from "./evidence-reducer";
 import { buildPos2008Scene, type BuildPos2008SceneDeps } from "./scenes";
+import { persistSceneForReport } from "../scene-persistence";
 import { buildPos2008Report, type BuildPos2008ReportInput } from "./report-builder";
 import type { AuasPolygonIdentity, AuasPre2008AnalysisV2 } from "../types";
 import type {
@@ -71,6 +72,8 @@ export type Pos2008OrchestratorDeps = {
   visionModel?: string;
   visionMaxImages?: number;
   visionTimeoutMs?: number;
+  /** Dono do job — sem ele a cena não é persistida e o laudo sai sem anexo. */
+  uid?: string;
 };
 
 function throwIfCancelled(signal: AbortSignal | undefined): void {
@@ -229,6 +232,9 @@ export async function runPos2008Analysis(
         { year: entry.year, sensor: entry.preferred.sensor, layer: entry.preferred.layer },
         deps.sceneDeps
       );
+      // Figura do anexo fotográfico: a MESMA imagem que a visão analisou,
+      // com o overlay do polígono (a `storedImageUrl` é a URL crua do WMS).
+      await persistSceneForReport(scene, { uid: deps.uid, phase: "auas_f2" });
       scenesByYear.set(entry.year, scene);
       allScenes.push(sceneToPublic(scene));
     }
@@ -344,6 +350,7 @@ export async function runPos2008Analysis(
           // Keep bridge scenes separate. Normal windows must continue to use the
           // preferred RGB series, otherwise a calibration image silently changes
           // the provenance of the temporal series.
+          await persistSceneForReport(scene, { uid: deps.uid, phase: "auas_f2" });
           allScenes.push(sceneToPublic(scene));
           bridgeScenes.push(scene);
         }

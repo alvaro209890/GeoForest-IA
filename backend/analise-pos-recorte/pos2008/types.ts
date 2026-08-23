@@ -44,6 +44,8 @@ export type Pos2008Scene = {
   qualityFlags: string[];
   fetchedAt: string;
   storedImageUrl?: string;
+  /** URL pública (storage local) da cena com overlay, para o anexo fotográfico do laudo. */
+  publicImageUrl?: string;
   bridge?: boolean;
   imageBuffer?: Buffer;
 };

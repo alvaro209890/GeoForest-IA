@@ -14,6 +14,7 @@ import type { Geometry } from "geojson";
 import type { WmsFetchDeps } from "../wms-scenes";
 import { getAcVegetacaoConfig, type AcVegetacaoConfig } from "../config";
 import { buildAcVegetacaoScene, type AcSceneSpec } from "./scenes";
+import { persistSceneForReport } from "../scene-persistence";
 import { computeAcGeometricEvidence, prepareLayerUnions, type PreparedLayerUnions } from "./geometry-evidence";
 import { reduceAcVegetacao } from "./evidence-reducer";
 import { buildAcVegetacaoReport } from "./report-builder";
@@ -50,6 +51,8 @@ export type AcVegetacaoOrchestratorDeps = {
   ) => Promise<void>;
   onProgress?: (progress: AcVegetacaoProgress) => void;
   now?: () => string;
+  /** Dono do job — sem ele a cena não é persistida e o laudo sai sem anexo. */
+  uid?: string;
 };
 
 function emptyAcAnalysis(jobId: string, startedAt: string, completedAt: string): AcVegetacaoAnalysis {
@@ -198,6 +201,9 @@ export async function runAcVegetacaoAnalysis(
         { ...spec, sceneId: `${polygon.polygonId}:${spec.sceneId}` },
         deps.sceneDeps || {}
       );
+      // Figura do anexo fotográfico: a MESMA imagem que a visão analisou,
+      // com o overlay do polígono (a `storedImageUrl` é a URL crua do WMS).
+      await persistSceneForReport(scene, { uid: deps.uid, phase: "ac_veg" });
       builtScenes.push(scene);
       if (scene.usability === "USABLE") usedScenes.push(scene);
     }
