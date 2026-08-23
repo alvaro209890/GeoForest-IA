@@ -15,6 +15,8 @@
 | [10-deploy-e-ops.md](10-deploy-e-ops.md) | Variáveis de ambiente, deploy no `server-desktop`, rollout por flag, observabilidade |
 | [11-riscos-e-decisoes-abertas.md](11-riscos-e-decisoes-abertas.md) | Riscos com mitigação + decisões A1–A10 que precisam do Álvaro |
 | [12-tarefas-implementacao.md](12-tarefas-implementacao.md) | Tarefas bite-sized em ordem (F0 → F3), com gate de teste por tarefa |
+| [FASE1_V2_SINAL_DUVIDA.md](FASE1_V2_SINAL_DUVIDA.md) | Fase 1 v2: status `SINAL_DE_DUVIDA`, zoom por polígono AUAS e anexo fotográfico no DOCX/PDF |
+| [FASE1_V2_SPOT_MARCO_2008.md](FASE1_V2_SPOT_MARCO_2008.md) | Por que a IA não lia o SPOT 2008 (modelo de visão travado em literal) e as 5 correções |
 | [STATUS.md](STATUS.md) | Status do plano e histórico |
 
 ## Fluxo do usuário (resumo)

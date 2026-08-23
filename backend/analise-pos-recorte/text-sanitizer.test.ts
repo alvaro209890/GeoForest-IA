@@ -27,6 +27,19 @@ describe("findLegalVerdict", () => {
 });
 
 describe("sanitizeVisionPayload", () => {
+  it("preenche `conflicts` ausente em vez de derrubar a janela", () => {
+    // O gemini-2.5-flash às vezes omite `conflicts` no JSON. Com o zod exigindo
+    // o campo, a janela inteira falhava com `conflicts:invalid_type` e o
+    // polígono virava INCONCLUSIVO — inclusive a janela do SPOT 2008.
+    const { value } = sanitizeVisionPayload({ observations: [], transitions: [] });
+    expect((value as any).conflicts).toEqual([]);
+  });
+
+  it("`conflicts` de tipo errado também vira lista vazia", () => {
+    expect((sanitizeVisionPayload({ conflicts: "nenhum" }).value as any).conflicts).toEqual([]);
+    expect((sanitizeVisionPayload({ conflicts: null }).value as any).conflicts).toEqual([]);
+  });
+
   it("trunca frase longa em vez de invalidar a observação", () => {
     const longText = "a".repeat(MAX_TEXT_LENGTH + 60);
     const { value, counters } = sanitizeVisionPayload({ conflicts: [longText] });

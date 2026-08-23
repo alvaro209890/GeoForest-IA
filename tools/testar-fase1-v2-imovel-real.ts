@@ -23,7 +23,7 @@ if (!job?.clippedGeometries) throw new Error("Job sem clippedGeometries");
 // 2. Roda a análise v2 com uid para persistir as cenas.
 console.log("[DOURADO F1 v2] rodando análise pré-2008...");
 const analysis = await runAuasPre2008Analysis(JOB_ID, job.clippedGeometries, {
-    checkpointStore: createFileCheckpointStore(`${JOB_ID}-v2-dourado-${Date.now()}`),
+    checkpointStore: createFileCheckpointStore(`${JOB_ID}-v2-spot-fix-${Date.now()}`),
     uid: UID,
 });
 

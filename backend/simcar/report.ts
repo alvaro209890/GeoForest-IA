@@ -53,6 +53,7 @@ import {
     normalizeReportImages,
     reportCleanText,
     reportPdfSafeText,
+    reportPdfWinAnsiText,
     reportSingleLineText,
     type SimcarReportImage,
 } from "./report-text";
@@ -210,6 +211,14 @@ export async function buildSimcarReportPdfBuffer(args: {
             Creator: "GeoForest IA",
         },
     });
+    // Toda string desenhada passa pela transliteração WinAnsi. Um único ponto,
+    // porque o texto chega ao `doc.text` por ~40 chamadas espalhadas e por
+    // caminhos que não controlamos (saída da IA, nome de camada do SIMCAR):
+    // filtrar caso a caso deixaria buraco na próxima frase nova.
+    const drawText = doc.text.bind(doc) as typeof doc.text;
+    doc.text = ((value: any, ...rest: any[]) =>
+        drawText(typeof value === "string" ? reportPdfWinAnsiText(value) : value, ...rest)) as typeof doc.text;
+
     const chunks: Buffer[] = [];
     const done = new Promise<Buffer>((resolve, reject) => {
         doc.on("data", (chunk: Buffer) => chunks.push(chunk));

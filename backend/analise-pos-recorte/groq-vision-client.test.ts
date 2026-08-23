@@ -126,12 +126,12 @@ describe("requestGroqVisionWindow — validação de schema e retry", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
-  it("não entra em loop depois da segunda falha de schema", async () => {
+  it("não entra em loop depois da terceira falha de schema (retry ampliado no v2)", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(groqSuccessBody({ not: "valid" })));
     const result = await requestGroqVisionWindow(baseRequest(), { fetchImpl, apiKey: "k" });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errorCode).toBe("INVALID_SCHEMA");
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
   it("rejeita polygonId/sceneId inventado no retorno", async () => {

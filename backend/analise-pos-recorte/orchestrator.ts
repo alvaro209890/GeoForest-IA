@@ -2,7 +2,14 @@ import type { Geometry } from "geojson";
 
 import { extractAuasPolygons } from "./auas-polygons";
 import { buildPhaseCheckpointKey } from "./checkpoint-store";
-import { AUAS_REQUIRED_SOURCES, AUAS_RULES_VERSION, AUAS_VISION_WINDOWS, getAuasV2Config, resolveAuasLayerName } from "./config";
+import {
+  AUAS_REQUIRED_SOURCES,
+  AUAS_RULES_VERSION,
+  AUAS_VISION_WINDOWS,
+  SPOT_MARCO_WINDOW_ID,
+  getAuasV2Config,
+  resolveAuasLayerName,
+} from "./config";
 import { reduceAuasAggregate, reduceAuasPolygon, type ReducerWindowInput } from "./evidence-reducer";
 import { computeAuasGeometryChecks } from "./geometry-checks";
 import { requestGroqVisionWindow, type GroqVisionDeps } from "./groq-vision-client";
@@ -104,6 +111,33 @@ function sceneUsableForVision(scene: AuasScene): boolean {
 
 function toDataUrl(buffer: Buffer): string {
   return `data:image/png;base64,${buffer.toString("base64")}`;
+}
+
+/**
+ * Comprime a cena antes de enviar à IA. O SPOT 2008 do WMS em zoom alto gera
+ * PNGs de centenas de KB (790 KB medidos no AUAS-0002 do job 27ca02d3) — em
+ * base64 isso vira ~1 MB por cena no corpo da requisição.
+ *
+ * JPEG q80 **sem resize** mantém a resolução nativa (o desmate raso continua
+ * legível) e derruba o payload para ~82 KB. Isso é economia de banda/tokens,
+ * NÃO a correção do timeout: medido, a mesma janela em JPEG levou 119,9 s e em
+ * PNG levou 6,7 s no `qwen/qwen3.6-27b` — a latência era do modelo, não do
+ * tamanho (ver DEFAULT_VISION_MODEL em config.ts).
+ *
+ * Falha de compressão cai no PNG original (não-fatal).
+ */
+async function toVisionDataUrl(buffer: Buffer): Promise<string> {
+  try {
+    const sharp = (await import("sharp")).default;
+    const jpeg = await sharp(buffer)
+      .flatten({ background: "#ffffff" })
+      .jpeg({ quality: 80, mozjpeg: true })
+      .toBuffer();
+    return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+  } catch (err) {
+    console.warn("[AUAS V2] compressão da cena falhou, enviando PNG (não-fatal):", err);
+    return toDataUrl(buffer);
+  }
 }
 
 function emptyAnalysis(jobId: string, startedAt: string, completedAt: string): AuasPre2008AnalysisV2 {
@@ -274,12 +308,12 @@ export async function runAuasPre2008Analysis(
         {
           polygonId: polygon.polygonId,
           windowId: windowDef.windowId,
-          images: sendableScenes.map((s) => ({
+          images: await Promise.all(sendableScenes.map(async (s) => ({
             sceneId: s.sceneId,
             year: s.year,
             sensor: s.sensor,
-            dataUrl: toDataUrl(s.imageBuffer!),
-          })),
+            dataUrl: await toVisionDataUrl(s.imageBuffer!),
+          }))),
         },
         { ...deps.groqDeps, model: cfg.visionModel, maxImages: cfg.visionMaxImages, timeoutMs: cfg.visionTimeoutMs, signal }
       );
@@ -376,6 +410,20 @@ export async function runAuasPre2008Analysis(
   const limitations = polygonResults.some((p) => p.status === "INCONCLUSIVO_NO_MARCO_2008")
     ? ["Um ou mais polígonos têm mudança observada apenas na transição 2007→SPOT 2008; não é possível afirmar de qual lado de 22/07/2008 ela ocorreu."]
     : [];
+
+  // A cena SPOT 2008 é o marco legal (22/07/2008). Se ela foi baixada do WMS
+  // mas a janela que a carrega falhou na visão, o laudo NÃO pode ficar só com
+  // "sem observação conclusiva de 2008": tem que dizer que o marco não foi
+  // lido e por quê. Sem isso a falha some dentro de um INCONCLUSIVO genérico.
+  const spotWindowFailures = allWindowRuns.filter(
+    (run) => run.windowId === SPOT_MARCO_WINDOW_ID && run.status === "FAILED"
+  );
+  if (spotWindowFailures.length > 0) {
+    const codes = [...new Set(spotWindowFailures.map((run) => run.errorCode || "ERRO"))].join(", ");
+    limitations.push(
+      `A cena SPOT 2008 (marco legal de 22/07/2008) foi obtida do WMS, mas a análise de visão falhou em ${spotWindowFailures.length} janela(s) [${codes}]: o veredicto desses polígonos não considera o mosaico de 2008.`
+    );
+  }
 
   const reportInput: BuildAuasReportInput = {
     rulesVersion: AUAS_RULES_VERSION,

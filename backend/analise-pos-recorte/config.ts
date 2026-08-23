@@ -64,6 +64,23 @@ export type AuasV2Config = {
   maxPolygonsPerJob: number;
 };
 
+/**
+ * Modelo de visão da Fase 1.
+ *
+ * Ordem: `SIMCAR_AUAS_VISION_MODEL` (override explícito) → `VISION_MODEL`
+ * (o mesmo modelo que o resto do backend já usa) → literal abaixo.
+ *
+ * Antes o literal era `qwen/qwen3.6-27b` e ignorava o `VISION_MODEL` do
+ * ambiente. Medido no imóvel real (job 27ca02d3, janela W2007_2008 =
+ * Landsat 2007 + SPOT 2008, mesmas cenas, mesmo prompt):
+ *   qwen/qwen3.6-27b      → 6,7 s · 119,9 s · >200 s (abortado)
+ *   google/gemini-2.5-flash → 3,7 s · 5,3 s
+ * A janela do SPOT é a mais pesada da série, então era justamente ela que
+ * estourava o timeout de 120 s — e o polígono terminava INCONCLUSIVO
+ * "sem observação conclusiva de 2008", ou seja: **a IA nunca via o SPOT**.
+ */
+const DEFAULT_VISION_MODEL = "google/gemini-2.5-flash";
+
 /** Recalcula config a cada chamada — env pode mudar entre testes. Lança cedo em valor inválido. */
 export function getAuasV2Config(): AuasV2Config {
   const visionMaxImages = readInt("SIMCAR_AUAS_VISION_MAX_IMAGES", 3, { min: 1, max: 3 });
@@ -78,7 +95,10 @@ export function getAuasV2Config(): AuasV2Config {
     enabled: readBool("SIMCAR_AUAS_V2_ENABLED", false),
     phase2Enabled: readBool("SIMCAR_AUAS_POS2008_ENABLED", true),
     phase3Enabled: readBool("SIMCAR_AC_VEG_ENABLED", false),
-    visionModel: readString("SIMCAR_AUAS_VISION_MODEL", "qwen/qwen3.6-27b"),
+    visionModel: readString(
+      "SIMCAR_AUAS_VISION_MODEL",
+      readString("VISION_MODEL", DEFAULT_VISION_MODEL)
+    ),
     textModel: readString("SIMCAR_AUAS_TEXT_MODEL", "deepseek-v4-pro"),
     visionMaxImages,
     visionReasoningEffort,
@@ -160,3 +180,12 @@ export const AUAS_VISION_WINDOWS = [
   { windowId: "W2005_2007" as const, years: [2005, 2006, 2007] as const },
   { windowId: "W2007_2008" as const, years: [2007, 2008] as const },
 ];
+
+/**
+ * Janela que carrega a cena SPOT 2008 — o marco legal de 22/07/2008. Se ela
+ * falhar na visão, o laudo tem de declarar isso (ver orchestrator.ts): sem o
+ * SPOT o veredicto do polígono não passa pelo marco.
+ */
+export const SPOT_MARCO_WINDOW_ID = AUAS_VISION_WINDOWS.find((w) =>
+  (w.years as readonly number[]).includes(2008)
+)!.windowId;

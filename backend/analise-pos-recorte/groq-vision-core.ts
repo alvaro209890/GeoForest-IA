@@ -405,14 +405,14 @@ export async function requestGroqVisionGeneric(
   }
   const fetchImpl = options.fetchImpl || fetch;
   const model = options.model || process.env.VISION_MODEL || "google/gemini-2.5-flash";
-  const timeoutMs = options.timeoutMs ?? 120_000;
+  const timeoutMs = options.timeoutMs ?? 180_000;
   const sleep = options.sleep || defaultSleep;
   const sentSceneIds = request.images.map((img) => img.sceneId);
 
   return withVisionMutex(async () => {
     let lastError: GroqVisionError | null = null;
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
       if (options.signal?.aborted) {
         return { ok: false, errorCode: "CANCELLED", message: "Cancelado antes da tentativa." };
       }
@@ -420,6 +420,13 @@ export async function requestGroqVisionGeneric(
       if (attempt > 1 && lastError?.code === "RATE_LIMITED") {
         const waitMs = lastRateLimit.retryAfterMs ?? lastRateLimit.resetTokensMs ?? 1000;
         await sleep(waitMs);
+      }
+      // TIMEOUT: espera curta antes de re-tentar (payload grande + provedor
+      // lento é transiente — regressão real: janela W2007_2008 com cena SPOT
+      // pesada estourou 120 s na 1ª tentativa e o polígono foi INCONCLUSIVO
+      // sem a IA ver o SPOT).
+      if (attempt > 1 && lastError?.code === "TIMEOUT") {
+        await sleep(2_000);
       }
 
       try {
@@ -440,7 +447,7 @@ export async function requestGroqVisionGeneric(
         });
         if (!validation.ok) {
           lastError = new GroqVisionError("INVALID_SCHEMA", validation.reason, true);
-          if (attempt >= 2) {
+          if (attempt >= 3) {
             return { ok: false, errorCode: "INVALID_SCHEMA", message: validation.reason };
           }
           continue;
@@ -448,7 +455,7 @@ export async function requestGroqVisionGeneric(
         return { ok: true, observation: validation.data, requestId, inputTokens, outputTokens, model };
       } catch (err) {
         lastError = err instanceof GroqVisionError ? err : new GroqVisionError("UNKNOWN", String(err), false);
-        if (!lastError.retryable || attempt >= 2) {
+        if (!lastError.retryable || attempt >= 3) {
           return { ok: false, errorCode: lastError.code, message: lastError.message };
         }
       }

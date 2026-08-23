@@ -174,9 +174,11 @@ export function sanitizeVisionPayload(raw: unknown): {
     });
   }
 
-  if (source.conflicts !== undefined) {
-    out.conflicts = sanitizeTextArray(source.conflicts, MAX_TEXT_ITEMS, counters);
-  }
+  // `conflicts` é lista de "nada a relatar": ausente significa nenhum conflito.
+  // O modelo às vezes simplesmente omite o campo, e o zod (que o exige) derrubava
+  // a janela inteira com `conflicts:invalid_type` — o polígono virava INCONCLUSIVO
+  // por um array vazio que não veio. Normaliza sempre, presente ou não.
+  out.conflicts = sanitizeTextArray(source.conflicts, MAX_TEXT_ITEMS, counters);
 
   return { value: out, counters };
 }
