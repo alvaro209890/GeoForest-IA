@@ -4,6 +4,7 @@ import { extractAuasPolygons } from "./auas-polygons";
 import { buildPhaseCheckpointKey } from "./checkpoint-store";
 import { AUAS_REQUIRED_SOURCES, AUAS_RULES_VERSION, AUAS_VISION_WINDOWS, getAuasV2Config, resolveAuasLayerName } from "./config";
 import { reduceAuasAggregate, reduceAuasPolygon, type ReducerWindowInput } from "./evidence-reducer";
+import { computeAuasGeometryChecks } from "./geometry-checks";
 import { requestGroqVisionWindow, type GroqVisionDeps } from "./groq-vision-client";
 import { buildAuasReport, type BuildAuasReportInput } from "./report-builder";
 import type { DeepseekTextDeps } from "./deepseek-text-client";
@@ -63,6 +64,8 @@ export type OrchestratorDeps = {
   now?: () => string;
   config?: ReturnType<typeof getAuasV2Config>;
   acAvnContext?: { source: string; summary: string };
+  /** uid do dono do job — usado para persistir as cenas no storage dele. */
+  uid?: string;
 };
 
 /**
@@ -91,8 +94,8 @@ function throwIfCancelled(signal: AbortSignal | undefined): void {
 }
 
 function sceneToPublic(scene: AuasScene): Omit<AuasScene, "imageBuffer"> {
-  const { imageBuffer, ...rest } = scene;
-  return rest;
+    const { imageBuffer, ...rest } = scene;
+    return rest;
 }
 
 function sceneUsableForVision(scene: AuasScene): boolean {
@@ -114,6 +117,8 @@ function emptyAnalysis(jobId: string, startedAt: string, completedAt: string): A
     summary: {
       polygonCount: 0,
       alertCount: 0,
+      doubtCount: 0,
+      doubtAreaHa: 0,
       inconclusiveCount: 0,
       noEvidenceCount: 0,
       totalAuasAreaHa: 0,
@@ -191,6 +196,24 @@ export async function runAuasPre2008Analysis(
     for (const source of AUAS_REQUIRED_SOURCES) {
       throwIfCancelled(signal);
       const scene = await buildAuasScene(polygon, source.year, deps.sceneDeps);
+
+      // Persiste a cena utilizável no storage local do usuário — vira figura no
+      // DOCX/laudo (pedido do Álvaro: cada polígono, todos os anos, com zoom).
+      if (scene.imageBuffer && scene.usability === "USABLE") {
+        try {
+          const { saveUserBuffer } = await import("../local-storage");
+          const saved = saveUserBuffer({
+            uid: deps.uid || "anonymous",
+            area: "simcar/analysis",
+            filename: `${Date.now()}_auas_f1_${polygon.polygonId.replace(/[^a-zA-Z0-9_-]/g, "_")}_${source.year}.png`,
+            buffer: scene.imageBuffer,
+          });
+          scene.publicImageUrl = saved.publicUrl;
+        } catch (persistErr) {
+          console.warn("[AUAS V2] persistência da cena falhou (não-fatal):", persistErr);
+        }
+      }
+
       scenesByYear.set(source.year, scene);
       allScenes.push(sceneToPublic(scene));
       attemptedYears.add(source.year);
@@ -297,6 +320,48 @@ export async function runAuasPre2008Analysis(
       sceneIdByYear,
       windows: reducerWindows,
     });
+
+    // ─── Checagem geométrica determinística (turf) ──────────────────────────
+    // Sobreposição AUAS∩AC / AUAS∩AVN é inconsistência objetiva de declaração
+    // (o SIMCAR marca como validação impeditiva). Roda SEMPRE, independente do
+    // resultado da visão, e anexa sinal de dúvida quando detecta sobreposição.
+    try {
+      const checks = computeAuasGeometryChecks(clippedGeometries, polygon.geometry);
+      if (checks) {
+        polygonResult.geometryChecks = checks;
+        const overlapNotes: string[] = [];
+        if (checks.overlapAcHa > 0.01) {
+          overlapNotes.push(
+            `AUAS sobrepõe Área Consolidada declarada em ${checks.overlapAcHa.toFixed(4)} ha — inconsistência de declaração no CAR (o SIMCAR trata sobreposição AUAS×AC como validação impeditiva).`
+          );
+        }
+        if (checks.overlapAvnHa > 0.01) {
+          overlapNotes.push(
+            `AUAS sobrepõe AVN declarada em ${checks.overlapAvnHa.toFixed(4)} ha — inconsistência de declaração no CAR (validação impeditiva no SIMCAR).`
+          );
+        }
+        if (overlapNotes.length > 0) {
+          // Geometria fala mais alto que ausência de sinal visual: se o polígono
+          // estava "sem evidência", passa a ser área de discussão.
+          if (polygonResult.status === "SEM_EVIDENCIA_PRE_2008") {
+            polygonResult.status = "SINAL_DE_DUVIDA";
+            polygonResult.evidenceKind = "DECLARATION_INCONSISTENCY";
+            polygonResult.confidence = "HIGH"; // medição geométrica é determinística
+            polygonResult.doubtSignals = [
+              ...(polygonResult.doubtSignals || []),
+              ...overlapNotes,
+            ];
+            polygonResult.evidence = [...(polygonResult.evidence || []), ...overlapNotes];
+          } else {
+            polygonResult.doubtSignals = [...(polygonResult.doubtSignals || []), ...overlapNotes];
+            polygonResult.evidence = [...(polygonResult.evidence || []), ...overlapNotes];
+          }
+        }
+      }
+    } catch (geoCheckErr) {
+      console.warn("[AUAS V2] checagem geométrica falhou (não-fatal):", geoCheckErr);
+    }
+
     polygonResults.push(polygonResult);
   }
 
@@ -319,6 +384,8 @@ export async function runAuasPre2008Analysis(
     summary: {
       polygonCount: polygons.length,
       alertCount: aggregate.alertCount,
+      doubtCount: aggregate.doubtCount,
+      doubtAreaHa: aggregate.doubtAreaHa,
       inconclusiveCount: aggregate.inconclusiveCount,
       noEvidenceCount: aggregate.noEvidenceCount,
       totalAuasAreaHa: aggregate.totalAuasAreaHa,
@@ -353,6 +420,8 @@ export async function runAuasPre2008Analysis(
     summary: {
       polygonCount: polygons.length,
       alertCount: aggregate.alertCount,
+      doubtCount: aggregate.doubtCount,
+      doubtAreaHa: aggregate.doubtAreaHa,
       inconclusiveCount: aggregate.inconclusiveCount,
       noEvidenceCount: aggregate.noEvidenceCount,
       totalAuasAreaHa: aggregate.totalAuasAreaHa,

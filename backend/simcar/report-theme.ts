@@ -351,6 +351,7 @@ export function buildAcAvnFindings(analysisMeta: any): Finding[] {
 
 const PRE2008_STATUS_LABEL: Record<string, string> = {
     ALERTA_PRE_2008: "Alerta pré-2008",
+    SINAL_DE_DUVIDA: "Sinal de dúvida",
     SEM_EVIDENCIA_PRE_2008: "Sem evidência pré-2008",
     INCONCLUSIVO: "Inconclusivo",
 };
@@ -384,7 +385,7 @@ export function buildAuasFindings(auasMeta: any, kind = detectReportKind(auasMet
                 label: "Polígonos AUAS analisados",
                 status: String(Number(summary.polygonCount || 0)),
                 tone: "info",
-                detail: `${Number(summary.alertCount || 0)} com alerta · ${Number(summary.inconclusiveCount || 0)} inconclusivo(s) · ${Number(summary.totalAuasAreaHa || 0).toFixed(2)} ha no total.`,
+                detail: `${Number(summary.alertCount || 0)} com alerta · ${Number(summary.doubtCount || 0)} com sinal de dúvida · ${Number(summary.inconclusiveCount || 0)} inconclusivo(s) · ${Number(summary.totalAuasAreaHa || 0).toFixed(2)} ha no total.`,
             },
         ];
         if (Number(summary.inconclusiveCount || 0) > 0) {
@@ -393,6 +394,14 @@ export function buildAuasFindings(auasMeta: any, kind = detectReportKind(auasMet
                 status: String(Number(summary.inconclusiveCount || 0)),
                 tone: "warn",
                 detail: "Nesses polígonos não é possível descartar conversão anterior ao marco — revisar manualmente.",
+            });
+        }
+        if (Number(summary.doubtCount || 0) > 0) {
+            findings.push({
+                label: "Áreas passíveis de discussão",
+                status: `${Number(summary.doubtCount || 0)} (${Number(summary.doubtAreaHa || 0).toFixed(2)} ha)`,
+                tone: "warn",
+                detail: "Polígonos com desmate parcial/gradual, estado misto ou sobreposição geométrica com AC/AVN — ver seção própria e figuras por ano.",
             });
         }
         return findings;

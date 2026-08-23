@@ -38,6 +38,8 @@ type MergedObservation = {
   state: GroqWindowObservation["observations"][number]["state"];
   confidence: Confidence;
   windowId: AuasWindowId;
+  /** Fração observável do polígono com sinal de uso/solo exposto (0–1), se relatada. */
+  observableFraction?: number | null;
 };
 
 type MergedTransition = GroqWindowObservation["transitions"][number] & {
@@ -50,7 +52,13 @@ function mergeObservationsByYear(windows: ReducerWindowInput[]): Map<number, Mer
     if (!w.observation) continue;
     for (const obs of w.observation.observations) {
       const list = map.get(obs.year) || [];
-      list.push({ year: obs.year, state: obs.state, confidence: obs.confidence, windowId: w.windowId });
+      list.push({
+        year: obs.year,
+        state: obs.state,
+        confidence: obs.confidence,
+        windowId: w.windowId,
+        observableFraction: obs.observableFraction ?? null,
+      });
       map.set(obs.year, list);
     }
   }
@@ -88,6 +96,30 @@ function bestDefiniteObservation(list: MergedObservation[] | undefined): MergedO
   const definite = list.filter((o) => o.state !== "NOT_OBSERVABLE" && o.confidence !== "INCONCLUSIVE");
   if (definite.length === 0) return null;
   return definite.slice().sort((a, b) => CONFIDENCE_RANK[b.confidence] - CONFIDENCE_RANK[a.confidence])[0];
+}
+
+/** Fração antropizada média por ano (só observações conclusivas). */
+function anthropizedFractionByYear(
+  usabilityByYear: Partial<Record<AuasYear, SceneUsability>>,
+  observationsByYear: Map<number, MergedObservation[]>
+): Partial<Record<AuasYear, number>> {
+  const out: Partial<Record<AuasYear, number>> = {};
+  for (const year of REQUIRED_YEARS) {
+    const list = observationsByYear.get(year);
+    if (!list || list.length === 0 || usabilityByYear[year as AuasYear] !== "USABLE") continue;
+    const withFraction = list.filter((o) => typeof o.observableFraction === "number");
+    if (withFraction.length === 0) continue;
+    // Pondera pela confiança: HIGH=3, MEDIUM=2, LOW=1.
+    let num = 0;
+    let den = 0;
+    for (const o of withFraction) {
+      const w = Math.max(1, CONFIDENCE_RANK[o.confidence]);
+      num += (o.observableFraction as number) * w;
+      den += w;
+    }
+    if (den > 0) out[year as AuasYear] = num / den;
+  }
+  return out;
 }
 
 function yearCovered(
@@ -218,6 +250,67 @@ export function reduceAuasPolygon(input: PolygonEvidenceInput): AuasPolygonResul
     };
   }
 
+  // ─── Sinais de dúvida (P1): desmate raso/gradual que não vira alerta pleno ──
+  // A visão relata MIXED, POSSIBLE_CHANGE e observableFraction; antes esses
+  // três sinais eram descartados silenciosamente. Agora viram o status
+  // SINAL_DE_DUVIDA — área passível de discussão, sem acusar infração.
+  const doubtSignals: string[] = [];
+  const fractions = anthropizedFractionByYear(input.sceneUsabilityByYear, observationsByYear);
+  const fractionYears = Object.keys(fractions).map(Number).sort((a, b) => a - b) as AuasYear[];
+
+  // (a) Estado misto em algum ano com confiança razoável.
+  const mixedObs = REQUIRED_YEARS.map((y) => ({ year: y, obs: bestDefiniteObservation(observationsByYear.get(y)) }))
+    .filter((e) => e.obs?.state === "MIXED" && (e.obs!.confidence === "HIGH" || e.obs!.confidence === "MEDIUM"));
+  for (const { year } of mixedObs) {
+    const frac = fractions[year as AuasYear];
+    doubtSignals.push(
+      `Estado MISTO observado em ${year}${typeof frac === "number" ? ` (~${Math.round(frac * 100)}% com sinal de uso/solo exposto)` : ""} — indício de desmate parcial ou vegetação rala; passível de discussão.`
+    );
+  }
+
+  // (b) POSSIBLE_CHANGE entre anos pré-2008 (fora do marco 2007→2008).
+  const possiblePre = transitions.filter(
+    (t) => t.change === "POSSIBLE_CHANGE" && t.confidence !== "INCONCLUSIVE" && !(t.fromYear === 2007 && t.toYear === 2008)
+  );
+  for (const t of possiblePre) {
+    doubtSignals.push(
+      `Possível alteração na cobertura entre ${t.fromYear} e ${t.toYear} (baixa definição da cena não permite afirmar) — ${t.evidence[0] || "sinal visual sutil"}.`
+    );
+  }
+
+  // (c) Tendência crescente de fração antropizada ≥ 15 p.p. entre cenas —
+  // assinatura típica de desmate raso progressivo.
+  if (fractionYears.length >= 2) {
+    let prev = fractionYears[0];
+    for (const year of fractionYears.slice(1)) {
+      const delta = (fractions[year] ?? 0) - (fractions[prev] ?? 0);
+      if (delta >= 0.15) {
+        doubtSignals.push(
+          `Fração com sinal de uso/solo exposto subiu ~${Math.round((fractions[prev] ?? 0) * 100)}% → ~${Math.round((fractions[year] ?? 0) * 100)}% entre ${prev} e ${year} — progressão compatível com desmate gradual/raso.`
+        );
+        break; // um registro da tendência basta
+      }
+      prev = year;
+    }
+  }
+
+  if (doubtSignals.length > 0) {
+    return {
+      ...base,
+      anthropizedFractionByYear: fractionYears.length > 0 ? fractions : undefined,
+      doubtSignals,
+      status: "SINAL_DE_DUVIDA",
+      pre2008Alert: false,
+      evidenceKind: mixedObs.length > 0 ? "MIXED_STATE_OBSERVED" : possiblePre.length > 0 ? "POSSIBLE_CHANGE_PRE_2008" : "FRACTION_TREND_SUSPICIOUS",
+      observedInterval: null,
+      confidence: "LOW",
+      evidence: doubtSignals,
+      limitations: [
+        "Sinal sutil na série 2003–2008: recomenda-se conferência visual pelo responsável técnico (imagens anexas por ano).",
+      ],
+    };
+  }
+
   const worstConfidence = REQUIRED_YEARS
     .map((y) => bestDefiniteObservation(observationsByYear.get(y))?.confidence ?? "HIGH")
     .sort((a, b) => CONFIDENCE_RANK[a] - CONFIDENCE_RANK[b])[0];
@@ -238,15 +331,19 @@ export function reduceAuasAggregate(polygons: AuasPolygonResult[]): {
   status: PropertyPre2008Status;
   pre2008Alert: boolean;
   alertCount: number;
+  doubtCount: number;
+  doubtAreaHa: number;
   inconclusiveCount: number;
   noEvidenceCount: number;
   alertAreaHa: number;
   totalAuasAreaHa: number;
 } {
   let alertCount = 0;
+  let doubtCount = 0;
   let inconclusiveCount = 0;
   let noEvidenceCount = 0;
   let alertAreaHa = 0;
+  let doubtAreaHa = 0;
   let totalAuasAreaHa = 0;
 
   for (const p of polygons) {
@@ -254,6 +351,9 @@ export function reduceAuasAggregate(polygons: AuasPolygonResult[]): {
     if (p.status === "ALERTA_PRE_2008") {
       alertCount += 1;
       alertAreaHa += p.areaHa;
+    } else if (p.status === "SINAL_DE_DUVIDA") {
+      doubtCount += 1;
+      doubtAreaHa += p.areaHa;
     } else if (p.status === "SEM_EVIDENCIA_PRE_2008") {
       noEvidenceCount += 1;
     } else {
@@ -262,12 +362,20 @@ export function reduceAuasAggregate(polygons: AuasPolygonResult[]): {
   }
 
   const status: PropertyPre2008Status =
-    alertCount > 0 ? "ALERTA_PRE_2008" : inconclusiveCount > 0 ? "INCONCLUSIVO" : "SEM_EVIDENCIA_PRE_2008";
+    alertCount > 0
+      ? "ALERTA_PRE_2008"
+      : doubtCount > 0
+        ? "SINAL_DE_DUVIDA"
+        : inconclusiveCount > 0
+          ? "INCONCLUSIVO"
+          : "SEM_EVIDENCIA_PRE_2008";
 
   return {
     status,
     pre2008Alert: alertCount > 0,
     alertCount,
+    doubtCount,
+    doubtAreaHa,
     inconclusiveCount,
     noEvidenceCount,
     alertAreaHa,

@@ -153,7 +153,7 @@ export function resolveAuasLayerName(year: number): string {
   return readString(`SIMCAR_AUAS_LAYER_${year}`, entry.defaultLayer);
 }
 
-export const AUAS_RULES_VERSION = "auas-pre2008-v1" as const;
+export const AUAS_RULES_VERSION = "auas-pre2008-v2" as const;
 
 export const AUAS_VISION_WINDOWS = [
   { windowId: "W2003_2005" as const, years: [2003, 2004, 2005] as const },

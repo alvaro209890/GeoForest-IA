@@ -724,6 +724,24 @@ export async function buildSimcarReportDocxBuffer(args: {
         );
     }
 
+    // Fase 1 v2 (AUAS pré-2008): seção de dúvidas + anexo por polígono/ano.
+    if (args.auasMeta && auasKind === "AUAS_PRE2008") {
+        try {
+            const { auasDoubtBlocks, auasScenesGalleryBlocks } = await import("./report-docx-auas");
+            const doubtPolygons: any[] = (Array.isArray(args.auasMeta.polygons) ? args.auasMeta.polygons : [])
+                .filter((p: any) => p?.status === "SINAL_DE_DUVIDA" || Number(p?.geometryChecks?.overlapAcHa || 0) > 0.01 || Number(p?.geometryChecks?.overlapAvnHa || 0) > 0.01);
+            const doubtBlocks = auasDoubtBlocks(doubtPolygons);
+            if (doubtBlocks.length > 0) blocks.push(...doubtBlocks);
+            const gallery = await auasScenesGalleryBlocks(
+                Array.isArray(args.auasMeta.scenes) ? args.auasMeta.scenes : [],
+                doubtPolygons.length > 0 ? doubtPolygons : args.auasMeta.polygons || [],
+            );
+            if (gallery.length > 0) blocks.push(...gallery);
+        } catch (auasDocxErr) {
+            console.warn("[SIMCAR DOCX] blocos AUAS F1 v2 falharam (não-fatal):", auasDocxErr instanceof Error ? auasDocxErr.message : auasDocxErr);
+        }
+    }
+
     blocks.push(
         ...sectionTitle("Fundamentação Legal Aplicada", "Normas que definem os marcos temporais usados nesta análise."),
         ...LEGAL_BASIS_LINES.map((text) => toneBullet(text, "info", 16)),

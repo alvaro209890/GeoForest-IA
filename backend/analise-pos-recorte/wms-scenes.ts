@@ -125,8 +125,12 @@ export const MIN_CONTEXT_SENSOR_PIXELS = Math.max(
   Number(process.env.SIMCAR_SCENE_MIN_CONTEXT_PIXELS || 24)
 );
 
-/** Margem relativa mínima, para o polígono nunca encostar na borda do quadro. */
-const CONTEXT_MARGIN_FRACTION = 0.15;
+/**
+ * Margem relativa do contexto. v2 (zoom maior): 0.15 → 0.08 — o polígono
+ * ocupa mais do quadro, facilitando a leitura de desmate raso/parcial pela
+ * visão (pedido do Álvaro: "recorte com zoom maior para cada polígono").
+ */
+const CONTEXT_MARGIN_FRACTION = Number(process.env.SIMCAR_SCENE_CONTEXT_MARGIN ?? 0.08);
 
 /** Teto da expansão, para um polígono minúsculo não virar uma cena regional. */
 const MAX_CONTEXT_SIDE_M = 5_000;
@@ -194,12 +198,12 @@ export function calculateDynamicResolution(
   const MIN_SHORT_SIDE_PX = 480;
 
   let baseLongSide: number;
-  if (areaHa <= 50) baseLongSide = 800;
-  else if (areaHa <= 200) baseLongSide = 900;
-  else if (areaHa <= 500) baseLongSide = 1200;
-  else if (areaHa <= 2000) baseLongSide = 1600;
-  else if (areaHa <= 5000) baseLongSide = 2000;
-  else baseLongSide = 2400;
+  if (areaHa <= 50) baseLongSide = 1200; // v2: 800 → 1200 (zoom maior)
+  else if (areaHa <= 200) baseLongSide = 1400; // v2: 900 → 1400
+  else if (areaHa <= 500) baseLongSide = 1600; // v2: 1200 → 1600
+  else if (areaHa <= 2000) baseLongSide = 2000; // v2: 1600 → 2000
+  else if (areaHa <= 5000) baseLongSide = 2400;
+  else baseLongSide = 2800;
 
   let width: number;
   let height: number;

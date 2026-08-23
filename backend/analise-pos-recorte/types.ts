@@ -17,12 +17,14 @@ export type VisualLandState =
 
 export type PolygonPre2008Status =
   | "ALERTA_PRE_2008"
+  | "SINAL_DE_DUVIDA"
   | "SEM_EVIDENCIA_PRE_2008"
   | "INCONCLUSIVO_NO_MARCO_2008"
   | "INCONCLUSIVO";
 
 export type PropertyPre2008Status =
   | "ALERTA_PRE_2008"
+  | "SINAL_DE_DUVIDA"
   | "SEM_EVIDENCIA_PRE_2008"
   | "INCONCLUSIVO";
 
@@ -59,6 +61,8 @@ export type AuasScene = {
   qualityFlags: string[];
   fetchedAt: string;
   storedImageUrl?: string;
+  /** URL pública (storage local) da cena com overlay, para anexo no DOCX/laudo. */
+  publicImageUrl?: string;
   /** Buffer da imagem já com overlay, usado somente em memória (nunca persistido bruto). */
   imageBuffer?: Buffer;
 };
@@ -96,6 +100,10 @@ export type GroqWindowObservation = {
 export type AuasEvidenceKind =
   | "ANTHROPIZED_BY_2003"
   | "TRANSITION_BEFORE_2008"
+  | "MIXED_STATE_OBSERVED"
+  | "POSSIBLE_CHANGE_PRE_2008"
+  | "FRACTION_TREND_SUSPICIOUS"
+  | "DECLARATION_INCONSISTENCY"
   | "NO_PRE2008_CHANGE_OBSERVED"
   | "ONLY_2007_TO_2008_CHANGE"
   | "INSUFFICIENT_EVIDENCE";
@@ -119,6 +127,25 @@ export type AuasPolygonResult = {
   windowIds: AuasWindowId[];
   evidence: string[];
   limitations: string[];
+  /**
+   * Fração observável do polígono com sinal de uso/solo exposto por ano
+   * (do campo `observableFraction` da visão, consolidado por ano). Alimenta a
+   * tendência de progressão que caracteriza desmate raso gradual.
+   */
+  anthropizedFractionByYear?: Partial<Record<AuasYear, number>>;
+  /** Sinais de dúvida que motivaram o status SINAL_DE_DUVIDA (texto do laudo). */
+  doubtSignals?: string[];
+  /**
+   * Interseções geométricas determinísticas (turf) contra camadas declaradas —
+   * independem da visão. AUAS sobrepondo AC/AVN indica inconsistência de
+   * declaração no CAR (o SIMCAR trata como validação impeditiva).
+   */
+  geometryChecks?: {
+    overlapAcHa: number;
+    overlapAvnHa: number;
+    hasAcLayer: boolean;
+    hasAvnLayer: boolean;
+  };
 };
 
 export type AuasWindowRunStatus = "COMPLETED" | "FAILED" | "SKIPPED";
@@ -137,7 +164,7 @@ export type AuasWindowRun = {
 
 export type AuasPre2008AnalysisV2 = {
   schemaVersion: 2;
-  rulesVersion: "auas-pre2008-v1";
+  rulesVersion: "auas-pre2008-v2";
   jobId: string;
   status: PropertyPre2008Status;
   pre2008Alert: boolean;
@@ -145,6 +172,9 @@ export type AuasPre2008AnalysisV2 = {
   summary: {
     polygonCount: number;
     alertCount: number;
+    /** Polígonos com sinal de dúvida (MIXED/POSSIBLE_CHANGE/tendência de fração). */
+    doubtCount: number;
+    doubtAreaHa: number;
     inconclusiveCount: number;
     noEvidenceCount: number;
     totalAuasAreaHa: number;

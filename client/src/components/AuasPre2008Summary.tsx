@@ -6,24 +6,33 @@ export type SimcarAuasPolygonResultV2 = {
   polygonId: string;
   areaHa: number;
   bbox: [number, number, number, number];
-  status: 'ALERTA_PRE_2008' | 'SEM_EVIDENCIA_PRE_2008' | 'INCONCLUSIVO_NO_MARCO_2008' | 'INCONCLUSIVO';
+  status: 'ALERTA_PRE_2008' | 'SINAL_DE_DUVIDA' | 'SEM_EVIDENCIA_PRE_2008' | 'INCONCLUSIVO_NO_MARCO_2008' | 'INCONCLUSIVO';
   pre2008Alert: boolean;
   evidenceKind: string;
   observedInterval: { fromYear: number | null; toYear: number | null; wording: string } | null;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INCONCLUSIVE';
   evidence: string[];
   limitations: string[];
+  doubtSignals?: string[];
+  geometryChecks?: {
+    overlapAcHa: number;
+    overlapAvnHa: number;
+    hasAcLayer: boolean;
+    hasAvnLayer: boolean;
+  };
 };
 
 export type SimcarAuasMetaV2 = {
   schemaVersion: 2;
   rulesVersion: string;
-  status: 'ALERTA_PRE_2008' | 'SEM_EVIDENCIA_PRE_2008' | 'INCONCLUSIVO';
+  status: 'ALERTA_PRE_2008' | 'SINAL_DE_DUVIDA' | 'SEM_EVIDENCIA_PRE_2008' | 'INCONCLUSIVO';
   pre2008Alert: boolean;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INCONCLUSIVE';
   summary: {
     polygonCount: number;
     alertCount: number;
+    doubtCount?: number;
+    doubtAreaHa?: number;
     inconclusiveCount: number;
     noEvidenceCount: number;
     totalAuasAreaHa: number;
@@ -36,12 +45,14 @@ export type SimcarAuasMetaV2 = {
 
 export function formatSimcarAuasPre2008Status(status?: SimcarAuasMetaV2['status']) {
   if (status === 'ALERTA_PRE_2008') return { label: 'Alerta pré-2008', className: 'border-red-500/25 bg-red-500/10 text-red-200' };
+  if (status === 'SINAL_DE_DUVIDA') return { label: 'Sinal de dúvida', className: 'border-orange-500/30 bg-orange-500/10 text-orange-200' };
   if (status === 'SEM_EVIDENCIA_PRE_2008') return { label: 'Sem evidência pré-2008', className: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' };
   return { label: 'Inconclusivo', className: 'border-amber-500/25 bg-amber-500/10 text-amber-200' };
 }
 
 export function formatSimcarAuasPolygonStatus(status: SimcarAuasPolygonResultV2['status']) {
   if (status === 'ALERTA_PRE_2008') return { label: 'Alerta pré-2008', className: 'border-red-500/25 bg-red-500/10 text-red-200' };
+  if (status === 'SINAL_DE_DUVIDA') return { label: 'Sinal de dúvida', className: 'border-orange-500/30 bg-orange-500/10 text-orange-200' };
   if (status === 'SEM_EVIDENCIA_PRE_2008') return { label: 'Sem evidência pré-2008', className: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' };
   if (status === 'INCONCLUSIVO_NO_MARCO_2008') return { label: 'Inconclusivo no marco 2008', className: 'border-amber-500/25 bg-amber-500/10 text-amber-200' };
   return { label: 'Inconclusivo', className: 'border-amber-500/25 bg-amber-500/10 text-amber-200' };
@@ -73,6 +84,20 @@ function PolygonRow({ polygon }: { polygon: SimcarAuasPolygonResultV2 }) {
           </p>
           {polygon.observedInterval && (
             <p className="text-slate-300">{polygon.observedInterval.wording}</p>
+          )}
+          {(polygon.doubtSignals?.length || 0) > 0 && (
+            <div className="space-y-0.5">
+              {polygon.doubtSignals!.map((item, idx) => (
+                <p key={`doubt-${idx}`} className="text-orange-200/90">
+                  ❓ {item}
+                </p>
+              ))}
+            </div>
+          )}
+          {polygon.geometryChecks && (polygon.geometryChecks.overlapAcHa > 0.01 || polygon.geometryChecks.overlapAvnHa > 0.01) && (
+            <p className="text-orange-200/90">
+              📐 Sobreposição geométrica: AC {polygon.geometryChecks.overlapAcHa.toFixed(4)} ha · AVN {polygon.geometryChecks.overlapAvnHa.toFixed(4)} ha
+            </p>
           )}
           {polygon.evidence.length > 0 && (
             <ul className="list-disc list-inside space-y-0.5 text-slate-400">

@@ -4989,6 +4989,7 @@ export async function processAuasAnalysisV2(
         const analysis = await runAuasPre2008Analysis(jobId, job.clippedGeometries, {
             checkpointStore: createFileCheckpointStore(jobId),
             acAvnContext,
+            uid: uid || job.uid || "anonymous",
             onProgress: (progress: AuasV2Progress) => {
                 throwIfClientDisconnected(res);
                 sendSSE(res, { type: "progress", ...progress });
