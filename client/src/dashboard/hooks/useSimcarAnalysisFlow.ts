@@ -852,7 +852,7 @@ if (!imageOnly && !silentOutput) {
     ]
   );
 
-  const runVectorizedCompleteAnalysis = useCallback(async () => {
+  const runVectorizedImportOnly = useCallback(async () => {
     if (!simcarClipFile) {
       toast.error('Selecione um ZIP vetorizado para continuar.');
       return;
@@ -939,24 +939,12 @@ if (!imageOnly && !silentOutput) {
       setSimcarClipHistory((prev) => [newClip, ...prev.filter((c) => c.jobId !== jobId)]);
       await persistSimcarClipHistoryEntry(newClip);
 
-      patchVectorizedHistoryState(jobId, {
-        status: 'processing',
-        processingStage: 'acavn',
-        error: undefined,
-      });
-      const cloudinaryFiles = [
-        newClip.outputZipUrl ? `- ZIP vetorizado: ${newClip.outputZipUrl}` : '',
-        newClip.contextUrl ? `- Contexto JSON: ${newClip.contextUrl}` : '',
-      ].filter(Boolean);
       void appendSimcarEntriesToConversation(
         newClip,
         [
           {
             role: 'user',
-            text: [
-              'Solicitei importação do ZIP vetorizado para análise completa SIMCAR.',
-              `Arquivo: ${simcarClipFile.name}.`,
-            ].join('\n'),
+            text: `Solicitei importação do ZIP vetorizado (job ${jobId}).`,
           },
           {
             role: 'ai',
@@ -964,8 +952,6 @@ if (!imageOnly && !silentOutput) {
               `Importação vetorizada concluída (job ${jobId}).`,
               `Feições detectadas: ${newClip.totalFeatures}.`,
               `Área do imóvel: ${newClip.propertyAreaHa.toFixed(2)} ha.`,
-              cloudinaryFiles.length > 0 ? `Arquivos no Cloudinary:\n${cloudinaryFiles.join('\n')}` : '',
-              resolvedDownloadUrl ? `Download do ZIP: ${resolvedDownloadUrl}` : '',
             ]
               .filter(Boolean)
               .join('\n\n'),
@@ -974,139 +960,21 @@ if (!imageOnly && !silentOutput) {
         { title: newClip.filename }
       );
 
-      setSimcarVectorizedStatus({ stage: 'acavn', message: 'Executando analise integrada (etapa AC/AVN)...' });
-      const acAvnResult = await runAcAvnAnalysis({
-        jobId,
-        historyEntry: newClip,
-        layers: simcarFixedSatelliteKeys,
-        imageOnly: false,
-        silentOutput: true,
-        skipConversation: true,
-      });
-      if (!acAvnResult.ok) {
-        const errText = acAvnResult.error || 'Falha na etapa AC/AVN.';
-        setSimcarClipError(errText);
-        setSimcarVectorizedStatus({ stage: 'error', message: errText });
-        patchVectorizedHistoryState(jobId, {
-          status: 'failed',
-          processingStage: 'error',
-          error: errText,
-        });
-        return;
-      }
-
       patchVectorizedHistoryState(jobId, {
-        status: 'processing',
-        processingStage: 'auas',
-        error: undefined,
-      });
-      setSimcarVectorizedStatus({ stage: 'auas', message: 'Consolidando laudo unico (AUAS + AC/AVN)...' });
-      const previousAnalysisText = acAvnResult.aiMessage?.text
-        || '';
-      const auasResult = await runAuasAnalysis({
-        jobId,
-        historyEntry: {
-          ...newClip,
-          analysisMeta: acAvnResult.analysisMeta,
-        },
-        previousAnalysis: previousAnalysisText,
-        acAvnMeta: acAvnResult.analysisMeta,
-        skipConversation: true,
-      });
-      if (!auasResult.ok) {
-        const errText = auasResult.error || 'Falha na etapa AUAS.';
-        setSimcarClipError(errText);
-        setSimcarVectorizedStatus({ stage: 'error', message: errText });
-        patchVectorizedHistoryState(jobId, {
-          status: 'failed',
-          processingStage: 'error',
-          error: errText,
-        });
-        return;
-      }
-
-      const acAvnImages = (acAvnResult.images || [])
-        .filter((img, idx, arr) => img?.url && arr.findIndex((x) => x.url === img.url) === idx);
-      const auasImages = (auasResult.images || [])
-        .filter((img, idx, arr) => img?.url && arr.findIndex((x) => x.url === img.url) === idx);
-      setSimcarAnalysisImages(acAvnImages);
-      setSimcarAnalysisMessages([]);
-      const rawAuasText = String(auasResult.aiMessage?.text || '').trim();
-      const backendLooksIntegrated =
-        /(ac\/avn|area consolidada|área consolidada)/i.test(rawAuasText) && /\bauas\b/i.test(rawAuasText);
-      const finalCombinedText =
-        (previousAnalysisText && rawAuasText && !backendLooksIntegrated)
-          ? buildIntegratedVectorizedReport(previousAnalysisText, rawAuasText)
-          : rawAuasText
-            || buildIntegratedVectorizedReport(
-              acAvnResult.aiMessage?.text || '',
-              auasResult.aiMessage?.text || ''
-            );
-      const mergedImages = [...acAvnImages, ...auasImages]
-        .filter((img, idx, arr) => img?.url && arr.findIndex((x) => x.url === img.url) === idx);
-      const finalAiMessage: SimcarAnalysisMessage = {
-        role: 'ai',
-        text: finalCombinedText,
-        thinkingText: auasResult.aiMessage?.thinkingText,
-        images: mergedImages.map((img) => img.url),
-      };
-      setSimcarAuasImages(auasImages);
-      setSimcarAuasMessages([finalAiMessage]);
-      setSimcarResultImagePanelsOpen({ acAvn: false, auas: false });
-      setSimcarClipHistory((prev) =>
-        prev.map((c) =>
-          c.jobId === jobId
-            ? {
-              ...c,
-              status: 'completed',
-              processingStage: 'done',
-              error: undefined,
-              analysisMeta: acAvnResult.analysisMeta,
-              auasAnalysisImages: auasImages,
-              auasAnalysisMessages: [finalAiMessage],
-              auasMeta: auasResult.auasMeta,
-            }
-            : c
-        )
-      );
-      void patchPersistedSimcarClip(jobId, {
         status: 'completed',
         processingStage: 'done',
         error: undefined,
-        analysisMeta: acAvnResult.analysisMeta,
-        auasAnalysisImages: auasImages,
-        auasAnalysisMessages: [finalAiMessage],
-        auasMeta: auasResult.auasMeta,
       });
-      const imageLinks = mergedImages.map((img) => `- ${img.url}`);
-      await appendSimcarEntriesToConversation(
-        {
-          ...newClip,
-          analysisMeta: acAvnResult.analysisMeta,
-          auasAnalysisImages: auasImages,
-          auasAnalysisMessages: [finalAiMessage],
-          auasMeta: auasResult.auasMeta,
-        },
-        [
-          {
-            role: 'user',
-            text: `Solicitei analise completa vetorizada para o recorte ${jobId} (AC, AVN e AUAS em laudo unico).`,
-          },
-          {
-            role: 'ai',
-            text: [
-              `Analise completa concluida para o recorte ${jobId}.`,
-              imageLinks.length > 0 ? `Imagens no Cloudinary:\n${imageLinks.join('\n')}` : '',
-              finalCombinedText,
-            ]
-              .filter(Boolean)
-              .join('\n\n'),
-          },
-        ]
-      );
+      setSimcarVectorizedStatus({ stage: 'done', message: 'ZIP vetorizado importado. Escolha uma análise abaixo para continuar.' });
+      setSimcarVectorizedRunning(false);
+      toast.success('ZIP vetorizado importado. Escolha uma das análises abaixo.');
+      return;
+      const cloudinaryFiles = [
+        newClip.outputZipUrl ? `- ZIP vetorizado: ${newClip.outputZipUrl}` : '',
+        newClip.contextUrl ? `- Contexto JSON: ${newClip.contextUrl}` : '',
+      ].filter(Boolean);
 
-      setSimcarVectorizedStatus({ stage: 'done', message: 'Análise completa finalizada com sucesso.' });
-      toast.success('Análise completa por IA concluída.');
+
     } catch (err: any) {
       const message = String(err?.message || 'Erro inesperado na análise completa vetorizada.');
       setSimcarClipError(message);
@@ -1301,7 +1169,7 @@ if (!imageOnly && !silentOutput) {
     sendSimcarFollowUpMessage,
     runAcAvnAnalysis,
     runAuasAnalysis,
-    runVectorizedCompleteAnalysis,
+    runVectorizedImportOnly,
     runPos2008Phase,
     runAcVegetacaoPhase,
     pos2008PhaseState,

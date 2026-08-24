@@ -3182,7 +3182,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     sendSimcarFollowUpMessage,
     runAcAvnAnalysis,
     runAuasAnalysis,
-    runVectorizedCompleteAnalysis,
+    runVectorizedImportOnly,
     runPos2008Phase,
     runAcVegetacaoPhase,
     pos2008PhaseState,
@@ -5259,7 +5259,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   <div className="mb-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3">
                     <p className="text-xs text-cyan-200 font-medium">Modo vetorizado ativo</p>
                     <p className="text-[11px] text-slate-300 mt-1">
-                      Neste modo, você envia um ZIP já vetorizado do modelo SIMCAR e a próxima etapa será apenas a análise com IA.
+                      Neste modo, você envia um ZIP já vetorizado do modelo SIMCAR. Depois do import, escolha uma das análises abaixo (simula o fluxo pós-recorte, mas sobre os polígonos do seu ZIP).
                     </p>
                   </div>
                 )}
@@ -5424,10 +5424,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   onClick={async () => {
                     if (simcarClipMode === 'vectorized-analysis') {
                       if (simcarClipFile) {
-                        await runVectorizedCompleteAnalysis();
+                        await runVectorizedImportOnly();
                         return;
                       }
                       if (simcarVectorizedServerZipReady && activeSimcarClip?.jobId) {
+                        if (activeSimcarClip.processingStage === 'done') {
+                          toast.info('ZIP já importado. Use as análises abaixo para continuar.');
+                          return;
+                        }
                         const resumedStage: NonNullable<SimcarClipHistoryItem['processingStage']> =
                           activeSimcarClip.processingStage === 'auas' ||
                             activeSimcarClip.processingStage === 'acavn' ||
@@ -5693,12 +5697,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                   {(simcarClipProcessing || simcarVectorizedRunning) ? (
                     <>
                       <Loader2 size={16} className="animate-spin" />
-                      <span>{simcarClipMode === 'auto-clip' ? 'Processando...' : 'Executando análise completa...'}</span>
+                      <span>{simcarClipMode === 'auto-clip' ? 'Processando...' : 'Importando ZIP...'}</span>
                     </>
                   ) : (
                     <>
                       {simcarClipMode === 'auto-clip' ? <Scissors size={16} /> : <Brain size={16} />}
-                      <span>{simcarClipMode === 'auto-clip' ? 'Processar Recorte' : 'Análise Completa por IA'}</span>
+                      <span>{simcarClipMode === 'auto-clip' ? 'Processar Recorte' : 'Importar ZIP'}</span>
                     </>
                   )}
                 </button>
