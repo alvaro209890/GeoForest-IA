@@ -5037,7 +5037,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </p>
                       {isSimcarModeLocked && (
                         <p className="text-[11px] text-amber-300 mt-1">
-                          Modo travado neste recorte: {simcarLockedMode === 'vectorized-analysis' ? 'Análise Vetorizada IA' : 'Recorte Automático'}.
+                          Recorte ativo em: {simcarLockedMode === 'vectorized-analysis' ? 'Análise Vetorizada IA' : 'Recorte Automático'}. Trocar de modo inicia um novo rascunho.
                         </p>
                       )}
                     </div>
@@ -5055,18 +5055,21 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                             key={modeOption.key}
                             type="button"
                             onClick={() => {
-                              if (isSimcarModeLocked) {
-                                toast.info('Este recorte já foi processado em um modo fixo. Clique em "Novo Recorte" para trocar de modo.');
+                              if (simcarClipMode === modeOption.key) return;
+                              if (isSimcarModeLocked && activeSimcarClip?.status === 'processing') {
+                                toast.info('O recorte ativo ainda está processando. Aguarde terminar para trocar de modo.');
                                 return;
                               }
-                              if (simcarClipMode === modeOption.key) return;
                               resetSimcarDraft(modeOption.key);
+                              if (isSimcarModeLocked && activeSimcarClip) {
+                                toast.info(`Novo rascunho iniciado no modo ${modeOption.label} — o recorte anterior continua salvo no histórico.`);
+                              }
                             }}
-                            disabled={isSimcarModeLocked}
-                            title={isSimcarModeLocked ? 'Modo bloqueado para o recorte ativo' : undefined}
+                            disabled={isSimcarModeLocked && activeSimcarClip?.status === 'processing'}
+                            title={isSimcarModeLocked && activeSimcarClip?.status === 'processing' ? 'Modo bloqueado enquanto o recorte ativo processa' : undefined}
                             className={`px-3 py-2 rounded-lg border text-[11px] font-semibold transition-colors ${isActive
                               ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-200'
-                              : isSimcarModeLocked
+                              : isSimcarModeLocked && activeSimcarClip?.status === 'processing'
                                 ? 'border-white/10 bg-white/5 text-slate-600 cursor-not-allowed'
                                 : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
                               }`}
