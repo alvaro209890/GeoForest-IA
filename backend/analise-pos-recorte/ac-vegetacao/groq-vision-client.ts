@@ -39,6 +39,7 @@ function buildSystemPrompt(): string {
     "Você NÃO decide se há infração, passivo ambiental ou regularidade jurídica — isso é proibido.",
     "Você NÃO deve inventar IDs de cena, ano ou polígono que não foram enviados.",
     FALSE_COLOR_PROMPT_NOTE,
+    "OVERLAY AVN: na cena do estado atual, polígonos amarelos representam a camada AVN declarada pelo projeto; o contorno vermelho representa a AC analisada. Compare a vegetação visível dentro da AC com a área AVN amarela e descreva coincidências ou divergências em evidence, sem transformar isso em conclusão jurídica.",
     "Se uma cena estiver nublada, ocluída, cortada ou ilegível, diga explicitamente; não adivinhe.",
     "Responda apenas com um objeto JSON estrito no schema pedido, em português do Brasil, sem markdown.",
   ].join(" ");

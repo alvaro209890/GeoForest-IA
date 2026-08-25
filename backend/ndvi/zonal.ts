@@ -38,6 +38,33 @@ function areaHaOf(geometry: Geometry): number {
 }
 
 /**
+ * Converte o percentual bruto do GDAL (denominador = retângulo do recorte) em
+ * cobertura válida dentro da geometria. Sem isso, polígonos irregulares eram
+ * falsamente marcados como nuvem porque o nodata fora do polígono entrava no
+ * denominador.
+ */
+export function zonalCoverage(args: {
+  rasterPixels: number;
+  gdalValidPercent: number | null;
+  geometryAreaM2: number;
+  pixelAreaM2?: number;
+}): { validPixels: number; totalPixels: number; validPct: number } {
+  const rawPct = args.gdalValidPercent === null
+    ? 1
+    : Math.max(0, Math.min(1, args.gdalValidPercent / 100));
+  const validPixels = Math.max(0, Math.round(args.rasterPixels * rawPct));
+  const geometryPixels = args.pixelAreaM2 && args.pixelAreaM2 > 0
+    ? Math.max(1, Math.round(args.geometryAreaM2 / args.pixelAreaM2))
+    : Math.max(0, args.rasterPixels);
+  const totalPixels = Math.max(validPixels, geometryPixels);
+  return {
+    validPixels,
+    totalPixels,
+    validPct: totalPixels > 0 ? Math.max(0, Math.min(1, validPixels / totalPixels)) : 0,
+  };
+}
+
+/**
  * Mede uma feição. Devolve `null` só quando o recorte falha de todo (feição fora do
  * raster) — o resto vira aviso na própria linha, nunca omissão silenciosa.
  */
@@ -83,11 +110,14 @@ export async function measureFeature(args: {
   if (!stats) return null;
 
   // gdalinfo dá o percentual de pixels válidos; o total sai da grade do recorte.
-  const validPct =
-    stats.validPercent === null ? 1 : Math.max(0, Math.min(1, stats.validPercent / 100));
   const grade = await readGrid(recorte, args.jobId);
-  const totalPixels = grade ? grade.ts[0] * grade.ts[1] : 0;
-  const validPixels = Math.round(totalPixels * validPct);
+  const rasterPixels = grade ? grade.ts[0] * grade.ts[1] : 0;
+  const { totalPixels, validPixels, validPct } = zonalCoverage({
+    rasterPixels,
+    gdalValidPercent: stats.validPercent,
+    geometryAreaM2: areaHa * 10_000,
+    pixelAreaM2: grade?.pixelAreaM2,
+  });
 
   let aviso: NdviZonalStat["aviso"] = null;
   if (totalPixels > 0 && totalPixels < NDVI_MIN_PIXELS) aviso = "area_pequena_demais";

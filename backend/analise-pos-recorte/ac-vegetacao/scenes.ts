@@ -8,6 +8,7 @@
  */
 import {
   buildAuasPolygonOverlaySvg,
+  buildMultiLayerOverlaySvg,
   calculateDynamicResolution,
   expandBboxForContext,
   polygonSensorPixels,
@@ -21,6 +22,7 @@ import {
   type WmsFetchDeps,
 } from "../wms-scenes";
 import { classifySceneUsability } from "../image-quality";
+import type { Geometry } from "geojson";
 import type { AcVegetacaoScene } from "./types";
 import type { AcPotentialPolygon } from "./types";
 
@@ -36,6 +38,12 @@ export type AcSceneSpec = {
   style?: string;
 };
 
+export type AcSceneOverlayOptions = {
+  avnGeometries?: Geometry[];
+  /** Enquadramento da cena atual: extensão combinada AC + AVN (zoom to layer). */
+  focusBbox?: [number, number, number, number];
+};
+
 export function buildAcSceneId(polygonId: string, key: string): string {
   return `${polygonId}:${key}`;
 }
@@ -43,14 +51,18 @@ export function buildAcSceneId(polygonId: string, key: string): string {
 /**
  * Gera uma cena comparável para um polígono AC (mesmo bbox/dimensão/overlay).
  * Aceita `style` (NIR) — monta `layers=<mosaico>&styles=<estilo>`.
+ * `avnGeometries` opcional: desenha a AVN declarada em amarelo além do polígono
+ * da AC em vermelho, para a IA cruzar o que o projeto declara com o que a cena
+ * mostra ("fechar com mais certeza").
  */
 export async function buildAcVegetacaoScene(
   polygon: AcPotentialPolygon,
   spec: AcSceneSpec,
-  deps: BuildAcVegetacaoSceneDeps = {}
+  deps: BuildAcVegetacaoSceneDeps = {},
+  overlay: AcSceneOverlayOptions = {},
 ): Promise<AcVegetacaoScene> {
   const groundResolutionM = sensorGroundResolutionM(spec.sensor);
-  const sceneBbox = expandBboxForContext(polygon.bbox, groundResolutionM);
+  const sceneBbox = expandBboxForContext(overlay.focusBbox || polygon.bbox, groundResolutionM);
   const { width, height } = calculateDynamicResolution(polygon.areaHa, sceneBbox, groundResolutionM);
   const native = polygonSensorPixels(polygon.bbox, groundResolutionM);
   const now = deps.now || (() => new Date().toISOString());
@@ -95,7 +107,23 @@ export async function buildAcVegetacaoScene(
       height,
       { ...deps, styles }
     );
-    const overlaySvg = buildAuasPolygonOverlaySvg(width, height, sceneBbox, polygon.geometry);
+    const overlaySvg =
+      overlay.avnGeometries && overlay.avnGeometries.length > 0
+        ? buildMultiLayerOverlaySvg(width, height, sceneBbox, [
+            ...overlay.avnGeometries.map((geometry) => ({
+              geometry,
+              stroke: "#FFD700",
+              strokeWidth: 2.5,
+              fill: "rgba(255,215,0,0.10)",
+            })),
+            {
+              geometry: polygon.geometry,
+              stroke: "#FF0000",
+              strokeWidth: 3.5,
+              fill: "rgba(255,0,0,0.08)",
+            },
+          ])
+        : buildAuasPolygonOverlaySvg(width, height, sceneBbox, polygon.geometry);
     const composited = await compositeOverlay(baseImage, overlaySvg);
     const classification = await classifySceneUsability(composited, { usedResolutionFallback });
     usability = classification.usability;

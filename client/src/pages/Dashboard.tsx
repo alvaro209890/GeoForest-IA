@@ -113,7 +113,6 @@ import {
   type SimcarLayerSummary,
   type SimcarClipSummary,
   type SimcarClipHistoryItem,
-  type SimcarServerRuntimeState,
   type VerticesLayer,
   type VerticesResultRow,
   type VerticesProgress,
@@ -150,7 +149,6 @@ import {
   normalizeImageCaption,
   normalizeBackendText,
   removeRoboticAuasLines,
-  buildIntegratedVectorizedReport,
 } from '@/dashboard/lib/format';
 import {
   formatSimcarAuasStatus,
@@ -333,7 +331,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     simcarSigefParcelCode,
     simcarClipJobId,
     simcarClipHistory,
-    simcarServerRuntimeState,
     activeSimcarClip,
     simcarLockedMode,
     isSimcarModeLocked,
@@ -348,7 +345,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     simcarFileInputRef,
     simcarClipProgressPendingRef,
     simcarCancelTimerRef,
-    simcarVectorizedResumeInFlightRef,
     setSimcarClipFile,
     setSimcarClipMode,
     setSimcarClipLayers,
@@ -369,7 +365,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     setSimcarSigefParcelCode,
     setSimcarClipJobId,
     setSimcarClipHistory,
-    setSimcarServerRuntimeState,
     loadSimcarClipLayers,
   } = useSimcarClipJobs();
 
@@ -645,59 +640,29 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
 
   const simcarUnifiedVectorizedProgress = useMemo(() => {
     if (!simcarVectorizedStatus) return null;
-    const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
-    const acPercent = clamp(simcarAnalysisProgress?.percent ?? 0);
-    const auasPercent = clamp(simcarAuasProgress?.percent ?? 0);
 
     if (simcarVectorizedStatus.stage === 'importing') {
       return {
-        percent: 10,
-        phaseLabel: '1/3 Importando',
+        percent: 25,
+        phaseLabel: 'Importando ZIP',
         message: simcarVectorizedStatus.message,
-      };
-    }
-
-    if (simcarVectorizedStatus.stage === 'acavn') {
-      return {
-        percent: clamp(12 + acPercent * 0.47),
-        phaseLabel: '2/3 AC/AVN',
-        message: simcarAnalysisProgress?.message || simcarVectorizedStatus.message,
-      };
-    }
-
-    if (simcarVectorizedStatus.stage === 'auas') {
-      return {
-        percent: clamp(60 + auasPercent * 0.39),
-        phaseLabel: '3/3 AUAS',
-        message: simcarAuasProgress?.message || simcarVectorizedStatus.message,
       };
     }
 
     if (simcarVectorizedStatus.stage === 'done') {
       return {
         percent: 100,
-        phaseLabel: 'Concluído',
+        phaseLabel: 'ZIP pronto',
         message: simcarVectorizedStatus.message,
       };
     }
 
-    const fallback = simcarAuasProcessing
-      ? clamp(60 + auasPercent * 0.39)
-      : simcarAnalysisProcessing
-        ? clamp(12 + acPercent * 0.47)
-        : 0;
     return {
-      percent: fallback,
+      percent: 0,
       phaseLabel: 'Falha',
       message: simcarVectorizedStatus.message,
     };
-  }, [
-    simcarAnalysisProcessing,
-    simcarAnalysisProgress,
-    simcarAuasProcessing,
-    simcarAuasProgress,
-    simcarVectorizedStatus,
-  ]);
+  }, [simcarVectorizedStatus]);
   useEffect(() => {
     if (!simcarUnifiedVectorizedProgress) {
       setSimcarUnifiedProgressDisplay(0);
@@ -736,8 +701,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     simcarClipCancelRequestedRef.current = false;
     simcarAnalysisProcessJobIdRef.current = null;
     simcarAuasProcessJobIdRef.current = null;
-    simcarVectorizedResumeInFlightRef.current = null;
-    setSimcarServerRuntimeState(null);
     setSimcarClipMode(nextMode);
     setSimcarClipCanceling(false);
     setSimcarClipFile(null);
@@ -1438,28 +1401,25 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
       runtime?: { serverStatus?: string; serverEndpoint?: string }
     ) => {
       const isVectorized = clip.sourceMode === 'vectorized-analysis';
-      const hasVectorizedFinalReport =
-        Array.isArray(clip.auasAnalysisMessages) && clip.auasAnalysisMessages.length > 0;
       const runtimeStageInfo = runtime?.serverEndpoint
         ? inferSimcarStageFromEndpoint(runtime.serverEndpoint, clip.sourceMode)
         : {};
       const runtimeStatus = String(runtime?.serverStatus || '').trim().toLowerCase();
-      const serverRunning = runtimeStatus === 'running' || runtimeStatus === 'cancel_requested';
+      const normalizedRuntimeEndpoint = String(runtime?.serverEndpoint || '').trim().toLowerCase();
+      const serverRunning =
+        (runtimeStatus === 'running' || runtimeStatus === 'cancel_requested') &&
+        (!isVectorized || normalizedRuntimeEndpoint === '/api/simcar/clip/import-vectorized');
       const inferredStage: NonNullable<SimcarClipHistoryItem['processingStage']> =
         clip.processingStage === 'done' || clip.processingStage === 'error' || clip.processingStage === 'auas' || clip.processingStage === 'acavn' || clip.processingStage === 'importing'
           ? clip.processingStage
-          : isVectorized
-            ? hasVectorizedFinalReport
-              ? 'done'
-              : 'acavn'
+          : isVectorized && clip.status === 'completed'
+            ? 'done'
             : 'importing';
       const effectiveStage: NonNullable<SimcarClipHistoryItem['processingStage']> =
         runtimeStageInfo.stage && (runtimeStageInfo.stage === 'importing' || runtimeStageInfo.stage === 'acavn' || runtimeStageInfo.stage === 'auas' || runtimeStageInfo.stage === 'done' || runtimeStageInfo.stage === 'error')
           ? runtimeStageInfo.stage
           : inferredStage;
-      const shouldResumeProcessing =
-        clip.status === 'processing' ||
-        (isVectorized && clip.status === 'completed' && !hasVectorizedFinalReport);
+      const shouldResumeProcessing = clip.status === 'processing';
 
       setSimcarClipDownloadUrl(resolveBackendDownloadUrl(clip.downloadUrl, clip.outputZipUrl));
       setSimcarClipJobId(clip.jobId);
@@ -1508,50 +1468,21 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
         if (isVectorized) {
           setSimcarVectorizedRunning(serverRunning);
           setSimcarClipProcessing(false);
-          const nextStage = effectiveStage === 'done' ? 'acavn' : effectiveStage;
+          const nextStage = effectiveStage === 'error' ? 'error' : 'importing';
           setSimcarVectorizedStatus({
             stage: nextStage,
             message: serverRunning
-              ? (
-                nextStage === 'importing'
-                  ? 'Importando ZIP vetorizado no servidor...'
-                  : nextStage === 'acavn'
-                    ? 'Análise AC/AVN em andamento no servidor...'
-                    : 'Análise AUAS em andamento no servidor...'
-              )
-              : (
-                runtimeStageInfo.message
-                || (nextStage === 'auas'
-                  ? 'Preparando etapa AUAS para concluir o laudo vetorizado...'
-                  : 'Processamento vetorizado em recuperação automática no servidor...')
-              ),
+              ? 'Importando ZIP vetorizado no servidor...'
+              : runtimeStageInfo.message || 'Importação vetorizada interrompida; envie o ZIP novamente.',
           });
-          if (nextStage === 'acavn' && serverRunning) {
-            setSimcarAnalysisProcessing(true);
-            setSimcarAuasProcessing(false);
-            setSimcarAnalysisProgress((prev) => ({
-              step: 'analyzing',
-              percent: Math.max(12, Math.round(Number(prev?.percent || 35))),
-              message: 'Análise AC/AVN em andamento no servidor...',
-            }));
-            setSimcarAuasProgress(null);
-          } else if (nextStage === 'auas' && serverRunning) {
-            setSimcarAnalysisProcessing(false);
-            setSimcarAuasProcessing(true);
-            setSimcarAnalysisProgress(null);
-            setSimcarAuasProgress((prev) => ({
-              step: 'analyzing',
-              percent: Math.max(60, Math.round(Number(prev?.percent || 72))),
-              message: 'Análise AUAS em andamento no servidor...',
-            }));
-          } else {
-            setSimcarAnalysisProcessing(false);
-            setSimcarAuasProcessing(false);
-            setSimcarAnalysisProgress(null);
-            setSimcarAuasProgress(null);
-          }
+
+          // As análises pós-recorte têm estado próprio nos três cards. Selecionar
+          // ou recuperar o ZIP nunca simula AC/AVN ou AUAS em execução.
+          setSimcarAnalysisProcessing(false);
+          setSimcarAuasProcessing(false);
+          setSimcarAnalysisProgress(null);
+          setSimcarAuasProgress(null);
 	        } else {
-	          const normalizedRuntimeEndpoint = String(runtime?.serverEndpoint || '').trim().toLowerCase();
 	          const runningAcAvn = serverRunning && normalizedRuntimeEndpoint === '/api/simcar/clip/analyze';
 	          const runningAuas = serverRunning && normalizedRuntimeEndpoint === '/api/simcar/clip/analyze-auas';
 	          const runningBaseClip = serverRunning && (
@@ -1601,11 +1532,11 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
       setSimcarAuasProgress(null);
       setSimcarClipProgress(null);
 
-      if (isVectorized && hasVectorizedFinalReport) {
+      if (isVectorized && clip.status === 'completed') {
         setSimcarVectorizedRunning(false);
         setSimcarVectorizedStatus({
           stage: 'done',
-          message: 'Análise completa finalizada com sucesso.',
+          message: 'ZIP vetorizado importado. Escolha uma análise abaixo para continuar.',
         });
         setSimcarUnifiedProgressDisplay(100);
       } else if (clip.status === 'failed' || clip.status === 'cancelled') {
@@ -2051,7 +1982,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     const activeClip = activeSimcarClip;
     const activeClipJobId = String(activeClip?.jobId || '').trim();
     if (!uid || !activeClip || !activeClipJobId) {
-      setSimcarServerRuntimeState(null);
       return;
     }
 
@@ -2067,11 +1997,15 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
           .filter((data: any) => {
             const endpoint = String(data?.endpoint || '').trim().toLowerCase();
             const clipJobId = String(data?.metadata?.clipJobId || '').trim();
-            return clipJobId === activeClipJobId && endpoint.startsWith('/api/simcar/clip');
+            if (clipJobId !== activeClipJobId) return false;
+            // No modo vetorizado, o cabeçalho acompanha somente a importação.
+            // Fases analíticas são independentes e pertencem aos próprios cards.
+            return activeClip.sourceMode === 'vectorized-analysis'
+              ? endpoint === '/api/simcar/clip/import-vectorized'
+              : endpoint.startsWith('/api/simcar/clip');
           })
           .sort((a: any, b: any) => Number(b?.updatedAtMs || 0) - Number(a?.updatedAtMs || 0));
         if (related.length === 0) {
-          setSimcarServerRuntimeState(null);
           return;
         }
 
@@ -2079,40 +2013,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
         const latestStatus = String(latest?.status || '').trim().toLowerCase();
         const endpoint = String(latest?.endpoint || '').trim();
         const normalizedLatestEndpoint = endpoint.toLowerCase();
-        const hasRunningJob = related.some((item: any) => {
-          const status = String(item?.status || '').trim().toLowerCase();
-          return status === 'running' || status === 'cancel_requested';
-        });
-        const hasCompletedImport = related.some((item: any) => {
-          const status = String(item?.status || '').trim().toLowerCase();
-          const normalizedEndpoint = String(item?.endpoint || '').trim().toLowerCase();
-          return status === 'completed' && normalizedEndpoint === '/api/simcar/clip/import-vectorized';
-        });
-        const hasCompletedAnalyze = related.some((item: any) => {
-          const status = String(item?.status || '').trim().toLowerCase();
-          const normalizedEndpoint = String(item?.endpoint || '').trim().toLowerCase();
-          const imageOnly = item?.metadata?.imageOnly === true;
-          return status === 'completed' && normalizedEndpoint === '/api/simcar/clip/analyze' && !imageOnly;
-        });
-        const hasCompletedAuas = related.some((item: any) => {
-          const status = String(item?.status || '').trim().toLowerCase();
-          const normalizedEndpoint = String(item?.endpoint || '').trim().toLowerCase();
-          return status === 'completed' && normalizedEndpoint === '/api/simcar/clip/analyze-auas';
-        });
-        setSimcarServerRuntimeState({
-          latestStatus,
-          latestEndpoint: normalizedLatestEndpoint,
-          hasRunningJob,
-          hasCompletedImport,
-          hasCompletedAnalyze,
-          hasCompletedAuas,
-        });
-
         const stageInfo = inferSimcarStageFromEndpoint(endpoint, activeClip.sourceMode);
-        const hasFinalVectorizedReport =
-          activeClip.sourceMode === 'vectorized-analysis' &&
-          Array.isArray(activeClip.auasAnalysisMessages) &&
-          activeClip.auasAnalysisMessages.length > 0;
 
         const patch: Partial<SimcarClipHistoryItem> = {};
         if (latestStatus === 'running' || latestStatus === 'cancel_requested') {
@@ -2124,33 +2025,18 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
           if (activeClip.sourceMode === 'vectorized-analysis') patch.processingStage = 'error';
           patch.error = String(latest?.error || '').trim() || activeClip.error;
         } else if (latestStatus === 'completed') {
-          if (normalizedLatestEndpoint === '/api/simcar/clip/analyze-auas') {
-            if (activeClip.sourceMode === 'vectorized-analysis') {
-              patch.status = hasFinalVectorizedReport ? 'completed' : activeClip.status || 'processing';
-              if (hasFinalVectorizedReport) {
-                patch.processingStage = 'done';
-              }
-            } else {
-              patch.status = 'completed';
-            }
+          if (normalizedLatestEndpoint === '/api/simcar/clip/import-vectorized') {
+            patch.status = 'completed';
+            patch.processingStage = 'done';
+            patch.error = undefined;
+          } else if (normalizedLatestEndpoint === '/api/simcar/clip/analyze-auas') {
+            patch.status = 'completed';
             patch.error = undefined;
           } else if (normalizedLatestEndpoint === '/api/simcar/clip/analyze') {
-            if (activeClip.sourceMode === 'vectorized-analysis' && !hasFinalVectorizedReport) {
-              patch.status = 'processing';
-              patch.processingStage = 'auas';
-              patch.error = undefined;
-            } else {
-              patch.status = 'completed';
-              patch.error = undefined;
-            }
-          } else if (
-            normalizedLatestEndpoint === '/api/simcar/clip' ||
-            normalizedLatestEndpoint === '/api/simcar/clip/import-vectorized'
-          ) {
-            patch.status = activeClip.sourceMode === 'vectorized-analysis' ? activeClip.status : 'completed';
-            if (activeClip.sourceMode === 'vectorized-analysis' && !hasFinalVectorizedReport) {
-              patch.processingStage = activeClip.processingStage || 'acavn';
-            }
+            patch.status = 'completed';
+            patch.error = undefined;
+          } else if (normalizedLatestEndpoint === '/api/simcar/clip') {
+            patch.status = 'completed';
             patch.error = undefined;
           }
         }
@@ -2189,7 +2075,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     inferSimcarStageFromEndpoint,
     persistSimcarClipHistoryEntry,
     selectSimcarClipEntry,
-    setSimcarServerRuntimeState,
     userProfile?.uid,
   ]);
 
@@ -3211,196 +3096,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     setSimcarVectorizedStatus,
     setSimcarUnifiedProgressDisplay,
   });
-
-  useEffect(() => {
-    const clip = activeSimcarClip;
-    if (!clip || clip.sourceMode !== 'vectorized-analysis') return;
-    const jobId = String(clip.jobId || '').trim();
-    if (!jobId) return;
-
-    const hasFinalVectorizedReport =
-      Array.isArray(clip.auasAnalysisMessages) &&
-      clip.auasAnalysisMessages.length > 0;
-    if (hasFinalVectorizedReport) {
-      if (clip.status !== 'completed' || clip.processingStage !== 'done') {
-        const patch: Partial<SimcarClipHistoryItem> = {
-          status: 'completed',
-          processingStage: 'done',
-          error: undefined,
-        };
-        setSimcarClipHistory((prev) =>
-          prev.map((item) => (item.jobId === jobId ? { ...item, ...patch } : item))
-        );
-        void patchPersistedSimcarClip(jobId, patch).catch(() => undefined);
-      }
-      return;
-    }
-
-    if (clip.status !== 'processing') return;
-    if (simcarServerRuntimeState?.hasRunningJob) return;
-    if (simcarVectorizedRunning || simcarAnalysisProcessing || simcarAuasProcessing) return;
-    if (simcarVectorizedResumeInFlightRef.current === jobId) return;
-
-    const dedupeImages = (images: Array<{ url: string; caption: string }>) =>
-      images.filter((img, idx, arr) => img?.url && arr.findIndex((item) => item.url === img.url) === idx);
-
-    const existingAcAvnText = (Array.isArray(clip.analysisMessages) ? clip.analysisMessages : [])
-      .filter((message) => message.role === 'ai')
-      .map((message) => String(message.text || '').trim())
-      .filter(Boolean)
-      .join('\n\n---\n\n')
-      .trim();
-    const existingAcAvnMeta = clip.analysisMeta;
-    const existingAcAvnImages = dedupeImages(Array.isArray(clip.analysisImages) ? clip.analysisImages : []);
-    const hasAcAvnArtifacts =
-      Boolean(existingAcAvnText) ||
-      Boolean(existingAcAvnMeta) ||
-      existingAcAvnImages.length > 0;
-
-    simcarVectorizedResumeInFlightRef.current = jobId;
-    setSimcarVectorizedRunning(true);
-    setSimcarClipProcessing(false);
-    setSimcarClipError(null);
-
-    const patchClip = async (patch: Partial<SimcarClipHistoryItem>) => {
-      setSimcarClipHistory((prev) =>
-        prev.map((item) => (item.jobId === jobId ? { ...item, ...patch } : item))
-      );
-      await patchPersistedSimcarClip(jobId, patch).catch(() => undefined);
-    };
-
-    void (async () => {
-      let acAvnResult: Awaited<ReturnType<typeof runAcAvnAnalysis>> | null = null;
-
-      if (!hasAcAvnArtifacts) {
-        setSimcarVectorizedStatus({
-          stage: 'acavn',
-          message: 'Retomando automaticamente a etapa AC/AVN...',
-        });
-        await patchClip({
-          status: 'processing',
-          processingStage: 'acavn',
-          error: undefined,
-        });
-        acAvnResult = await runAcAvnAnalysis({
-          jobId,
-          historyEntry: clip,
-          layers: simcarFixedSatelliteKeys,
-          imageOnly: false,
-          silentOutput: true,
-          skipConversation: true,
-        });
-        if (!acAvnResult.ok) {
-          const errText = acAvnResult.error || 'Falha na etapa AC/AVN.';
-          setSimcarClipError(errText);
-          setSimcarVectorizedStatus({ stage: 'error', message: errText });
-          await patchClip({
-            status: 'failed',
-            processingStage: 'error',
-            error: errText,
-          });
-          return;
-        }
-      }
-
-      const acAvnMeta = acAvnResult?.analysisMeta || existingAcAvnMeta;
-      const previousAnalysisText = String(acAvnResult?.aiMessage?.text || existingAcAvnText || '').trim();
-      const acAvnImages = dedupeImages(acAvnResult?.images || existingAcAvnImages);
-
-      setSimcarVectorizedStatus({
-        stage: 'auas',
-        message: hasAcAvnArtifacts
-          ? 'AC/AVN já concluído. Continuando automaticamente para AUAS...'
-          : 'Consolidando laudo único (AUAS + AC/AVN)...',
-      });
-      await patchClip({
-        status: 'processing',
-        processingStage: 'auas',
-        error: undefined,
-        analysisMeta: acAvnMeta,
-        ...(acAvnResult?.aiMessage ? { analysisMessages: [acAvnResult.aiMessage] } : {}),
-        ...(acAvnImages.length > 0 ? { analysisImages: acAvnImages } : {}),
-      });
-
-      const auasResult = await runAuasAnalysis({
-        jobId,
-        historyEntry: {
-          ...clip,
-          analysisMeta: acAvnMeta,
-        },
-        previousAnalysis: previousAnalysisText,
-        acAvnMeta,
-        skipConversation: true,
-      });
-      if (!auasResult.ok) {
-        const errText = auasResult.error || 'Falha na etapa AUAS.';
-        setSimcarClipError(errText);
-        setSimcarVectorizedStatus({ stage: 'error', message: errText });
-        await patchClip({
-          status: 'failed',
-          processingStage: 'error',
-          error: errText,
-        });
-        return;
-      }
-
-      const auasImages = dedupeImages(auasResult.images || []);
-      const mergedImages = dedupeImages([...acAvnImages, ...auasImages]);
-      const rawAuasText = String(auasResult.aiMessage?.text || '').trim();
-      const backendLooksIntegrated =
-        /(ac\/avn|area consolidada|área consolidada)/i.test(rawAuasText) && /\bauas\b/i.test(rawAuasText);
-      const finalCombinedText = previousAnalysisText && rawAuasText && !backendLooksIntegrated
-        ? buildIntegratedVectorizedReport(previousAnalysisText, rawAuasText)
-        : rawAuasText || buildIntegratedVectorizedReport(previousAnalysisText, rawAuasText);
-      const finalAiMessage: SimcarAnalysisMessage = {
-        role: 'ai',
-        text: finalCombinedText,
-        thinkingText: auasResult.aiMessage?.thinkingText,
-        images: mergedImages.map((img) => img.url),
-      };
-
-      setSimcarAnalysisImages(acAvnImages);
-      setSimcarAnalysisMessages([]);
-      setSimcarAuasImages(auasImages);
-      setSimcarAuasMessages([finalAiMessage]);
-      setSimcarResultImagePanelsOpen({ acAvn: false, auas: false });
-      await patchClip({
-        status: 'completed',
-        processingStage: 'done',
-        error: undefined,
-        analysisMeta: acAvnMeta,
-        ...(acAvnResult?.aiMessage ? { analysisMessages: [acAvnResult.aiMessage] } : {}),
-        ...(acAvnImages.length > 0 ? { analysisImages: acAvnImages } : {}),
-        auasAnalysisImages: auasImages,
-        auasAnalysisMessages: [finalAiMessage],
-        auasMeta: auasResult.auasMeta,
-      });
-      setSimcarVectorizedStatus({
-        stage: 'done',
-        message: 'Análise completa finalizada com sucesso.',
-      });
-      toast.success('Processamento vetorizado retomado automaticamente.');
-    })()
-      .catch((error: any) => {
-        const message = String(error?.message || 'Falha ao retomar o processamento vetorizado.');
-        setSimcarClipError(message);
-        setSimcarVectorizedStatus({ stage: 'error', message });
-      })
-      .finally(() => {
-        simcarVectorizedResumeInFlightRef.current = null;
-        setSimcarVectorizedRunning(false);
-      });
-  }, [
-    activeSimcarClip,
-    patchPersistedSimcarClip,
-    runAcAvnAnalysis,
-    runAuasAnalysis,
-    simcarAnalysisProcessing,
-    simcarAuasProcessing,
-    simcarFixedSatelliteKeys,
-    simcarServerRuntimeState,
-    simcarVectorizedRunning,
-  ]);
 
   const patchMessageMeta = async (
     messageId: string,
@@ -5428,30 +5123,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                         return;
                       }
                       if (simcarVectorizedServerZipReady && activeSimcarClip?.jobId) {
-                        if (activeSimcarClip.processingStage === 'done') {
-                          toast.info('ZIP já importado. Use as análises abaixo para continuar.');
-                          return;
-                        }
-                        const resumedStage: NonNullable<SimcarClipHistoryItem['processingStage']> =
-                          activeSimcarClip.processingStage === 'auas' ||
-                            activeSimcarClip.processingStage === 'acavn' ||
-                            activeSimcarClip.processingStage === 'importing'
-                            ? activeSimcarClip.processingStage
-                            : 'acavn';
-                        const patch: Partial<SimcarClipHistoryItem> = {
-                          status: 'processing',
-                          processingStage: resumedStage,
-                          error: undefined,
-                        };
-                        setSimcarClipHistory((prev) =>
-                          prev.map((item) => (item.jobId === activeSimcarClip.jobId ? { ...item, ...patch } : item))
-                        );
-                        void patchPersistedSimcarClip(activeSimcarClip.jobId, patch).catch(() => undefined);
-                        setSimcarVectorizedStatus({
-                          stage: resumedStage === 'auas' ? 'auas' : 'acavn',
-                          message: 'Retomando automaticamente o fluxo vetorizado no servidor...',
-                        });
-                        toast.info('Fluxo vetorizado retomado automaticamente.');
+                        toast.info('ZIP já importado. Use os três cards independentes abaixo.');
                         return;
                       }
                       toast.error('Selecione um ZIP vetorizado para continuar.');

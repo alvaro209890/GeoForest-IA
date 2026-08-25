@@ -8,7 +8,7 @@
  * (`docs/planos/analise-pos-recorte/02-arquitetura.md` §6).
  */
 
-export type PhaseId = 'PRE_2008' | 'POS_2008' | 'AC_VEG';
+export type PhaseId = 'PRE_2008' | 'POS_2008' | 'AC_VEG' | 'NDVI';
 
 export type PhaseState = 'BLOCKED' | 'AVAILABLE' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'STALE';
 
@@ -47,7 +47,7 @@ export type PhasesResponse = {
 
 export type PhaseCard = {
   id: PhaseId;
-  order: 1 | 2 | 3;
+  order: 1 | 2 | 3 | 4;
   title: string;
   question: string;
   state: PhaseState;
@@ -66,7 +66,7 @@ export type PhaseCard = {
   report: PhaseReportLinks | null;
 };
 
-const PHASE_TITLES: Record<PhaseId, { order: 1 | 2 | 3; title: string; question: string }> = {
+const PHASE_TITLES: Record<PhaseId, { order: 1 | 2 | 3 | 4; title: string; question: string }> = {
   PRE_2008: {
     order: 1,
     title: 'Análise de AUAS (2003–2008)',
@@ -81,6 +81,11 @@ const PHASE_TITLES: Record<PhaseId, { order: 1 | 2 | 3; title: string; question:
     order: 3,
     title: 'Vegetação dentro da Área Consolidada',
     question: 'Sobrou vegetação nativa dentro da AC declarada?',
+  },
+  NDVI: {
+    order: 4,
+    title: 'Índice de Vegetação (NDVI)',
+    question: 'Qual é o vigor da vegetação medido por reflectância de superfície?',
   },
 };
 
@@ -207,13 +212,11 @@ export function buildPhaseCards(
         blockedMessage = 'Consultando o estado das fases…';
         actionEnabled = false;
       } else if (options.error) {
-        // Falha de consulta não pode esconder a Fase 1: ela continua clicável.
-        state = id === 'PRE_2008' ? 'AVAILABLE' : 'BLOCKED';
-        blockedMessage =
-          id === 'PRE_2008'
-            ? 'Não foi possível consultar o estado das fases; a Fase 1 continua disponível.'
-            : 'Estado das fases indisponível no momento.';
-        actionEnabled = id === 'PRE_2008';
+        // A consulta de status é informativa; a rota de cada card valida a sua
+        // própria camada. Uma falha aqui não recria dependência entre fases.
+        state = 'AVAILABLE';
+        blockedMessage = 'Não foi possível consultar o estado; a análise continua disponível.';
+        actionEnabled = true;
       } else {
         blockedMessage = 'Conclua o recorte para liberar as análises.';
         actionEnabled = false;

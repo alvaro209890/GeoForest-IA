@@ -8,6 +8,7 @@ import sharp from "sharp";
 import type { Geometry } from "geojson";
 
 import { runAcVegetacaoAnalysis } from "./orchestrator";
+import { buildAcVegetacaoScene } from "./scenes";
 import type { AcPotentialPolygon } from "./types";
 
 function squarePolygon(cx: number, cy: number, size = 0.01): Geometry {
@@ -200,5 +201,33 @@ describe("runAcVegetacaoAnalysis", () => {
     );
 
     expect(result.pos2008JobRef).toBeNull();
+  });
+
+  it("compõe a AVN em amarelo e enquadra AC + AVN na cena atual", async () => {
+    const polygon = {
+      ...acPolygon("AC-0001", squarePolygon(-56.1, -12.1, 0.02)),
+      bbox: [-56.1, -12.1, -56.08, -12.08] as [number, number, number, number],
+    };
+    const avn = squarePolygon(-56.095, -12.095, 0.035);
+    const base = await buildAcVegetacaoScene(
+      polygon,
+      { sceneId: "AC-0001:S2_2024", year: 2024, sensor: "SENTINEL_2", layer: "Mosaicos:SENTINEL_2_2024" },
+      { fetchImpl: wmsFetchImpl() },
+    );
+    const withAvn = await buildAcVegetacaoScene(
+      polygon,
+      { sceneId: "AC-0001:S2_2024", year: 2024, sensor: "SENTINEL_2", layer: "Mosaicos:SENTINEL_2_2024" },
+      { fetchImpl: wmsFetchImpl() },
+      {
+        avnGeometries: [avn],
+        focusBbox: [-56.1, -12.1, -56.06, -12.06],
+      },
+    );
+
+    expect(base.usability).toBe("USABLE");
+    expect(withAvn.usability).toBe("USABLE");
+    expect(withAvn.imageSha256).not.toBe(base.imageSha256);
+    expect(withAvn.bbox[2]).toBeGreaterThanOrEqual(-56.06);
+    expect(withAvn.bbox[3]).toBeGreaterThanOrEqual(-12.06);
   });
 });

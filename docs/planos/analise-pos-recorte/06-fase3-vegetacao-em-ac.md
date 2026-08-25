@@ -60,6 +60,11 @@ Todos sujeitos à validação de catálogo do doc 03 — se o NIR de 2021 não e
 publicado, cair para o NIR mais recente disponível (2020) e registrar. A cena de 2008 é
 **contexto**, nunca base para datar nada (isso é a Fase 1).
 
+Na cena do estado atual, as geometrias da camada `AVN` que encostam no polígono AC
+também são desenhadas como overlay amarelo. O contorno vermelho continua sendo a AC
+analisada. Assim a visão compara a vegetação aparente com a área de AVN declarada,
+sem aumentar o número de cenas nem fazer nova chamada ao WMS.
+
 Saída JSON por cena:
 
 ```

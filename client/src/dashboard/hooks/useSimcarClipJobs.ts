@@ -11,7 +11,6 @@ import { apiUrl } from '@/lib/api';
 import type {
   SimcarClipHistoryItem,
   SimcarClipSummary,
-  SimcarServerRuntimeState,
 } from '@/dashboard/types/history';
 
 export type SimcarClipMode = 'auto-clip' | 'vectorized-analysis';
@@ -36,7 +35,7 @@ export function useSimcarClipJobs() {
   const [simcarClipCanceling, setSimcarClipCanceling] = useState(false);
   const [simcarVectorizedRunning, setSimcarVectorizedRunning] = useState(false);
   const [simcarVectorizedStatus, setSimcarVectorizedStatus] = useState<{
-    stage: 'importing' | 'acavn' | 'auas' | 'done' | 'error';
+    stage: 'importing' | 'done' | 'error';
     message: string;
   } | null>(null);
   const [simcarClipProgress, setSimcarClipProgress] = useState<SimcarClipProgressState | null>(null);
@@ -59,8 +58,6 @@ export function useSimcarClipJobs() {
 
   // ─── SIMCAR Clip History (for sidebar cards) ───
   const [simcarClipHistory, setSimcarClipHistory] = useState<SimcarClipHistoryItem[]>([]);
-  const [simcarServerRuntimeState, setSimcarServerRuntimeState] = useState<SimcarServerRuntimeState | null>(null);
-  const simcarVectorizedResumeInFlightRef = useRef<string | null>(null);
 
   const activeSimcarClip = useMemo(
     () => (simcarClipJobId ? simcarClipHistory.find((clip) => clip.jobId === simcarClipJobId) : undefined),
@@ -141,7 +138,6 @@ export function useSimcarClipJobs() {
     simcarSigefParcelCode,
     simcarClipJobId,
     simcarClipHistory,
-    simcarServerRuntimeState,
     activeSimcarClip,
     simcarLockedMode,
     isSimcarModeLocked,
@@ -157,7 +153,6 @@ export function useSimcarClipJobs() {
     simcarFileInputRef,
     simcarClipProgressPendingRef,
     simcarCancelTimerRef,
-    simcarVectorizedResumeInFlightRef,
     // setters
     setSimcarClipFile,
     setSimcarClipMode,
@@ -179,7 +174,6 @@ export function useSimcarClipJobs() {
     setSimcarSigefParcelCode,
     setSimcarClipJobId,
     setSimcarClipHistory,
-    setSimcarServerRuntimeState,
     // ações
     loadSimcarClipLayers,
   };

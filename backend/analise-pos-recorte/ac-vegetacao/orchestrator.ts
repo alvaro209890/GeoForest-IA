@@ -97,6 +97,57 @@ function toDataUrl(buffer: Buffer): string {
   return `data:image/png;base64,${buffer.toString("base64")}`;
 }
 
+/** Retorna as geometrias AVN que encostam na bbox da AC analisada. */
+function avnGeometriesNearAc(
+  layers: Map<string, Geometry[]>,
+  acBbox: [number, number, number, number],
+): Geometry[] {
+  return (layers.get("AVN") || []).filter((geometry) => {
+    if (geometry.type !== "Polygon" && geometry.type !== "MultiPolygon") return false;
+    const rings = geometry.type === "Polygon" ? geometry.coordinates : geometry.coordinates.flat();
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const ring of rings) {
+      for (const [x, y] of ring) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+    return !(acBbox[2] < minX || maxX < acBbox[0] || acBbox[3] < minY || maxY < acBbox[1]);
+  });
+}
+
+/**
+ * Extensão combinada usada como "zoom to layer" da cena RGB atual. A IA vê a
+ * AC inteira e também a feição AVN que cruza/encosta nela no mesmo quadro.
+ */
+function acAvnFocusBbox(
+  acBbox: [number, number, number, number],
+  avnGeometries: Geometry[],
+): [number, number, number, number] {
+  const focus: [number, number, number, number] = [...acBbox];
+  for (const geometry of avnGeometries) {
+    const rings = geometry.type === "Polygon"
+      ? geometry.coordinates
+      : geometry.type === "MultiPolygon"
+        ? geometry.coordinates.flat()
+        : [];
+    for (const ring of rings) {
+      for (const [x, y] of ring) {
+        focus[0] = Math.min(focus[0], x);
+        focus[1] = Math.min(focus[1], y);
+        focus[2] = Math.max(focus[2], x);
+        focus[3] = Math.max(focus[3], y);
+      }
+    }
+  }
+  return focus;
+}
+
 /**
  * Roda a Fase 3. Não faz chamadas a IA se não houver visão configurada (somente
  * geometria). Imutável em relação ao conjunto de polígonos pós-2008.
@@ -195,11 +246,21 @@ export async function runAcVegetacaoAnalysis(
 
     const builtScenes = [];
     const usedScenes = [];
-    for (const spec of sceneSpecs) {
+    const avnNear = avnGeometriesNearAc(layers, polygon.bbox);
+    for (let sceneIndex = 0; sceneIndex < sceneSpecs.length; sceneIndex++) {
+      const spec = sceneSpecs[sceneIndex];
       const scene = await buildAcVegetacaoScene(
         polygon,
         { ...spec, sceneId: `${polygon.polygonId}:${spec.sceneId}` },
-        deps.sceneDeps || {}
+        deps.sceneDeps || {},
+        // O overlay da AVN fica na cena S2 atual, onde o RT confere o estado
+        // declarado contra a imagem. NIR/SPOT permanecem leituras limpas.
+        sceneIndex === 0
+          ? {
+              avnGeometries: avnNear,
+              focusBbox: avnNear.length > 0 ? acAvnFocusBbox(polygon.bbox, avnNear) : polygon.bbox,
+            }
+          : {},
       );
       // Figura do anexo fotográfico: a MESMA imagem que a visão analisou,
       // com o overlay do polígono (a `storedImageUrl` é a URL crua do WMS).

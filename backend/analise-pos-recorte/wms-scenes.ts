@@ -443,6 +443,37 @@ export function buildAuasPolygonOverlaySvg(
   return Buffer.from(svg);
 }
 
+/** Camada do overlay vetorial: geometria + estilo do traço e do preenchimento. */
+export type OverlayLayer = {
+  geometry: Geometry;
+  stroke: string;
+  strokeWidth: number;
+  fill: string;
+};
+
+/**
+ * Overlay SVG com várias camadas vetoriais (ex.: polígono da AC em vermelho +
+ * AVN declarada em amarelo). Usado pela Fase 3 para a IA cruzar o que o projeto
+ * declarou (AVN) com o que a cena mostra dentro da Área Consolidada.
+ */
+export function buildMultiLayerOverlaySvg(
+  width: number,
+  height: number,
+  bbox: [number, number, number, number],
+  layers: OverlayLayer[]
+): Buffer {
+  const paths = layers
+    .map((layer) => geometryToSvgPath(layer.geometry, bbox, width, height, layer.stroke, layer.strokeWidth, layer.fill))
+    .join("\n");
+  return Buffer.from(
+    [
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+      paths,
+      "</svg>",
+    ].join("\n")
+  );
+}
+
 export async function compositeOverlay(basePngBuffer: Buffer, svgOverlay: Buffer): Promise<Buffer> {
   return sharp(basePngBuffer)
     .composite([{ input: svgOverlay, top: 0, left: 0 }])

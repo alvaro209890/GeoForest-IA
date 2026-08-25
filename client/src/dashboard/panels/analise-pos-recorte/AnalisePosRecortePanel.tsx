@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { apiFetch } from '@/lib/api';
+import { downloadSimcarReportDocx } from '@/dashboard/lib/download-actions';
+import { readSseEvents } from '@/dashboard/lib/analysis-helpers';
 
 import { FaseCard } from './FaseCard';
 import {
   buildPhaseCards,
   isPhase1MetaCompleted,
   type PhaseId,
+  type PhaseCard,
   type PhasesResponse,
 } from './phase-state';
 
@@ -30,9 +33,36 @@ export type AnalisePosRecortePanelProps = {
   onCancelPhase3?: () => void;
 };
 
+type NdviResult = {
+  ndviJobId?: string;
+  propertyStat?: {
+    mean?: number;
+    validPct?: number;
+    classeLabel?: string | null;
+    aviso?: string | null;
+  } | null;
+  reportDocxUrl?: string;
+  reportDocxFilename?: string;
+  raster?: { wmsPublicUrl?: string; ndviLayerName?: string };
+  scene?: { acquiredAt?: string; platformLabel?: string };
+};
+
+type NdviApiState = {
+  enabled: boolean;
+  status: string;
+  ndviJobId: string | null;
+  result: NdviResult | null;
+  error: string | null;
+};
+
+function defaultNdviYear(): number {
+  const now = new Date();
+  return now.getUTCMonth() >= 9 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+}
+
 /**
- * Painel "Análise pós-recorte": os 3 botões encadeados que substituem o botão
- * solto de AUAS (`docs/planos/analise-pos-recorte/07-frontend-ux.md`).
+ * Painel "Análise pós-recorte": quatro análises independentes. As três análises
+ * visuais e o NDVI nunca formam uma esteira automática.
  */
 export function AnalisePosRecortePanel({
   jobId,
@@ -52,6 +82,17 @@ export function AnalisePosRecortePanel({
   const [payload, setPayload] = useState<PhasesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [ndvi, setNdvi] = useState<NdviApiState>({
+    enabled: false,
+    status: 'idle',
+    ndviJobId: null,
+    result: null,
+    error: null,
+  });
+  const [ndviYear, setNdviYear] = useState(defaultNdviYear);
+  const [ndviProgress, setNdviProgress] = useState<{ percent: number; message: string } | null>(null);
+  const ndviAbortRef = useRef<AbortController | null>(null);
+  const ndviConnectedJobRef = useRef<string | null>(null);
 
   const phase1Done = isPhase1MetaCompleted(auasMeta);
   const phase2Done = !!auasPos2008Meta;
@@ -77,15 +118,141 @@ export function AnalisePosRecortePanel({
     }
   }, [jobId, contextUrl, outputZipUrl]);
 
+  const loadNdvi = useCallback(async () => {
+    if (!jobId) return;
+    try {
+      const response = await apiFetch(`/api/simcar/clip/ndvi/${encodeURIComponent(jobId)}`);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+      setNdvi({
+        enabled: body?.enabled === true,
+        status: String(body?.status || 'idle'),
+        ndviJobId: body?.ndviJobId ? String(body.ndviJobId) : null,
+        result: body?.ndvi || null,
+        error: body?.error ? String(body.error) : null,
+      });
+    } catch (err) {
+      setNdvi((prev) => ({ ...prev, error: err instanceof Error ? err.message : String(err) }));
+    }
+  }, [jobId]);
+
+  const connectNdviProgress = useCallback(async (ndviJobId: string) => {
+    if (!ndviJobId || ndviConnectedJobRef.current === ndviJobId) return;
+    ndviConnectedJobRef.current = ndviJobId;
+    const controller = new AbortController();
+    ndviAbortRef.current = controller;
+    try {
+      const response = await apiFetch(
+        `/api/simcar/clip/ndvi/${encodeURIComponent(jobId)}/events?ndviJobId=${encodeURIComponent(ndviJobId)}`,
+        { signal: controller.signal },
+      );
+      if (!response.ok || !response.body) throw new Error(`Falha ao acompanhar NDVI (HTTP ${response.status}).`);
+      await readSseEvents(response.body.getReader(), (event) => {
+        if (event.percent !== undefined || event.message) {
+          setNdviProgress({
+            percent: Math.max(0, Math.min(100, Number(event.percent) || 0)),
+            message: String(event.message || event.stage || 'Processando NDVI...'),
+          });
+        }
+        const status = String(event.status || 'running');
+        setNdvi((prev) => ({
+          ...prev,
+          status,
+          error: event.error ? String(event.error) : prev.error,
+        }));
+        if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+          void loadNdvi();
+        }
+      });
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        setNdvi((prev) => ({ ...prev, error: err instanceof Error ? err.message : String(err) }));
+      }
+    } finally {
+      if (ndviAbortRef.current === controller) ndviAbortRef.current = null;
+      ndviConnectedJobRef.current = null;
+      setNdviProgress(null);
+      void loadNdvi();
+    }
+  }, [jobId, loadNdvi]);
+
+  const runNdvi = useCallback(async () => {
+    setNdvi((prev) => ({ ...prev, status: 'running', error: null }));
+    setNdviProgress({ percent: 0, message: 'Iniciando cálculo NDVI...' });
+    try {
+      const response = await apiFetch('/api/simcar/clip/analyze-ndvi', {
+        method: 'POST',
+        body: JSON.stringify({ jobId, ano: ndviYear }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+      const ndviJobId = String(body?.ndviJobId || '');
+      if (!ndviJobId) throw new Error('Servidor iniciou o NDVI sem identificador do job.');
+      setNdvi((prev) => ({ ...prev, status: 'running', ndviJobId }));
+      await connectNdviProgress(ndviJobId);
+    } catch (err) {
+      setNdvi((prev) => ({
+        ...prev,
+        status: 'failed',
+        error: err instanceof Error ? err.message : String(err),
+      }));
+      setNdviProgress(null);
+    }
+  }, [connectNdviProgress, jobId, ndviYear]);
+
+  const cancelNdvi = useCallback(async () => {
+    if (!ndvi.ndviJobId) return;
+    await apiFetch(`/api/simcar/clip/ndvi/${encodeURIComponent(ndvi.ndviJobId)}`, { method: 'DELETE' });
+    setNdviProgress((prev) => ({ percent: prev?.percent || 0, message: 'Cancelamento solicitado...' }));
+  }, [ndvi.ndviJobId]);
+
   // Recarrega ao trocar de job e quando uma fase conclui (o gate das seguintes muda).
   useEffect(() => {
     void loadPhases();
   }, [loadPhases, phase1Done, phase2Done, phase3Done]);
 
+  useEffect(() => {
+    void loadNdvi();
+    return () => ndviAbortRef.current?.abort();
+  }, [loadNdvi]);
+
+  useEffect(() => {
+    if (ndvi.status === 'running' && ndvi.ndviJobId) {
+      void connectNdviProgress(ndvi.ndviJobId);
+    }
+  }, [connectNdviProgress, ndvi.ndviJobId, ndvi.status]);
+
   const cards = useMemo(
     () => buildPhaseCards(payload, { runningPhase, loading: loading && !payload, error }),
     [payload, runningPhase, loading, error],
   );
+
+  const ndviCard = useMemo<PhaseCard>(() => {
+    const running = ndvi.status === 'running';
+    const completed = ndvi.status === 'completed' && !!ndvi.result;
+    const mean = ndvi.result?.propertyStat?.mean;
+    const validPct = ndvi.result?.propertyStat?.validPct;
+    const resultLine = completed && Number.isFinite(mean) && Number.isFinite(validPct)
+      ? `NDVI médio ${Number(mean).toFixed(3)} · pixels válidos ${(Number(validPct) * 100).toFixed(1)}%${ndvi.result?.propertyStat?.classeLabel ? ` · ${ndvi.result.propertyStat.classeLabel}` : ''}`
+      : completed
+        ? 'NDVI concluído — consulte o laudo para as limitações da medição.'
+        : null;
+    return {
+      id: 'NDVI',
+      order: 4,
+      title: 'Índice de Vegetação (NDVI)',
+      question: 'Qual é o vigor da vegetação medido por reflectância de superfície?',
+      state: running ? 'RUNNING' : completed ? 'COMPLETED' : ndvi.status === 'failed' ? 'FAILED' : ndvi.enabled ? 'AVAILABLE' : 'BLOCKED',
+      preview: `Landsat C2 L2 · ano ${ndviYear} · estatística por polígono`,
+      resultLine,
+      blockedMessage: ndvi.enabled ? null : 'NDVI ainda não está habilitado neste ambiente.',
+      actionLabel: running ? 'Calculando…' : completed ? 'Recalcular' : ndvi.status === 'failed' ? 'Tentar novamente' : 'Calcular NDVI',
+      actionEnabled: ndvi.enabled && !running,
+      notImplemented: !ndvi.enabled,
+      stale: false,
+      report: null,
+    };
+  }, [ndvi, ndviYear]);
 
   // O detalhamento por polígono da Fase 1 (SimcarAuasPre2008PanelV2) já é
   // renderizado no card de resultado do recorte; aqui fica só o resumo de estado.
@@ -131,6 +298,52 @@ export function AnalisePosRecortePanel({
             </FaseCard>
           );
         })}
+        <FaseCard
+          card={ndviCard}
+          progress={ndviProgress}
+          onRun={() => void runNdvi()}
+          onCancel={() => void cancelNdvi()}
+        >
+          {!ndviProgress && ndvi.enabled ? (
+            <label className="flex items-center gap-2 text-[11px] text-slate-400">
+              Ano da cena
+              <select
+                value={ndviYear}
+                onChange={(event) => setNdviYear(Number(event.target.value))}
+                className="rounded-md border border-white/10 bg-black/30 px-2 py-1 text-slate-200"
+              >
+                {Array.from({ length: defaultNdviYear() - 1983 }, (_, index) => defaultNdviYear() - index).map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {ndvi.error && ndvi.status !== 'running' ? (
+            <p className="text-[11px] text-red-300">{ndvi.error}</p>
+          ) : null}
+          {ndvi.result && ndvi.status === 'completed' ? (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {ndvi.result.reportDocxUrl ? (
+                <button
+                  type="button"
+                  onClick={() => downloadSimcarReportDocx(ndvi.result?.reportDocxUrl, ndvi.result?.reportDocxFilename)}
+                  className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-200"
+                >
+                  Baixar laudo NDVI (Word)
+                </button>
+              ) : null}
+              {ndvi.result.raster?.wmsPublicUrl ? (
+                <button
+                  type="button"
+                  onClick={() => window.open(ndvi.result?.raster?.wmsPublicUrl, '_blank', 'noopener,noreferrer')}
+                  className="rounded-md border border-cyan-500/20 bg-cyan-500/10 px-2 py-1 text-[10px] text-cyan-200"
+                >
+                  Abrir WMS · {ndvi.result.raster.ndviLayerName || 'camada NDVI'}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </FaseCard>
       </div>
     </section>
   );

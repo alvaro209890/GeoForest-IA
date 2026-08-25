@@ -36,24 +36,20 @@ function payload(overrides: Partial<Record<keyof PhasesResponse['phases'], Phase
         state: 'AVAILABLE',
         estimate: { polygons: 17, scenesPerPolygon: 6, windowsPerPolygon: 3, etaSeconds: 2550 },
       }),
-      POS_2008: status({ blockedReason: 'requires_PRE_2008', blockedMessage: 'Conclua a Fase 1 (AUAS 2003–2008) para liberar.' }),
-      AC_VEG: status({ blockedReason: 'requires_PRE_2008', blockedMessage: 'Conclua a Fase 1 (AUAS 2003–2008) para liberar.' }),
+      POS_2008: status({ state: 'AVAILABLE' }),
+      AC_VEG: status({ state: 'AVAILABLE' }),
       ...overrides,
     },
   };
 }
 
 describe('buildPhaseCards', () => {
-  it('F-01: sempre 3 cards, com a Fase 1 habilitada e as outras bloqueadas com motivo legível', () => {
+  it('F-01: sempre mostra os 3 cards independentes e habilitados', () => {
     const cards = buildPhaseCards(payload());
     expect(cards.map((c) => c.order)).toEqual([1, 2, 3]);
-    expect(cards[0].actionEnabled).toBe(true);
+    expect(cards.every((card) => card.actionEnabled)).toBe(true);
     expect(cards[0].preview).toContain('17 polígono(s) AUAS');
     expect(cards[0].preview).toContain('~43 min');
-    expect(cards[1].actionEnabled).toBe(false);
-    expect(cards[1].blockedMessage).toMatch(/Fase 1/);
-    expect(cards[2].actionEnabled).toBe(false);
-    expect(cards[2].blockedMessage).toBeTruthy();
   });
 
   it('F-02: Fase 1 concluída vira "Refazer" e mostra o resultado resumido', () => {
@@ -102,12 +98,11 @@ describe('buildPhaseCards', () => {
     expect(cards[1].blockedMessage).toMatch(/Aguardando a Fase 1/);
   });
 
-  it('falha na consulta não faz a Fase 1 sumir', () => {
+  it('falha na consulta não bloqueia nenhum card por dependência artificial', () => {
     const cards = buildPhaseCards(null, { error: true });
     expect(cards).toHaveLength(3);
-    expect(cards[0].actionEnabled).toBe(true);
-    expect(cards[0].blockedMessage).toMatch(/continua disponível/);
-    expect(cards[1].actionEnabled).toBe(false);
+    expect(cards.every((card) => card.actionEnabled)).toBe(true);
+    expect(cards.every((card) => card.blockedMessage?.includes('continua disponível'))).toBe(true);
   });
 
   it('durante o carregamento nada é clicável, mas os 3 cards já aparecem', () => {

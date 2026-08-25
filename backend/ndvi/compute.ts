@@ -34,6 +34,8 @@ type RunArgs = {
 export type GridRef = {
   te: [number, number, number, number];
   ts: [number, number];
+  /** Área de um pixel na projeção nativa (Landsat C2 L2: UTM, em m²). */
+  pixelAreaM2?: number;
 };
 
 /**
@@ -101,7 +103,15 @@ export async function readGrid(rasterPath: string, jobId: string): Promise<GridR
     const minY = Math.min(Number(c.upperLeft[1]), Number(c.lowerRight[1]));
     const maxY = Math.max(Number(c.upperLeft[1]), Number(c.lowerRight[1]));
     if (![minX, maxX, minY, maxY].every(Number.isFinite)) return null;
-    return { te: [minX, minY, maxX, maxY], ts: [Number(size[0]), Number(size[1])] };
+    const transform = Array.isArray(info?.geoTransform) ? info.geoTransform.map(Number) : [];
+    const pixelAreaM2 = transform.length >= 6
+      ? Math.abs(transform[1] * transform[5] - transform[2] * transform[4])
+      : undefined;
+    return {
+      te: [minX, minY, maxX, maxY],
+      ts: [Number(size[0]), Number(size[1])],
+      pixelAreaM2: Number.isFinite(pixelAreaM2) && Number(pixelAreaM2) > 0 ? Number(pixelAreaM2) : undefined,
+    };
   } catch {
     return null;
   }

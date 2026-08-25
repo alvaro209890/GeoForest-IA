@@ -75,21 +75,29 @@ export const inferSimcarStageFromEndpoint = (
 ): { stage?: SimcarClipHistoryItem['processingStage']; message?: string } => {
   const normalizedEndpoint = String(endpoint || '').trim().toLowerCase();
   const isVectorized = sourceMode === 'vectorized-analysis';
-  if (normalizedEndpoint === '/api/simcar/clip') {
+  if (
+    normalizedEndpoint === '/api/simcar/clip' ||
+    normalizedEndpoint === '/api/simcar/clip/import-vectorized'
+  ) {
     return {
       stage: 'importing',
-      message: 'Recorte base em processamento no servidor...',
+      message: isVectorized
+        ? 'Importando ZIP vetorizado no servidor...'
+        : 'Recorte base em processamento no servidor...',
     };
   }
+  // AC/AVN e AUAS não são etapas do importador vetorizado. Cada análise
+  // pós-recorte tem estado próprio no card e não pode reabrir o cabeçalho.
+  if (isVectorized) return {};
   if (normalizedEndpoint === '/api/simcar/clip/analyze') {
     return {
-      stage: isVectorized ? 'acavn' : undefined,
+      stage: undefined,
       message: 'Análise AC/AVN em processamento no servidor...',
     };
   }
   if (normalizedEndpoint === '/api/simcar/clip/analyze-auas') {
     return {
-      stage: isVectorized ? 'auas' : undefined,
+      stage: undefined,
       message: 'Análise AUAS em processamento no servidor...',
     };
   }

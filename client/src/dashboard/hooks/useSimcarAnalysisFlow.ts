@@ -5,7 +5,7 @@
  *   - sendSimcarFollowUpMessage
  *   - runAcAvnAnalysis
  *   - runAuasAnalysis
- *   - runVectorizedCompleteAnalysis
+ *   - runVectorizedImportOnly
  *
  * Padrão useSimcarClipActions: deps injetadas via argumento. O estado de análise
  * (useSimcarAnalysis) é passado como UMA dep (`analysis`) e desestruturado aqui —
@@ -30,7 +30,6 @@ import type {
 } from '@/dashboard/types/history';
 import { useSimcarAnalysis } from './useSimcarAnalysis';
 import {
-  buildIntegratedVectorizedReport,
   isPlainObject,
   normalizeBackendText,
   resolveBackendDownloadUrl,
@@ -68,7 +67,7 @@ export type UseSimcarAnalysisFlowDeps = {
   setSimcarVectorizedRunning: (running: boolean) => void;
   setSimcarVectorizedStatus: React.Dispatch<
     React.SetStateAction<{
-      stage: 'importing' | 'acavn' | 'auas' | 'done' | 'error';
+      stage: 'importing' | 'done' | 'error';
       message: string;
     } | null>
   >;
@@ -870,12 +869,12 @@ if (!imageOnly && !silentOutput) {
     setSimcarResultImagePanelsOpen({ acAvn: false, auas: false });
     let pipelineJobId = '';
 
-    const patchVectorizedHistoryState = (jobId: string, patch: Partial<SimcarClipHistoryItem>) => {
+    const patchVectorizedHistoryState = async (jobId: string, patch: Partial<SimcarClipHistoryItem>) => {
       if (!jobId) return;
       setSimcarClipHistory((prev) =>
         prev.map((clip) => (clip.jobId === jobId ? { ...clip, ...patch } : clip))
       );
-      void patchPersistedSimcarClip(jobId, patch).catch(() => undefined);
+      await patchPersistedSimcarClip(jobId, patch);
     };
 
     try {
@@ -928,8 +927,11 @@ if (!imageOnly && !silentOutput) {
         outputZipUrl: payload?.outputZipUrl ? String(payload.outputZipUrl) : undefined,
         contextUrl: payload?.contextUrl ? String(payload.contextUrl) : undefined,
         sourceMode: 'vectorized-analysis',
-        status: 'processing',
-        processingStage: 'importing',
+        // A rota de importação é síncrona: ao receber o payload, o ZIP já está
+        // pronto. Persistir um estado intermediário aqui abria uma janela para
+        // o recuperador legado iniciar AC/AVN e AUAS automaticamente.
+        status: 'completed',
+        processingStage: 'done',
         summary: summary || undefined,
       };
 
@@ -960,27 +962,16 @@ if (!imageOnly && !silentOutput) {
         { title: newClip.filename }
       );
 
-      patchVectorizedHistoryState(jobId, {
-        status: 'completed',
-        processingStage: 'done',
-        error: undefined,
-      });
       setSimcarVectorizedStatus({ stage: 'done', message: 'ZIP vetorizado importado. Escolha uma análise abaixo para continuar.' });
       setSimcarVectorizedRunning(false);
       toast.success('ZIP vetorizado importado. Escolha uma das análises abaixo.');
       return;
-      const cloudinaryFiles = [
-        newClip.outputZipUrl ? `- ZIP vetorizado: ${newClip.outputZipUrl}` : '',
-        newClip.contextUrl ? `- Contexto JSON: ${newClip.contextUrl}` : '',
-      ].filter(Boolean);
-
-
     } catch (err: any) {
       const message = String(err?.message || 'Erro inesperado na análise completa vetorizada.');
       setSimcarClipError(message);
       setSimcarVectorizedStatus({ stage: 'error', message });
       if (pipelineJobId) {
-        patchVectorizedHistoryState(pipelineJobId, {
+        await patchVectorizedHistoryState(pipelineJobId, {
           status: 'failed',
           processingStage: 'error',
           error: message,
@@ -996,11 +987,7 @@ if (!imageOnly && !silentOutput) {
     handleInsufficientCredits,
     persistSimcarClipHistoryEntry,
     readApiError,
-    runAcAvnAnalysis,
-    runAuasAnalysis,
-    simcarAnalysisMessages,
     simcarClipFile,
-    simcarFixedSatelliteKeys,
     normalizeSimcarClipSummary,
     patchPersistedSimcarClip,
   ]);
