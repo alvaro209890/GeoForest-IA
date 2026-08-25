@@ -9,6 +9,7 @@ import { registerSimcarReceiptRoutes } from "../simcar-receipts";
 import { registerApfReceiptRoutes } from "../apf-receipts";
 import { registerCbersWpmRoutes } from "../cbers-wpm";
 import { registerLandsatRoutes } from "../landsat";
+import { registerNdviRoutes } from "../ndvi";
 import { registerVerticesRoutes } from "../vertices-proximas";
 import { registerContainmentRoutes } from "../containment-analysis";
 import { registerOverlapRoutes } from "../overlap";
@@ -38,6 +39,7 @@ export function registerAllRoutes(app: Express) {
   registerApfReceiptRoutes(app);
   registerCbersWpmRoutes(app);
   registerLandsatRoutes(app);
+  registerNdviRoutes(app);
   registerVerticesRoutes(app);
   registerContainmentRoutes(app);
   registerOverlapRoutes(app);
