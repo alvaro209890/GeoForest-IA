@@ -63,7 +63,8 @@ publicado, cair para o NIR mais recente disponível (2020) e registrar. A cena d
 Na cena do estado atual, as geometrias da camada `AVN` que encostam no polígono AC
 também são desenhadas como overlay amarelo. O contorno vermelho continua sendo a AC
 analisada. Assim a visão compara a vegetação aparente com a área de AVN declarada,
-sem aumentar o número de cenas nem fazer nova chamada ao WMS.
+sem aumentar o número de cenas. O bbox desta primeira cena é a extensão combinada da
+AC com as AVNs relacionadas (`zoom to layer`); NIR e SPOT mantêm o enquadramento da AC.
 
 Saída JSON por cena:
 

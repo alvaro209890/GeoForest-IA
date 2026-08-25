@@ -2,9 +2,9 @@
 
 | Campo | Valor |
 |---|---|
-| Status | **🚧 EM IMPLEMENTAÇÃO** — F2 (datação 2009–2019) e F3 (vegetação na AC) implementadas, auditadas e no `main`; decisões A1–A10 e fonte da declaração F3 **fechadas** (2026-08-10). Rollout: **F1 LIGADA em produção (2026-08-10)**; F2 após F1 estável ≥1 semana; F3 após F2 + conferência GIS ≥3 imóveis. **Dourados F2/F3 gerados (2026-08-12) — aguardando conferência do Álvaro** |
+| Status | **✅ IMPLEMENTADO** — três análises visuais independentes, cada uma com seu card/laudo; importação vetorizada separada das análises; Fase 3 com enquadramento AC + AVN; NDVI adicionado como quarto card determinístico. A publicação de 25/08 está registrada no changelog correspondente. |
 | Criado em | 2026-08-05 |
-| Atualizado em | 2026-08-12 (dourados F2/F3 gerados; fix DEEPSEEK_API_KEY expirada) |
+| Atualizado em | 2026-08-25 (loop vetorizado removido; zoom AC + AVN; card NDVI) |
 | Autor | Claude (plano), com Álvaro |
 | Repo | `alvaro209890/GeoForest-IA` — branch `main` |
 | Pasta | `docs/planos/analise-pos-recorte/` |
@@ -12,14 +12,16 @@
 
 ## Escopo
 
-Encadear em três botões a análise que roda **depois do recorte SIMCAR**:
+Disponibilizar análises independentes que rodam **depois do recorte SIMCAR**:
 
 1. **Fase 1 — AUAS 2003–2008:** houve desmate/antropização antes do marco?
    *(código já existe em `backend/analise-pos-recorte/`, flag desligada)*
 2. **Fase 2 — AUAS 2008–2019:** quando ocorreu? *(implementada, flag desligada)*
-3. **Fase 3 — vegetação dentro da Área Consolidada** *(implementada, flag desligada)*
+3. **Fase 3 — vegetação dentro da Área Consolidada** *(implementada)*
+4. **NDVI — medição determinística Landsat C2 L2** *(implementada em módulo próprio)*
 
-Cada fase destrava a seguinte; a regra de desbloqueio é do backend, não só da UI.
+Nenhuma análise exige a conclusão de outra. O bloqueio por camada ausente continua
+válido; nas três fases visuais há mutex somente enquanto outra grava o mesmo job.
 
 ## Progresso
 
@@ -81,3 +83,4 @@ alertas) · **A9** laudo único com 3 seções · **A10** refazer fase com confi
 | 2026-08-23 | **Fase 1 v2 — a IA passa a enxergar o SPOT 2008**: o modelo de visão estava preso ao literal `qwen/qwen3.6-27b` (ignorando o `VISION_MODEL` do ambiente) e a janela `W2007_2008`, a mais pesada da série, dava `TIMEOUT` em todos os polígonos — a cena SPOT do WMS era baixada, aparecia no anexo do laudo e **nunca era analisada**. Corrigidos: herança do `VISION_MODEL`, `conflicts` ausente no JSON da visão, limitação explícita quando a janela do marco falha, e glifos fora do WinAnsi no PDF (`2007→SPOT` saía `2007!’SPOT`). Validado no imóvel real (job `27ca02d3`): 6/6 janelas COMPLETED e `AUAS-0002` chega a `INCONCLUSIVO_NO_MARCO_2008` pela leitura do SPOT. Suíte 855 passed/8 skipped. Ver [`FASE1_V2_SPOT_MARCO_2008.md`](FASE1_V2_SPOT_MARCO_2008.md) |
 | 2026-08-23 | **As 3 análises pós-recorte viraram independentes** (pedido do Álvaro): a Fase 3 exigia F1+F2 concluídas (`requires_PRE_2008`/`requires_POS_2008`) e herdava `previous_phase_stale`, apesar de o orquestrador dela já aceitar `pos2008CompletedAt: null`. Removido o encadeamento e a invalidação cruzada; `SIMCAR_AC_VEG_ENABLED` ligado no env. Achado 🔴 no caminho: havia **um slot só de laudo por job** e cada geração apagava o arquivo anterior — rodar a Fase 3 destruía o PDF da Fase 1; agora cada fase guarda o seu em `phaseReports[fase]` e o card oferece PDF+Word próprios. Como soltar as fases abria corrida entre elas, o gate passou a recusar `PHASE_ALREADY_RUNNING` sempre que outra fase está rodando. Validado no job real `27ca02d3` com as 3 executadas na ordem inversa (F3 sozinha primeiro). Ver [`FLUXO_3_ANALISES_INDEPENDENTES.md`](FLUXO_3_ANALISES_INDEPENDENTES.md) |
 | 2026-08-23 | **Anexo fotográfico nas 3 análises**: só a Fase 1 persistia o `imageBuffer` da cena (a imagem com overlay que a IA olhou); as Fases 2 e 3 guardavam apenas a URL crua do WMS e saíam **sem figura nenhuma**. Helper único `scene-persistence.ts`, `uid` como dependência das duas, e o gate do anexo trocado de `kind === "AUAS_PRE2008"` para `reportPhotoAnnexHeading(kind)` no PDF e no DOCX. Como a Fase 2 tem 11 anos por polígono, as figuras passaram a ser recomprimidas em JPEG q82 ao embutir — sem isso 6 figuras já davam 5,55 MB de PDF (Fase 3: 5,55 → 0,62 MB; Fase 1: 1,77 → 0,48 MB, mesmas 12 figuras). Ver [`FLUXO_3_ANALISES_INDEPENDENTES.md`](FLUXO_3_ANALISES_INDEPENDENTES.md) |
+| 2026-08-25 | **Loop vetorizado removido e foco AVN concluído:** o importador não relança mais AC/AVN/AUAS; cada endpoint pertence ao seu card. A cena RGB da Fase 3 enquadra AC + AVN no mesmo `zoom to layer`, sem quarta chamada de visão. NDVI entra como quarto card independente. Ver [`docs/CHANGELOG_2026-08-25_OVERLAY_AVN_FASE3.md`](../../CHANGELOG_2026-08-25_OVERLAY_AVN_FASE3.md). |

@@ -1,8 +1,8 @@
 # NDVI — plano de implementação (STATUS)
 
 > **Leia este arquivo primeiro.** Ele é o índice e o quadro de estado do plano.
-> Nenhum código foi escrito ainda: os documentos abaixo são a especificação para o
-> agente implementador.
+> O núcleo F0–F5 está implementado; os documentos abaixo preservam o contrato e as
+> decisões que guiaram a implementação.
 
 **Origem do pedido:** reunião IMAP × Bruno Cardoso (RestaurAgro), 31/07/2026,
 sobre GEE e índices espectrais. O NDFI do título da reunião **está fora de escopo** —
@@ -12,7 +12,7 @@ só a metodologia foi aproveitada. O objetivo é **NDVI**.
 
 ---
 
-## O que vai ser construído
+## O que foi construído
 
 1. Raster **NDVI** da área recortada, gerado com GDAL no mesmo padrão do pipeline
    CBERS/Landsat.
@@ -57,12 +57,12 @@ Estas três não estão em aberto. O que continua em aberto está em
 
 | Fase | Entrega | Estado |
 |---|---|---|
-| F0 | Preflight GDAL + SLD versionado no GeoServer | ⬜ não iniciada |
-| F1 | Núcleo NDVI: recorte + cálculo + Float32 + RGB no HD | ⬜ não iniciada |
-| F2 | Publicação na biblioteca `NDVI` do WMS + validação GetMap | ⬜ não iniciada |
-| F3 | Estatística zonal por polígono | ⬜ não iniciada |
-| F4 | Laudo Word próprio | ⬜ não iniciada |
-| F5 | Rota, flag, botão no frontend | ⬜ não iniciada |
+| F0 | Preflight GDAL + SLD versionado no GeoServer | ✅ código/preflight local concluído; validação live registrada separadamente |
+| F1 | Núcleo NDVI: recorte + cálculo + Float32 + RGB no HD | ✅ implementada |
+| F2 | Publicação na biblioteca `NDVI` do WMS + validação GetMap | ✅ implementada; GetMap real depende da primeira execução live |
+| F3 | Estatística zonal por polígono | ✅ implementada, incluindo denominador geométrico de `validPct` |
+| F4 | Laudo Word próprio | ✅ implementada e testada |
+| F5 | Rota, flag, botão no frontend | ✅ implementada: quarto card independente + progresso/cancelamento |
 | F6 | Série temporal multi-ano | ⬜ não iniciada (opcional) |
 
 Detalhe de cada fase em [08-fases-e-aceitacao.md](08-fases-e-aceitacao.md).
@@ -77,10 +77,6 @@ Detalhe de cada fase em [08-fases-e-aceitacao.md](08-fases-e-aceitacao.md).
 2. **O WMS da SEMA não serve para NDVI.** O "NIR" de lá é **estilo de cor**, não banda;
    o GetMap devolve PNG 8 bits já esticado. Detalhe em
    [02](02-fonte-das-bandas.md#21-o-que-nao-serve-e-por-que).
-3. **Outro agente está editando arquivos que este plano toca.** Em 25/08/2026:
-   `report-docx.ts`, `report.ts`, `phases.ts`, `wms-scenes.ts`, `ac-vegetacao/` e o
-   `phase-state.ts` do frontend. O laudo NDVI é **módulo novo**
-   (`backend/ndvi/report-ndvi-docx.ts`) justamente para não colidir, e os dois pontos de
-   contato inevitáveis (`PhaseId` e cartão da UI) ficam para o fim.
-   **Conferir `git status` antes de começar.** Detalhe em
-   [06 §0](06-laudo-docx.md#0-regra-de-convivência).
+3. **`validPct` usa os pixels esperados dentro da geometria**, não todos os pixels do
+   retângulo envolvente. Contar nodata externo ao polígono como nuvem produz falso
+   `nuvem_excessiva` em feições irregulares.

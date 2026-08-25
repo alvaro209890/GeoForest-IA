@@ -128,4 +128,6 @@ venv/
 
 # Hermes agent tracking
 .hermes/
+.commandcode/
+.codex-tmp/
 Analise_pos_recorte/concluido/

@@ -106,8 +106,27 @@ Em `client/src/pages/Dashboard.tsx`:
    - Fase 3 — Vegetação na Área Consolidada
 5. Roda cada uma quando quiser; independentes; cada uma com seu laudo (PDF/DOCX) baixável.
 
+## Correção de regressão (2026-08-25)
+
+O hook de importação tinha sido simplificado, mas o `Dashboard` ainda guardava dois
+mecanismos do fluxo antigo:
+
+1. o polling interpretava `/analyze` e `/analyze-auas` como etapas `2/3` e `3/3` do
+   importador;
+2. um `useEffect` de recuperação relançava AC/AVN e AUAS quando encontrava um clip sem
+   o antigo laudo combinado.
+
+Isso explica o comportamento observado: o ZIP ou um card parecia terminar, o cabeçalho
+marcava 100% e, em seguida, outra imagem/análise começava. A correção removeu o efeito de
+retomada, separou o polling do importador dos endpoints dos cards e eliminou o estado
+intermediário `processing/importing` depois de uma resposta de importação já concluída.
+
+Teste de regressão: no modo `vectorized-analysis`, apenas
+`/api/simcar/clip/import-vectorized` pode atualizar o cabeçalho; `/analyze`,
+`/analyze-auas` e `/analyze-ac-vegetacao` retornam estado vazio para esse fluxo.
+
 ## Notas
 
-- O resume automático após F5 só re-entra no fluxo vetorizado se o clip estiver `processing`;
-  com `done` ele não relança análise.
+- Não há mais resume automático de fases analíticas no fluxo vetorizado. Se uma análise
+  falhar ou for interrompida, o usuário a refaz pelo card correspondente.
 - O modo vetorizado nunca consulta WFS: o dado vem 100% do ZIP do usuário.

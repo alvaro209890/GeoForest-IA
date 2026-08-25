@@ -7,7 +7,7 @@
 
 ## 1. Integração com as fases pós-recorte
 
-Hoje existem três fases encadeadas em `backend/simcar/phases.ts`:
+Existem três fases visuais independentes em `backend/simcar/phases.ts`:
 
 ```ts
 export type PhaseId = "PRE_2008" | "POS_2008" | "AC_VEG";
@@ -23,18 +23,14 @@ O NDVI entra como quarta:
 export type PhaseId = "PRE_2008" | "POS_2008" | "AC_VEG" | "NDVI";
 ```
 
-⚠️ **`backend/simcar/phases.ts`, `phases.test.ts` e o `phase-state.ts` do frontend estavam
-sendo editados por outro agente em 25/08/2026.** Conferir `git status` antes de tocar.
-Deixar essa alteração — que é pequena — para **o fim da implementação**; todo o
-`backend/ndvi/` pode ser construído e testado antes dela, com a rota respondendo
-`409 PHASE_NOT_READY` fixo enquanto isso.
+Na implementação final, o NDVI aparece como quarto card no mesmo painel, mas mantém
+estado e job próprios. Ele não entra no mutex das três análises visuais.
 
 ### O NDVI é independente das outras três
 
 Não exige F1, nem F2, nem F3. O motivo é técnico, não de conveniência: as três fases
-existentes são **análises de IA sobre imagem** e se encadeiam porque uma alimenta a
-próxima. O NDVI é **medição determinística sobre raster** — não consome saída de IA
-nenhuma. Só precisa de duas coisas:
+existentes são **análises de IA sobre imagem**. O NDVI é **medição determinística sobre
+raster** — não consome saída de IA nenhuma. Só precisa de duas coisas:
 
 1. um recorte concluído (para ter a geometria);
 2. cena Landsat disponível para o ano pedido.
@@ -42,8 +38,8 @@ nenhuma. Só precisa de duas coisas:
 Isso segue o precedente já aberto no repositório: **"F2 não exige F1"**. O que o NDVI
 faz é levar o mesmo raciocínio ao limite — nenhuma dependência de fase.
 
-`derivePhases` deve reportar `NDVI` como bloqueada só por: flag desligada, recorte
-inexistente, ou ausência de cena.
+O quarto card consulta a rota NDVI própria e fica bloqueado somente por flag desligada
+ou recorte inexistente. Ausência de cena é falha declarada depois da busca do ano.
 
 ---
 
@@ -53,15 +49,15 @@ Molde: `/api/simcar/clip/analyze-auas-pos2008` (`backend/simcar/routes.ts:1093`)
 
 | Método | Caminho | Corpo / query | Resposta |
 |---|---|---|---|
-| `POST` | `/api/simcar/clip/analyze-ndvi` | `{ jobId, anos?: number[], force?: boolean }` | `202 { ok, jobId, ndviJobId }` · `409 PHASE_NOT_READY` · `404` |
+| `POST` | `/api/simcar/clip/analyze-ndvi` | `{ jobId, ano?: number, force?: boolean }` | `202 { ok, jobId, ndviJobId }` · `409 PHASE_NOT_READY` · `404` |
 | `GET` | `/api/simcar/clip/ndvi/:jobId` | — | `{ ok, ndvi: NdviResult \| null, status }` |
 | `GET` | `/api/simcar/clip/ndvi/:jobId/events` | — | SSE de progresso |
-| `POST` | `/api/simcar/clip/ndvi-report` | `{ jobId, force? }` | `{ ok, ndviReportUrl, ndviReportDownloadUrl, ndviReportFilename }` |
 | `GET` | `/api/ndvi/archive` | `?path=&row=&year=` | Índice do acervo NDVI (reuso/depuração) |
 
 Notas:
 
-- `anos` vazio ⇒ ano da cena mais recente disponível. Lista ⇒ série temporal (R6).
+- `ano` vazio ⇒ ano sazonal padrão; um ano explícito gera uma medição. Série temporal
+  multi-ano permanece opcional em F6.
 - `force: true` ignora o reuso do acervo e recalcula.
 - Os bytes do laudo saem pelo estático `GET /api/storage/*` (`backend/app.ts:35`), como
   já acontece com o laudo SIMCAR. A rota `/ndvi-report` devolve **URL**, não arquivo.
@@ -77,7 +73,6 @@ Esquecer qualquer um deixa a rota aberta ou inexistente:
    "/api/simcar/clip/analyze-ndvi",
    /^\/api\/simcar\/clip\/ndvi\/[^/]+$/,
    /^\/api\/simcar\/clip\/ndvi\/[^/]+\/events$/,
-   "/api/simcar/clip/ndvi-report",
    "/api/ndvi/archive",
    ```
 3. **`backend/app.ts`** — `app.use("/api/raster-ndvi", express.static(NDVI_ARCHIVE_ROOT))`.
@@ -121,7 +116,7 @@ Todas com default embutido; declarar só para sobrescrever. Documentar em
 
 | Env | Efeito | Default |
 |---|---|---|
-| `NDVI_QA_MASK_BITS` | Bits do `qa_pixel` que viram nodata | `27` (L4/5/7) · `31` com cirrus (L8/9) |
+| `NDVI_QA_MASK_BITS` | Bits do `qa_pixel` que viram nodata | `59` (L4/5/7) · `63` com cirrus (L8/9) |
 | `NDVI_SR_SCALE` | Fator de escala C2 L2 | `0.0000275` |
 | `NDVI_SR_OFFSET` | Offset C2 L2 | `-0.2` |
 | `NDVI_NODATA` | Valor de nodata na saída | `-9999` |
