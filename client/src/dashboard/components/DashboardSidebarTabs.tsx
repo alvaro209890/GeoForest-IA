@@ -10,6 +10,7 @@ import {
   Receipt,
   Satellite,
   Scissors,
+  Sprout,
 } from 'lucide-react';
 import type { DashboardTabId, DashboardView } from '../types';
 
@@ -86,6 +87,13 @@ export const DASHBOARD_TABS: DashboardTabDef[] = [
     Icon: Map,
     activeGradient: 'linear-gradient(135deg, #d97706, #f59e0b)',
     iconGlowClass: 'drop-shadow-[0_0_6px_rgba(245,158,11,0.5)]',
+  },
+  {
+    id: 'ndvi',
+    label: 'NDVI',
+    Icon: Sprout,
+    activeGradient: 'linear-gradient(135deg, #65a30d, #10b981)',
+    iconGlowClass: 'drop-shadow-[0_0_6px_rgba(132,204,22,0.5)]',
   },
   {
     id: 'solicitacao-prioridade',

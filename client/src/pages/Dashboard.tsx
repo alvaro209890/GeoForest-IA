@@ -63,6 +63,7 @@ import {
   CalendarClock,
   Combine,
   Map as MapIcon,
+  Sprout,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -201,6 +202,7 @@ const SobreposicoesPanel = lazy(() => import('@/dashboard/panels/SobreposicoesPa
 const CroquiPanel = lazy(() => import('@/dashboard/panels/CroquiPanel'));
 const SolicitacaoPrioridadePanel = lazy(() => import('@/components/SolicitacaoPrioridadePanel'));
 const SimcarLotesPanel = lazy(() => import('@/components/SimcarLotesPanel'));
+const NdviPanel = lazy(() => import('@/dashboard/panels/ndvi/NdviPanel'));
 
 type DocumentReference = ReturnType<typeof doc>;
 
@@ -294,6 +296,8 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   // Sub-abas dentro de "Análise de Erros": vértices próximas x áreas não contidas (containment) x erros de geometria
   const [errorAnalysisTab, setErrorAnalysisTab] = useState<'vertices' | 'containment' | 'geometry'>('vertices');
   const [manualSection, setManualSection] = useState<string | null>(null);
+  // Recorte selecionado na aba NDVI (estado controlado: histórico lateral + painel central sincronizados).
+  const [ndviSelectedJobId, setNdviSelectedJobId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -4206,6 +4210,36 @@ Arquivo de imagem previamente anexado pelo usuário.`;
             ) : (
               <HistoryEmptyState Icon={MapIcon} title="Nenhum croqui gerado." />
             )
+          ) : activeView === 'ndvi' ? (
+            simcarClipHistory.length > 0 ? (
+              simcarClipHistory.map((entry) => (
+                <HistoryCard
+                  key={entry.jobId}
+                  theme={{
+                    Icon: Sprout,
+                    activeBg: 'bg-lime-500/10 border-lime-500/20 shadow-[0_0_15px_rgba(132,204,22,0.06)]',
+                    inactiveBg: 'bg-[#0a1208]/60 hover:bg-[#101b0e] hover:border-lime-500/20',
+                    iconActive: 'bg-gradient-to-br from-lime-500 to-emerald-500 text-white shadow-md shadow-lime-900/40',
+                    iconInactive: 'bg-white/5 text-slate-400 group-hover:text-lime-300 group-hover:bg-lime-500/10',
+                    titleActive: 'text-lime-100',
+                    titleInactive: 'text-slate-200 group-hover:text-lime-100',
+                    percentText: 'text-lime-300',
+                  }}
+                  active={ndviSelectedJobId === entry.jobId}
+                  title={entry.filename}
+                  percent={0}
+                  status={entry.status}
+                  subtitle={
+                    <span>
+                      {entry.propertyAreaHa ? `${entry.propertyAreaHa.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ha` : 'Recorte SIMCAR'}
+                    </span>
+                  }
+                  onSelect={() => setNdviSelectedJobId(entry.jobId)}
+                />
+              ))
+            ) : (
+              <HistoryEmptyState Icon={Sprout} title="Nenhum recorte para NDVI." hint="Faça um recorte SIMCAR primeiro" />
+            )
           ) : activeView === 'vertices-proximas' ? (
             errorAnalysisTab === 'containment' ? (
               containmentHistory.length > 0 ? (
@@ -7174,6 +7208,21 @@ progress={
         ) : activeView === 'auas-sccon' ? (
           <Suspense fallback={<div className="flex-1 flex items-center justify-center text-slate-400 text-sm">Carregando AUAS × SCCON...</div>}>
             <AuasSccon />
+          </Suspense>
+        ) : activeView === 'ndvi' ? (
+          <Suspense fallback={
+            <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+              <div className="max-w-4xl mx-auto">
+                <div className="rounded-2xl border border-white/10 bg-[#0e1612]/70 p-6 text-sm text-slate-300">Carregando NDVI...</div>
+              </div>
+            </div>
+          }>
+            <NdviPanel
+              clips={simcarClipHistory}
+              selectedJobId={ndviSelectedJobId}
+              onSelectJob={setNdviSelectedJobId}
+              onGoSimcar={() => navigateView('simcar-clip')}
+            />
           </Suspense>
         ) : activeView === 'features' ? (
           <Suspense fallback={

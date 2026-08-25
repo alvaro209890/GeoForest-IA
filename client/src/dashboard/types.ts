@@ -41,6 +41,7 @@ export type DashboardView =
   | 'auas-sccon'
   | 'sobreposicoes'
   | 'croqui'
+  | 'ndvi'
   | 'solicitacao-prioridade'
   | 'features'
   | 'settings';
@@ -55,6 +56,7 @@ export type DashboardTabId =
   | 'auas-sccon'
   | 'sobreposicoes'
   | 'croqui'
+  | 'ndvi'
   | 'solicitacao-prioridade';
 
 export const DASHBOARD_VIEW_LABELS: Record<DashboardView, string> = {
@@ -67,6 +69,7 @@ export const DASHBOARD_VIEW_LABELS: Record<DashboardView, string> = {
   'auas-sccon': 'AUAS × SCCON',
   sobreposicoes: 'Sobreposições',
   croqui: 'Croqui',
+  ndvi: 'NDVI',
   'solicitacao-prioridade': 'Solicitação Prioridade',
   features: 'Funcionalidades',
   settings: 'Configurações',
