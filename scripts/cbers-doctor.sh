@@ -52,7 +52,8 @@ warn() { printf "  \033[33mWARN\033[0m %s\n" "$1"; WARN=$((WARN+1)); }
 echo
 echo "== Ferramentas GDAL / runtime =="
 # gdal_pansharpen.py e gdal_edit.py sao os nomes EXATOS chamados pelo backend.
-for tool in gdalinfo gdal_translate gdalwarp gdaladdo gdalbuildvrt gdal_pansharpen.py gdal_edit.py python3 node; do
+# gdaldem e gdal_calc.py entraram com o pipeline NDVI (color-relief e a conta do indice).
+for tool in gdalinfo gdal_translate gdalwarp gdaladdo gdalbuildvrt gdaldem gdal_calc.py gdal_pansharpen.py gdal_edit.py python3 node; do
   if command -v "$tool" >/dev/null 2>&1; then
     ok "$tool -> $(command -v "$tool")"
   else

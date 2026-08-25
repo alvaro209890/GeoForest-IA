@@ -1,0 +1,6 @@
+# Gravação e transcrição bruta da reunião de 31/07/2026: arquivos grandes (o .mp4 tem
+# ~509 MB) e com conversa pessoal dos participantes. O que interessa tecnicamente já
+# está extraído e citado em "Plano de implementação/01-contexto-e-fontes.md".
+*.mp4
+*.docx
+Plano de implementação/fontes/transcricao-*.txt

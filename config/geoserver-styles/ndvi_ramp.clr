@@ -1,0 +1,17 @@
+# Rampa NDVI - fonte unica para gdaldem color-relief e para ndvi_ramp.sld.
+# As duas representacoes DEVEM bater: ndvi-style.test.ts compara os pares valor->cor.
+# Formato: valor R G B A   (marrom = solo exposto/agua, verde escuro = arborea densa)
+-9999   0   0   0   0
+-1.00 140  81  10 255
+-0.20 191 129  45 255
+ 0.00 223 194 125 255
+ 0.10 246 232 195 255
+ 0.20 255 255 191 255
+ 0.30 217 240 163 255
+ 0.40 173 221 142 255
+ 0.50 120 198 121 255
+ 0.60  65 171  93 255
+ 0.70  35 132  67 255
+ 0.80   0 104  55 255
+ 1.00   0  69  41 255
+nv      0   0   0   0
