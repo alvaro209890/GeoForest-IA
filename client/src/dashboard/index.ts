@@ -133,4 +133,7 @@ export { useOverlapJobs } from './hooks/useOverlapJobs';
 export type { UseOverlapJobsReturn, UseOverlapJobsDeps } from './hooks/useOverlapJobs';
 export { useCroquiJobs } from './hooks/useCroquiJobs';
 export type { UseCroquiJobsReturn, UseCroquiJobsDeps } from './hooks/useCroquiJobs';
+export { useNdviJobs } from './hooks/useNdviJobs';
+export type { UseNdviJobsReturn, UseNdviJobsDeps } from './hooks/useNdviJobs';
+export type { NdviHistoryItem, NdviScene, NdviComposition } from './ndvi/types';
 export type { CroquiPanelProps } from './panels/CroquiPanel';

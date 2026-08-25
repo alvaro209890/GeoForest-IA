@@ -42,6 +42,12 @@ export const AUTH_REQUIRED_PATHS: (string | RegExp)[] = [
   /^\/api\/simcar\/clip\/ndvi\/[^/]+$/,
   /^\/api\/simcar\/clip\/ndvi\/[^/]+\/events$/,
   "/api/ndvi/archive",
+  // Aba NDVI dedicada (cena completa, padrão CBERS) — backend/ndvi-scene/.
+  "/api/ndvi/search",
+  "/api/ndvi/jobs",
+  /^\/api\/ndvi\/jobs\/[^/]+\/status$/,
+  /^\/api\/ndvi\/jobs\/[^/]+\/events$/,
+  /^\/api\/ndvi\/jobs\/[^/]+$/,
   "/api/vertices/upload",
   "/api/vertices/process",
   /^\/api\/vertices\/jobs\/[^/]+\/status$/,

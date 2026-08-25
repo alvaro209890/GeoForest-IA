@@ -11,12 +11,7 @@ import type { Geometry } from "geojson";
 import { isCancelRequested } from "../processing-jobs";
 import { hydrateCachedJob, readPersistedSimcarClipForUid } from "../simcar/hydration";
 import { uploadRawBufferToCloudinary } from "../simcar/cloudinary";
-import {
-  NDVI_TMP_ROOT,
-  GEOSERVER_NDVI_STYLE,
-  GEOSERVER_PUBLIC_WMS_BASE,
-  GEOSERVER_RASTER_STYLE,
-} from "./constants";
+import { NDVI_TMP_ROOT } from "./constants";
 import {
   assertNdviRange,
   buildOverviews,
@@ -29,8 +24,7 @@ import {
   writeCutline,
 } from "./compute";
 import { findReusableNdvi, ndviArchiveSubdir, saveNdviArchiveAsset, saveNdviArchiveRecord } from "./archive";
-import { ensureNdviStyle, publishNdviGeoTiff } from "./geoserver";
-import { buildNdviFilename, buildNdviStoreName, dateCompactFromItemId, platformShort } from "./naming";
+import { buildNdviFilename, dateCompactFromItemId } from "./naming";
 import { classifyNdvi } from "./ndvi-math";
 import { buildNdviReportDocxBuffer } from "./report-ndvi-docx";
 import { pickBest, resolveAssetHrefs, searchCandidates, toSceneRef } from "./scene-select";
@@ -191,29 +185,11 @@ export async function runNdviJob(input: NdviJobInput): Promise<NdviResult> {
     const salvoNdvi = saveNdviArchiveAsset({ subdir, filename: nomeNdvi, sourcePath: ndviTmp });
     const salvoRgb = saveNdviArchiveAsset({ subdir, filename: nomeRgb, sourcePath: rgbTmp });
 
-    // --- 8. Publicação ----------------------------------------------------
-    relatar(input, { stage: "publish", percent: 79, message: "Publicando na biblioteca NDVI do WMS." });
-    await ensureNdviStyle();
-    const storeNdvi = buildNdviStoreName({ path: scene.path, row: scene.row, year: scene.year, filename: nomeNdvi });
-    const storeRgb = buildNdviStoreName({ path: scene.path, row: scene.row, year: scene.year, filename: nomeRgb });
-
-    await publishNdviGeoTiff({
-      storeName: storeNdvi,
-      title: `NDVI ${scene.platformLabel} ${scene.path}/${scene.row} ${scene.acquiredAt}`,
-      hdPath: salvoNdvi.absolutePath,
-      path: scene.path, row: scene.row, year: scene.year,
-      styleName: GEOSERVER_NDVI_STYLE,
-    });
-    await publishNdviGeoTiff({
-      storeName: storeRgb,
-      title: `NDVI (cor) ${scene.platformLabel} ${scene.path}/${scene.row} ${scene.acquiredAt}`,
-      hdPath: salvoRgb.absolutePath,
-      path: scene.path, row: scene.row, year: scene.year,
-      styleName: GEOSERVER_RASTER_STYLE,
-    });
-
+    // ⚠️ Desde 25/08/2026 o NDVI pós-recorte NÃO é mais publicado no WMS: a aba
+    // NDVI dedicada (backend/ndvi-scene/) publica a cena completa. Aqui ficam só
+    // acervo + estatística + laudo (a cena recortada não deve aparecer no WMS).
     const registro: NdviArchiveRecord = {
-      ndviId: storeNdvi,
+      ndviId: nomeNdvi,
       uid: input.uid,
       ndviJobId: input.ndviJobId,
       clipJobId: input.clipJobId,
@@ -226,12 +202,12 @@ export async function runNdviJob(input: NdviJobInput): Promise<NdviResult> {
       cloudCoverPct: scene.cloudCoverPct,
       ndviFilename: nomeNdvi,
       ndviHdPath: salvoNdvi.absolutePath,
-      ndviLayerName: storeNdvi,
+      ndviLayerName: "",
       rgbFilename: nomeRgb,
       rgbHdPath: salvoRgb.absolutePath,
-      rgbLayerName: storeRgb,
+      rgbLayerName: "",
       bytes: salvoNdvi.bytes + salvoRgb.bytes,
-      wmsPublicUrl: `${GEOSERVER_PUBLIC_WMS_BASE}?service=WMS&version=1.3.0&request=GetCapabilities`,
+      wmsPublicUrl: "",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -291,11 +267,13 @@ async function finalizar(args: {
     stats,
     featuresOmitidas: omitidas,
     raster: {
-      ndviLayerName: args.registro.ndviLayerName,
-      rgbLayerName: args.registro.rgbLayerName,
+      // ⚠️ Sem publicação WMS desde 25/08/2026 (cena recortada não vai ao WMS;
+      // a aba NDVI dedicada publica a cena completa). Mantém só os caminhos locais.
+      ndviLayerName: "",
+      rgbLayerName: "",
       ndviHdPath: args.registro.ndviHdPath,
       rgbHdPath: args.registro.rgbHdPath,
-      wmsPublicUrl: args.registro.wmsPublicUrl,
+      wmsPublicUrl: "",
       bytes: args.registro.bytes,
     },
     failure: derivarFalha(propertyStat, scene),

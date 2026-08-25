@@ -10,6 +10,7 @@ import { registerApfReceiptRoutes } from "../apf-receipts";
 import { registerCbersWpmRoutes } from "../cbers-wpm";
 import { registerLandsatRoutes } from "../landsat";
 import { registerNdviRoutes } from "../ndvi";
+import { registerNdviSceneRoutes } from "../ndvi-scene";
 import { registerVerticesRoutes } from "../vertices-proximas";
 import { registerContainmentRoutes } from "../containment-analysis";
 import { registerOverlapRoutes } from "../overlap";
@@ -40,6 +41,7 @@ export function registerAllRoutes(app: Express) {
   registerCbersWpmRoutes(app);
   registerLandsatRoutes(app);
   registerNdviRoutes(app);
+  registerNdviSceneRoutes(app);
   registerVerticesRoutes(app);
   registerContainmentRoutes(app);
   registerOverlapRoutes(app);

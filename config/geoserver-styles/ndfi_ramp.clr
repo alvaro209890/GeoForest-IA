@@ -1,0 +1,17 @@
+# Rampa NDFI - fonte unica para gdaldem color-relief e para ndfi_ramp.sld.
+# As duas representacoes DEVEM bater (mesmo contrato do ndvi_ramp.clr/ndfi_ramp.sld).
+# Formato: valor R G B A
+#
+# NDFI = (rho_nir08 - rho_swir16) / (rho_nir08 + rho_swir16)
+#   convertido/solo exposto: SWIR alto, NIR baixo  -> NDFI negativo -> BRANCO
+#   vegetacao densa:         NIR alto, SWIR baixo  -> NDFI positivo alto -> VERDE
+-9999   0   0   0   0
+-1.00 255 255 255 255
+-0.20 255 255 255 255
+ 0.00 255 250 200 255
+ 0.20 250 230 120 255
+ 0.40 170 210  90 255
+ 0.60  90 170  60 255
+ 0.80  40 120  40 255
+ 1.00  20  80  30 255
+nv      0   0   0   0

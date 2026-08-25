@@ -74,6 +74,7 @@ import {
   useLandsatJobs,
   useOverlapJobs,
   useCroquiJobs,
+  useNdviJobs,
   useDashboardNavigation,
   useSimcarClipJobs,
   useSimcarAnalysis,
@@ -114,6 +115,7 @@ import {
   type SimcarLayerSummary,
   type SimcarClipSummary,
   type SimcarClipHistoryItem,
+  type NdviHistoryItem,
   type VerticesLayer,
   type VerticesResultRow,
   type VerticesProgress,
@@ -296,8 +298,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   // Sub-abas dentro de "Análise de Erros": vértices próximas x áreas não contidas (containment) x erros de geometria
   const [errorAnalysisTab, setErrorAnalysisTab] = useState<'vertices' | 'containment' | 'geometry'>('vertices');
   const [manualSection, setManualSection] = useState<string | null>(null);
-  // Recorte selecionado na aba NDVI (estado controlado: histórico lateral + painel central sincronizados).
-  const [ndviSelectedJobId, setNdviSelectedJobId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1077,6 +1077,29 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     deleteCroquiJob,
   } = croqui;
 
+  const ndviDownloadZipRef = useRef<(url?: string | null, filename?: string) => void | Promise<void>>(async () => {});
+  const ndviDownloadZip = useCallback((url?: string | null, filename?: string) => {
+    return ndviDownloadZipRef.current(url, filename);
+  }, []);
+
+  const ndvi = useNdviJobs({
+    apiFetch,
+    requestProcessCancel,
+    downloadZip: ndviDownloadZip,
+    fileToBase64Payload,
+  });
+  const {
+    ndviHistory,
+    setNdviHistory,
+    ndviJobId,
+    setNdviJobId,
+    setNdviProcessing,
+    resetNdviDraft,
+    selectNdviHistoryEntry,
+    hydrateFromDocs: hydrateNdviFromDocs,
+    deleteNdviJob,
+  } = ndvi;
+
 
   const appendVerticesJobToConversation = useCallback(async (job: VerticesHistoryItem) => {
     if (!conversationsRef || !verticesJobsRef || !job?.jobId || job.status !== 'completed') return null;
@@ -1634,6 +1657,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
         const landsatRef = collection(db, 'users', currentUser.uid, 'landsat_jobs');
         const overlapRef = collection(db, 'users', currentUser.uid, 'overlap_jobs');
         const croquiRef = collection(db, 'users', currentUser.uid, 'croqui_jobs');
+        const ndviRef = collection(db, 'users', currentUser.uid, 'ndvi_scene_jobs');
 
         const nextSettingsRef = doc(db, 'users', currentUser.uid, 'settings', 'preferences');
         setSettingsRef(nextSettingsRef);
@@ -1916,6 +1940,14 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
           console.warn('Falha ao carregar histórico de croquis:', error);
         }
 
+        try {
+          const ndviSnap = await getDocs(query(ndviRef, orderBy('updatedAtMs', 'desc')));
+          const docs = ndviSnap.docs.map((docSnap: any) => ({ id: docSnap.id, data: docSnap.data() as any }));
+          hydrateNdviFromDocs(docs);
+        } catch (error) {
+          console.warn('Falha ao carregar histórico NDVI salvo:', error);
+        }
+
         if (list.length === 0) {
           await createConversation(collRef);
         } else {
@@ -1932,7 +1964,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     });
 
     return () => unsubscribe();
-  }, [mapVerticesDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, hydrateCbersFromDocs, hydrateLandsatFromDocs, hydrateOverlapFromDocs, hydrateCroquiFromDocs, selectSimcarClipEntry, setLocation]);
+  }, [mapVerticesDocToHistoryItem, normalizeSimcarClipSummary, normalizeSimcarReportPatch, hydrateCbersFromDocs, hydrateLandsatFromDocs, hydrateOverlapFromDocs, hydrateCroquiFromDocs, hydrateNdviFromDocs, selectSimcarClipEntry, setLocation]);
 
   useEffect(() => {
     const uid = String(userProfile?.uid || '').trim();
@@ -4211,8 +4243,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <HistoryEmptyState Icon={MapIcon} title="Nenhum croqui gerado." />
             )
           ) : activeView === 'ndvi' ? (
-            simcarClipHistory.length > 0 ? (
-              simcarClipHistory.map((entry) => (
+            ndviHistory.length > 0 ? (
+              ndviHistory.map((entry: NdviHistoryItem) => (
                 <HistoryCard
                   key={entry.jobId}
                   theme={{
@@ -4225,20 +4257,22 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     titleInactive: 'text-slate-200 group-hover:text-lime-100',
                     percentText: 'text-lime-300',
                   }}
-                  active={ndviSelectedJobId === entry.jobId}
+                  active={ndviJobId === entry.jobId}
                   title={entry.filename}
-                  percent={0}
+                  percent={entry.percent}
                   status={entry.status}
                   subtitle={
                     <span>
-                      {entry.propertyAreaHa ? `${entry.propertyAreaHa.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ha` : 'Recorte SIMCAR'}
+                      {entry.areaHa ? `${entry.areaHa.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ha` : 'NDVI · cena completa'}
                     </span>
                   }
-                  onSelect={() => setNdviSelectedJobId(entry.jobId)}
+                  onSelect={() => selectNdviHistoryEntry(entry)}
+                  onDelete={() => void deleteNdviJob(entry)}
+                  deleteTitle="Excluir job NDVI"
                 />
               ))
             ) : (
-              <HistoryEmptyState Icon={Sprout} title="Nenhum recorte para NDVI." hint="Faça um recorte SIMCAR primeiro" />
+              <HistoryEmptyState Icon={Sprout} title="Nenhum job NDVI." hint="Importe um polígono e gere a cena completa" />
             )
           ) : activeView === 'vertices-proximas' ? (
             errorAnalysisTab === 'containment' ? (
@@ -7217,12 +7251,7 @@ progress={
               </div>
             </div>
           }>
-            <NdviPanel
-              clips={simcarClipHistory}
-              selectedJobId={ndviSelectedJobId}
-              onSelectJob={setNdviSelectedJobId}
-              onGoSimcar={() => navigateView('simcar-clip')}
-            />
+            <NdviPanel ndvi={ndvi} />
           </Suspense>
         ) : activeView === 'features' ? (
           <Suspense fallback={
