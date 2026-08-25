@@ -22,6 +22,13 @@ só a metodologia foi aproveitada. O objetivo é **NDVI**.
 4. **Aba dedicada no dashboard** (`/dashboard/ndvi`, commit `e1026b85`) que lista os
    recortes SIMCAR do usuário e calcula o NDVI de cada um, com progresso, cancelamento,
    laudo Word e WMS. Doc: `docs/CHANGELOG_2026-08-25_ABA_NDVI.md`.
+5. **Aba refeita no fluxo CBERS** (commit `b2b7ab42`): importa o polígono (ZIP/SHP/CAR),
+   busca cenas Landsat C2 L2 e gera a **cena completa** com **4 composições** publicadas
+   no WMS — `NDVI` (rampa verde-amarelo-marrom), `NDFI` (área convertida fica **branca**,
+   rampa nova `ndfi_ramp`), `RGB` (cor natural) e `SWIR` (falsa-cor 6-5-4, banda 7).
+   Organização no GeoServer: `RASTER → NDVI → órbita → ano → composição`.
+   O NDVI pós-recorte deixou de publicar no WMS (mantém cálculo + laudo).
+   Doc: `docs/CHANGELOG_2026-08-25_ABA_NDVI_FLUXO_CBERS.md`.
 
 ---
 
@@ -65,7 +72,7 @@ Estas três não estão em aberto. O que continua em aberto está em
 | F2 | Publicação na biblioteca `NDVI` do WMS + validação GetMap | ✅ implementada; GetMap real depende da primeira execução live |
 | F3 | Estatística zonal por polígono | ✅ implementada, incluindo denominador geométrico de `validPct` |
 | F4 | Laudo Word próprio | ✅ implementada e testada |
-| F5 | Rota, flag, botão no frontend | ✅ implementada: quarto card independente + progresso/cancelamento + **aba dedicada `/dashboard/ndvi`** (25/08) |
+| F5 | Rota, flag, botão no frontend | ✅ implementada: quarto card independente + progresso/cancelamento + **aba dedicada `/dashboard/ndvi`** (25/08) + **refeita no fluxo CBERS** (cena completa, 4 composições, commit `b2b7ab42`) |
 | F6 | Série temporal multi-ano | ⬜ não iniciada (opcional) |
 
 Detalhe de cada fase em [08-fases-e-aceitacao.md](08-fases-e-aceitacao.md).
