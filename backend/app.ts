@@ -8,6 +8,7 @@ import { createRequestLogger } from "./middleware/request-logger";
 import { requireAuth, attachOptionalAuth } from "./auth";
 import { STORAGE_ROOT } from "./local-storage";
 import { CBERS_ARCHIVE_ROOT } from "./cbers/archive";
+import { NDVI_ARCHIVE_ROOT } from "./ndvi/constants";
 import { registerAllRoutes } from "./routes/_registry";
 import { AUTH_REQUIRED_PATHS } from "./auth-required-paths";
 import type { Logger } from "./lib/logger";
@@ -34,6 +35,7 @@ export function createApp(logBackend: Logger): Express {
   });
   app.use("/api/storage", express.static(STORAGE_ROOT));
   app.use("/api/raster", express.static(CBERS_ARCHIVE_ROOT));
+  app.use("/api/raster-ndvi", express.static(NDVI_ARCHIVE_ROOT));
 
   registerAllRoutes(app);
 
