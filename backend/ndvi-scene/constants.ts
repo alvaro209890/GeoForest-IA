@@ -46,7 +46,7 @@ export const NDVI_SCENE_BATCH_CONCURRENCY = Math.max(
 // --- Composições ----------------------------------------------------------
 
 /** Composições suportadas para a cena completa. */
-export type NdviSceneComposition = "NDVI" | "NDFI" | "RGB" | "SWIR";
+export type NdviSceneComposition = "NDVI" | "NDFI" | "SAVI" | "RGB" | "SWIR";
 
 export type NdviSceneCompositionMeta = {
   id: NdviSceneComposition;
@@ -77,6 +77,14 @@ export const NDVI_SCENE_COMPOSITIONS: readonly NdviSceneCompositionMeta[] = [
       "NDFI = (ρ_NIR − ρ_SWIR16)/(ρ_NIR + ρ_SWIR16): área convertida/solo exposto (SWIR alto, NIR baixo) → negativo; vegetação densa → positivo alto.",
   },
   {
+    id: "SAVI",
+    label: "SAVI",
+    bands: ["nir08", "red", "qa_pixel"],
+    styleName: "savi_ramp",
+    description:
+      "SAVI = (ρ_NIR − ρ_RED)/(ρ_NIR + ρ_RED + L) × (1 + L), com L = 0,5: índice de vegetação ajustado ao solo, minimiza a influência do solo exposto (útil em áreas com pouca cobertura).",
+  },
+  {
     id: "RGB",
     label: "RGB",
     bands: ["red", "green", "blue"],
@@ -93,7 +101,7 @@ export const NDVI_SCENE_COMPOSITIONS: readonly NdviSceneCompositionMeta[] = [
 ];
 
 /** Composição padrão quando o cliente não pede nenhuma. */
-export const NDVI_SCENE_DEFAULT_COMPOSITIONS: readonly NdviSceneComposition[] = ["NDVI", "NDFI"];
+export const NDVI_SCENE_DEFAULT_COMPOSITIONS: readonly NdviSceneComposition[] = ["NDVI", "NDFI", "SAVI"];
 
 export function compositionMeta(id: string): NdviSceneCompositionMeta | null {
   return NDVI_SCENE_COMPOSITIONS.find((c) => c.id === id) || null;
@@ -103,6 +111,9 @@ export function compositionMeta(id: string): NdviSceneCompositionMeta | null {
 
 /** Estilo NDFI novo, criado/publicado por `ensureNdfiStyle()` do módulo. */
 export const GEOSERVER_NDFI_STYLE = process.env.GEOSERVER_NDFI_STYLE || "ndfi_ramp";
+
+/** Estilo SAVI novo, criado/publicado por `ensureSaviStyle()` do módulo. */
+export const GEOSERVER_SAVI_STYLE = process.env.GEOSERVER_SAVI_STYLE || "savi_ramp";
 
 /** Reexporta o estilo NDVI herdado (fonte única: `backend/ndvi/constants.ts`). */
 export { GEOSERVER_NDVI_STYLE, GEOSERVER_RASTER_STYLE, GEOSERVER_PUBLIC_WMS_BASE };
@@ -117,6 +128,11 @@ export const NDFI_SLD_PATH =
   process.env.NDFI_SLD_PATH || repoConfigPath("geoserver-styles", "ndfi_ramp.sld");
 export const NDFI_COLOR_RAMP_PATH =
   process.env.NDFI_COLOR_RAMP_PATH || repoConfigPath("geoserver-styles", "ndfi_ramp.clr");
+
+export const SAVI_SLD_PATH =
+  process.env.SAVI_SLD_PATH || repoConfigPath("geoserver-styles", "savi_ramp.sld");
+export const SAVI_COLOR_RAMP_PATH =
+  process.env.SAVI_COLOR_RAMP_PATH || repoConfigPath("geoserver-styles", "savi_ramp.clr");
 
 export {
   NDVI_SLD_PATH,

@@ -68,7 +68,24 @@ export function registerNdviSceneRoutes(app: Express): void {
       const orbit = String((req.body as any)?.orbit || "").trim();
       const point = String((req.body as any)?.point || "").trim();
 
-      const candidatos = await searchCandidates({ geometry: area.geometry!, year: anoBase });
+      // ⚠️ A busca tem que respeitar as DATAS informadas. Antes usava só o ano
+      // corrente (anoBase) — pedir 2007/2008 devolvia "sem imagem" porque o STAC
+      // era consultado só para 2025 e o filtro de data matava tudo.
+      const anoStart = dateStart ? Number(String(dateStart).slice(0, 4)) : anoBase;
+      const anoEnd = dateEnd ? Number(String(dateEnd).slice(0, 4)) : anoBase;
+      const anosBusca: number[] = [];
+      const primeiroAno = Number.isFinite(anoStart) ? anoStart : anoBase;
+      const ultimoAno = Number.isFinite(anoEnd) ? anoEnd : anoBase;
+      const minAno = Math.min(primeiroAno, ultimoAno);
+      const maxAno = Math.max(primeiroAno, ultimoAno);
+      for (let ano = minAno; ano <= Math.min(maxAno, agora.getUTCFullYear()); ano += 1) {
+        anosBusca.push(ano);
+      }
+      if (anosBusca.length === 0) anosBusca.push(anoBase);
+
+      const candidatos = (
+        await Promise.all(anosBusca.map((ano) => searchCandidates({ geometry: area.geometry!, year: ano })))
+      ).flat();
       const scenes = candidatos
         .filter((c) => {
           const data = c.acquiredAt.slice(0, 10);

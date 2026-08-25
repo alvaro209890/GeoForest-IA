@@ -9,9 +9,9 @@
 import type { CbersGeoJsonGeometry } from '../components/CbersMapPreview';
 
 /** Composições geradas por cena completa NDVI. */
-export type NdviComposition = 'NDVI' | 'NDFI' | 'RGB' | 'SWIR';
+export type NdviComposition = 'NDVI' | 'NDFI' | 'SAVI' | 'RGB' | 'SWIR';
 
-export const NDVI_COMPOSITIONS: NdviComposition[] = ['NDVI', 'NDFI', 'RGB', 'SWIR'];
+export const NDVI_COMPOSITIONS: NdviComposition[] = ['NDVI', 'NDFI', 'SAVI', 'RGB', 'SWIR'];
 
 export const isNdviComposition = (value: unknown): value is NdviComposition =>
   NDVI_COMPOSITIONS.includes(value as NdviComposition);
@@ -28,34 +28,46 @@ export type NdviCompositionMeta = {
 
 /**
  * Metadados de UI das composições (reunião): label + descrição + cores.
- * NDVI lime · NDFI white/amber · RGB rainbow/blue · SWIR purple.
+ * NDVI lime · NDFI white/amber · SAVI green/brown · RGB rainbow/blue · SWIR purple.
  */
 export const NDVI_COMPOSITION_META: Record<NdviComposition, NdviCompositionMeta> = {
   NDVI: {
     key: 'NDVI',
     label: 'NDVI',
-    description: 'Índice de vegetação (verde→amarelo→marrom).',
+    description:
+      'Índice de Vegetação por Diferença Normalizada — (NIR−RED)/(NIR+RED). Faixa −1 a 1: verde = vegetação densa, amarelo = vegetação rala/pastagem, marrom = solo exposto/água. É o índice clássico de vigor vegetativo.',
     badgeClass: 'border-lime-500/30 bg-lime-500/10 text-lime-200',
     swatchClass: 'from-lime-500 via-amber-400 to-amber-700',
   },
   NDFI: {
     key: 'NDFI',
     label: 'NDFI',
-    description: 'Detecção de área convertida (solo exposto/desmate fica BRANCO).',
+    description:
+      'NDFI (Normalized Difference Fraction Index) — usa NIR e SWIR. Área convertida/desmatada e solo exposto ficam em BRANCO, vegetação em verde. É a composição que destaca cicatrizes de exploração e corte raso, como mostrado na reunião.',
     badgeClass: 'border-amber-500/30 bg-amber-500/10 text-amber-100',
     swatchClass: 'from-white via-amber-200 to-amber-600',
+  },
+  SAVI: {
+    key: 'SAVI',
+    label: 'SAVI',
+    description:
+      'Soil Adjusted Vegetation Index — (NIR−RED)/(NIR+RED+L) × (1+L), com L=0,5. Ajustado ao solo: reduz a influência do brilho do solo exposto em áreas de vegetação esparsa. Ideal para pastagens degradadas e regeneração inicial, onde o NDVI fica contaminado.',
+    badgeClass: 'border-green-500/30 bg-green-500/10 text-green-200',
+    swatchClass: 'from-green-600 via-lime-400 to-amber-600',
   },
   RGB: {
     key: 'RGB',
     label: 'RGB',
-    description: 'Cor natural.',
+    description:
+      'Cor natural 4-3-2 (red, green, blue) com realce de contraste. Mostra a cena como fotografia: vegetação verde, solo marrom, água escura. Útil para conferência visual direta da área.',
     badgeClass: 'border-sky-500/30 bg-sky-500/10 text-sky-200',
     swatchClass: 'from-sky-500 via-emerald-400 to-rose-400',
   },
   SWIR: {
     key: 'SWIR',
     label: 'SWIR',
-    description: 'Falsa-cor 6-5-4 (banda 7 — cicatriz de exploração).',
+    description:
+      'Falsa-cor 6-5-4 (swir16, nir08, red) — banda 7 do Landsat. O infravermelho de ondas curtas destaca cicatrizes de exploração, queimadas recentes e áreas úmidas (tons escuros/magenta). Complementa o NDFI na leitura de desmate.',
     badgeClass: 'border-purple-500/30 bg-purple-500/10 text-purple-200',
     swatchClass: 'from-purple-700 via-fuchsia-500 to-purple-300',
   },

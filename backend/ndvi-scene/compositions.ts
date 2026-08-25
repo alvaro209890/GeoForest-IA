@@ -21,6 +21,7 @@ import {
   NDVI_SCENE_COMPOSITIONS,
   NDVI_SR_OFFSET,
   NDVI_SR_SCALE,
+  SAVI_COLOR_RAMP_PATH,
   type NdviSceneComposition,
 } from "./constants";
 import { NdviSceneCancelError } from "./types";
@@ -58,9 +59,10 @@ export function allBandKeys(): string[] {
   return [...set];
 }
 
-/** Caminho da rampa de cor da composição (NDVI usa a do NDVI; NDFI usa a nova). */
+/** Caminho da rampa de cor da composição (NDVI usa a do NDVI; NDFI/SAVI usam as próprias). */
 function colorRampFor(comp: NdviSceneComposition): string {
   if (comp === "NDFI") return NDFI_COLOR_RAMP_PATH;
+  if (comp === "SAVI") return SAVI_COLOR_RAMP_PATH;
   return NDVI_COLOR_RAMP_PATH;
 }
 
@@ -146,6 +148,35 @@ export function buildNdfiCalcExpression(args: {
 }
 
 /**
+ * Expressão `gdal_calc` do SAVI a partir de reflectância (A: NIR, B: RED, C: QA).
+ *
+ * SAVI = (ρ_NIR − ρ_RED) / (ρ_NIR + ρ_RED + L) × (1 + L), com L = 0,5.
+ * O fator L (soil adjustment factor) reduz a influência do solo exposto no índice —
+ * em áreas de vegetação esparsa o NDVI fica contaminado pelo brilho do solo; o SAVI
+ * estabiliza a resposta. Mesma disciplina do NDVI: DN → reflectância ANTES da razão.
+ */
+export function buildSaviCalcExpression(args: {
+  qaMask: number;
+  scale?: number;
+  offset?: number;
+  nodata?: number;
+  comQa?: boolean;
+  soilFactor?: number;
+}): string {
+  const scale = args.scale ?? NDVI_SR_SCALE;
+  const offset = args.offset ?? NDVI_SR_OFFSET;
+  const nodata = args.nodata ?? NDVI_NODATA;
+  const l = Number.isFinite(args.soilFactor) ? Number(args.soilFactor) : 0.5;
+  const nir = `(A.astype(float32)*${scale}${offset >= 0 ? "+" : ""}${offset})`;
+  const red = `(B.astype(float32)*${scale}${offset >= 0 ? "+" : ""}${offset})`;
+  const soma = `(${nir}+${red}+${l})`;
+  const invalido = args.comQa === false
+    ? `(A<=0)|(B<=0)`
+    : `(A<=0)|(B<=0)|(bitwise_and(C.astype(uint16),${args.qaMask})>0)`;
+  return `where(${invalido},${nodata},(${nir}-${red})/where(${soma}==0,1e-10,${soma})*${1 + l})`;
+}
+
+/**
  * Monta e executa o comando GDAL que gera o GeoTIFF RGB 8 bits da composição.
  *
  * NDVI/NDFI: `gdal_calc.py` (Float32, máscara QA) → `gdaldem color-relief` (rampa).
@@ -167,18 +198,20 @@ export async function buildCompositionCommand(args: {
   const { comp, bandPaths, platform } = args;
   const outBase = path.join(args.outDir, `${String(comp).toLowerCase()}`);
 
-  if (comp === "NDVI" || comp === "NDFI") {
+  if (comp === "NDVI" || comp === "NDFI" || comp === "SAVI") {
     const nirPath = bandPaths.nir08;
-    const segundoPath = comp === "NDVI" ? bandPaths.red : bandPaths.swir16;
+    const segundoPath = comp === "NDVI" ? bandPaths.red : comp === "NDFI" ? bandPaths.swir16 : bandPaths.red;
     if (!nirPath || !segundoPath) {
-      throw new Error(`Composição ${comp} exige bandas nir08 e ${comp === "NDVI" ? "red" : "swir16"} materializadas.`);
+      throw new Error(`Composição ${comp} exige bandas nir08 e ${comp === "NDVI" || comp === "SAVI" ? "red" : "swir16"} materializadas.`);
     }
     const qaPath = bandPaths.qa_pixel;
     const comQa = Boolean(qaPath && fs.existsSync(qaPath));
     const indexTmp = `${outBase}_float.tif`;
     const expression = comp === "NDVI"
       ? buildGdalCalcExpression({ qaMask: qaMaskForPlatform(platform), comQa })
-      : buildNdfiCalcExpression({ qaMask: qaMaskForPlatform(platform), comQa });
+      : comp === "NDFI"
+        ? buildNdfiCalcExpression({ qaMask: qaMaskForPlatform(platform), comQa })
+        : buildSaviCalcExpression({ qaMask: qaMaskForPlatform(platform), comQa });
     const qaArgs = comQa ? ["-C", qaPath as string, "--C_band=1"] : [];
     await runCommand({
       uid: args.uid,

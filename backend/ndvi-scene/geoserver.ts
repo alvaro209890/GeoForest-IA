@@ -22,7 +22,9 @@ import {
   GEOSERVER_NDVI_STYLE,
   GEOSERVER_PUBLIC_WMS_BASE,
   GEOSERVER_RASTER_STYLE,
+  GEOSERVER_SAVI_STYLE,
   NDFI_SLD_PATH,
+  SAVI_SLD_PATH,
 } from "./constants";
 import type { NdviSceneComposition } from "./constants";
 import type { NdviSceneCompositionState } from "./types";
@@ -96,6 +98,8 @@ export function styleNameForComposition(comp: NdviSceneComposition): string {
       return GEOSERVER_NDVI_STYLE;
     case "NDFI":
       return GEOSERVER_NDFI_STYLE;
+    case "SAVI":
+      return GEOSERVER_SAVI_STYLE;
     case "RGB":
     case "SWIR":
       return GEOSERVER_RASTER_STYLE;
@@ -104,7 +108,7 @@ export function styleNameForComposition(comp: NdviSceneComposition): string {
 
 /**
  * Garante que o estilo necessário à composição exista no GeoServer.
- * NDVI → `ensureNdviStyle` (módulo NDVI); NDFI → `ensureNdfiStyle` (deste módulo).
+ * NDVI → `ensureNdviStyle` (módulo NDVI); NDFI → `ensureNdfiStyle`; SAVI → `ensureSaviStyle`.
  */
 export async function ensureStyleForComposition(comp: NdviSceneComposition): Promise<void> {
   if (comp === "NDVI") {
@@ -113,7 +117,50 @@ export async function ensureStyleForComposition(comp: NdviSceneComposition): Pro
   }
   if (comp === "NDFI") {
     await ensureNdfiStyle();
+    return;
   }
+  if (comp === "SAVI") {
+    await ensureSaviStyle();
+  }
+}
+
+/**
+ * Cria ou atualiza o estilo `savi_ramp` a partir do SLD versionado
+ * (`config/geoserver-styles/savi_ramp.sld`). Mesmo molde do `ensureNdfiStyle`.
+ */
+export async function ensureSaviStyle(): Promise<"created" | "updated"> {
+  const sld = fs.readFileSync(SAVI_SLD_PATH, "utf8");
+  const estilo = encodeURIComponent(GEOSERVER_SAVI_STYLE);
+  const existente = await geoserverFetch(`/rest/styles/${estilo}.json`);
+  if (existente.status === 404) {
+    const res = await geoserverFetch(
+      `/rest/styles?name=${estilo}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/vnd.ogc.sld+xml" },
+        body: sld,
+      },
+    );
+    if (![200, 201, 202, 204].includes(res.status)) {
+      throw new Error(`Falha ao criar estilo ${GEOSERVER_SAVI_STYLE}: ${res.status}`);
+    }
+    return "created";
+  }
+  if (!existente.ok) {
+    throw new Error(`Falha ao ler estilo ${GEOSERVER_SAVI_STYLE}: ${existente.status}`);
+  }
+  const res = await geoserverFetch(
+    `/rest/styles/${estilo}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/vnd.ogc.sld+xml" },
+      body: sld,
+    },
+  );
+  if (![200, 201, 202, 204].includes(res.status)) {
+    throw new Error(`Falha ao atualizar estilo ${GEOSERVER_SAVI_STYLE}: ${res.status}`);
+  }
+  return "updated";
 }
 
 /** URL pública de capabilities WMS (fonte: backend/ndvi/constants). */
