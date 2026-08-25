@@ -23,12 +23,16 @@ só a metodologia foi aproveitada. O objetivo é **NDVI**.
    recortes SIMCAR do usuário e calcula o NDVI de cada um, com progresso, cancelamento,
    laudo Word e WMS. Doc: `docs/CHANGELOG_2026-08-25_ABA_NDVI.md`.
 5. **Aba refeita no fluxo CBERS** (commit `b2b7ab42`): importa o polígono (ZIP/SHP/CAR),
-   busca cenas Landsat C2 L2 e gera a **cena completa** com **4 composições** publicadas
+   busca cenas Landsat C2 L2 e gera a **cena completa** com **5 composições** publicadas
    no WMS — `NDVI` (rampa verde-amarelo-marrom), `NDFI` (área convertida fica **branca**,
-   rampa nova `ndfi_ramp`), `RGB` (cor natural) e `SWIR` (falsa-cor 6-5-4, banda 7).
+   rampa nova `ndfi_ramp`), `SAVI` (ajustado ao solo, L=0,5 — rampa `savi_ramp`),
+   `RGB` (cor natural) e `SWIR` (falsa-cor 6-5-4, banda 7).
    Organização no GeoServer: `RASTER → NDVI → órbita → ano → composição`.
    O NDVI pós-recorte deixou de publicar no WMS (mantém cálculo + laudo).
    Doc: `docs/CHANGELOG_2026-08-25_ABA_NDVI_FLUXO_CBERS.md`.
+6. **Correção da busca por data** (commit `4ab045d1`): a busca agora consulta o STAC
+   para **todos os anos entre `dateStart` e `dateEnd`** (antes usava só o ano corrente,
+   então 2007/2008 devolvia "sem imagem").
 
 ---
 
