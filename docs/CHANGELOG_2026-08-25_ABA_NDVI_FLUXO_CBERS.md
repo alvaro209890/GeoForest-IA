@@ -13,12 +13,22 @@ não só a propriedade), publicando tudo organizado no WMS.
 |---|---|---|---|
 | `NDVI` | nir08, red | verde→amarelo→marrom | `ndvi_ramp` |
 | `NDFI` | swir16, nir08 | área convertida/solo exposto **BRANCO**, vegetação verde | `ndfi_ramp` (novo) |
+| `SAVI` | nir08, red | ajustado ao solo (L=0,5) — pastagem/regeneração | `savi_ramp` (novo) |
 | `RGB` | red, green, blue | cor natural | `raster` |
 | `SWIR` | swir16, nir08, red | falsa-cor 6-5-4 (banda 7 — cicatriz de exploração) | `raster` |
 
 A rampa `ndfi_ramp` é a que deixa a área mexida em **branco** (NDFI negativo/baixo =
 convertido), exatamente como mostrado na reunião ("se tiver branco lá... é caracterizado
 como uma área que foi convertida").
+
+### Correção da busca por data (commit `4ab045d1`)
+
+A busca de cenas **ignorava as datas informadas** (usava sempre o ano corrente no STAC) —
+pedir 2007/2008 devolvia "não tem imagem" porque o Planetary Computer era consultado só
+para 2025 e o filtro de data matava tudo. Agora a busca consulta **todos os anos entre
+`dateStart` e `dateEnd`** (janela seca jun–set por ano) e depois aplica os filtros de
+data/órbita/ponto. SAVI adicionado como composição (L=0,5) e descrições detalhadas de
+todas as composições no seletor.
 
 ### Backend — `backend/ndvi-scene/` (novo)
 
