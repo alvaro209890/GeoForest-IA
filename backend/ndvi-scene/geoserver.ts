@@ -1,10 +1,8 @@
 /**
  * Publicação da cena completa no GeoServer.
  *
- * - `ensureNdfiStyle()` cria/atualiza o estilo `ndfi_ramp` (molde do
- *   `ensureNdviStyle` de `backend/ndvi/geoserver.ts`).
  * - `publishCompositionLayer()` chama `publishNdviGeoTiff` (do módulo NDVI) com
- *   storeName/layerName/estilo da composição e valida a publicação.
+ *   storeName/layerName e o estilo neutro `raster`.
  *
  * A hierarquia de grupos (`RASTER → NDVI → ndvi_orbit_<path>_<row> → ..._y<ano>`)
  * é a mesma do NDVI pós-recorte — cada composição entra como um layer irmão.
@@ -13,13 +11,13 @@ import fs from "node:fs";
 import {
   authHeader,
   ensureNdviStyle,
+  rollbackNdviGeoTiffPublication,
   publishNdviGeoTiff,
   verifyNdviWmsPublication,
 } from "../ndvi/geoserver";
 import { GEOSERVER_WORKSPACE } from "../ndvi/constants";
 import {
   GEOSERVER_NDFI_STYLE,
-  GEOSERVER_NDVI_STYLE,
   GEOSERVER_PUBLIC_WMS_BASE,
   GEOSERVER_RASTER_STYLE,
   GEOSERVER_SAVI_STYLE,
@@ -38,12 +36,15 @@ export {
 };
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise(r => setTimeout(r, ms));
 }
 
-async function geoserverFetch(restPath: string, options: RequestInit = {}): Promise<Response> {
+async function geoserverFetch(
+  restPath: string,
+  options: RequestInit = {}
+): Promise<Response> {
   const base = String(
-    process.env.GEOSERVER_BASE_URL || "http://127.0.0.1:8081/geoserver",
+    process.env.GEOSERVER_BASE_URL || "http://127.0.0.1:8081/geoserver"
   ).replace(/\/+$/, "");
   const res = await fetch(`${base}${restPath}`, {
     ...options,
@@ -61,67 +62,53 @@ export async function ensureNdfiStyle(): Promise<"created" | "updated"> {
   const estilo = encodeURIComponent(GEOSERVER_NDFI_STYLE);
   const existente = await geoserverFetch(`/rest/styles/${estilo}.json`);
   if (existente.status === 404) {
-    const res = await geoserverFetch(
-      `/rest/styles?name=${estilo}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/vnd.ogc.sld+xml" },
-        body: sld,
-      },
-    );
+    const res = await geoserverFetch(`/rest/styles?name=${estilo}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/vnd.ogc.sld+xml" },
+      body: sld,
+    });
     if (![200, 201, 202, 204].includes(res.status)) {
-      throw new Error(`Falha ao criar estilo ${GEOSERVER_NDFI_STYLE}: ${res.status}`);
+      throw new Error(
+        `Falha ao criar estilo ${GEOSERVER_NDFI_STYLE}: ${res.status}`
+      );
     }
     return "created";
   }
   if (!existente.ok) {
-    throw new Error(`Falha ao ler estilo ${GEOSERVER_NDFI_STYLE}: ${existente.status}`);
+    throw new Error(
+      `Falha ao ler estilo ${GEOSERVER_NDFI_STYLE}: ${existente.status}`
+    );
   }
-  const res = await geoserverFetch(
-    `/rest/styles/${estilo}`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/vnd.ogc.sld+xml" },
-      body: sld,
-    },
-  );
+  const res = await geoserverFetch(`/rest/styles/${estilo}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/vnd.ogc.sld+xml" },
+    body: sld,
+  });
   if (![200, 201, 202, 204].includes(res.status)) {
-    throw new Error(`Falha ao atualizar estilo ${GEOSERVER_NDFI_STYLE}: ${res.status}`);
+    throw new Error(
+      `Falha ao atualizar estilo ${GEOSERVER_NDFI_STYLE}: ${res.status}`
+    );
   }
   return "updated";
 }
 
-/** Estilo GeoServer da composição (fonte: metadados das composições). */
-export function styleNameForComposition(comp: NdviSceneComposition): string {
-  switch (comp) {
-    case "NDVI":
-      return GEOSERVER_NDVI_STYLE;
-    case "NDFI":
-      return GEOSERVER_NDFI_STYLE;
-    case "SAVI":
-      return GEOSERVER_SAVI_STYLE;
-    case "RGB":
-    case "SWIR":
-      return GEOSERVER_RASTER_STYLE;
-  }
+/**
+ * Todas as composições finais já são RGB/RGBA 8 bits. As rampas CLR são
+ * incorporadas pelo GDAL; aplicar um ColorMap monobanda novamente no GeoServer
+ * causa `Source and Destination image must have the same Bands`.
+ */
+export function styleNameForComposition(_comp: NdviSceneComposition): string {
+  return GEOSERVER_RASTER_STYLE;
 }
 
 /**
- * Garante que o estilo necessário à composição exista no GeoServer.
- * NDVI → `ensureNdviStyle` (módulo NDVI); NDFI → `ensureNdfiStyle`; SAVI → `ensureSaviStyle`.
+ * Compatibilidade da API anterior. O produto final já incorpora a cor e não
+ * precisa criar nem atualizar rampas SLD durante a publicação.
  */
-export async function ensureStyleForComposition(comp: NdviSceneComposition): Promise<void> {
-  if (comp === "NDVI") {
-    await ensureNdviStyle();
-    return;
-  }
-  if (comp === "NDFI") {
-    await ensureNdfiStyle();
-    return;
-  }
-  if (comp === "SAVI") {
-    await ensureSaviStyle();
-  }
+export async function ensureStyleForComposition(
+  comp: NdviSceneComposition
+): Promise<void> {
+  void comp;
 }
 
 /**
@@ -133,32 +120,32 @@ export async function ensureSaviStyle(): Promise<"created" | "updated"> {
   const estilo = encodeURIComponent(GEOSERVER_SAVI_STYLE);
   const existente = await geoserverFetch(`/rest/styles/${estilo}.json`);
   if (existente.status === 404) {
-    const res = await geoserverFetch(
-      `/rest/styles?name=${estilo}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/vnd.ogc.sld+xml" },
-        body: sld,
-      },
-    );
+    const res = await geoserverFetch(`/rest/styles?name=${estilo}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/vnd.ogc.sld+xml" },
+      body: sld,
+    });
     if (![200, 201, 202, 204].includes(res.status)) {
-      throw new Error(`Falha ao criar estilo ${GEOSERVER_SAVI_STYLE}: ${res.status}`);
+      throw new Error(
+        `Falha ao criar estilo ${GEOSERVER_SAVI_STYLE}: ${res.status}`
+      );
     }
     return "created";
   }
   if (!existente.ok) {
-    throw new Error(`Falha ao ler estilo ${GEOSERVER_SAVI_STYLE}: ${existente.status}`);
+    throw new Error(
+      `Falha ao ler estilo ${GEOSERVER_SAVI_STYLE}: ${existente.status}`
+    );
   }
-  const res = await geoserverFetch(
-    `/rest/styles/${estilo}`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/vnd.ogc.sld+xml" },
-      body: sld,
-    },
-  );
+  const res = await geoserverFetch(`/rest/styles/${estilo}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/vnd.ogc.sld+xml" },
+    body: sld,
+  });
   if (![200, 201, 202, 204].includes(res.status)) {
-    throw new Error(`Falha ao atualizar estilo ${GEOSERVER_SAVI_STYLE}: ${res.status}`);
+    throw new Error(
+      `Falha ao atualizar estilo ${GEOSERVER_SAVI_STYLE}: ${res.status}`
+    );
   }
   return "updated";
 }
@@ -196,9 +183,6 @@ export async function publishCompositionLayer(args: {
     year: args.year,
     styleName,
   });
-  // Validação extra: GetMap com o estilo certo (mesma checagem do NDVI).
-  await verifyNdviWmsPublication(args.storeName);
-
   const now = new Date().toISOString();
   return {
     composition: args.comp,
@@ -218,3 +202,13 @@ export async function publishCompositionLayer(args: {
 
 // Mantém `sleep` utilizável fora (paridade com o módulo NDVI).
 export { sleep };
+
+/** Remove a publicação parcial sem afetar outros produtos da árvore RASTER. */
+export async function rollbackCompositionLayer(args: {
+  storeName: string;
+  path: string;
+  row: string;
+  year: string | number;
+}): Promise<void> {
+  await rollbackNdviGeoTiffPublication(args);
+}

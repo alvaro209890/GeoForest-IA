@@ -20,19 +20,33 @@ import path from "node:path";
 import proj4 from "proj4";
 import { runCommand } from "../cbers/gdal";
 import { buildOverviews } from "../ndvi/compute";
-import { buildNdviStoreName, dateCompactFromItemId, platformFromText, platformShort } from "../ndvi/naming";
+import {
+  buildNdviStoreName,
+  dateCompactFromItemId,
+  platformFromText,
+  platformShort,
+} from "../ndvi/naming";
 import { toSceneRef, type NdviCandidate } from "../ndvi/scene-select";
 import type { NdviProgressPatch } from "../ndvi/types";
 import {
+  deleteNdviSceneArchiveAsset,
+  deleteNdviSceneArchiveRecord,
   ndviSceneArchiveSubdir,
   saveNdviSceneArchiveAsset,
   saveNdviSceneArchiveRecord,
   type NdviSceneArchiveRecord,
 } from "./archive";
 import { buildCompositionCommand, throwIfCancelled } from "./compositions";
-import { NDVI_SCENE_COMPOSITIONS, type NdviSceneComposition } from "./constants";
-import { publishCompositionLayer } from "./geoserver";
-import { getStacItem, resolveAllAssetHrefs, type SceneBandHrefs } from "./scene-select";
+import {
+  NDVI_SCENE_COMPOSITIONS,
+  type NdviSceneComposition,
+} from "./constants";
+import { publishCompositionLayer, rollbackCompositionLayer } from "./geoserver";
+import {
+  getStacItem,
+  resolveAllAssetHrefs,
+  type SceneBandHrefs,
+} from "./scene-select";
 
 /** Bandas materializadas por `gdal_translate -projwin` na resolução nativa da cena. */
 export type MaterializedSceneBands = {
@@ -71,15 +85,19 @@ function registerUtmEpsg(epsg: number): string {
   const south = epsg >= 32701 && epsg <= 32760 ? epsg - 32700 : 0;
   const zone = north || south;
   if (!zone) throw new Error(`EPSG ${epsg} não é uma UTM WGS84 conhecida.`);
-  proj4.defs(key, `+proj=utm +zone=${zone}${south ? " +south" : ""} +datum=WGS84 +units=m +no_defs`);
+  proj4.defs(
+    key,
+    `+proj=utm +zone=${zone}${south ? " +south" : ""} +datum=WGS84 +units=m +no_defs`
+  );
   return key;
 }
 
 /** EPSG UTM da cena: usa `proj:epsg` do item ou deriva da zona do centroide. */
 function utmEpsgFor(item: any): number {
   const declarado = Number(item?.properties?.["proj:epsg"]);
-  if (Number.isFinite(declarado) && declarado >= 32601 && declarado <= 32760) return declarado;
-  const [minLon, , maxLon, ] = stacItemBbox(item);
+  if (Number.isFinite(declarado) && declarado >= 32601 && declarado <= 32760)
+    return declarado;
+  const [minLon, , maxLon] = stacItemBbox(item);
   const lon = (minLon + maxLon) / 2;
   const lat = Number(item?.geometry?.coordinates?.[0]?.[0]?.[1]);
   const zone = Math.min(60, Math.max(1, Math.floor((lon + 180) / 6) + 1));
@@ -91,7 +109,8 @@ function stacItemBbox(item: any): [number, number, number, number] {
   const bbox = item?.bbox;
   if (Array.isArray(bbox) && bbox.length >= 4) {
     const values = bbox.slice(0, 4).map(Number);
-    if (values.every(Number.isFinite)) return [values[0], values[1], values[2], values[3]];
+    if (values.every(Number.isFinite))
+      return [values[0], values[1], values[2], values[3]];
   }
   const geom = item?.geometry;
   if (geom?.type === "Polygon") {
@@ -106,7 +125,12 @@ function stacItemBbox(item: any): [number, number, number, number] {
       }
     }
     if (xs.length) {
-      return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+      return [
+        Math.min(...xs),
+        Math.min(...ys),
+        Math.max(...xs),
+        Math.max(...ys),
+      ];
     }
   }
   throw new Error("Item STAC sem bbox ou footprint utilizável.");
@@ -115,15 +139,17 @@ function stacItemBbox(item: any): [number, number, number, number] {
 /** Anel externo do footprint (WGS84), para projeção UTM. */
 function footprintRingCoords(item: any): Array<[number, number]> {
   const geom = item?.geometry;
-  const ring = geom?.type === "Polygon"
-    ? geom.coordinates[0]
-    : geom?.type === "MultiPolygon"
-      ? geom.coordinates[0]?.[0]
-      : null;
+  const ring =
+    geom?.type === "Polygon"
+      ? geom.coordinates[0]
+      : geom?.type === "MultiPolygon"
+        ? geom.coordinates[0]?.[0]
+        : null;
   if (!Array.isArray(ring)) return [];
   const coords: Array<[number, number]> = [];
   for (const [x, y] of ring as number[][]) {
-    if (Number.isFinite(x) && Number.isFinite(y)) coords.push([Number(x), Number(y)]);
+    if (Number.isFinite(x) && Number.isFinite(y))
+      coords.push([Number(x), Number(y)]);
   }
   return coords;
 }
@@ -132,13 +158,24 @@ function footprintRingCoords(item: any): Array<[number, number]> {
  * Extensão da cena na UTM nativa, com margem de ~100 m (evita borda de 1 px e
  * cobre pequenas diferenças entre footprint e raster real).
  */
-function sceneUtmExtent(item: any): { epsg: number; minX: number; minY: number; maxX: number; maxY: number } {
+function sceneUtmExtent(item: any): {
+  epsg: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+} {
   const epsg = utmEpsgFor(item);
   const target = registerUtmEpsg(epsg);
   const coords = footprintRingCoords(item);
   if (coords.length < 3) {
     const [minLon, minLat, maxLon, maxLat] = stacItemBbox(item);
-    coords.push([minLon, minLat], [maxLon, minLat], [maxLon, maxLat], [minLon, maxLat]);
+    coords.push(
+      [minLon, minLat],
+      [maxLon, minLat],
+      [maxLon, maxLat],
+      [minLon, maxLat]
+    );
   }
   const xs: number[] = [];
   const ys: number[] = [];
@@ -153,7 +190,10 @@ function sceneUtmExtent(item: any): { epsg: number; minX: number; minY: number; 
       /* vértice fora da área de projeção — ignora */
     }
   }
-  if (xs.length < 3) throw new Error("Não foi possível projetar o footprint da cena para a UTM.");
+  if (xs.length < 3)
+    throw new Error(
+      "Não foi possível projetar o footprint da cena para a UTM."
+    );
   const margin = 100;
   return {
     epsg,
@@ -183,21 +223,35 @@ async function materializeBand(args: {
   spanPercent: number;
   onProgress?: (patch: NdviProgressPatch) => void;
 }): Promise<void> {
-  const remoto = /^https?:\/\//i.test(args.href) ? `/vsicurl/${args.href}` : args.href;
+  const remoto = /^https?:\/\//i.test(args.href)
+    ? `/vsicurl/${args.href}`
+    : args.href;
   const isQa = args.bandKey === "qa_pixel";
   await runCommand({
     uid: args.uid,
     jobId: args.jobId,
     command: "gdal_translate",
     commandArgs: [
-      "-projwin", String(args.utm.minX), String(args.utm.maxY), String(args.utm.maxX), String(args.utm.minY),
-      "-projwin_srs", `EPSG:${args.utm.epsg}`,
-      "-tr", "30", "30",
-      "-r", isQa ? "near" : "cubic",
-      "-of", "GTiff",
-      "-co", "COMPRESS=LZW",
-      "-co", "TILED=YES",
-      "-co", "BIGTIFF=IF_SAFER",
+      "-projwin",
+      String(args.utm.minX),
+      String(args.utm.maxY),
+      String(args.utm.maxX),
+      String(args.utm.minY),
+      "-projwin_srs",
+      `EPSG:${args.utm.epsg}`,
+      "-tr",
+      "30",
+      "30",
+      "-r",
+      isQa ? "near" : "cubic",
+      "-of",
+      "GTiff",
+      "-co",
+      "COMPRESS=LZW",
+      "-co",
+      "TILED=YES",
+      "-co",
+      "BIGTIFF=IF_SAFER",
       remoto,
       args.outPath,
     ],
@@ -221,7 +275,10 @@ function buildNdviSceneFilename(args: {
   const ext = ".TIF";
   const plat = String(args.platform).toUpperCase();
   const job = args.jobId
-    ? `_J${String(args.jobId).replace(/[^a-zA-Z0-9]/g, "").slice(0, 8).toUpperCase()}`
+    ? `_J${String(args.jobId)
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .slice(0, 8)
+        .toUpperCase()}`
     : "";
   const base = [
     "NDVI",
@@ -246,19 +303,40 @@ export async function processNdviScene(args: {
 }): Promise<ProcessNdviSceneResult> {
   const { uid, jobId, itemId } = args;
   const report = (patch: NdviProgressPatch) => args.onSceneProgress?.(patch);
-  const sceneDir = path.join(args.tmpDir, String(itemId).replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 64));
+  const sceneDir = path.join(
+    args.tmpDir,
+    String(itemId)
+      .replace(/[^a-zA-Z0-9._-]/g, "_")
+      .slice(0, 64)
+  );
   fs.mkdirSync(sceneDir, { recursive: true });
+  const rollbackArtifacts: Array<{
+    archiveId: string;
+    hdPath: string;
+    storeName: string;
+    path: string;
+    row: string;
+    year: string;
+  }> = [];
 
   try {
     throwIfCancelled(jobId);
-    report({ stage: "scene", percent: 2, message: `Carregando cena ${itemId} do STAC.` });
+    report({
+      stage: "scene",
+      percent: 2,
+      message: `Carregando cena ${itemId} do STAC.`,
+    });
 
     // --- 1. Item STAC + hrefs assinados ----------------------------------
     const { item } = await getStacItem(itemId);
     throwIfCancelled(jobId);
     const hrefs: SceneBandHrefs = await resolveAllAssetHrefs(item);
     const utm = sceneUtmExtent(item);
-    report({ stage: "scene", percent: 4, message: "Bandas assinadas; extensão da cena determinada na UTM nativa." });
+    report({
+      stage: "scene",
+      percent: 4,
+      message: "Bandas assinadas; extensão da cena determinada na UTM nativa.",
+    });
 
     const pr = (() => {
       const match = String(itemId).match(/_(\d{3})(\d{3})_(\d{8})/);
@@ -268,10 +346,14 @@ export async function processNdviScene(args: {
       return { path: "000", row: "000" };
     })();
     const dateCompact = dateCompactFromItemId(itemId) || "";
-    const year = String(dateCompact).slice(0, 4) || String(new Date().getUTCFullYear());
+    const year =
+      String(dateCompact).slice(0, 4) || String(new Date().getUTCFullYear());
     const platform = platformFromText(itemId || item?.properties?.platform);
-    const acquiredAt = String(item?.properties?.datetime || "").slice(0, 10) || "";
-    const cloudCoverPct = Number.isFinite(Number(item?.properties?.["eo:cloud_cover"]))
+    const acquiredAt =
+      String(item?.properties?.datetime || "").slice(0, 10) || "";
+    const cloudCoverPct = Number.isFinite(
+      Number(item?.properties?.["eo:cloud_cover"])
+    )
       ? Number(item.properties["eo:cloud_cover"])
       : null;
 
@@ -333,7 +415,11 @@ export async function processNdviScene(args: {
       });
       throwIfCancelled(jobId);
     }
-    report({ stage: "materialize", percent: 50, message: "Bandas da cena completa materializadas." });
+    report({
+      stage: "materialize",
+      percent: 50,
+      message: "Bandas da cena completa materializadas.",
+    });
 
     // --- 3. Composições ----------------------------------------------------
     const wmsLayerNames: string[] = [];
@@ -341,7 +427,7 @@ export async function processNdviScene(args: {
     let totalBytes = 0;
     const comps = args.compositions.length
       ? args.compositions
-      : NDVI_SCENE_COMPOSITIONS.map((c) => c.id);
+      : NDVI_SCENE_COMPOSITIONS.map(c => c.id);
     const compSpan = comps.length ? 42 / comps.length : 0;
 
     for (let i = 0; i < comps.length; i += 1) {
@@ -400,13 +486,26 @@ export async function processNdviScene(args: {
         jobId,
       });
       const subdir = ndviSceneArchiveSubdir(pr.path, pr.row, year);
-      const salvo = saveNdviSceneArchiveAsset({ subdir, filename, sourcePath: rgbPath });
+      const salvo = saveNdviSceneArchiveAsset({
+        subdir,
+        filename,
+        sourcePath: rgbPath,
+      });
 
       const storeName = buildNdviStoreName({
         path: pr.path,
         row: pr.row,
         year,
         filename,
+      });
+      const archiveId = archiveIdFor(storeName, comp);
+      rollbackArtifacts.push({
+        archiveId,
+        hdPath: salvo.absolutePath,
+        storeName,
+        path: pr.path,
+        row: pr.row,
+        year,
       });
 
       report({
@@ -429,7 +528,7 @@ export async function processNdviScene(args: {
       });
 
       const archiveRecord: NdviSceneArchiveRecord = {
-        archiveId: archiveIdFor(storeName, comp),
+        archiveId,
         uid,
         ndviSceneJobId: jobId,
         itemId,
@@ -464,6 +563,37 @@ export async function processNdviScene(args: {
       wmsUrl: results[0]?.archive.wmsPublicUrl || "",
       bytes: totalBytes,
     };
+  } catch (error) {
+    const rollbackErrors: string[] = [];
+    for (const artifact of [...rollbackArtifacts].reverse()) {
+      try {
+        await rollbackCompositionLayer(artifact);
+      } catch (rollbackError) {
+        rollbackErrors.push(
+          `GeoServer ${artifact.storeName}: ${String(rollbackError)}`
+        );
+      }
+      try {
+        deleteNdviSceneArchiveRecord(artifact.archiveId);
+      } catch (rollbackError) {
+        rollbackErrors.push(
+          `índice ${artifact.archiveId}: ${String(rollbackError)}`
+        );
+      }
+      try {
+        deleteNdviSceneArchiveAsset(artifact.hdPath);
+      } catch (rollbackError) {
+        rollbackErrors.push(
+          `arquivo ${artifact.hdPath}: ${String(rollbackError)}`
+        );
+      }
+    }
+    if (rollbackErrors.length) {
+      console.error(
+        `[ndvi-scene] rollback incompleto do job ${jobId}: ${rollbackErrors.join(" | ")}`
+      );
+    }
+    throw error;
   } finally {
     try {
       fs.rmSync(sceneDir, { recursive: true, force: true });

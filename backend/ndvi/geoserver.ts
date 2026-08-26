@@ -38,17 +38,24 @@ export function publicWmsCapabilitiesUrl(): string {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise(r => setTimeout(r, ms));
 }
 
 function isTransientStatus(status: number): boolean {
   return status === 0 || status === 429 || (status >= 500 && status <= 599);
 }
 
-async function geoserverFetch(restPath: string, options: RequestInit = {}): Promise<Response> {
+async function geoserverFetch(
+  restPath: string,
+  options: RequestInit = {}
+): Promise<Response> {
   const url = `${GEOSERVER_BASE_URL}${restPath}`;
   let ultimo: unknown = null;
-  for (let tentativa = 0; tentativa <= GEOSERVER_PUBLISH_RETRIES; tentativa += 1) {
+  for (
+    let tentativa = 0;
+    tentativa <= GEOSERVER_PUBLISH_RETRIES;
+    tentativa += 1
+  ) {
     try {
       const res = await fetch(url, {
         ...options,
@@ -59,9 +66,12 @@ async function geoserverFetch(restPath: string, options: RequestInit = {}): Prom
     } catch (erro) {
       ultimo = erro;
     }
-    if (tentativa < GEOSERVER_PUBLISH_RETRIES) await sleep(GEOSERVER_PUBLISH_RETRY_DELAY_MS);
+    if (tentativa < GEOSERVER_PUBLISH_RETRIES)
+      await sleep(GEOSERVER_PUBLISH_RETRY_DELAY_MS);
   }
-  throw ultimo instanceof Error ? ultimo : new Error("Falha ao falar com o GeoServer.");
+  throw ultimo instanceof Error
+    ? ultimo
+    : new Error("Falha ao falar com o GeoServer.");
 }
 
 export async function waitForGeoserverReady(): Promise<void> {
@@ -79,7 +89,7 @@ export async function waitForGeoserverReady(): Promise<void> {
     await sleep(1500);
   }
   throw new Error(
-    `GeoServer não respondeu em ${GEOSERVER_READY_TIMEOUT_MS} ms.${ultimoErro ? ` (${String(ultimoErro)})` : ""}`,
+    `GeoServer não respondeu em ${GEOSERVER_READY_TIMEOUT_MS} ms.${ultimoErro ? ` (${String(ultimoErro)})` : ""}`
   );
 }
 
@@ -95,7 +105,7 @@ async function geoserverWrite(
   method: "POST" | "PUT",
   body?: string,
   contentType = "application/json",
-  aceitos: number[] = [200, 201, 202, 204, 409],
+  aceitos: number[] = [200, 201, 202, 204, 409]
 ): Promise<void> {
   const res = await geoserverFetch(restPath, {
     method,
@@ -104,7 +114,19 @@ async function geoserverWrite(
   });
   if (!aceitos.includes(res.status)) {
     const texto = await res.text().catch(() => "");
-    throw new Error(`${method} ${restPath} falhou (${res.status}): ${texto.slice(0, 300)}`);
+    throw new Error(
+      `${method} ${restPath} falhou (${res.status}): ${texto.slice(0, 300)}`
+    );
+  }
+}
+
+async function geoserverDelete(restPath: string): Promise<void> {
+  const res = await geoserverFetch(restPath, { method: "DELETE" });
+  if (![200, 202, 204, 404].includes(res.status)) {
+    const texto = await res.text().catch(() => "");
+    throw new Error(
+      `DELETE ${restPath} falhou (${res.status}): ${texto.slice(0, 300)}`
+    );
   }
 }
 
@@ -119,14 +141,16 @@ async function geoserverWrite(
  */
 export async function ensureNdviStyle(): Promise<"created" | "updated"> {
   const sld = fs.readFileSync(NDVI_SLD_PATH, "utf8");
-  const existente = await geoserverJson(`/rest/styles/${encodeURIComponent(GEOSERVER_NDVI_STYLE)}.json`);
+  const existente = await geoserverJson(
+    `/rest/styles/${encodeURIComponent(GEOSERVER_NDVI_STYLE)}.json`
+  );
   if (!existente) {
     await geoserverWrite(
       `/rest/styles?name=${encodeURIComponent(GEOSERVER_NDVI_STYLE)}`,
       "POST",
       sld,
       "application/vnd.ogc.sld+xml",
-      [200, 201, 202, 204],
+      [200, 201, 202, 204]
     );
     return "created";
   }
@@ -136,7 +160,7 @@ export async function ensureNdviStyle(): Promise<"created" | "updated"> {
     "PUT",
     sld,
     "application/vnd.ogc.sld+xml",
-    [200, 201, 202, 204],
+    [200, 201, 202, 204]
   );
   return "updated";
 }
@@ -150,7 +174,11 @@ export type LayerGroupUpsert = {
   style: PlainObject | string;
 };
 
-export function ndviLayerGroupNames(path: string, row: string, year: string | number): {
+export function ndviLayerGroupNames(
+  path: string,
+  row: string,
+  year: string | number
+): {
   rasterGroup: string;
   rootGroup: string;
   orbitGroup: string;
@@ -193,9 +221,24 @@ export function buildNdviLayerGroupHierarchy(args: {
         href: `${GEOSERVER_BASE_URL}/rest/styles/${args.styleName}.json`,
       },
     },
-    { name: nomes.orbitGroup, title: orbitKey(args.path, args.row), publishable: grupo(nomes.yearGroup), style: "" },
-    { name: nomes.rootGroup, title: nomes.rootGroup, publishable: grupo(nomes.orbitGroup), style: "" },
-    { name: nomes.rasterGroup, title: nomes.rasterGroup, publishable: grupo(nomes.rootGroup), style: "" },
+    {
+      name: nomes.orbitGroup,
+      title: orbitKey(args.path, args.row),
+      publishable: grupo(nomes.yearGroup),
+      style: "",
+    },
+    {
+      name: nomes.rootGroup,
+      title: nomes.rootGroup,
+      publishable: grupo(nomes.orbitGroup),
+      style: "",
+    },
+    {
+      name: nomes.rasterGroup,
+      title: nomes.rasterGroup,
+      publishable: grupo(nomes.rootGroup),
+      style: "",
+    },
   ];
 }
 
@@ -219,13 +262,16 @@ export async function upsertLayerGroup(args: LayerGroupUpsert): Promise<void> {
   const publicados = asArray(atual?.layerGroup?.publishables?.published);
   const estilos = asArray(atual?.layerGroup?.styles?.style);
 
-  const jaTem = publicados.some((p) => String(p?.name) === String(args.publishable.name));
+  const jaTem = publicados.some(
+    p => String(p?.name) === String(args.publishable.name)
+  );
   if (!jaTem) {
     publicados.push(args.publishable);
     estilos.push(args.style as PlainObject);
   }
   // mantém os dois vetores em paralelo mesmo se o GeoServer devolveu desalinhado
-  while (estilos.length < publicados.length) estilos.push("" as unknown as PlainObject);
+  while (estilos.length < publicados.length)
+    estilos.push("" as unknown as PlainObject);
   while (estilos.length > publicados.length) estilos.pop();
 
   const corpo = JSON.stringify({
@@ -242,7 +288,100 @@ export async function upsertLayerGroup(args: LayerGroupUpsert): Promise<void> {
   });
 
   if (atual) await geoserverWrite(rota, "PUT", corpo);
-  else await geoserverWrite(`/rest/workspaces/${ws}/layergroups`, "POST", corpo);
+  else
+    await geoserverWrite(`/rest/workspaces/${ws}/layergroups`, "POST", corpo);
+}
+
+async function removePublishableFromLayerGroup(
+  groupName: string,
+  publishableName: string
+): Promise<{ exists: boolean; empty: boolean }> {
+  const ws = GEOSERVER_WORKSPACE;
+  const rota = `/rest/workspaces/${ws}/layergroups/${encodeURIComponent(groupName)}`;
+  const atual = await geoserverJson(`${rota}.json`);
+  if (!atual?.layerGroup) return { exists: false, empty: true };
+  const publicadosAtuais = asArray(atual.layerGroup.publishables?.published);
+  const estilosAtuais = asArray(atual.layerGroup.styles?.style);
+  const publicados: PlainObject[] = [];
+  const estilos: PlainObject[] = [];
+  publicadosAtuais.forEach((item, index) => {
+    if (String(item?.name || "") === publishableName) return;
+    publicados.push(item);
+    estilos.push((estilosAtuais[index] ?? "") as PlainObject);
+  });
+  if (publicados.length !== publicadosAtuais.length) {
+    await geoserverWrite(
+      rota,
+      "PUT",
+      JSON.stringify({
+        layerGroup: {
+          name: groupName,
+          mode: atual.layerGroup.mode || "NAMED",
+          title: atual.layerGroup.title || groupName,
+          enabled: atual.layerGroup.enabled !== false,
+          advertised: atual.layerGroup.advertised !== false,
+          workspace: { name: ws },
+          publishables: { published: publicados },
+          styles: { style: estilos },
+        },
+      })
+    );
+  }
+  return { exists: true, empty: publicados.length === 0 };
+}
+
+/**
+ * Desfaz uma publicação NDVI parcial. Primeiro solta as referências dos pais,
+ * depois exclui apenas os grupos que ficaram vazios e por fim o coveragestore.
+ */
+export async function rollbackNdviGeoTiffPublication(args: {
+  storeName: string;
+  path: string;
+  row: string;
+  year: string | number;
+}): Promise<void> {
+  const ws = GEOSERVER_WORKSPACE;
+  const names = ndviLayerGroupNames(args.path, args.row, args.year);
+  const layerName = `${ws}:${args.storeName}`;
+  const yearState = await removePublishableFromLayerGroup(
+    names.yearGroup,
+    layerName
+  );
+
+  if (yearState.empty) {
+    const orbitState = await removePublishableFromLayerGroup(
+      names.orbitGroup,
+      `${ws}:${names.yearGroup}`
+    );
+    if (orbitState.empty) {
+      const rootState = await removePublishableFromLayerGroup(
+        names.rootGroup,
+        `${ws}:${names.orbitGroup}`
+      );
+      if (rootState.empty) {
+        await removePublishableFromLayerGroup(
+          names.rasterGroup,
+          `${ws}:${names.rootGroup}`
+        );
+      }
+      if (rootState.exists)
+        await geoserverDelete(
+          `/rest/workspaces/${ws}/layergroups/${encodeURIComponent(names.rootGroup)}`
+        );
+    }
+    if (orbitState.exists)
+      await geoserverDelete(
+        `/rest/workspaces/${ws}/layergroups/${encodeURIComponent(names.orbitGroup)}`
+      );
+    if (yearState.exists)
+      await geoserverDelete(
+        `/rest/workspaces/${ws}/layergroups/${encodeURIComponent(names.yearGroup)}`
+      );
+  }
+
+  await geoserverDelete(
+    `/rest/workspaces/${ws}/coveragestores/${encodeURIComponent(args.storeName)}?recurse=true`
+  );
 }
 
 // --- Camada ---------------------------------------------------------------
@@ -260,9 +399,13 @@ async function createCoverageStore(storeName: string): Promise<void> {
   const xml =
     `<coverageStore><name>${xmlEscape(storeName)}</name><type>GeoTIFF</type>` +
     `<enabled>true</enabled><workspace><name>${ws}</name></workspace></coverageStore>`;
-  await geoserverWrite(`/rest/workspaces/${ws}/coveragestores`, "POST", xml, "application/xml", [
-    200, 201, 202, 204, 409,
-  ]);
+  await geoserverWrite(
+    `/rest/workspaces/${ws}/coveragestores`,
+    "POST",
+    xml,
+    "application/xml",
+    [200, 201, 202, 204, 409]
+  );
 }
 
 /** Publica um GeoTIFF do HD (caminho direto, como o Landsat — sem symlink). */
@@ -284,7 +427,7 @@ export async function publishNdviGeoTiff(args: {
       `?configure=first&coverageName=${encodeURIComponent(args.storeName)}&recalculate=nativebbox,latlonbbox`,
     "PUT",
     args.hdPath,
-    "text/plain",
+    "text/plain"
   );
 
   await geoserverWrite(
@@ -299,13 +442,13 @@ export async function publishNdviGeoTiff(args: {
           href: `${GEOSERVER_BASE_URL}/rest/styles/${args.styleName}.json`,
         },
       },
-    }),
+    })
   );
 
   await geoserverWrite(
     `/rest/workspaces/${ws}/coveragestores/${encodeURIComponent(args.storeName)}/coverages/${encodeURIComponent(args.storeName)}.json`,
     "PUT",
-    JSON.stringify({ coverage: { title: args.title, enabled: true } }),
+    JSON.stringify({ coverage: { title: args.title, enabled: true } })
   );
 
   for (const grupo of buildNdviLayerGroupHierarchy({
@@ -323,15 +466,20 @@ export async function publishNdviGeoTiff(args: {
 
 // --- Validação ------------------------------------------------------------
 
-async function coverageBbox(storeName: string): Promise<[number, number, number, number] | null> {
+async function coverageBbox(
+  storeName: string
+): Promise<[number, number, number, number] | null> {
   const ws = GEOSERVER_WORKSPACE;
   const json = await geoserverJson(
-    `/rest/workspaces/${ws}/coveragestores/${encodeURIComponent(storeName)}/coverages/${encodeURIComponent(storeName)}.json`,
+    `/rest/workspaces/${ws}/coveragestores/${encodeURIComponent(storeName)}/coverages/${encodeURIComponent(storeName)}.json`
   );
-  const bbox = json?.coverage?.latLonBoundingBox || json?.coverage?.nativeBoundingBox;
+  const bbox =
+    json?.coverage?.latLonBoundingBox || json?.coverage?.nativeBoundingBox;
   if (!bbox) return null;
   const v = [bbox.minx, bbox.miny, bbox.maxx, bbox.maxy].map(Number);
-  return v.every(Number.isFinite) ? (v as [number, number, number, number]) : null;
+  return v.every(Number.isFinite)
+    ? (v as [number, number, number, number])
+    : null;
 }
 
 async function getMapPng(storeName: string, style?: string): Promise<Buffer> {
@@ -350,16 +498,21 @@ async function getMapPng(storeName: string, style?: string): Promise<Buffer> {
     format: "image/png",
     transparent: "true",
   });
-  const res = await fetch(`${GEOSERVER_BASE_URL}/${GEOSERVER_WORKSPACE}/wms?${params}`, {
-    headers: { Authorization: authHeader() },
-  });
-  if (!res.ok) throw new Error(`GetMap de ${storeName} respondeu ${res.status}.`);
+  const res = await fetch(
+    `${GEOSERVER_BASE_URL}/${GEOSERVER_WORKSPACE}/wms?${params}`,
+    {
+      headers: { Authorization: authHeader() },
+    }
+  );
+  if (!res.ok)
+    throw new Error(`GetMap de ${storeName} respondeu ${res.status}.`);
   const tipo = String(res.headers.get("content-type") || "");
   if (!tipo.startsWith("image/")) {
     throw new Error(`GetMap de ${storeName} devolveu ${tipo}, não imagem.`);
   }
   const buffer = Buffer.from(await res.arrayBuffer());
-  if (buffer.byteLength < 100) throw new Error(`GetMap de ${storeName} devolveu PNG vazio.`);
+  if (buffer.byteLength < 100)
+    throw new Error(`GetMap de ${storeName} devolveu PNG vazio.`);
   return buffer;
 }
 
@@ -371,15 +524,20 @@ async function getMapPng(storeName: string, style?: string): Promise<Buffer> {
  *      teste de "é PNG";
  *   2. se `defaultStyle` não pegou, o render com o estilo explícito difere do padrão.
  */
-export async function verifyNdviWmsPublication(storeName: string): Promise<void> {
+export async function verifyNdviWmsPublication(
+  storeName: string
+): Promise<void> {
   const ws = GEOSERVER_WORKSPACE;
-  const camada = await geoserverJson(`/rest/layers/${ws}:${encodeURIComponent(storeName)}.json`);
-  if (!camada) throw new Error(`Camada ${storeName} não existe após a publicação.`);
+  const camada = await geoserverJson(
+    `/rest/layers/${ws}:${encodeURIComponent(storeName)}.json`
+  );
+  if (!camada)
+    throw new Error(`Camada ${storeName} não existe após a publicação.`);
 
   const padrao = await getMapPng(storeName);
   if (ehQuaseUniforme(padrao)) {
     throw new Error(
-      `GetMap de ${storeName} devolveu imagem praticamente uniforme — provável estilo não aplicado.`,
+      `GetMap de ${storeName} devolveu imagem praticamente uniforme — provável estilo não aplicado.`
     );
   }
 }
