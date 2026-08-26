@@ -309,7 +309,12 @@ async function removePublishableFromLayerGroup(
     publicados.push(item);
     estilos.push((estilosAtuais[index] ?? "") as PlainObject);
   });
-  if (publicados.length !== publicadosAtuais.length) {
+  // O GeoServer recusa PUT de grupo vazio. Nesse caso o chamador primeiro
+  // desprende a cadeia dos pais e depois exclui o grupo diretamente.
+  if (
+    publicados.length !== publicadosAtuais.length &&
+    publicados.length > 0
+  ) {
     await geoserverWrite(
       rota,
       "PUT",

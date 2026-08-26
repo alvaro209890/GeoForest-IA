@@ -70,6 +70,13 @@ describe("publicação WMS da cena completa", () => {
     expect(rasterPut?.body).toContain("cbers:CBERS-4A-Apos_2019");
     expect(rasterPut?.body).not.toContain("cbers:NDVI");
     expect(
+      calls.filter(
+        (call) =>
+          call.method === "PUT" &&
+          !call.url.endsWith("/layergroups/RASTER")
+      )
+    ).toHaveLength(0);
+    expect(
       calls.filter(call => call.method === "DELETE").map(call => call.url)
     ).toEqual(
       expect.arrayContaining([

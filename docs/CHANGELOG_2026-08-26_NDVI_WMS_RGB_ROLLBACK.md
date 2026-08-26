@@ -15,6 +15,7 @@ Além disso, arquivo, coveragestore e grupos eram criados antes da validação d
 - As cinco composições de cena completa (NDVI, NDFI, SAVI, RGB e SWIR) usam o estilo neutro `raster`; as cores dos índices permanecem incorporadas pelos arquivos CLR durante o processamento.
 - A validação redundante de `GetMap` foi removida; a publicação base continua validando a camada uma vez.
 - O processamento agora registra cada artefato copiado e, se qualquer composição falhar, desfaz em ordem segura o índice, o TIFF, o `.ovr`, a camada, o coveragestore e somente os grupos NDVI que ficarem vazios.
+- Como o GeoServer rejeita `PUT` de um grupo vazio, o rollback calcula o esvaziamento sem persistir esse estado inválido, desprende primeiro a cadeia dos grupos pais e só então exclui os grupos vazios.
 - A biblioteca `RASTER` e seus produtos CBERS, Landsat e SPOT são preservados.
 
 ## Evidência esperada
