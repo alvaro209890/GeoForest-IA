@@ -13,7 +13,7 @@ import {
   Square,
   X,
 } from 'lucide-react';
-import { CbersMapPreview } from '@/dashboard/components/CbersMapPreview';
+import { NdviScenePreview } from './NdviScenePreview';
 import {
   ndviSceneZipFilename,
   ndviSceneZipPath,
@@ -92,9 +92,10 @@ export function NdviPreviewMap({ ndvi }: NdviPanelProps) {
                   )}
                 </div>
                 <div className="space-y-4 p-5">
-                  <CbersMapPreview
+                  <NdviScenePreview
                     propertyGeometry={ndviPropertyGeometry}
                     sceneGeometry={ndviPreviewScene.geometry || null}
+                    sceneBbox={ndviPreviewScene.bbox}
                   />
                   <div className="grid grid-cols-2 gap-3">
                     <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
