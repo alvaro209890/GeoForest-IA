@@ -54,6 +54,25 @@ export function normalizeNdviScene(raw: any): NdviScene | null {
       : null;
   const datetime = String(raw?.datetime || raw?.acquiredAt || '');
   const platform = String(raw?.platform || raw?.platformLabel || '');
+
+  // `/api/ndvi/search` devolve o contrato em português (`sensorDegradado` e
+  // `coberturaParcial`, este último invertido); outras respostas já usam os
+  // nomes em inglês. Aceitar os dois evita o bug silencioso em que o selo
+  // "SLC-off" existia na UI e nunca aparecia, deixando o usuário escolher uma
+  // cena Landsat 7 pós-2003 sem aviso das faixas sem dado.
+  const slcOff =
+    typeof raw?.slcOff === 'boolean'
+      ? raw.slcOff
+      : typeof raw?.sensorDegradado === 'boolean'
+        ? raw.sensorDegradado
+        : undefined;
+  const coversArea =
+    typeof raw?.coversArea === 'boolean'
+      ? raw.coversArea
+      : typeof raw?.coberturaParcial === 'boolean'
+        ? !raw.coberturaParcial
+        : undefined;
+
   return {
     id,
     itemId: raw?.itemId ? String(raw.itemId) : id,
@@ -66,9 +85,9 @@ export function normalizeNdviScene(raw: any): NdviScene | null {
     row: String(raw?.row || ''),
     platform: platform || undefined,
     platformLabel: raw?.platformLabel ? String(raw.platformLabel) : platform || undefined,
-    coversArea: typeof raw?.coversArea === 'boolean' ? raw.coversArea : undefined,
+    coversArea,
     coveragePercent: Number.isFinite(Number(raw?.coveragePercent)) ? Number(raw.coveragePercent) : undefined,
-    slcOff: typeof raw?.slcOff === 'boolean' ? raw.slcOff : undefined,
+    slcOff,
     bbox: Array.isArray(raw?.bbox) && raw.bbox.length >= 4
       ? [Number(raw.bbox[0]), Number(raw.bbox[1]), Number(raw.bbox[2]), Number(raw.bbox[3])] as [number, number, number, number]
       : null,
