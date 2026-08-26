@@ -2978,35 +2978,9 @@ function inferAvnParcialForaShapeMasEmAuas(text: string): AcAvnVerdict {
     return null;
 }
 
-function resolveAuasAcAvnMeta(previousAnalysis?: string, acAvnMeta?: any): any {
-    if (acAvnMeta && typeof acAvnMeta === "object") {
-        return acAvnMeta;
-    }
-    const text = splitThinkProgress(String(previousAnalysis || "")).answerText || String(previousAnalysis || "");
-    if (!text.trim()) return undefined;
-
-    const acForaShape = extractAcAvnVerdict(text, "AC_FORA_SHAPE") || "INCONCLUSIVO";
-    const avnDentroShapeAntropizado = extractAcAvnVerdict(text, "AVN_DENTRO_SHAPE_ANTROPIZADO") || "INCONCLUSIVO";
-    const avnParcialForaShapeMasEmAuas =
-        extractAcAvnVerdict(text, "AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS")
-        || inferAvnParcialForaShapeMasEmAuas(text)
-        || "INCONCLUSIVO";
-    const confidence = extractAcAvnConfidence(text);
-
-    const hasSignal =
-        /AC_FORA_SHAPE\s*=|AVN_DENTRO_SHAPE_ANTROPIZADO\s*=|AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS\s*=/i.test(text);
-    if (!hasSignal) return undefined;
-
-    return {
-        globalVerdict: {
-            acForaShape,
-            avnDentroShapeAntropizado,
-            avnParcialForaShapeMasEmAuas,
-            confidence,
-        },
-        source: "derived_from_previous_analysis",
-    };
-}
+// `resolveAuasAcAvnMeta` foi removida junto com o encadeamento: ela reconstruía os
+// vereditos da AC/AVN garimpando marcadores no texto da análise anterior, que é
+// justamente a dependência que a Fase 1 não deve ter.
 
 function buildUserFriendlyAcAvnGuidance(
     acForaShape: AcAvnVerdict,
@@ -4266,7 +4240,6 @@ function buildAuasFinalSynthesisPrompt(
     areaHa: number,
     layerSummaries: LayerSummary[],
     perSatelliteAnalyses: Array<{ satelliteLabel: string; year: number; analysis: string }>,
-    previousAcAvnAnalysis?: string,
     options?: {
         acAvnMeta?: any;
         crossCheck?: AuasAvnCrossCheck | null;
@@ -4292,7 +4265,8 @@ function buildAuasFinalSynthesisPrompt(
     const parts: string[] = [
         "Você é a **GeoForest IA**, responsável por produzir um laudo AUAS técnico e juridicamente preciso.",
         "Sintetize as análises por satélite em um relatório coerente, com foco na progressão temporal da cobertura.",
-        "Não usar tabela. Não usar emoji. Não incluir bloco <think>. Tamanho: entre 500 e 800 palavras.",
+        "Não usar tabela. Não usar emoji. Não incluir bloco <think>. Tamanho: entre 150 e 250 palavras.",
+        "Seja enxuto: o laudo é lido junto do painel, que já mostra áreas, anos e cenas. Cite um número só quando ele sustentar a conclusão.",
         "",
         buildPropertyContext(areaHa, layerSummaries, { compact: true, maxRows: 10 }),
         "",
@@ -4335,13 +4309,8 @@ function buildAuasFinalSynthesisPrompt(
         "",
     );
 
-    if (previousAcAvnAnalysis) {
-        parts.push(
-            "## Referência Cruzada AC/AVN",
-            toSynthesisExcerpt(previousAcAvnAnalysis, 2000),
-            "",
-        );
-    }
+    // O texto da análise AC/AVN não entra mais aqui: a Fase 1 é independente das
+    // outras duas e conclui apenas pela própria série temporal.
 
     if (options?.acAvnMeta) {
         parts.push(
@@ -4371,10 +4340,11 @@ function buildAuasFinalSynthesisPrompt(
         "- Use AUAS_INVALIDA somente quando a delimitação espacial ou temporal da AUAS for tecnicamente incorreta (ex.: AUAS cobrindo vegetação nativa intacta desde 2008).",
         "- Use AUAS_VALIDA quando o shape AUAS reflete fielmente a realidade temporal observada, mesmo que haja passivo.",
         "",
+        // Quatro seções, não sete: com o teto de 150-250 palavras cada seção a mais
+        // vira título com uma frase solta embaixo. 'Achados por Período' repetia a
+        // progressão temporal, que agora entra no próprio resumo.
         "## Formato Obrigatório de Saída",
         "## Resumo Executivo",
-        "## Progressão Temporal da Cobertura",
-        "## Achados por Período",
         "## Não Conformidades Detectadas",
         "## Veredito Final AUAS",
         "## Próximas Ações Recomendadas",
@@ -4385,9 +4355,9 @@ function buildAuasFinalSynthesisPrompt(
         "- CONFIANCA_GERAL = ALTA | MEDIA | BAIXA | INCONCLUSIVO",
         "- Se há supressão confirmada pós-2008 dentro da AUAS, adicionar: PASSIVO_AMBIENTAL = IDENTIFICADO",
         "",
+        "Em 'Resumo Executivo': em um parágrafo, a cobertura em 2008 (referência), o que mudou depois e a situação atual.",
         "Em 'Não Conformidades': citar intervalo de anos, localização aproximada (porção N/NE/S etc.) e área estimada em hectares quando identificada supressão irregular.",
-        "Em 'Progressão Temporal': descrever cobertura em 2008 (referência), mudanças em períodos intermediários e situação atual.",
-        "Em 'Próximas Ações': máximo 4 ações, priorizadas e específicas para o caso.",
+        "Em 'Próximas Ações': máximo 2 ações, priorizadas e específicas para o caso.",
     );
 
     return parts.join("\n");
@@ -4498,98 +4468,14 @@ function enforceAuasMissingVectorizationGuidance(
     return [base, "", mandatoryNote].filter(Boolean).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-function buildIntegratedAcAvnAuasPrompt(
-    previousAcAvnAnalysis: string,
-    auasSynthesisText: string,
-    options?: {
-        acAvnMeta?: any;
-        crossCheck?: AuasAvnCrossCheck | null;
-        firstDeforestationYear?: number | null;
-        hasAuasLayer?: boolean;
-    },
-): string {
-    const acText = toSynthesisExcerpt(previousAcAvnAnalysis, 2600);
-    const auasText = toSynthesisExcerpt(auasSynthesisText, 2600);
-    const parts: string[] = [
-        "Você é a revisora final de um laudo técnico ambiental.",
-        "Unifique os resultados de AC/AVN e AUAS em um único parecer claro, natural e objetivo.",
-        "Não use linguagem robótica, não repita blocos longos e não copie os textos integralmente.",
-        "",
-        AC_AUAS_PROMPT_GLOSSARY,
-        "",
-        "## Base AC/AVN",
-        acText,
-        "",
-        "## Base AUAS",
-        auasText,
-        "",
-    ];
-
-    if (options?.acAvnMeta) {
-        parts.push(
-            "Metadados AC/AVN (apoio):",
-            clampTextMiddle(JSON.stringify(options.acAvnMeta), 900),
-            "",
-        );
-    }
-    if (options?.crossCheck) {
-        const cc = options.crossCheck;
-        parts.push(
-            "Cruzamento geométrico AUAS x AVN:",
-            `- AUAS total: ${cc.auasAreaHa.toFixed(2)} ha`,
-            `- AVN total: ${cc.avnAreaHa.toFixed(2)} ha`,
-            `- Interseção AUAS∩AVN: ${cc.overlapAreaHa.toFixed(2)} ha`,
-            "",
-        );
-    }
-    if (Number.isFinite(options?.firstDeforestationYear as number)) {
-        parts.push(
-            `Ano provável inicial de supressão já identificado: ${Number(options?.firstDeforestationYear)}.`,
-            "",
-        );
-    }
-    if (options?.hasAuasLayer === false) {
-        parts.push(
-            "Contexto adicional: o ZIP não possui shape AUAS vetorizado.",
-            "Se houver evidência de supressão pós-2008, declarar que há AUAS não vetorizada (passivo ambiental).",
-            "",
-        );
-    } else {
-        parts.push(
-            "Contexto adicional: o ZIP possui shape AUAS vetorizado.",
-            "Nao afirmar AUAS ausente, AUAS nao vetorizada ou AUAS nao declarada neste caso.",
-            "",
-        );
-    }
-
-    parts.push(
-        "Formato obrigatório:",
-        "## Resumo Geral",
-        "## Pontos Críticos (AC/AVN e AUAS)",
-        "## Veredito Integrado",
-        "## Próximas Ações",
-        "",
-        "Regras obrigatórias:",
-        "- Escrever em português técnico claro, em frases naturais.",
-        "- Não copiar para a resposta final os códigos técnicos AC_FORA_SHAPE, AVN_FORA_SHAPE, AVN_DENTRO_SHAPE_ANTROPIZADO ou AVN_PARCIAL_FORA_SHAPE_MAS_EM_AUAS.",
-        "- Quando precisar usar os metadados AC/AVN, traduza: uso consolidado fora do shape AC, uso consolidado dentro do shape AVN, relação AVN x AUAS.",
-        "- Não usar linhas no formato STATUS_FINAL = ...",
-        "- Não usar linhas no formato ANO_PROVAVEL_INICIO_DESMATE = ...",
-        "- Quando citar ano provável de desmate, escrever em frase corrida.",
-        "- Nunca chamar Área Consolidada de \"área antropizada\", \"desmate\" ou \"supressão\": AC é conversão anterior a 22/07/2008 e é uso regular. Escreva \"uso consolidado\".",
-        "- Reservar \"supressão\" e \"desmate\" para AUAS, isto é, para conversão a partir de 22/07/2008.",
-        "- Se AUAS indicar supressão pós-2008, descrever como passivo ambiental identificado na área AUAS (não como invalidação automática da AUAS).",
-        "- Quando AUAS vetorizada estiver ausente e houver supressão pós-2008, afirmar explicitamente que há AUAS não vetorizada.",
-        "- Quando AUAS vetorizada estiver presente, nunca afirmar AUAS ausente/não vetorizada/não declarada.",
-        "- Só usar linguagem de 'AUAS inválida' quando houver incoerência técnica de vetorização/delimitação, não apenas por existir passivo pós-marco.",
-        "- Limite de tamanho: 260 a 420 palavras.",
-        "- Sem tabelas e sem bloco <think>.",
-    );
-
-    return parts.join("\n");
-}
-
-/** Main AUAS analysis pipeline (called from the SSE endpoint). */
+/**
+ * Main AUAS analysis pipeline (called from the SSE endpoint).
+ *
+ * `previousAnalysis` segue no contrato porque o frontend ainda o envia, mas é
+ * **ignorado de propósito**: esta análise é independente das outras duas do painel
+ * pós-recorte. Não volte a ligá-lo ao prompt — era por ele que o laudo herdava as
+ * conclusões que a AC/AVN havia escrito no chat.
+ */
 export async function processAuasAnalysis(
     res: Response,
     jobId: string,
@@ -4779,20 +4665,20 @@ export async function processAuasAnalysis(
         return null;
     }
 
-    // Step 5: Final synthesis (combines AUAS + previous AC/AVN analysis)
-    sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA sintetizando laudo integrado de AUAS..." });
+    // Step 5: síntese final, só da AUAS. Esta análise não lê nem incorpora o texto
+    // das outras duas — o cruzamento AUAS×AVN abaixo vem da geometria do próprio
+    // recorte, não de outra análise.
+    sendSSE(res, { type: "progress", step: "analyzing", percent: 88, message: "IA redigindo laudo da AUAS..." });
     throwIfClientDisconnected(res);
 
     let auasSynthesisText: string;
-    const truncatedPreviousAnalysis = clampTextMiddle(previousAnalysis || "", 4200);
     const crossCheck = computeAuasAvnCrossCheck(job);
-    const resolvedAcAvnMeta = resolveAuasAcAvnMeta(previousAnalysis, acAvnMeta);
+    const resolvedAcAvnMeta = acAvnMeta && typeof acAvnMeta === "object" ? acAvnMeta : undefined;
     try {
         const synthesisPrompt = buildAuasFinalSynthesisPrompt(
             areaHa,
             layerSummaries,
             perSatResults,
-            truncatedPreviousAnalysis,
             {
                 acAvnMeta: resolvedAcAvnMeta,
                 crossCheck,
@@ -4835,54 +4721,11 @@ export async function processAuasAnalysis(
     const synthesisConfidence = extractAcAvnConfidence(auasSynthesisText);
     const synthesisPassivoAmbiental = extractAuasPassivoAmbiental(auasSynthesisText);
 
-    let analysisText = auasSynthesisText;
-    if (truncatedPreviousAnalysis.trim()) {
-        throwIfClientDisconnected(res);
-        sendSSE(res, {
-            type: "progress",
-            step: "analyzing",
-            percent: 94,
-            message: "IA unificando conclusoes de AC/AVN e AUAS em resumo final...",
-        });
-        try {
-            const unifiedPrompt = buildIntegratedAcAvnAuasPrompt(
-                truncatedPreviousAnalysis,
-                auasSynthesisText,
-                {
-                    acAvnMeta: resolvedAcAvnMeta,
-                    crossCheck,
-                    firstDeforestationYear,
-                    hasAuasLayer,
-                },
-            );
-            const unified = await callBestTextSynthesis(
-                [{ role: "user", content: unifiedPrompt }],
-                "sintese final integrada AC_AVN_AUAS",
-                {
-                    modelChain: SIMCAR_FINAL_UNIFIED_TEXT_MODELS,
-                    maxOutputTokens: 4096,
-                },
-            );
-            const splitUnified = splitThinkProgress(unified);
-            if (splitUnified.thinkingText) {
-                sendSSE(res, {
-                    type: "model_thinking",
-                    source: "Sintese integrada final",
-                    thinkingText: splitUnified.thinkingText,
-                });
-            }
-            analysisText = stripRoboticVerdictLines(splitUnified.answerText || unified);
-            if (!analysisText.trim()) {
-                analysisText = stripRoboticVerdictLines(auasSynthesisText);
-            }
-            console.log(`[AUAS ANALYSIS] Integrated synthesis complete (${analysisText.length} chars)`);
-        } catch (err: any) {
-            console.warn(`[AUAS ANALYSIS] Integrated synthesis fallback to AUAS text: ${err?.message || err}`);
-            analysisText = stripRoboticVerdictLines(auasSynthesisText);
-        }
-    } else {
-        analysisText = stripRoboticVerdictLines(auasSynthesisText);
-    }
+    // A 2ª passada de IA que fundia AC/AVN + AUAS num texto único foi removida:
+    // ela tornava o laudo desta análise dependente do que as outras escreveram no
+    // chat. O texto final é o da própria AUAS, sem as linhas de marcador que só
+    // servem para o parse acima.
+    let analysisText = stripRoboticVerdictLines(auasSynthesisText);
 
     const inferredAuasNotVectorized = !hasAuasLayer && (
         (Number.isFinite(firstDeforestationYear as number) && Number(firstDeforestationYear) > 2008) ||
@@ -4913,9 +4756,7 @@ export async function processAuasAnalysis(
         passivoAmbiental,
         qualityFlags,
         auasAvnCrossCheck: crossCheck,
-        acAvnContextSource:
-            resolvedAcAvnMeta?.source === "derived_from_previous_analysis" ? "derived_from_previous_analysis" : "provided",
-        integratedSummaryModelChain: SIMCAR_FINAL_UNIFIED_TEXT_MODELS,
+        acAvnContextSource: resolvedAcAvnMeta ? "provided" : "none",
         hasAuasVectorizedLayer: hasAuasLayer,
         inferredAuasNotVectorized,
         cloudWarnings,
@@ -4980,15 +4821,14 @@ export async function processAuasAnalysisV2(
         return null;
     }
 
-    const acAvnContext =
-        acAvnMeta && typeof acAvnMeta === "object"
-            ? { source: "provided", summary: JSON.stringify(acAvnMeta).slice(0, 2000) }
-            : undefined;
+    // `acAvnMeta` chega da análise AC/AVN e NÃO é repassado de propósito: a Fase 1
+    // é independente das outras duas e redige o laudo só com a própria geometria
+    // e as cenas que ela mesma inspecionou. Antes ele entrava no prompt do laudo
+    // e o texto da Fase 1 herdava conclusões que não eram dela.
 
     try {
         const analysis = await runAuasPre2008Analysis(jobId, job.clippedGeometries, {
             checkpointStore: createFileCheckpointStore(jobId),
-            acAvnContext,
             uid: uid || job.uid || "anonymous",
             onProgress: (progress: AuasV2Progress) => {
                 throwIfClientDisconnected(res);

@@ -10,7 +10,6 @@ export type BuildAuasReportInput = {
   sources: AuasPre2008AnalysisV2["sources"];
   polygons: AuasPolygonResult[];
   limitations: string[];
-  acAvnContext?: { source: string; summary: string };
 };
 
 function toDeepseekInput(input: BuildAuasReportInput): DeepseekAuasReportInput {
@@ -32,7 +31,6 @@ function toDeepseekInput(input: BuildAuasReportInput): DeepseekAuasReportInput {
       limitations: p.limitations,
     })),
     limitations: input.limitations,
-    acAvnContext: input.acAvnContext,
   };
 }
 

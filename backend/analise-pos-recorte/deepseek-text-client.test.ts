@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { buildDeterministicFallbackReport, requestDeepseekAuasReport } from "./deepseek-text-client";
+import {
+  buildDeterministicFallbackReport,
+  requestDeepseekAuasReport,
+  POLYGON_SECTION_MAX_WORDS,
+  SUMMARY_MAX_WORDS,
+  SUMMARY_MIN_WORDS,
+} from "./deepseek-text-client";
 import type { DeepseekAuasReportInput } from "./types";
 
 function baseInput(): DeepseekAuasReportInput {
@@ -75,6 +81,27 @@ describe("requestDeepseekAuasReport", () => {
     });
     const result = await requestDeepseekAuasReport(baseInput(), { fetchImpl, apiKey: "k" });
     expect(result.ok).toBe(true);
+  });
+
+  /**
+   * Sem teto explicito o modelo escrevia o laudo inteiro em prosa longa e o texto
+   * ainda crescia com o numero de poligonos, porque o relatorio e o resumo mais
+   * uma secao por poligono. Limitar so o resumo nao segura o total.
+   */
+  it("manda os limites de tamanho do laudo no system prompt", async () => {
+    let system = "";
+    const fetchImpl = vi.fn(async (_url: any, init: any) => {
+      const body = JSON.parse(init.body);
+      system = body.messages.find((m: any) => m.role === "system")?.content || "";
+      return jsonResponse(deepseekBody(validReportPayload()));
+    });
+    await requestDeepseekAuasReport(baseInput(), { fetchImpl, apiKey: "k" });
+
+    expect(system).toContain(String(SUMMARY_MIN_WORDS));
+    expect(system).toContain(String(SUMMARY_MAX_WORDS));
+    expect(system).toContain("summaryMarkdown");
+    expect(system).toContain("polygonSections");
+    expect(system).toContain(String(POLYGON_SECTION_MAX_WORDS));
   });
 
   it("rejeita polygonId inventado na saída", async () => {

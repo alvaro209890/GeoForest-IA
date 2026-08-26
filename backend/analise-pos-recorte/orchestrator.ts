@@ -71,7 +71,6 @@ export type OrchestratorDeps = {
   signal?: AbortSignal;
   now?: () => string;
   config?: ReturnType<typeof getAuasV2Config>;
-  acAvnContext?: { source: string; summary: string };
   /** uid do dono do job — usado para persistir as cenas no storage dele. */
   uid?: string;
 };
@@ -430,7 +429,6 @@ export async function runAuasPre2008Analysis(
     sources: { required: requiredLayers, used: usedLayers, missing: missingLayers },
     polygons: polygonResults,
     limitations,
-    acAvnContext: deps.acAvnContext,
   };
 
   onProgress({ step: "writing_report", percent: 98, message: "Redigindo laudo técnico." });

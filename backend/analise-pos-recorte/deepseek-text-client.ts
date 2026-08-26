@@ -5,6 +5,16 @@ export const DEEPSEEK_AUAS_URL = "https://api.deepseek.com/v1/chat/completions";
 const DEEPSEEK_BASE_OUTPUT_TOKENS = 3_000;
 const DEEPSEEK_REASONING_HEADROOM = 1_600;
 
+/**
+ * Teto de tamanho do laudo. O relatório é `summaryMarkdown` + uma seção por
+ * polígono, então limitar só o resumo não segura o total: um recorte com dezenas
+ * de polígonos continuava saindo com páginas de texto.
+ */
+export const SUMMARY_MIN_WORDS = 150;
+export const SUMMARY_MAX_WORDS = 250;
+export const POLYGON_SECTION_MAX_SENTENCES = 2;
+export const POLYGON_SECTION_MAX_WORDS = 40;
+
 export class DeepseekTextError extends Error {
   constructor(
     public readonly code: string,
@@ -36,6 +46,13 @@ function buildSystemPrompt(): string {
     "Você NÃO pode afirmar que viu uma imagem — apenas relatar o que já foi observado e validado.",
     "Distinga claramente 'não foi observada evidência nesta série' de 'não existe desmate'.",
     "Cite apenas os polygonId realmente informados. Inclua um aviso de revisão por responsável técnico.",
+    // O laudo é lido junto do painel, que já mostra status, área e cenas de cada
+    // polígono. Sem teto explícito o modelo repetia esses números em prosa e o
+    // texto crescia com o nº de polígonos, virando parede de texto.
+    `Seja enxuto: "summaryMarkdown" deve ter de ${SUMMARY_MIN_WORDS} a ${SUMMARY_MAX_WORDS} palavras, em prosa corrida.`,
+    `Cada item de "polygonSections" deve ter no máximo ${POLYGON_SECTION_MAX_SENTENCES} frases e ${POLYGON_SECTION_MAX_WORDS} palavras.`,
+    "Não repita no texto os números que já estão nos dados: cite um valor só quando ele sustentar a conclusão daquele trecho.",
+    "Sem títulos de seção, sem listas e sem tabelas: escreva parágrafos.",
     "Retorne apenas um objeto JSON no contrato pedido, sem markdown, em português do Brasil.",
   ].join(" ");
 }

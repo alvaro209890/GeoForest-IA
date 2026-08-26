@@ -80,4 +80,41 @@ describe("buildAuasReport", () => {
     expect(report.model).toBe("deterministic-fallback");
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  /**
+   * A Fase 1 e independente das outras duas analises do painel pos-recorte. O
+   * contexto da AC/AVN ja entrou no prompt do laudo, e o texto da Fase 1 herdava
+   * conclusoes que nao eram dela. `toDeepseekInput` copia campo a campo justamente
+   * para que sobras assim nao vazem — este teste tranca isso.
+   */
+  it("nao repassa contexto da analise AC/AVN para o prompt do laudo", async () => {
+    let enviado = "";
+    const fetchImpl = vi.fn(async (_url: any, init: any) => {
+      enviado = String(init?.body || "");
+      return jsonResponse({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                summaryMarkdown: "Resumo com aviso de revisao tecnica.",
+                polygonSections: [{ polygonId: "AUAS-0001", markdown: "Sem evidencia pre-2008." }],
+                evidenceRefs: ["AUAS-0001"],
+              }),
+            },
+          },
+        ],
+      });
+    });
+
+    const comAcAvn = {
+      ...baseInput(),
+      acAvnContext: { source: "provided", summary: "AC_FORA_SHAPE=SIM; AVN_DENTRO_SHAPE_ANTROPIZADO=SIM" },
+    } as any;
+
+    await buildAuasReport(comAcAvn, { fetchImpl: fetchImpl as any, apiKey: "k" });
+
+    expect(enviado).not.toContain("acAvnContext");
+    expect(enviado).not.toContain("AC_FORA_SHAPE");
+    expect(enviado).toContain("AUAS-0001");
+  });
 });

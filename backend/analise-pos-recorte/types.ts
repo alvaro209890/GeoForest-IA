@@ -240,8 +240,4 @@ export type DeepseekAuasReportInput = {
     limitations: string[];
   }>;
   limitations: string[];
-  acAvnContext?: {
-    source: string;
-    summary: string;
-  };
 };
