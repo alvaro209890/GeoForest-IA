@@ -7,6 +7,7 @@ import {
   signInWithRedirect,
   signOut,
   User,
+  onAuthStateChanged,
 } from 'firebase/auth';
 import { auth } from './firebase';
 
@@ -32,7 +33,7 @@ function apiUrl(path: string) {
 }
 
 export async function bootstrapAccount(fullName?: string): Promise<UserProfile> {
-  const user = auth.currentUser;
+  const user = await getCurrentUserAsync();
   if (!user) {
     throw new Error('Usuário não autenticado.');
   }
@@ -153,12 +154,32 @@ export function getCurrentUser(): User | null {
   return auth.currentUser;
 }
 
+/** Aguarda a restauração assíncrona da sessão antes de declarar logout. */
+export function getCurrentUserAsync(timeoutMs = 10000): Promise<User | null> {
+  if (auth.currentUser) return Promise.resolve(auth.currentUser);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let unsubscribe = () => {};
+    const finish = (user: User | null) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      unsubscribe();
+      resolve(user);
+    };
+    unsubscribe = onAuthStateChanged(auth, finish);
+    timeoutId = setTimeout(() => finish(auth.currentUser), timeoutMs);
+  });
+}
+
 export function isAuthenticated(): boolean {
   return auth.currentUser !== null;
 }
 
 export async function getIdToken(forceRefresh = false): Promise<string | null> {
-  const user = auth.currentUser;
+  const user = await getCurrentUserAsync();
   if (!user) return null;
   return user.getIdToken(forceRefresh);
 }

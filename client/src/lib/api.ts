@@ -3,7 +3,7 @@
  * Centraliza base da API, auth Bearer e utilitários de arquivo.
  */
 
-import { auth } from '@/lib/firebase';
+import { getCurrentUserAsync } from '@/lib/auth';
 
 export const DEFAULT_PRODUCTION_API_BASE = 'https://geoforest-api.cursar.space';
 
@@ -75,7 +75,7 @@ export async function apiFetch(
     headers.set('Content-Type', 'application/json');
   }
   if (useAuth) {
-    const user = auth.currentUser;
+    const user = await getCurrentUserAsync();
     if (!user) {
       throw new Error('Usuário não autenticado.');
     }

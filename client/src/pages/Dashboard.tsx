@@ -181,7 +181,7 @@ import {
 import SatelliteComparisonView from '@/dashboard/components/SatelliteComparisonView';
 import SatelliteTimelineView from '@/dashboard/components/SatelliteTimelineView';
 import { auth, db } from '@/lib/firebase';
-import { handleLogout, UserProfile } from '@/lib/auth';
+import { getCurrentUserAsync, handleLogout, UserProfile } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MapView } from '@/components/Map';
@@ -2410,7 +2410,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   const onResetPassword = async () => {
     if (resettingPassword) return;
 
-    const currentUser = auth.currentUser;
+    const currentUser = await getCurrentUserAsync();
     if (!currentUser) {
       toast.error('Usuário não autenticado');
       return;
