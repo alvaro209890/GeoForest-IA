@@ -131,6 +131,21 @@ export {
 export { mapOverlapDocToHistoryItem } from './sobreposicoes/mapDoc';
 export { useOverlapJobs } from './hooks/useOverlapJobs';
 export type { UseOverlapJobsReturn, UseOverlapJobsDeps } from './hooks/useOverlapJobs';
+export type {
+  FiscalizacaoSource,
+  FiscalizacaoJobStatus,
+  FiscalizacaoResumoItem,
+  FiscalizacaoHistoryItem,
+} from './fiscalizacao/types';
+export { FISCALIZACAO_SOURCE_LABELS } from './fiscalizacao/types';
+export { fiscalizacaoZipFilename, fiscalizacaoDownloadUrl } from './fiscalizacao/filenames';
+export { mapFiscalizacaoDocToHistoryItem } from './fiscalizacao/mapDoc';
+export { useFiscalizacaoJobs } from './hooks/useFiscalizacaoJobs';
+export type {
+  UseFiscalizacaoJobsReturn,
+  UseFiscalizacaoJobsDeps,
+} from './hooks/useFiscalizacaoJobs';
+export type { FiscalizacaoPanelProps } from './panels/FiscalizacaoPanel';
 export { useCroquiJobs } from './hooks/useCroquiJobs';
 export type { UseCroquiJobsReturn, UseCroquiJobsDeps } from './hooks/useCroquiJobs';
 export { useNdviJobs } from './hooks/useNdviJobs';

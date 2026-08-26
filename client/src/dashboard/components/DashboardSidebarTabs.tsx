@@ -10,6 +10,7 @@ import {
   Receipt,
   Satellite,
   Scissors,
+  ShieldAlert,
   Sprout,
 } from 'lucide-react';
 import type { DashboardTabId, DashboardView } from '../types';
@@ -80,6 +81,13 @@ export const DASHBOARD_TABS: DashboardTabDef[] = [
     Icon: Combine,
     activeGradient: 'linear-gradient(135deg, #0d9488, #10b981)',
     iconGlowClass: 'drop-shadow-[0_0_6px_rgba(45,212,191,0.5)]',
+  },
+  {
+    id: 'fiscalizacao',
+    label: 'Fiscalização',
+    Icon: ShieldAlert,
+    activeGradient: 'linear-gradient(135deg, #e11d48, #f43f5e)',
+    iconGlowClass: 'drop-shadow-[0_0_6px_rgba(244,63,94,0.5)]',
   },
   {
     id: 'croqui',

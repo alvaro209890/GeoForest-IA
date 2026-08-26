@@ -70,7 +70,7 @@ function insideMap(rect: Rect): boolean {
 }
 
 /** Texto branco com contorno escuro, como os rótulos do Google Earth. */
-function haloText(doc: Doc, text: string, x: number, y: number): void {
+export function haloText(doc: Doc, text: string, x: number, y: number): void {
   doc.save();
   doc.fillColor("#1a1a1a");
   for (const [dx, dy] of [
@@ -136,7 +136,8 @@ function drawLegend(doc: Doc, rect: Rect): void {
   doc.restore();
 }
 
-function drawNorthArrow(doc: Doc, cx: number, baseY: number): void {
+/** Seta norte com halo branco, ancorada pela base. */
+export function drawNorthArrow(doc: Doc, cx: number, baseY: number): void {
   doc.save();
   doc.lineJoin("round");
   const tipY = baseY - 26;
@@ -167,7 +168,8 @@ function drawNorthArrow(doc: Doc, cx: number, baseY: number): void {
   doc.restore();
 }
 
-function drawScaleBar(doc: Doc, frame: MapFrame, rightX: number, baseY: number): void {
+/** Barra de escala com número redondo, ancorada pelo canto inferior direito. */
+export function drawScaleBar(doc: Doc, frame: MapFrame, rightX: number, baseY: number): void {
   const bar = pickScaleBar(frame.metersPerPoint, 150);
   doc.save();
   doc.font("Helvetica").fontSize(8.5);

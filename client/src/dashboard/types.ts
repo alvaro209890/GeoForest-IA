@@ -40,6 +40,7 @@ export type DashboardView =
   | 'vertices-proximas'
   | 'auas-sccon'
   | 'sobreposicoes'
+  | 'fiscalizacao'
   | 'croqui'
   | 'ndvi'
   | 'solicitacao-prioridade'
@@ -55,6 +56,7 @@ export type DashboardTabId =
   | 'vertices-proximas'
   | 'auas-sccon'
   | 'sobreposicoes'
+  | 'fiscalizacao'
   | 'croqui'
   | 'ndvi'
   | 'solicitacao-prioridade';
@@ -68,6 +70,7 @@ export const DASHBOARD_VIEW_LABELS: Record<DashboardView, string> = {
   'vertices-proximas': 'Análise de Erros',
   'auas-sccon': 'AUAS × SCCON',
   sobreposicoes: 'Sobreposições',
+  fiscalizacao: 'Fiscalização',
   croqui: 'Croqui',
   ndvi: 'NDVI',
   'solicitacao-prioridade': 'Solicitação Prioridade',

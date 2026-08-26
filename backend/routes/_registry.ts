@@ -14,6 +14,7 @@ import { registerNdviSceneRoutes } from "../ndvi-scene";
 import { registerVerticesRoutes } from "../vertices-proximas";
 import { registerContainmentRoutes } from "../containment-analysis";
 import { registerOverlapRoutes } from "../overlap";
+import { registerFiscalizacaoRoutes } from "../fiscalizacao";
 import { registerCroquiRoutes } from "../croqui";
 import { registerGeometryErrorsRoutes } from "../geometry-errors";
 import { registerProcessarProjetoRoutes } from "../processar-projeto";
@@ -45,6 +46,7 @@ export function registerAllRoutes(app: Express) {
   registerVerticesRoutes(app);
   registerContainmentRoutes(app);
   registerOverlapRoutes(app);
+  registerFiscalizacaoRoutes(app);
   registerCroquiRoutes(app);
   registerGeometryErrorsRoutes(app);
   registerProcessarProjetoRoutes(app);

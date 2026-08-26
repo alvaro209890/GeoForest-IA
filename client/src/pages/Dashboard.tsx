@@ -73,6 +73,7 @@ import {
   useCbersJobs,
   useLandsatJobs,
   useOverlapJobs,
+  useFiscalizacaoJobs,
   useCroquiJobs,
   useNdviJobs,
   useDashboardNavigation,
@@ -201,6 +202,7 @@ const SettingsPanel = lazy(() => import('@/dashboard/panels/SettingsPanel'));
 const CbersPanel = lazy(() => import('@/dashboard/panels/CbersPanel'));
 const LandsatPanel = lazy(() => import('@/dashboard/panels/LandsatPanel'));
 const SobreposicoesPanel = lazy(() => import('@/dashboard/panels/SobreposicoesPanel'));
+const FiscalizacaoPanel = lazy(() => import('@/dashboard/panels/FiscalizacaoPanel'));
 const CroquiPanel = lazy(() => import('@/dashboard/panels/CroquiPanel'));
 const SolicitacaoPrioridadePanel = lazy(() => import('@/components/SolicitacaoPrioridadePanel'));
 const SimcarLotesPanel = lazy(() => import('@/components/SimcarLotesPanel'));
@@ -1057,6 +1059,20 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     hydrateFromDocs: hydrateOverlapFromDocs,
     deleteOverlapJob,
   } = overlap;
+
+  // Reaproveita o mesmo downloader de ZIP das sobreposicoes.
+  const fiscalizacao = useFiscalizacaoJobs({
+    apiFetch,
+    downloadZip: overlapDownloadZip,
+    fileToBase64Payload,
+  });
+  const {
+    fiscHistory,
+    fiscJobId,
+    resetFiscDraft,
+    selectFiscHistoryEntry,
+    deleteFiscJob,
+  } = fiscalizacao;
 
   const croquiDownloadZipRef = useRef<(url?: string | null, filename?: string) => void | Promise<void>>(async () => {});
   const croquiDownloadZip = useCallback((url?: string | null, filename?: string) => {
@@ -4087,6 +4103,16 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               <span>Nova Landsat</span>
             </button>
           )}
+          {activeView === 'fiscalizacao' && (
+            <button
+              type="button"
+              onClick={() => resetFiscDraft()}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 py-2.5 px-3 text-sm font-semibold text-white shadow-lg shadow-rose-900/30 transition-all"
+            >
+              <Plus size={16} strokeWidth={2.25} className="shrink-0" aria-hidden />
+              <span>Nova Fiscalização</span>
+            </button>
+          )}
           {activeView === 'sobreposicoes' && (
             <button
               type="button"
@@ -4209,6 +4235,39 @@ Arquivo de imagem previamente anexado pelo usuário.`;
               ))
             ) : (
               <HistoryEmptyState Icon={Combine} title="Nenhuma análise de sobreposição." />
+            )
+          ) : activeView === 'fiscalizacao' ? (
+            fiscHistory.length > 0 ? (
+              fiscHistory.map((entry) => (
+                <HistoryCard
+                  key={entry.id}
+                  theme={{
+                    Icon: ShieldAlert,
+                    activeBg: 'bg-rose-500/10 border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.06)]',
+                    inactiveBg: 'bg-[#140a0c]/60 hover:bg-[#1b1013] hover:border-rose-500/20',
+                    iconActive: 'bg-gradient-to-br from-rose-500 to-red-500 text-white shadow-md shadow-rose-900/40',
+                    iconInactive: 'bg-white/5 text-slate-400 group-hover:text-rose-300 group-hover:bg-rose-500/10',
+                    titleActive: 'text-rose-100',
+                    titleInactive: 'text-slate-200 group-hover:text-rose-100',
+                    percentText: 'text-rose-300',
+                  }}
+                  active={fiscJobId === entry.jobId}
+                  title={entry.atpNome || entry.filename}
+                  percent={entry.percent}
+                  status={entry.status}
+                  subtitle={
+                    <span>
+                      {typeof entry.totalIncidentes === 'number'
+                        ? `${entry.totalIncidentes} incidente(s)`
+                        : 'Fiscalização'}
+                    </span>
+                  }
+                  onSelect={() => selectFiscHistoryEntry(entry)}
+                  onDelete={() => void deleteFiscJob(entry)}
+                />
+              ))
+            ) : (
+              <HistoryEmptyState Icon={ShieldAlert} title="Nenhuma análise de fiscalização." />
             )
           ) : activeView === 'croqui' ? (
             croquiHistory.length > 0 ? (
@@ -6647,6 +6706,16 @@ progress={
             </div>
           }>
             <SobreposicoesPanel overlap={overlap} />
+          </Suspense>
+        ) : activeView === 'fiscalizacao' ? (
+          <Suspense fallback={
+            <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+              <div className="max-w-6xl mx-auto">
+                <div className="rounded-2xl border border-white/10 bg-[#0e1612]/70 p-6 text-sm text-slate-300">Carregando Fiscalização...</div>
+              </div>
+            </div>
+          }>
+            <FiscalizacaoPanel fiscalizacao={fiscalizacao} />
           </Suspense>
         ) : activeView === 'croqui' ? (
           <Suspense fallback={

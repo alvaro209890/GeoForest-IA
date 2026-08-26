@@ -37,6 +37,8 @@ const USER_DIRS = [
   "containment/output",
   "overlap/input",
   "overlap/output",
+  "fiscalizacao/input",
+  "fiscalizacao/output",
   "croqui/input",
   "croqui/output",
   "geometry-errors/input",
@@ -292,6 +294,8 @@ export function saveUserBuffer(args: {
     | "containment/output"
     | "overlap/input"
     | "overlap/output"
+    | "fiscalizacao/input"
+    | "fiscalizacao/output"
     | "croqui/input"
     | "croqui/routes"
     | "croqui/output"
