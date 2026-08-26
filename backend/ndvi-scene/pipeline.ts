@@ -158,7 +158,7 @@ function footprintRingCoords(item: any): Array<[number, number]> {
  * Extensão da cena na UTM nativa, com margem de ~100 m (evita borda de 1 px e
  * cobre pequenas diferenças entre footprint e raster real).
  */
-function sceneUtmExtent(item: any): {
+export function sceneUtmExtent(item: any): {
   epsg: number;
   minX: number;
   minY: number;
@@ -212,7 +212,7 @@ function sceneUtmExtent(item: any): {
  * COMPRESS=LZW + TILED + BIGTIFF=IF_SAFER. `qa_pixel` é bitmask — usa `-r near`
  * (nunca interpola bits).
  */
-async function materializeBand(args: {
+export async function materializeBand(args: {
   uid: string;
   jobId: string;
   href: string;
@@ -227,7 +227,8 @@ async function materializeBand(args: {
     ? `/vsicurl/${args.href}`
     : args.href;
   const isQa = args.bandKey === "qa_pixel";
-  await runCommand({
+  try {
+    await runCommand({
     uid: args.uid,
     jobId: args.jobId,
     command: "gdal_translate",
@@ -260,7 +261,13 @@ async function materializeBand(args: {
     stage: "materialize",
     message: `Materializando banda ${args.bandKey.toUpperCase()} da cena completa.`,
     onProgress: args.onProgress,
-  });
+    });
+  } catch (error) {
+    throw new Error(
+      `Falha ao materializar banda ${args.bandKey.toUpperCase()}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error }
+    );
+  }
 }
 
 /** Nome de arquivo do acervo: `NDVI_<path>_<row>_<date>_<PLAT>_<COMP>[.TIF]` (+ sufixo J<JOB>). */
@@ -440,24 +447,32 @@ export async function processNdviScene(args: {
         message: `Gerando composição ${comp} (${i + 1}/${comps.length}).`,
       });
 
-      const rgbPath = await buildCompositionCommand({
-        comp,
-        bandPaths: {
-          nir08: bandPaths.nir08,
-          red: bandPaths.red,
-          green: bandPaths.green,
-          blue: bandPaths.blue,
-          swir16: bandPaths.swir16,
-          qa_pixel: bandPaths.qa_pixel || undefined,
-        },
-        platform: platformFromText(itemId),
-        outDir: sceneDir,
-        uid,
-        jobId,
-        basePercent: compBase,
-        spanPercent: compSpan * 0.8,
-        onProgress: report,
-      });
+      let rgbPath: string;
+      try {
+        rgbPath = await buildCompositionCommand({
+          comp,
+          bandPaths: {
+            nir08: bandPaths.nir08,
+            red: bandPaths.red,
+            green: bandPaths.green,
+            blue: bandPaths.blue,
+            swir16: bandPaths.swir16,
+            qa_pixel: bandPaths.qa_pixel || undefined,
+          },
+          platform: platformFromText(itemId),
+          outDir: sceneDir,
+          uid,
+          jobId,
+          basePercent: compBase,
+          spanPercent: compSpan * 0.8,
+          onProgress: report,
+        });
+      } catch (error) {
+        throw new Error(
+          `Falha ao gerar composição ${comp}: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error }
+        );
+      }
       throwIfCancelled(jobId);
 
       // Overviews do produto RGB (cena inteira: necessários para o zoom-out no WMS).

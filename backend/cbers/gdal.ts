@@ -8,6 +8,20 @@ import { progress, throwIfCancelled } from "./sse";
 import { CbersCancelError, CbersProgressPatch } from "./types";
 import { gdalCommandEnv } from "./utils";
 
+/** Preserva a causa (início) e o contexto final sem persistir megabytes de progresso. */
+export function formatCommandFailure(
+  command: string,
+  code: number | null,
+  output: string
+): string {
+  const clean = String(output || "").trim();
+  const excerpt =
+    clean.length <= 4000
+      ? clean
+      : `${clean.slice(0, 2000)}\n... saída intermediária omitida ...\n${clean.slice(-2000)}`;
+  return `${command} falhou com codigo ${code}: ${excerpt}`;
+}
+
 export async function runCommand(args: {
   uid: string;
   jobId: string;
@@ -113,7 +127,7 @@ export async function runCommand(args: {
         finish(() => resolve());
         return;
       }
-      finish(() => reject(new Error(`${args.command} falhou com codigo ${code}: ${output.slice(-1200)}`)));
+      finish(() => reject(new Error(formatCommandFailure(args.command, code, output))));
     });
   });
 
@@ -154,7 +168,7 @@ export async function runCommandCapture(command: string, commandArgs: string[], 
     child.on("close", (code) => {
       clearInterval(cancelTimer);
       if (code === 0) resolve(output);
-      else reject(new Error(`${command} falhou com codigo ${code}: ${errorOutput.slice(-1200)}`));
+      else reject(new Error(formatCommandFailure(command, code, errorOutput)));
     });
   });
 }
