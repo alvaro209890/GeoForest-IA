@@ -142,6 +142,21 @@ function markCbersScenesInterrupted(current: Record<string, any> | null, error: 
   });
 }
 
+function markNdviScenesInterrupted(current: Record<string, any> | null, error: string): Record<string, any>[] | undefined {
+  if (!Array.isArray(current?.scenes)) return undefined;
+  return current.scenes.map((scene: Record<string, any>) => {
+    const status = safeTrim(scene?.status).toLowerCase();
+    if (status === "completed" || status === "failed" || status === "cancelled") return scene;
+    return {
+      ...scene,
+      status: "failed",
+      stage: "interrupted",
+      message: error,
+      error,
+    };
+  });
+}
+
 export function markPersistedRunningJobsInterrupted(): number {
   const usersDir = path.join(STORAGE_ROOT, "users");
   if (!fs.existsSync(usersDir)) return 0;
@@ -210,6 +225,24 @@ export function markPersistedRunningJobsInterrupted(): number {
           );
         }
 
+        if (endpoint === "/api/ndvi/jobs") {
+          const ndviData = readJsonSafe(
+            path.join(usersDir, uid, "ndvi_scene_jobs", `${jobId}.json`),
+          );
+          writeDocBySegments(
+            ["users", uid, "ndvi_scene_jobs", jobId],
+            {
+              status: "failed",
+              stage: "interrupted",
+              error,
+              message: error,
+              scenes: markNdviScenesInterrupted(ndviData, error),
+              completedAt: interruptedAt,
+            },
+            { merge: true },
+          );
+        }
+
         interruptedJobKeys.add(`${uid}:${jobId}`);
       }
     }
@@ -223,6 +256,10 @@ export function markPersistedRunningJobsInterrupted(): number {
         name: "simcar_oraculo_jobs",
         activeStatuses: new Set(["queued", "running", "cancel_requested"]),
       },
+      {
+        name: "ndvi_scene_jobs",
+        activeStatuses: new Set(["processing"]),
+      },
     ] as const;
 
     for (const collection of standaloneCollections) {
@@ -235,18 +272,28 @@ export function markPersistedRunningJobsInterrupted(): number {
         const status = safeTrim(data?.status).toLowerCase();
         if (!collection.activeStatuses.has(status)) continue;
 
+        const isNdviScene = collection.name === "ndvi_scene_jobs";
         writeDocBySegments(
           ["users", uid, collection.name, jobId],
-          {
-            status: "interrupted",
-            stage: "interrupted",
-            ok: false,
-            error,
-            message: error,
-            interruptedAt,
-            finishedAt: interruptedAt,
-            finishedAtMs: now,
-          },
+          isNdviScene
+            ? {
+                status: "failed",
+                stage: "interrupted",
+                error,
+                message: error,
+                scenes: markNdviScenesInterrupted(data, error),
+                completedAt: interruptedAt,
+              }
+            : {
+                status: "interrupted",
+                stage: "interrupted",
+                ok: false,
+                error,
+                message: error,
+                interruptedAt,
+                finishedAt: interruptedAt,
+                finishedAtMs: now,
+              },
           { merge: true },
         );
         interruptedJobKeys.add(`${uid}:${jobId}`);

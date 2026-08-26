@@ -39,10 +39,25 @@ describe("recuperação de jobs no boot", () => {
     storage.writeDocBySegments(["users", uid, "simcar_oraculo_jobs", "job-final"], {
       status: "completed",
     });
+    storage.writeDocBySegments(["users", uid, "processing_jobs", "job-ndvi"], {
+      status: "running",
+      endpoint: "/api/ndvi/jobs",
+    });
+    storage.writeDocBySegments(["users", uid, "ndvi_scene_jobs", "job-ndvi"], {
+      status: "processing",
+      stage: "materialize",
+      percent: 15,
+      scenes: [{ itemId: "LE07_TEST", status: "processing", stage: "materialize", percent: 15 }],
+    });
+    storage.writeDocBySegments(["users", uid, "ndvi_scene_jobs", "job-ndvi-final"], {
+      status: "completed",
+      stage: "completed",
+      percent: 100,
+    });
 
     const interrupted = processingJobs.markPersistedRunningJobsInterrupted();
 
-    expect(interrupted).toBe(2);
+    expect(interrupted).toBe(3);
     expect(
       storage.readDocBySegments(["users", uid, "processing_jobs", "job-local"]),
     ).toMatchObject({ status: "failed" });
@@ -58,5 +73,15 @@ describe("recuperação de jobs no boot", () => {
     expect(
       storage.readDocBySegments(["users", uid, "simcar_oraculo_jobs", "job-final"]),
     ).toMatchObject({ status: "completed" });
+    expect(
+      storage.readDocBySegments(["users", uid, "ndvi_scene_jobs", "job-ndvi"]),
+    ).toMatchObject({
+      status: "failed",
+      stage: "interrupted",
+      scenes: [{ status: "failed", stage: "interrupted" }],
+    });
+    expect(
+      storage.readDocBySegments(["users", uid, "ndvi_scene_jobs", "job-ndvi-final"]),
+    ).toMatchObject({ status: "completed", stage: "completed", percent: 100 });
   });
 });
