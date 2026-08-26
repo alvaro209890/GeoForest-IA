@@ -21,3 +21,9 @@ Além disso, arquivo, coveragestore e grupos eram criados antes da validação d
 ## Evidência esperada
 
 Uma publicação válida deve aparecer no `GetCapabilities` e responder `GetMap` com `image/png`. Uma publicação inválida deve falhar o job sem deixar camada ou arquivo parcial.
+
+## Segunda falha: montagem RGB/SWIR
+
+O job `f396e691-7f3e-41f3-8ef9-d3e84fd0e57a` confirmou que NDVI, NDFI e SAVI já publicavam corretamente com `raster`, mas caiu ao iniciar RGB. O `gdal_merge.py` não recebia `-separate` e produzia uma imagem de uma banda por sobreposição espacial; em seguida o `gdal_translate` recusava `-scale_2` e `-scale_3` com `-scale_XX has been specified with XX greater than the number of output bands`.
+
+A montagem de RGB e SWIR agora usa `gdal_merge.py -separate`, criando exatamente três bandas antes do realce para Byte. Um teste de regressão exige a flag e a ordem RED/GREEN/BLUE.

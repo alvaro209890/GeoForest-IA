@@ -120,6 +120,22 @@ function gdalCalcBaseArgs(outPath: string): string[] {
 }
 
 /**
+ * `gdal_merge.py` sem `-separate` mosaica entradas sobre a mesma banda. Para
+ * RGB/SWIR cada arquivo de entrada precisa virar uma banda distinta.
+ */
+export function buildRgbMergeArgs(mergedPath: string, inputs: string[]): string[] {
+  return [
+    "-separate",
+    "-o", mergedPath,
+    "-of", "GTiff",
+    "-co", "COMPRESS=LZW",
+    "-co", "TILED=YES",
+    "-co", "BIGTIFF=IF_SAFER",
+    ...inputs,
+  ];
+}
+
+/**
  * Expressão `gdal_calc` do NDFI a partir de reflectância (A: NIR, B: SWIR16, C: QA).
  *
  * NDFI = (ρ_NIR − ρ_SWIR16) / (ρ_NIR + ρ_SWIR16) — variação do NDVI usando SWIR:
@@ -270,14 +286,7 @@ export async function buildCompositionCommand(args: {
     uid: args.uid,
     jobId: args.jobId,
     command: "gdal_merge.py",
-    commandArgs: [
-      "-o", mergedTmp,
-      "-of", "GTiff",
-      "-co", "COMPRESS=LZW",
-      "-co", "TILED=YES",
-      "-co", "BIGTIFF=IF_SAFER",
-      ...inputs,
-    ],
+    commandArgs: buildRgbMergeArgs(mergedTmp, inputs),
     basePercent: args.basePercent,
     spanPercent: args.spanPercent * 0.4,
     stage: comp.toLowerCase(),
