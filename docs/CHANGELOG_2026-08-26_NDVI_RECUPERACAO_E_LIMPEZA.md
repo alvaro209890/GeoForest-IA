@@ -47,8 +47,9 @@ A limpeza operacional remove:
 - os índices `ndvi_archive` e `ndvi_scene_archive`;
 - o histórico da aba (`ndvi_scene_jobs`) e os registros genéricos correspondentes.
 
-Os estilos (`ndvi_ramp`, `ndfi_ramp` e `savi_ramp`) permanecem instalados: não são
-imagens e serão necessários para a primeira publicação nova.
+As definições de estilo permanecem versionadas no GeoForest. O `ndvi_ramp` continua
+instalado no GeoServer; `ndfi_ramp` e `savi_ramp` serão criados de forma idempotente
+quando a primeira publicação nova exigir cada um deles. Estilos não são imagens.
 
 ## Aceitação
 
