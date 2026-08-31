@@ -13,6 +13,9 @@ import { buildDbfBuffer, buildPointShpAndShx, buildShpAndShx } from "../shapefil
 import { getZipLayerGroups } from "../vertices-proximas";
 import { GEOMETRIAS_TABELA } from "./constants";
 import { QuadroAreaRow } from "./types";
+import { csvEscape, safeSegment } from "../lib/job-utils";
+
+export { csvEscape, parseBase64Zip, safeSegment } from "../lib/job-utils";
 
 export function groupsFromZip(zipBuffer: Buffer) {
   return getZipLayerGroups(zipBuffer);
@@ -105,20 +108,6 @@ export function computeGeometriasEncontradas(args: {
   return rows;
 }
 
-
-export function safeSegment(input: string): string {
-  return String(input || "")
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 120);
-}
-
-export function csvEscape(value: unknown): string {
-  const text = String(value ?? "");
-  return /[",\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
 export function buildCsv(rows: GeometryErrorRow[]): Buffer {
   const headers = ["camada", "tipo", "feicao", "parte", "anel", "x", "y", "detalhe"];
   const lines = rows.map((row) => headers.map((h) => csvEscape((row as any)[h])).join(";"));
@@ -176,14 +165,4 @@ export function layerShpFiles(
     { name: `${safe}.dbf`, data: buildDbfBuffer(records.map((r) => r.attributes), fields) },
     { name: `${safe}.prj`, data: Buffer.from(prj, "utf8") },
   ];
-}
-
-
-export function parseBase64Zip(raw: unknown): Buffer {
-  const value = String(raw || "").trim();
-  if (!value) throw new Error("ZIP não enviado.");
-  const payload = value.includes(",") ? value.split(",").pop() || "" : value;
-  const buffer = Buffer.from(payload, "base64");
-  if (buffer.length < 22) throw new Error("ZIP inválido ou vazio.");
-  return buffer;
 }

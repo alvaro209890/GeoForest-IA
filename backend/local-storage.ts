@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { ensureDir, readJsonSafe, writeJsonAtomic } from "./lib/fs-json";
 
 type PlainObject = Record<string, any>;
 
@@ -83,10 +84,6 @@ function safeSegment(input: string): string {
     .replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-function ensureDir(dir: string): void {
-  fs.mkdirSync(dir, { recursive: true });
-}
-
 function removeStaleTempCopies(dir: string, prefix: string): void {
   let entries: string[] = [];
   try {
@@ -129,22 +126,6 @@ function copyFileAtomic(sourcePath: string, absolutePath: string): number {
       // Keep the original copy error.
     }
     throw error;
-  }
-}
-
-function writeJsonAtomic(filePath: string, data: unknown): void {
-  ensureDir(path.dirname(filePath));
-  const tempPath = `${filePath}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), "utf8");
-  fs.renameSync(tempPath, filePath);
-}
-
-function readJsonSafe<T>(filePath: string, fallback: T): T {
-  try {
-    if (!fs.existsSync(filePath)) return fallback;
-    return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
-  } catch {
-    return fallback;
   }
 }
 
@@ -204,6 +185,35 @@ export function getUserProfile(uid: string): PlainObject | null {
   return readJsonSafe<PlainObject | null>(profilePath, null);
 }
 
+/**
+ * Coleções que podem ser lidas/escritas sob `users/<uid>/`.
+ *
+ * 🔴 Rota/feature nova que persiste job PRECISA entrar aqui — senão
+ * `writeDocBySegments` devolve `INVALID_DOC_PATH` e o histórico fica
+ * silenciosamente vazio (foi o que aconteceu com `solicitacao_prioridade_jobs`).
+ *
+ * Ficava duplicada dentro de `resolveDocPathFromSegments` e
+ * `resolveCollectionDirFromSegments`, e era realocada a cada chamada.
+ */
+const ALLOWED_COLLECTIONS = new Set([
+  "conversations",
+  "simcar_clips",
+  "cbers_wpm_jobs",
+  "landsat_jobs",
+  "vertices_jobs",
+  "processing_jobs",
+  "containment_jobs",
+  "geometry_errors_jobs",
+  "processar_projeto_jobs",
+  "simcar_oraculo_jobs",
+  "simcar_lotes_jobs",
+  "solicitacao_prioridade_jobs",
+  "receipts",
+  "croqui_jobs",
+  "fiscalizacao_jobs",
+  "ndvi_scene_jobs",
+]);
+
 function resolveDocPathFromSegments(segments: string[]): string | null {
   const parts = segments.filter(Boolean).map((part) => safeSegment(part));
   if (parts[0] !== "users" || !parts[1]) return null;
@@ -214,16 +224,14 @@ function resolveDocPathFromSegments(segments: string[]): string | null {
   }
   const docId = parts[3];
   if (!docId) return null;
-  const allowed = new Set(["conversations", "simcar_clips", "cbers_wpm_jobs", "landsat_jobs", "vertices_jobs", "processing_jobs", "containment_jobs", "geometry_errors_jobs", "processar_projeto_jobs", "simcar_oraculo_jobs", "simcar_lotes_jobs", "receipts", "croqui_jobs", "fiscalizacao_jobs", "ndvi_scene_jobs"]);
-  if (!allowed.has(parts[2])) return null;
+    if (!ALLOWED_COLLECTIONS.has(parts[2])) return null;
   return path.join(getUserDir(uid), parts[2], `${docId}.json`);
 }
 
 function resolveCollectionDirFromSegments(segments: string[]): string | null {
   const parts = segments.filter(Boolean).map((part) => safeSegment(part));
   if (parts[0] !== "users" || !parts[1] || !parts[2]) return null;
-  const allowed = new Set(["conversations", "simcar_clips", "cbers_wpm_jobs", "landsat_jobs", "vertices_jobs", "processing_jobs", "containment_jobs", "geometry_errors_jobs", "processar_projeto_jobs", "simcar_oraculo_jobs", "simcar_lotes_jobs", "receipts", "croqui_jobs", "fiscalizacao_jobs", "ndvi_scene_jobs"]);
-  if (!allowed.has(parts[2])) return null;
+    if (!ALLOWED_COLLECTIONS.has(parts[2])) return null;
   return path.join(getUserDir(parts[1]), parts[2]);
 }
 

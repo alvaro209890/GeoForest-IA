@@ -2,28 +2,7 @@
  * Cabeçalho do painel CBERS-4A WPM.
  */
 import React from 'react';
-import { createPortal } from 'react-dom';
-import {
-  AlertTriangle,
-  ArrowUpRight,
-  CheckCircle2,
-  CheckSquare,
-  Cpu,
-  Download,
-  Loader2,
-  Satellite,
-  Search,
-  Square,
-  Upload,
-  X,
-} from 'lucide-react';
-import { CbersMapPreview } from '@/dashboard/components/CbersMapPreview';
-import {
-  cbersArchiveZipFilename,
-  cbersArchiveZipUrl,
-  cbersBatchZipFilename,
-} from '@/dashboard/cbers/filenames';
-import type { UseCbersJobsReturn } from '@/dashboard/hooks/useCbersJobs';
+import { Satellite } from 'lucide-react';
 import type { CbersPanelProps } from '../CbersPanel';
 
 export function CbersPanelHeader(_props: CbersPanelProps) {

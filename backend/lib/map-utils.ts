@@ -522,7 +522,7 @@ export const fetchSemamtImageryLayers = async () => {
 
 export const decodeDataUrl = (dataUrl: string) => {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) throw new Error("dataUrl invÃ¡lido.");
+  if (!match) throw new Error("dataUrl inválido.");
   const mimeType = match[1] || "application/octet-stream";
   const payload = match[2];
   return { mimeType, buffer: Buffer.from(payload, "base64") };
@@ -553,7 +553,7 @@ export const parseKmlBbox = (kml: string) => {
     }
   }
   if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
-    throw new Error("NÃ£o foi possÃ­vel extrair coordenadas vÃ¡lidas do KML.");
+    throw new Error("Não foi possível extrair coordenadas válidas do KML.");
   }
   return [minX, minY, maxX, maxY] as [number, number, number, number];
 };

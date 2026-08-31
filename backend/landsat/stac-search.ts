@@ -8,27 +8,15 @@ import { findLocalRecordForExternal, localRecordToScene, readLocalLandsatRecords
 import { compositionLabel, isoFromDateCompact, landsatAssetKeysForComposition, parseLandsatStacId, planetaryComputerItemIdFromLandsatId } from "./naming";
 import { LandsatComposition, LandsatScene, PlainObject } from "./types";
 import { bboxGeometry, computeSceneCoverage } from "./utils";
+import { fetchJsonWithTimeout } from "../lib/http";
 
 export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      ...init,
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        ...(init?.headers || {}),
-      },
-    });
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`STAC Landsat ${response.status}: ${text.slice(0, 300)}`);
-    }
-    return await response.json() as T;
-  } finally {
-    clearTimeout(timer);
-  }
+  return fetchJsonWithTimeout<T>(url, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    init,
+    defaultHeaders: { Accept: "application/json" },
+    httpError: ({ status, body }) => `STAC Landsat ${status}: ${body.slice(0, 300)}`,
+  });
 }
 
 

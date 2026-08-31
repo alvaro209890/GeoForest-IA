@@ -131,3 +131,6 @@ venv/
 .commandcode/
 .codex-tmp/
 Analise_pos_recorte/concluido/
+
+# Scratch de sondas do SIMCAR (não versionado)
+.tmp-download/

@@ -34,7 +34,7 @@ login erradas suspendem a conta, e cada execução mexe num projeto real no SIMC
 
 | Camada | Estado |
 |---|---|
-| **Interface** | ❌ **removida** em 2026-07-21 — a sub-aba "Processar projeto" não existe mais no Dashboard; não há rota `/dashboard/...` para ela; `client/src/components/ProcessarProjetoAnalysis.tsx` continua no repo mas **não é importado por ninguém** |
+| **Interface** | ❌ **removida** em 2026-07-21 — a sub-aba "Processar projeto" não existe mais no Dashboard; não há rota `/dashboard/...` para ela; `client/src/components/ProcessarProjetoAnalysis.tsx` foi **apagado em 2026-08-30** (2.191 linhas sem nenhum importador; está no histórico do git se algum dia precisar de consulta) |
 | **Rotas de backend** | ⚠️ ainda registradas (`registerSimcarOraculoRoutes` em `backend/routes/_registry.ts`, allowlist em `backend/app.ts`) — **inalcançáveis pelo app**, mas vivas se alguém chamar direto com token |
 | **Módulo** | `backend/simcar-oraculo/` continua no repo. Parte dele é **reusada por outra coisa viva**: `client.ts` (sessão SEMA por credencial) é o que a aba **Lotes SIMCAR** usa para baixar documentos — **esse arquivo não pode ser apagado** |
 | **Credenciais** | `SIMCAR_SENHA` do oráculo no `backend.env` do server está **inválida** desde 2026-08-05 (SEMA respondeu "tentativa 2 de 3"). Não corrigir: o fluxo não volta |
@@ -43,8 +43,8 @@ login erradas suspendem a conta, e cada execução mexe num projeto real no SIMC
 
 1. **Não reativar.** Nenhuma aba, botão, rota ou job novo pode enviar ZIP do usuário ao
    SIMCAR real para importar/processar.
-2. **Não reintroduzir** a sub-aba "Processar projeto" nem importar
-   `ProcessarProjetoAnalysis.tsx`.
+2. **Não reintroduzir** a sub-aba "Processar projeto" nem restaurar
+   `ProcessarProjetoAnalysis.tsx` do histórico do git.
 3. **Não usar a conta técnica do Álvaro** para mutação na SEMA (importar, processar,
    salvar município, limpar abrangência). Leitura pontual continua permitida onde já
    existe — ex.: a aba **Lotes SIMCAR** baixa documentos **com a credencial que o próprio

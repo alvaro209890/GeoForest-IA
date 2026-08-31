@@ -4,12 +4,10 @@
  *
  * Extraído de simcar-clip.ts (Plano 02, Fase 5a).
  */
-
 import fs from "fs";
 import path from "path";
-import { parsePolygonGeometryFromGml } from "../sigef-client";
 import { STORAGE_ROOT, storageUrlToRelativePath, writeDocBySegments } from "../local-storage";
-import { normalizePolygonGeometry, polygonToWkt, toPolygonOrMultiFeature } from "../wfs-intersection";
+
 import { extractZipEntries } from "../geo-utils";
 import { readFullShapefile } from "./shapefile-io";
 import { dedupeWarnings, appendLayerWarning, inspectPropertyLayerConsistency } from "./area-calculator";
@@ -19,7 +17,7 @@ import { jobCache } from "./clip-pipeline";
 import { toPublicApiUrl } from "./constants";
 import { area as turfArea, polygon as turfPolygon } from "@turf/turf";
 import type { Feature, Geometry, MultiPolygon, Polygon } from "geojson";
-import type { CachedJob, LayerSummary, PersistedClipContextV1 } from "./types";
+import type { CachedJob, LayerSummary } from "./types";
 
 export function readPersistedSimcarClip(jobId: string): Record<string, any> | null {
     const safeJobId = String(jobId || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_");

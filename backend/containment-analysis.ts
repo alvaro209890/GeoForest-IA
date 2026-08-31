@@ -22,7 +22,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import proj4 from "proj4";
 import {
-  area as turfArea,
   difference as turfDifference,
   union as turfUnion,
   featureCollection as turfFeatureCollection,
@@ -56,10 +55,10 @@ import {
   readDocBySegments,
   removeStoragePath,
   saveUserBuffer,
-  stripUndefinedDeep,
-  writeDocBySegments,
 } from "./local-storage";
 import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
+import { createSseHub } from "./lib/sse";
+import { csvEscape, parseBase64Zip, safeSegment } from "./lib/job-utils";
 
 proj4.defs("EPSG:4674", "+proj=longlat +ellps=GRS80 +no_defs +type=crs");
 proj4.defs("EPSG:4326", "+proj=longlat +datum=WGS84 +no_defs +type=crs");
@@ -67,26 +66,10 @@ proj4.defs("EPSG:4326", "+proj=longlat +datum=WGS84 +no_defs +type=crs");
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MIN_AREA_M2 = 1; // slivers de borda menores que isto são ruído numérico
 
-const subscribers = new Map<string, Set<Response>>();
+const { subscribers, writeSse, emitJobEvent, closeSubscribers, persistJob, progress } =
+  createSseHub({ collection: "containment_jobs" });
 
 /* ─────────────────────────── util ─────────────────────────── */
-
-function safeSegment(input: string): string {
-  return String(input || "")
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 120);
-}
-
-function parseBase64Zip(raw: unknown): Buffer {
-  const value = String(raw || "").trim();
-  if (!value) throw new Error("ZIP não enviado.");
-  const payload = value.includes(",") ? value.split(",").pop() || "" : value;
-  const buffer = Buffer.from(payload, "base64");
-  if (buffer.length < 22) throw new Error("ZIP inválido ou vazio.");
-  return buffer;
-}
 
 function ensureClosed(ring: number[][]): number[][] {
   if (ring.length < 3) return ring;
@@ -253,11 +236,6 @@ type GapRow = {
   y: number;
   coordinates: number[][][];
 };
-
-function csvEscape(value: unknown): string {
-  const text = String(value ?? "");
-  return /[",\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
 
 function buildCsv(rows: GapRow[]): Buffer {
   const headers = ["alvo", "feicao", "parte", "area_ha", "area_m2", "x", "y", "contido_em"];
@@ -498,44 +476,6 @@ export function analyzeContainment(args: {
 }
 
 /* ─────────────────────────── SSE / jobs ─────────────────────────── */
-
-function writeSse(res: Response, data: Record<string, unknown>): void {
-  if (res.writableEnded || res.destroyed || (res as any)?.socket?.destroyed) return;
-  try {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-    if (typeof (res as any).flush === "function") (res as any).flush();
-  } catch {
-    // conexão encerrada
-  }
-}
-
-function emitJobEvent(jobId: string, data: Record<string, unknown>): void {
-  const set = subscribers.get(jobId);
-  if (!set) return;
-  for (const res of set) writeSse(res, data);
-}
-
-function closeSubscribers(jobId: string): void {
-  const set = subscribers.get(jobId);
-  if (!set) return;
-  for (const res of set) {
-    if (!res.writableEnded) res.end();
-  }
-  subscribers.delete(jobId);
-}
-
-function persistJob(uid: string, jobId: string, patch: Record<string, unknown>): void {
-  writeDocBySegments(
-    ["users", uid, "containment_jobs", jobId],
-    stripUndefinedDeep({ jobId, ...patch, updatedAtMs: Date.now() }),
-    { merge: true },
-  );
-}
-
-function progress(uid: string, jobId: string, patch: Record<string, unknown>): void {
-  persistJob(uid, jobId, patch);
-  emitJobEvent(jobId, { type: "progress", jobId, ...patch });
-}
 
 async function runContainmentJob(args: {
   uid: string;

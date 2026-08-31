@@ -19,7 +19,6 @@ import { nanoid } from 'nanoid';
 import type { BillingResult } from '@/dashboard/types';
 import type {
   SimcarAcAvnAnalysisMeta,
-  SimcarAnalysisImage,
   SimcarAnalysisMessage,
   SimcarAuasMeta,
   SimcarClipHistoryItem,

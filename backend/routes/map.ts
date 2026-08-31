@@ -1,4 +1,4 @@
-import { Express, Request, Response } from "express";
+import { Express } from "express";
 import { requireAuth } from "../auth";
 import {
   getMapCapabilitiesData,
@@ -15,14 +15,14 @@ export function registerMapRoutes(app: Express) {
 
   app.get("/api/map/capabilities", async (_req, res) => {
     try {
-      console.log("[API] GET /api/map/capabilities â€” iniciando...");
+      console.log("[API] GET /api/map/capabilities — iniciando...");
       const capabilities = await getMapCapabilitiesData();
       const payload = capabilities.payload;
       if (!payload) {
         throw new Error("Falha ao montar payload de capabilities.");
       }
       console.log(`[API] Default layer: ${payload.defaultLayer}`);
-      console.log("[API] GET /api/map/capabilities â€” sucesso");
+      console.log("[API] GET /api/map/capabilities — sucesso");
       res.setHeader("Cache-Control", "public, max-age=120");
       res.json(payload);
     } catch (error: any) {
@@ -52,16 +52,16 @@ export function registerMapRoutes(app: Express) {
         format?: "image/png" | "image/jpeg";
       };
   
-      console.log(`[API] POST /api/map/snapshot â€” layer=${layerName}, bbox=${JSON.stringify(bbox)}, overlays=${JSON.stringify(overlayLayers)}, size=${width}x${height}`);
+      console.log(`[API] POST /api/map/snapshot — layer=${layerName}, bbox=${JSON.stringify(bbox)}, overlays=${JSON.stringify(overlayLayers)}, size=${width}x${height}`);
   
       if (!layerName || !bbox || !Array.isArray(bbox) || bbox.length !== 4) {
-        res.status(400).json({ error: "ParÃ¢metros invÃ¡lidos para snapshot de mapa." });
+        res.status(400).json({ error: "Parâmetros inválidos para snapshot de mapa." });
         return;
       }
   
       const [minX, minY, maxX, maxY] = bbox.map(Number);
       if (![minX, minY, maxX, maxY].every(Number.isFinite) || minX >= maxX || minY >= maxY) {
-        res.status(400).json({ error: "BBox invÃ¡lida." });
+        res.status(400).json({ error: "BBox inválida." });
         return;
       }
   
@@ -103,7 +103,7 @@ export function registerMapRoutes(app: Express) {
         !capabilities.allowedLayerNames.has(normalizedLayerName.toLowerCase())
       ) {
         res.status(400).json({
-          error: `Layer '${normalizedLayerName}' nÃ£o Ã© uma camada disponÃ­vel.`,
+          error: `Layer '${normalizedLayerName}' não é uma camada disponível.`,
           availableLayers: capabilities.payload?.imageLayers.slice(0, 50).map((l) => l.name) || [],
         });
         return;
@@ -144,13 +144,13 @@ export function registerMapRoutes(app: Express) {
           const available =
             capabilities?.payload?.imageLayers.slice(0, 50).map((l) => l.name) || [];
           res.status(400).json({
-            error: `Layer '${normalizedLayerName}' nÃ£o existe no WMS da SEMA.`,
+            error: `Layer '${normalizedLayerName}' não existe no WMS da SEMA.`,
             availableLayers: available,
           });
           return;
         }
         res.status(502).json({
-          error: "Resposta do WMS nÃ£o retornou imagem.",
+          error: "Resposta do WMS não retornou imagem.",
           details: text.slice(0, 500),
         });
         return;

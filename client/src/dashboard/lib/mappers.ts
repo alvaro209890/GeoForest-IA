@@ -13,20 +13,9 @@ import type {
 } from '@/dashboard/types/history';
 import type { ContainmentRow, ContainmentSummary } from '@/components/ContainmentAnalysis';
 import type { GeometryErrorRow } from '@/components/GeometryErrorsAnalysis';
+import { toIsoDateFromUnknown } from './values';
 
-export const toIsoDateFromUnknown = (value: any) => {
-  if (!value) return new Date().toISOString();
-  if (typeof value === 'string') return value;
-  if (typeof value?.toDate === 'function') {
-    try {
-      return value.toDate().toISOString();
-    } catch {
-      return new Date().toISOString();
-    }
-  }
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
-};
+export { toIsoDateFromUnknown } from './values';
 
 export const mapVerticesDocToHistoryItem = (docId: string, data: any): VerticesHistoryItem => {
   const rawStatus = String(data?.status || '').trim().toLowerCase();

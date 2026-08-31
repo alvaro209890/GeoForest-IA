@@ -7,14 +7,9 @@ import path from "node:path";
 import { detectUtmProj, extractZipEntries } from "../geo-utils";
 import { SIRGAS_2000_PRJ, WGS84_PRJ } from "./constants";
 import { CodedCrs, ParsedPolygonRecord, VerticesLayerInfo, ZipEntry } from "./types";
+import { safeSegment } from "../lib/job-utils";
 
-export function safeSegment(input: string): string {
-  return String(input || "")
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 120);
-}
+export { parseBase64Zip, safeSegment } from "../lib/job-utils";
 
 export function layerIdForPath(entryName: string): string {
   const digest = crypto.createHash("sha1").update(entryName).digest("hex").slice(0, 10);
@@ -26,15 +21,6 @@ export function basenameKey(entryName: string): string {
   const dir = path.dirname(entryName).replace(/\\/g, "/");
   const base = path.basename(entryName, path.extname(entryName)).toLowerCase();
   return `${dir === "." ? "" : `${dir}/`}${base}`;
-}
-
-export function parseBase64Zip(raw: unknown): Buffer {
-  const value = String(raw || "").trim();
-  if (!value) throw new Error("ZIP não enviado.");
-  const payload = value.includes(",") ? value.split(",").pop() || "" : value;
-  const buffer = Buffer.from(payload, "base64");
-  if (buffer.length < 22) throw new Error("ZIP inválido ou vazio.");
-  return buffer;
 }
 
 export function shapeTypeName(shapeType: number): string {

@@ -2,29 +2,16 @@
  * Coluna lateral do painel CBERS: progresso do job e histórico.
  */
 import React from 'react';
-import { createPortal } from 'react-dom';
 import {
-  AlertTriangle,
-  ArrowUpRight,
-  CheckCircle2,
-  CheckSquare,
-  Cpu,
   Download,
-  Loader2,
-  Satellite,
-  Search,
-  Square,
-  Upload,
   X,
 } from 'lucide-react';
-import { CbersMapPreview } from '@/dashboard/components/CbersMapPreview';
 import {
   cbersArchiveZipFilename,
   cbersArchiveZipUrl,
   cbersBatchZipFilename,
 } from '@/dashboard/cbers/filenames';
 import { resolveBackendUrl } from '@/lib/api';
-import type { UseCbersJobsReturn } from '@/dashboard/hooks/useCbersJobs';
 import type { CbersPanelProps } from '../CbersPanel';
 
 export function CbersJobList({ cbers }: CbersPanelProps) {

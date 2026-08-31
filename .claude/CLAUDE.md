@@ -44,7 +44,15 @@ npx firebase deploy --only hosting   # site único: ia-florestal
 
 | File | Purpose |
 |------|---------|
-| `backend/index.ts` | Express server (~2567 lines), CORS, all API routes |
+| `backend/index.ts` | **Só o boot** (142 linhas): logger, `createApp()`, knowledge base, registro das rotas, static, `listen`, keep-alive |
+| `backend/app.ts` + `backend/routes/_registry.ts` | Factory do Express (CORS, auth, static) e registro das rotas de módulo |
+| `backend/routes/chat.ts` | `/api/chat` e `/api/chat-stream` (auto-seleção de modelo, guardrails, continuação de stream). Registrado em `startServer()`, **não** no `_registry` — depende da knowledge base |
+| `backend/routes/uploads.ts` | `/api/upload-image`, `/api/upload-file`, `/api/file-proxy` |
+| `backend/routes/health.ts` | `/api/health`, `/api/knowledge/health`, `/api/runtime/version` |
+| `backend/lib/sse.ts` | `createSseHub({ collection })` — **encanamento SSE único** de todos os jobs (`writeSse`/`emitJobEvent`/`closeSubscribers`/`persistJob`/`progress`). Não reimplementar dentro de módulo |
+| `backend/lib/job-utils.ts` | `sleep`, `safeSegment`, `parseBase64Zip`, `csvEscape` — únicos |
+| `backend/lib/fs-json.ts` | `ensureDir`, `writeJsonAtomic`, `readJsonSafe` — únicos |
+| `backend/lib/http.ts` | `fetchJsonWithTimeout`, `xmlEscape`, `asArray` |
 | `backend/firebase-admin.ts` | Firebase Admin SDK init (token verification) |
 | `backend/local-storage.ts` | Local JSON database (replaces Firestore) |
 | `backend/billing.ts` | Billing disabled (all costs return 0 BRL) |
@@ -70,6 +78,15 @@ npx firebase deploy --only hosting   # site único: ia-florestal
 | `backend/croqui.ts` + `backend/croqui/*` | Croqui de acesso: ATP → PDF/DOCX/KML no padrão SEMA (ver `docs/CROQUI_ACESSO.md`) |
 | `config/sedes-mt.json` | Sedes dos 142 municípios de MT (ponto de partida do croqui) |
 | `client/src/lib/localFirestore.ts` | Client-side Firestore replacement |
+| `client/src/dashboard/lib/values.ts` | `isPlainObject` e `toIsoDateFromUnknown` — únicos; todo `mapDoc.ts`/hook importa daqui |
+
+## Banco local: whitelist de coleções
+
+`backend/local-storage.ts` → **`ALLOWED_COLLECTIONS`** (constante única).
+
+🔴 Coleção ausente da lista faz `writeDocBySegments` lançar `INVALID_DOC_PATH`. Como os
+jobs envolvem a escrita em `try/catch`, o sintoma é **histórico vazio para sempre**, não
+erro visível. Foi o caso de `solicitacao_prioridade_jobs` (corrigido 2026-08-30).
 
 ## Environment Variables
 

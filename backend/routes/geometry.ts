@@ -1,4 +1,4 @@
-import { Express, Request, Response } from "express";
+import { Express } from "express";
 import { decodeDataUrl, parseKmlBbox } from "../lib/map-utils";
 import {
   extractZipEntries,
@@ -15,7 +15,7 @@ export function registerGeometryRoutes(app: Express) {
     try {
       const { dataUrl, filename } = req.body as { dataUrl?: string; filename?: string };
       if (!dataUrl || typeof dataUrl !== "string") {
-        res.status(400).json({ error: "dataUrl Ã© obrigatÃ³rio." });
+        res.status(400).json({ error: "dataUrl é obrigatório." });
         return;
       }
       const name = String(filename || "").toLowerCase();
@@ -43,7 +43,7 @@ export function registerGeometryRoutes(app: Express) {
           return;
         }
         if (shp.data.length < 100) {
-          res.status(400).json({ error: "Arquivo .shp invÃ¡lido." });
+          res.status(400).json({ error: "Arquivo .shp inválido." });
           return;
         }
         // Shapefile main header bbox (bytes 36..67 little endian)
@@ -52,7 +52,7 @@ export function registerGeometryRoutes(app: Express) {
         const maxX = shp.data.readDoubleLE(52);
         const maxY = shp.data.readDoubleLE(60);
         if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
-          res.status(400).json({ error: "NÃ£o foi possÃ­vel extrair bbox do shapefile." });
+          res.status(400).json({ error: "Não foi possível extrair bbox do shapefile." });
           return;
         }
         const polygon = parseShapefileFirstPolygon(shp.data) || undefined;
@@ -78,7 +78,7 @@ export function registerGeometryRoutes(app: Express) {
         return;
       }
   
-      res.status(400).json({ error: "Formato nÃ£o suportado. Envie .kml ou .zip (shapefile)." });
+      res.status(400).json({ error: "Formato não suportado. Envie .kml ou .zip (shapefile)." });
     } catch (error: any) {
       console.error("Erro no /api/geometry/bbox:", error);
       res.status(500).json({ error: error?.message || "Erro interno" });

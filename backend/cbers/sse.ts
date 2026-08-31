@@ -1,50 +1,22 @@
 /**
  * Progresso do job CBERS via SSE + persistência.
+ *
+ * Plumbing compartilhado em `backend/lib/sse.ts` (`createSseHub`). O que é
+ * próprio do CBERS fica aqui: o default de `status` no `progress` e o
+ * `throwIfCancelled` com a exceção do módulo.
  */
-import type { Response } from "express";
-import { stripUndefinedDeep, writeDocBySegments } from "../local-storage";
+import { createSseHub } from "../lib/sse";
 import { isCancelRequested } from "../processing-jobs";
 import { CbersCancelError, CbersProgressPatch } from "./types";
 import { clampPercent } from "./utils";
 
-export const eventSubscribers = new Map<string, Set<Response>>();
+const hub = createSseHub<CbersProgressPatch>({ collection: "cbers_wpm_jobs" });
 
-export function writeSse(res: Response, data: Record<string, unknown>): void {
-  if (res.writableEnded || res.destroyed || (res as any)?.socket?.destroyed) return;
-  try {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-    if (typeof (res as any).flush === "function") (res as any).flush();
-  } catch {
-    // Connection is gone.
-  }
-}
-
-export function emitJobEvent(jobId: string, data: Record<string, unknown>): void {
-  const subscribers = eventSubscribers.get(jobId);
-  if (!subscribers) return;
-  for (const res of subscribers) writeSse(res, data);
-}
-
-export function closeJobSubscribers(jobId: string): void {
-  const subscribers = eventSubscribers.get(jobId);
-  if (!subscribers) return;
-  for (const res of subscribers) {
-    if (!res.writableEnded) res.end();
-  }
-  eventSubscribers.delete(jobId);
-}
-
-export function persistCbersJob(uid: string, jobId: string, patch: CbersProgressPatch & Record<string, unknown>): void {
-  writeDocBySegments(
-    ["users", uid, "cbers_wpm_jobs", jobId],
-    stripUndefinedDeep({
-      jobId,
-      ...patch,
-      updatedAtMs: Date.now(),
-    }),
-    { merge: true },
-  );
-}
+export const eventSubscribers = hub.subscribers;
+export const writeSse = hub.writeSse;
+export const emitJobEvent = hub.emitJobEvent;
+export const closeJobSubscribers = hub.closeSubscribers;
+export const persistCbersJob = hub.persistJob;
 
 export function progress(uid: string, jobId: string, patch: CbersProgressPatch): void {
   const next = {

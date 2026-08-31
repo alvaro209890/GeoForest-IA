@@ -5,6 +5,9 @@ import { GEOSERVER_BASE_URL, GEOSERVER_LANDSAT_STYLE, GEOSERVER_PASSWORD, GEOSER
 import { readLocalLandsatRecords } from "./local-archive";
 import { PlainObject } from "./types";
 import { firstFiniteNumber, safeName, xmlValue } from "./utils";
+import { asArray, xmlEscape } from "../lib/http";
+
+export { asArray, xmlEscape } from "../lib/http";
 
 export function publicWmsCapabilitiesUrl(): string {
   return `${GEOSERVER_PUBLIC_WMS_BASE.replace(/\/+$/, "")}?service=WMS&version=1.3.0&request=GetCapabilities`;
@@ -112,15 +115,6 @@ export function buildLandsatLayerGroupHierarchy(args: {
   ];
 }
 
-export function xmlEscape(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
 export async function geoserverFetch(restPath: string, options: RequestInit = {}): Promise<globalThis.Response> {
   return await fetch(`${GEOSERVER_BASE_URL}${restPath}`, {
     ...options,
@@ -147,12 +141,6 @@ export async function geoserverWrite(restPath: string, method: "POST" | "PUT", b
   if ([200, 201, 202, 204, 409].includes(response.status)) return;
   const text = await response.text().catch(() => "");
   throw new Error(`GeoServer ${method} ${restPath} falhou: ${response.status} ${text.slice(0, 300)}`);
-}
-
-export function asArray(value: unknown): any[] {
-  if (Array.isArray(value)) return value;
-  if (value && typeof value === "object") return [value];
-  return [];
 }
 
 export function groupPublished(payload: PlainObject | null): PlainObject[] {

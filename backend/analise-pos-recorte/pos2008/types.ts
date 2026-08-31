@@ -1,4 +1,3 @@
-import type { Geometry } from "geojson";
 
 import type { Confidence } from "../types";
 

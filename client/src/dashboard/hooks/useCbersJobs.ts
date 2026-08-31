@@ -10,12 +10,7 @@ import type {
   CbersScene,
   CbersSceneJobState,
 } from '../cbers/types';
-
-const isPlainObject = (value: unknown): value is Record<string, any> => {
-  if (!value || typeof value !== 'object') return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-};
+import { isPlainObject } from '@/dashboard/lib/values';
 
 export type UseCbersJobsDeps = {
   apiFetch: (input: string, init?: RequestInit) => Promise<Response>;

@@ -1,45 +1,16 @@
 /**
- * Plumbing de SSE/persistência de progresso dos jobs de geometria.
+ * SSE/persistência de progresso dos jobs de geometria.
+ *
+ * Plumbing compartilhado em `backend/lib/sse.ts` (`createSseHub`) — este arquivo
+ * só amarra a coleção `geometry_errors_jobs` e reexporta a API do módulo.
  */
-import type { Response } from "express";
-import { stripUndefinedDeep, writeDocBySegments } from "../local-storage";
+import { createSseHub } from "../lib/sse";
 
-export const subscribers = new Map<string, Set<Response>>();
+const hub = createSseHub({ collection: "geometry_errors_jobs" });
 
-export function writeSse(res: Response, data: Record<string, unknown>): void {
-  if (res.writableEnded || res.destroyed || (res as any)?.socket?.destroyed) return;
-  try {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-    if (typeof (res as any).flush === "function") (res as any).flush();
-  } catch {
-    // Connection is gone.
-  }
-}
-
-export function emitJobEvent(jobId: string, data: Record<string, unknown>): void {
-  const set = subscribers.get(jobId);
-  if (!set) return;
-  for (const res of set) writeSse(res, data);
-}
-
-export function closeSubscribers(jobId: string): void {
-  const set = subscribers.get(jobId);
-  if (!set) return;
-  for (const res of set) {
-    if (!res.writableEnded) res.end();
-  }
-  subscribers.delete(jobId);
-}
-
-export function persistGeometryJob(uid: string, jobId: string, patch: Record<string, unknown>): void {
-  writeDocBySegments(
-    ["users", uid, "geometry_errors_jobs", jobId],
-    stripUndefinedDeep({ jobId, ...patch, updatedAtMs: Date.now() }),
-    { merge: true },
-  );
-}
-
-export function progress(uid: string, jobId: string, patch: Record<string, unknown>): void {
-  persistGeometryJob(uid, jobId, patch);
-  emitJobEvent(jobId, { type: "progress", jobId, ...patch });
-}
+export const subscribers = hub.subscribers;
+export const writeSse = hub.writeSse;
+export const emitJobEvent = hub.emitJobEvent;
+export const closeSubscribers = hub.closeSubscribers;
+export const persistGeometryJob = hub.persistJob;
+export const progress = hub.progress;

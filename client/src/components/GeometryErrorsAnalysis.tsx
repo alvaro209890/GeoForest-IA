@@ -13,7 +13,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fileToBase64 } from '@/lib/api';
+import { fileToBase64, readApiErrorMessage } from '@/lib/api';
 
 type ApiFetch = (
   path: string,
@@ -137,20 +137,6 @@ type Props = {
   onHighlightLocation?: (location: { lat: number; lng: number } | null, label: string | null) => void;
 };
 
-async function readApiError(response: Response): Promise<string> {
-  try {
-    const text = await response.text();
-    if (!text) return `Erro ${response.status}`;
-    try {
-      const json = JSON.parse(text);
-      return json?.error || json?.message || text;
-    } catch {
-      return text;
-    }
-  } catch {
-    return `Erro ${response.status}`;
-  }
-}
 
 const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot, onHighlightLocation }) => {
   const [file, setFile] = useState<File | null>(null);
@@ -232,7 +218,7 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot, onHi
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ filename: picked.name, zipBase64 }),
         });
-        if (!response.ok) throw new Error(await readApiError(response));
+        if (!response.ok) throw new Error(await readApiErrorMessage(response));
         const payload = await response.json();
         const visible: GeometryLayer[] = Array.isArray(payload?.layers) ? payload.layers : [];
         setUploadId(String(payload?.uploadId || ''));
@@ -300,7 +286,7 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot, onHi
           signal: controller.signal,
           headers: { Accept: 'text/event-stream' },
         });
-        if (!response.ok || !response.body) throw new Error(await readApiError(response));
+        if (!response.ok || !response.body) throw new Error(await readApiErrorMessage(response));
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -368,7 +354,7 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot, onHi
           settings: { generateFixed, minOverlapM2: Number(minOverlapM2) || 0 },
         }),
       });
-      if (!response.ok) throw new Error(await readApiError(response));
+      if (!response.ok) throw new Error(await readApiErrorMessage(response));
       const payload = await response.json();
       const newJobId = String(payload?.jobId || '');
       setJobId(newJobId);
@@ -383,7 +369,7 @@ const GeometryErrorsAnalysis: React.FC<Props> = ({ apiFetch, onJobSnapshot, onHi
     if (!downloadUrl) return;
     try {
       const response = await apiFetch(downloadUrl);
-      if (!response.ok) throw new Error(await readApiError(response));
+      if (!response.ok) throw new Error(await readApiErrorMessage(response));
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');

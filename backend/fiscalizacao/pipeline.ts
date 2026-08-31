@@ -17,7 +17,6 @@ import { closeSubscribers, progress } from "./sse";
 import {
   FISCALIZACAO_SOURCES,
   type AtpFeature,
-  type FiscalizacaoRecord,
   type FiscalizacaoSource,
   type FiscalizacaoSourceResult,
 } from "./types";

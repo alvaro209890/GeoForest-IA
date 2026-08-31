@@ -1,10 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus,
-  Search,
-  Send,
-  Paperclip,
-  MessageSquare,
   Zap,
   Sparkles,
   Menu,
@@ -25,42 +21,22 @@ import {
   Square,
   Loader2,
   Brain,
-  SendHorizontal,
   Eye,
   BookOpen,
   Cpu,
   TreePine,
   Satellite,
-  FileSearch,
-  ShieldCheck,
-  ArrowRight,
-  HelpCircle,
-  Lightbulb,
   AlertTriangle,
   FolderArchive,
   Hourglass,
   Clock,
-  MousePointerClick,
   CheckCircle2,
   Copy,
   Receipt,
   ArrowUpRight,
   Network,
-  Database,
-  CloudDownload,
-  FolderTree,
-  HardDrive,
   MapPinned,
-  CalendarDays,
-  Gauge,
-  SlidersHorizontal,
-  RefreshCw,
-  FileArchive,
-  Server,
-  Radio,
   ShieldAlert,
-  FileStack,
-  CalendarClock,
   Combine,
   Map as MapIcon,
   Sprout,
@@ -102,24 +78,17 @@ import {
   type DashboardView,
   type ChatMessage,
   type Conversation,
-  type BillingUsageItem,
   type BillingResult,
   type BillingMePayload,
-  type SimcarAnalysisMessage,
   type SimcarAnalysisImage,
   type SimcarAcAvnAnalysisMeta,
-  type SimcarAuasMetaV1,
   type SimcarAuasMeta,
   type SimcarPos2008Meta,
   type SimcarAcVegetacaoMeta,
   type SimcarConversationEntry,
-  type SimcarLayerSummary,
-  type SimcarClipSummary,
   type SimcarClipHistoryItem,
   type NdviHistoryItem,
   type VerticesLayer,
-  type VerticesResultRow,
-  type VerticesProgress,
   type VerticesHistoryItem,
   type ContainmentHistoryItem,
   type GeometryHistoryItem,
@@ -135,7 +104,6 @@ import {
 } from '@/dashboard/settings/types';
 import {
   apiFetch as apiFetchShared,
-  apiUrl,
   fileToBase64,
   readApiError as readApiErrorShared,
   resolveBackendUrl,
@@ -143,16 +111,12 @@ import {
 import {
   sanitizeMessagesForFirestore,
   isPlainObject,
-  stripUndefinedDeep,
   toCloudinaryDownloadUrl,
   toFileProxyUrl,
   resolveBackendDownloadUrl,
-  renderInlineRichText,
   renderRichText,
   renderAnalysisRichText,
   normalizeImageCaption,
-  normalizeBackendText,
-  removeRoboticAuasLines,
 } from '@/dashboard/lib/format';
 import {
   formatSimcarAuasStatus,
@@ -188,9 +152,7 @@ import { MapView } from '@/components/Map';
 import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 import VerticesProximasInfoDialog from '@/components/VerticesProximasInfoDialog';
-import type { ContainmentRow, ContainmentSummary } from '@/components/ContainmentAnalysis';
-import type { GeometryErrorRow, GeometrySummary } from '@/components/GeometryErrorsAnalysis';
-import { SimcarAuasPre2008PanelV2, type SimcarAuasMetaV2 } from '@/components/AuasPre2008Summary';
+import { SimcarAuasPre2008PanelV2 } from '@/components/AuasPre2008Summary';
 import { AnalisePosRecortePanel } from '@/dashboard/panels/analise-pos-recorte/AnalisePosRecortePanel';
 
 const FeaturesManual = lazy(() => import('@/components/FeaturesManual'));
@@ -223,7 +185,6 @@ const SIMCAR_FIXED_AC_AVN_SATELLITES: Array<{ key: string; label: string; sensor
   { key: 'spot_2008', label: 'SPOT 2008', sensor: 'SPOT', year: 2008 },
   { key: 'landsat5_2008', label: 'Landsat 2008', sensor: 'Landsat 5', year: 2008 },
 ];
-
 
 const REQUIRED_MODELS: Array<{ id: string; label: string; capabilities: string[]; description: string }> = [
   {
@@ -276,7 +237,6 @@ const REQUIRED_MODELS: Array<{ id: string; label: string; capabilities: string[]
   },
 ];
 
-
 interface DashboardProps {
   initialView?: DashboardView;
   hideSidebar?: boolean;
@@ -313,7 +273,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
   const [selectedModel, setSelectedModel] = useState('auto');
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
-
 
   // ─── SIMCAR Clip State (extraído para useSimcarClipJobs — plano 03) ───
   const {
@@ -484,7 +443,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     settings,
     setSettings,
   } = useChat();
-
 
   // ─── Vértices/Containment/Geometry State (extraído para useErrorsAnalysis — plano 03) ───
   const {
@@ -993,7 +951,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     return `Contexto de conversas anteriores (use apenas se ajudar na resposta atual):\n${others.join('\n')}`;
   };
 
-
   const fileToBase64Payload = fileToBase64;
 
   const cbersDownloadZipRef = useRef<(url?: string | null, filename?: string) => void | Promise<void>>(async () => {});
@@ -1115,7 +1072,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     hydrateFromDocs: hydrateNdviFromDocs,
     deleteNdviJob,
   } = ndvi;
-
 
   const appendVerticesJobToConversation = useCallback(async (job: VerticesHistoryItem) => {
     if (!conversationsRef || !verticesJobsRef || !job?.jobId || job.status !== 'completed') return null;
@@ -1436,7 +1392,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     verticesPreserveCrs,
     verticesUploadId,
   ]);
-
 
   const selectSimcarClipEntry = useCallback(
     (
@@ -2248,7 +2203,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     };
   }, [imagePreview]);
 
-
   useEffect(() => {
     if (aiThinking || typingMessageId) {
       if (processingTimerRef.current) {
@@ -2639,12 +2593,10 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
     window.open(toFileProxyUrl(sourceUrl, fileName, 'download'), '_blank', 'noopener,noreferrer');
   }, []);
 
-
   cbersDownloadZipRef.current = downloadSimcarZip;
   landsatDownloadZipRef.current = downloadSimcarZip;
   overlapDownloadZipRef.current = downloadSimcarZip;
   croquiDownloadZipRef.current = downloadSimcarZip;
-
 
   const openSimcarAnalysisImage = useCallback((image: SimcarAnalysisImage, sourceLabel?: string) => {
     if (!image?.url) return;
@@ -2866,7 +2818,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
       pages: Number(data.pages || 0),
     };
   };
-
 
   const updateConversationMeta = async (
     updatedMessages: ChatMessage[],
@@ -3180,7 +3131,6 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
 
   const handleSend = async () => {
     if ((!input.trim() && !imageFile && !pdfFile && queuedFiles.length === 0) || sending) return;
-
 
     let targetConversationRef = activeConversationRef;
     let targetConversationId = activeConversationId;
@@ -3892,7 +3842,6 @@ Arquivo de imagem previamente anexado pelo usuário.`;
       typingText,
     ]
   );
-
 
   // Custom components
   const CustomSelect = ({ label, icon: Icon, options, value, onChange }: any) => (
@@ -7362,7 +7311,6 @@ progress={
             />
           </Suspense>
         ) : null}
-
 
         {
           billingTopupOpen && (

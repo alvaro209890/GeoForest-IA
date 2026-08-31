@@ -2,11 +2,9 @@
  * Área de interesse, filtros e lista de cenas CBERS.
  */
 import React from 'react';
-import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   ArrowUpRight,
-  CheckCircle2,
   CheckSquare,
   Cpu,
   Download,
@@ -17,14 +15,12 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { CbersMapPreview } from '@/dashboard/components/CbersMapPreview';
 import {
   CAR_ESTADUAL_PLACEHOLDER,
   cbersSceneZipFilename,
   cbersSceneZipPath,
 } from '@/dashboard/cbers/filenames';
 import { resolveBackendUrl } from '@/lib/api';
-import type { UseCbersJobsReturn } from '@/dashboard/hooks/useCbersJobs';
 import type { CbersPanelProps } from '../CbersPanel';
 
 export function CbersSceneSelector({ cbers }: CbersPanelProps) {

@@ -5,20 +5,7 @@ import type {
   FiscalizacaoResumoItem,
   FiscalizacaoSource,
 } from './types';
-
-const toIsoDateFromUnknown = (value: any) => {
-  if (!value) return new Date().toISOString();
-  if (typeof value === 'string') return value;
-  if (typeof value?.toDate === 'function') {
-    try {
-      return value.toDate().toISOString();
-    } catch {
-      return new Date().toISOString();
-    }
-  }
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
-};
+import { toIsoDateFromUnknown } from '@/dashboard/lib/values';
 
 const SOURCES: FiscalizacaoSource[] = ['ibama', 'sema', 'siga'];
 

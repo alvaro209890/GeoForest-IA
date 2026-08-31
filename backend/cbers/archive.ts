@@ -1,9 +1,11 @@
-import type { Express, Request, Response as ExpressResponse } from "express";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { STORAGE_ROOT } from "../local-storage";
+import { asArray, xmlEscape } from "../lib/http";
+import { ensureDir, readJsonSafe, writeJsonAtomic } from "../lib/fs-json";
+import { sleep } from "../lib/job-utils";
 
 type PlainObject = Record<string, any>;
 
@@ -89,10 +91,6 @@ const GEOSERVER_READY_TIMEOUT_MS = Math.max(
   0,
   Number(process.env.GEOSERVER_READY_TIMEOUT_MS || 60000),
 );
-
-function ensureDir(dir: string): void {
-  fs.mkdirSync(dir, { recursive: true });
-}
 
 function removeStaleTempCopies(dir: string, prefix: string): void {
   let entries: string[] = [];
@@ -214,22 +212,6 @@ async function ensureRgbColorInterpretation(tifPath: string): Promise<void> {
   ]);
 }
 
-function writeJsonAtomic(filePath: string, data: unknown): void {
-  ensureDir(path.dirname(filePath));
-  const tmp = `${filePath}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
-  fs.renameSync(tmp, filePath);
-}
-
-function readJsonSafe<T>(filePath: string, fallback: T): T {
-  try {
-    if (!fs.existsSync(filePath)) return fallback;
-    return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
-  } catch {
-    return fallback;
-  }
-}
-
 function safeSegment(value: unknown): string {
   return String(value || "")
     .trim()
@@ -244,15 +226,6 @@ function cleanLayerName(value: string): string {
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "");
-}
-
-function xmlEscape(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
 }
 
 function parseCbersItemId(itemId: string): { orbit: string; year: string } {
@@ -286,10 +259,6 @@ function withJobSuffix(filename: string, jobId: string): string {
 
 function authHeader(): string {
   return `Basic ${Buffer.from(`${GEOSERVER_USER}:${GEOSERVER_PASSWORD}`).toString("base64")}`;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // 5xx/connection failures here are almost always GeoServer mid-restart (e.g. right after a
@@ -377,12 +346,6 @@ async function geoserverWrite(
   if ([200, 201, 202, 204, 409, 404].includes(response.status)) return;
   const text = await response.text().catch(() => "");
   throw new Error(`GeoServer ${method} ${restPath} falhou: ${response.status} ${text.slice(0, 300)}`);
-}
-
-function asArray(value: unknown): any[] {
-  if (Array.isArray(value)) return value;
-  if (value && typeof value === "object") return [value];
-  return [];
 }
 
 function groupPublished(payload: PlainObject | null): PlainObject[] {

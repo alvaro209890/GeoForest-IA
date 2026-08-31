@@ -6,7 +6,6 @@
  * ⚠️ O token SAS do Planetary Computer **expira em ~1 h**. Assinar imediatamente
  * antes de usar; num job longo, reassinar antes de cada banda materializada.
  */
-import type { Geometry } from "geojson";
 import {
   searchCandidates,
   pickBest,
@@ -19,6 +18,7 @@ import {
 } from "../ndvi/scene-select";
 import { allBandKeys } from "./compositions";
 import { NdviSceneFailure } from "./errors";
+import { fetchJsonWithTimeout } from "../lib/http";
 
 export {
   searchCandidates,
@@ -38,15 +38,11 @@ const PC_COLLECTION =
 const FETCH_TIMEOUT_MS = Math.max(5000, Number(process.env.LANDSAT_FETCH_TIMEOUT_MS || 120000));
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    if (!res.ok) throw new Error(`STAC ${url} respondeu ${res.status}.`);
-    return (await res.json()) as T;
-  } finally {
-    clearTimeout(timer);
-  }
+  return fetchJsonWithTimeout<T>(url, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    init,
+    httpError: ({ status }) => `STAC ${url} respondeu ${status}.`,
+  });
 }
 
 /**

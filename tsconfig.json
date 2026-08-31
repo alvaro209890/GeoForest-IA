@@ -1,7 +1,6 @@
 {
   "include": [
     "client/src/**/*",
-    "shared/**/*",
     "backend/**/*",
     "vite.config.ts"
   ],
@@ -32,9 +31,6 @@
     "paths": {
       "@/*": [
         "./client/src/*"
-      ],
-      "@shared/*": [
-        "./shared/*"
       ]
     }
   }

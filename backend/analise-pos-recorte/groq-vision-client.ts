@@ -5,7 +5,7 @@
  */
 import { FALSE_COLOR_PROMPT_NOTE, requestGroqVisionGeneric, type GroqVisionImageInput } from "./groq-vision-core";
 import { validateGroqWindowObservation, type GroqWindowObservationParsed } from "./schemas";
-import type { AuasWindowId, AuasYear } from "./types";
+import type { AuasWindowId } from "./types";
 
 export { parseGroqDurationToMs, resetGroqVisionRateLimitStateForTests, GroqVisionError } from "./groq-vision-core";
 

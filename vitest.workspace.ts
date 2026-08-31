@@ -14,7 +14,7 @@ export default defineWorkspace([
     test: {
       name: "backend",
       root: ".",
-      include: ["backend/**/*.{test,spec}.ts", "shared/**/*.{test,spec}.ts"],
+      include: ["backend/**/*.{test,spec}.ts"],
       environment: "node",
     },
   },

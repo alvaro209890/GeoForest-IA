@@ -17,7 +17,6 @@ import {
   GEOSERVER_PUBLIC_WMS_BASE,
   GEOSERVER_PUBLISH_RETRIES,
   GEOSERVER_PUBLISH_RETRY_DELAY_MS,
-  GEOSERVER_RASTER_STYLE,
   GEOSERVER_READY_TIMEOUT_MS,
   GEOSERVER_USER,
   GEOSERVER_WORKSPACE,
@@ -26,6 +25,7 @@ import {
   ROOT_RASTER_GROUP,
 } from "./constants";
 import { orbitKey, safeSegment } from "./naming";
+import { sleep } from "../lib/job-utils";
 
 type PlainObject = Record<string, any>;
 
@@ -35,10 +35,6 @@ export function authHeader(): string {
 
 export function publicWmsCapabilitiesUrl(): string {
   return `${GEOSERVER_PUBLIC_WMS_BASE.replace(/\/+$/, "")}?service=WMS&version=1.3.0&request=GetCapabilities`;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(r => setTimeout(r, ms));
 }
 
 function isTransientStatus(status: number): boolean {

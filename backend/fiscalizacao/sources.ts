@@ -18,26 +18,17 @@ import {
 } from "./constants";
 import type { FiscalizacaoGeometry, FiscalizacaoRecord } from "./types";
 import { propStr } from "../overlap/utils";
+import { fetchJsonWithTimeout } from "../lib/http";
 
 type Bbox = [number, number, number, number];
 
 async function fetchJson(url: string, init?: RequestInit): Promise<any> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      ...init,
-      signal: controller.signal,
-      headers: { "User-Agent": HTTP_USER_AGENT, Accept: "application/json", ...(init?.headers || {}) },
-    });
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
-    }
-    return await response.json();
-  } finally {
-    clearTimeout(timer);
-  }
+  return fetchJsonWithTimeout<any>(url, {
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    init,
+    defaultHeaders: { "User-Agent": HTTP_USER_AGENT, Accept: "application/json" },
+    httpError: ({ status, body }) => `HTTP ${status}: ${body.slice(0, 200)}`,
+  });
 }
 
 /** Converte data em milissegundos, "dd/mm/aaaa", ISO ou só o ano para ISO curto. */

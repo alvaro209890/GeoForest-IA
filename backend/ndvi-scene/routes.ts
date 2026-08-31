@@ -21,9 +21,13 @@ import type { NdviSceneComposition } from "./constants";
 import { listNdviSceneArchiveRecords, markNdviSceneArchiveUserDeleted } from "./archive";
 import { runNdviSceneJob, persistNdviSceneJob } from "./job";
 import type { NdviSceneJobScene } from "./types";
-import { writeSse } from "../cbers/sse";
+import { createSseHub } from "../lib/sse";
 
-const eventSubscribers = new Map<string, Set<Response>>();
+const { subscribers: eventSubscribers, writeSse, emitJobEvent } = createSseHub({
+  collection: "ndvi_scene_jobs",
+});
+
+
 
 function uidDe(req: Request): string | null {
   const uid = (req as any).authUid;
@@ -40,12 +44,6 @@ function parseCompositions(raw: unknown): NdviSceneComposition[] {
   return out.length ? out : [...NDVI_SCENE_DEFAULT_COMPOSITIONS];
 }
 
-/** Emite evento para os assinantes SSE de um job. */
-function emitJobEvent(jobId: string, data: Record<string, unknown>): void {
-  const subscribers = eventSubscribers.get(jobId);
-  if (!subscribers) return;
-  for (const res of subscribers) writeSse(res, data);
-}
 
 export function registerNdviSceneRoutes(app: Express): void {
   /** Busca cenas Landsat C2 L2 no Planetary Computer para a área do usuário. */

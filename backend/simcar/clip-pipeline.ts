@@ -27,17 +27,10 @@ import type {
 } from "geojson";
 import { isCancelRequested } from "../processing-jobs";
 import {
-    buildWfsUrl,
-    fetchJsonWithTimeout,
-    fetchTextWithTimeout,
-    getCapabilitiesCached,
-    getGeometryFieldForLayer,
-    polygonToWkt,
-    normalizePolygonGeometry,
-    toPolygonOrMultiFeature,
-    WFS_TIMEOUT_MS,
-    WFS_PAGE_SIZE,
-    type SupportedPolygonGeometry,
+  getCapabilitiesCached,
+  polygonToWkt,
+  normalizePolygonGeometry,
+  toPolygonOrMultiFeature,
 } from "../wfs-intersection";
 import { fetchSigefBoundaryByParcelCode, SIGEF_WFS_TIMEOUT_MS } from "../sigef-client";
 import {

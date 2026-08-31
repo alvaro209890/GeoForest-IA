@@ -7,7 +7,6 @@
  */
 import type { Express, Request, Response } from "express";
 import { execFileSync } from "node:child_process";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,7 +15,8 @@ import { extractZipEntries } from "./geo-utils";
 import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
 import { requireAuth } from "./auth";
 import { stripUndefinedDeep, writeDocBySegments } from "./local-storage";
-import type { Logger } from "./lib/logger";
+import { writeSse } from "./lib/sse";
+import { parseBase64Zip } from "./lib/job-utils";
 
 const subscribers = new Map<string, Set<Response>>();
 
@@ -45,15 +45,6 @@ function persistSolicitacaoJob(args: {
   }
 }
 
-function writeSse(res: Response, data: Record<string, unknown>): void {
-  if (res.writableEnded || res.destroyed) return;
-  try {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  } catch {
-    // ignore
-  }
-}
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PYTHON_EXE = resolvePythonExe();
@@ -75,15 +66,6 @@ function resolvePythonExe(): string {
 }
 
 const FILL_SCRIPT = path.resolve(__dirname, "solicitacao", "fill_templates.py");
-
-function parseBase64Zip(raw: unknown): Buffer {
-  const value = String(raw || "").trim();
-  if (!value) throw new Error("ZIP não enviado.");
-  const payload = value.includes(",") ? value.split(",").pop() || "" : value;
-  const buffer = Buffer.from(payload, "base64");
-  if (buffer.length < 22) throw new Error("ZIP inválido ou vazio.");
-  return buffer;
-}
 
 async function handleProcess(req: Request, res: Response): Promise<void> {
   const uid = getAuthUid(req);

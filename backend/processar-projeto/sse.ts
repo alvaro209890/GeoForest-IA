@@ -1,37 +1,18 @@
 /**
  * SSE/persistência do job de Processar Projeto.
+ *
+ * Plumbing compartilhado em `backend/lib/sse.ts` (`createSseHub`) — aqui fica só
+ * a coleção `processar_projeto_jobs` e a resposta 410 do fluxo local removido.
  */
 import type { Request, Response } from "express";
-import { stripUndefinedDeep, writeDocBySegments } from "../local-storage";
+import { createSseHub } from "../lib/sse";
 
-export const subscribers = new Map<string, Set<Response>>();
+const hub = createSseHub({ collection: "processar_projeto_jobs" });
 
-export function writeSse(res: Response, data: Record<string, unknown>): void {
-  if (res.writableEnded || res.destroyed || (res as any)?.socket?.destroyed) return;
-  try {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-    if (typeof (res as any).flush === "function") (res as any).flush();
-  } catch {
-    /* gone */
-  }
-}
-
-export function closeSubscribers(jobId: string): void {
-  const set = subscribers.get(jobId);
-  if (!set) return;
-  for (const res of set) {
-    if (!res.writableEnded) res.end();
-  }
-  subscribers.delete(jobId);
-}
-
-export function persistJob(uid: string, jobId: string, patch: Record<string, unknown>): void {
-  writeDocBySegments(
-    ["users", uid, "processar_projeto_jobs", jobId],
-    stripUndefinedDeep({ jobId, ...patch, updatedAtMs: Date.now() }),
-    { merge: true },
-  );
-}
+export const subscribers = hub.subscribers;
+export const writeSse = hub.writeSse;
+export const closeSubscribers = hub.closeSubscribers;
+export const persistJob = hub.persistJob;
 
 export function sendLocalProcessingGone(req: Request, res: Response): void {
   const uid = String((req as any).authUid || "").trim();
@@ -45,5 +26,3 @@ export function sendLocalProcessingGone(req: Request, res: Response): void {
     hint: "Use POST /api/simcar-oraculo/pipeline.",
   });
 }
-
-/* ─────────────────────── routes ─────────────────────── */

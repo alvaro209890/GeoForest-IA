@@ -14,7 +14,6 @@ import type { Express, Request, Response } from "express";
 import archiver from "archiver";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import path from "node:path";
 import { centroid } from "@turf/turf";
 import type { Polygon, MultiPolygon } from "geojson";
 import {
@@ -23,8 +22,6 @@ import {
   readDocBySegments,
   removeStoragePath,
   saveUserBuffer,
-  stripUndefinedDeep,
-  writeDocBySegments,
 } from "./local-storage";
 import { finishJob, isCancelRequested, requestCancel, startJob } from "./processing-jobs";
 import { parseUserShapefile } from "./simcar";
@@ -51,64 +48,12 @@ import type { BasemapProvider } from "./croqui/basemap";
 import { buildCroquiDocxBuffer } from "./croqui/render-docx";
 import { buildCroquiKml } from "./croqui/render-kml";
 import { buildCroquiPdfBuffer } from "./croqui/render-pdf";
+import { createSseHub } from "./lib/sse";
+import { parseBase64Zip, safeSegment } from "./lib/job-utils";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const subscribers = new Map<string, Set<Response>>();
-
-function safeSegment(input: string): string {
-  return String(input || "")
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 120);
-}
-
-function parseBase64Zip(raw: unknown): Buffer {
-  const value = String(raw || "").trim();
-  if (!value) throw new Error("ZIP não enviado.");
-  const payload = value.includes(",") ? value.split(",").pop() || "" : value;
-  const buffer = Buffer.from(payload, "base64");
-  if (buffer.length < 22) throw new Error("ZIP inválido ou vazio.");
-  return buffer;
-}
-
-function writeSse(res: Response, data: Record<string, unknown>): void {
-  if (res.writableEnded || res.destroyed) return;
-  try {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-    if (typeof (res as any).flush === "function") (res as any).flush();
-  } catch {
-    // ignore
-  }
-}
-
-function emitJobEvent(jobId: string, data: Record<string, unknown>): void {
-  const set = subscribers.get(jobId);
-  if (!set) return;
-  for (const r of set) writeSse(r, data);
-}
-
-function closeSubscribers(jobId: string): void {
-  const set = subscribers.get(jobId);
-  if (!set) return;
-  for (const r of set) {
-    if (!r.writableEnded) r.end();
-  }
-  subscribers.delete(jobId);
-}
-
-function persistJob(uid: string, jobId: string, patch: Record<string, unknown>): void {
-  writeDocBySegments(
-    ["users", uid, "croqui_jobs", jobId],
-    stripUndefinedDeep({ jobId, ...patch, updatedAtMs: Date.now() }),
-    { merge: true },
-  );
-}
-
-function progress(uid: string, jobId: string, patch: Record<string, unknown>): void {
-  persistJob(uid, jobId, patch);
-  emitJobEvent(jobId, { type: "progress", jobId, ...patch });
-}
+const { subscribers, writeSse, emitJobEvent, closeSubscribers, persistJob, progress } =
+  createSseHub({ collection: "croqui_jobs" });
 
 async function buildOutputZip(files: Array<{ name: string; buffer: Buffer }>): Promise<Buffer> {
   return new Promise((resolve, reject) => {

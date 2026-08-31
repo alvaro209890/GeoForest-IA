@@ -1,19 +1,6 @@
 import { resolveBackendUrl } from '@/lib/api';
 import type { CroquiHistoryItem, CroquiJobStatus } from './types';
-
-const toIsoDateFromUnknown = (value: unknown) => {
-  if (!value) return new Date().toISOString();
-  if (typeof value === 'string') return value;
-  if (value && typeof (value as { toDate?: () => Date }).toDate === 'function') {
-    try {
-      return (value as { toDate: () => Date }).toDate().toISOString();
-    } catch {
-      return new Date().toISOString();
-    }
-  }
-  const parsed = new Date(String(value));
-  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
-};
+import { toIsoDateFromUnknown } from '@/dashboard/lib/values';
 
 export function mapCroquiDocToHistoryItem(docId: string, data: Record<string, unknown>): CroquiHistoryItem {
   const rawStatus = String(data?.status || '').trim().toLowerCase();

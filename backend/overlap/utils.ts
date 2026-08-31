@@ -9,22 +9,7 @@ import { normalizePolygonGeometry } from "../wfs-intersection";
 import { estimateUtmProjFromLonLat } from "../vertices-proximas";
 import { PolyFeature } from "./types";
 
-export function safeSegment(input: string): string {
-  return String(input || "")
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 120);
-}
-
-export function parseBase64Zip(raw: unknown): Buffer {
-  const value = String(raw || "").trim();
-  if (!value) throw new Error("ZIP não enviado.");
-  const payload = value.includes(",") ? value.split(",").pop() || "" : value;
-  const buffer = Buffer.from(payload, "base64");
-  if (buffer.length < 22) throw new Error("ZIP inválido ou vazio.");
-  return buffer;
-}
+export { parseBase64Zip, safeSegment } from "../lib/job-utils";
 
 
 export function round4(n: number): number {

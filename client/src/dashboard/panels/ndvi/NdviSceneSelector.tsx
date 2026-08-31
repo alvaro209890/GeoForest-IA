@@ -9,7 +9,6 @@ import {
   Cpu,
   Download,
   Layers,
-  Leaf,
   Loader2,
   Satellite,
   Search,

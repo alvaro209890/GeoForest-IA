@@ -8,6 +8,10 @@ import { area as turfArea, bboxPolygon, featureCollection, intersect as turfInte
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 import { fetchCarBoundaryByNumber, parseUserShapefile } from "../simcar";
 import { LandsatAreaContext } from "./types";
+import { ensureDir } from "../lib/fs-json";
+import { parseBase64Zip as parseBase64ZipShared } from "../lib/job-utils";
+
+export { ensureDir } from "../lib/fs-json";
 
 export function safeName(value: unknown, fallback = "landsat"): string {
   const clean = String(value || "")
@@ -37,13 +41,12 @@ export function normalizeDateParam(raw: unknown, endOfDay = false): string | nul
   return Number.isFinite(new Date(iso).getTime()) ? iso : null;
 }
 
+/** ZIP da área do imóvel (mensagens próprias do módulo). */
 export function parseBase64Zip(raw: unknown): Buffer {
-  const value = String(raw || "").trim();
-  const payload = value.includes(",") ? value.split(",").pop() || "" : value;
-  if (!payload) throw new Error("ZIP da área é obrigatório.");
-  const buffer = Buffer.from(payload, "base64");
-  if (buffer.length < 22) throw new Error("ZIP da área é inválido ou muito pequeno.");
-  return buffer;
+  return parseBase64ZipShared(raw, {
+    missing: "ZIP da área é obrigatório.",
+    invalid: "ZIP da área é inválido ou muito pequeno.",
+  });
 }
 
 export function parseOptionalAreaContext(raw: unknown): LandsatAreaContext {
@@ -136,10 +139,6 @@ export function firstFiniteNumber(...values: unknown[]): number | null {
   return null;
 }
 
-
-export function ensureDir(dir: string): void {
-  fs.mkdirSync(dir, { recursive: true });
-}
 
 export function copyFileAtomic(sourcePath: string, destPath: string): number {
   ensureDir(path.dirname(destPath));

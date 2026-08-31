@@ -2,54 +2,42 @@
  * SIMCAR Routes — endpoints do fluxo de recorte e análise SIMCAR.
  * Extraído de simcar-clip.ts (Plano 02, Fase 6b).
  */
-
 import type { Express, Request, Response } from "express";
 import crypto from "crypto";
 import {
-    BillingError,
-    applyCancelFloorDebit,
-    buildUsageFromGroq,
-    createRequestId,
-    estimateCloudinaryStorageReserve,
-    estimateImageTokens,
-    estimateReserveForModels,
-    estimateTokensFromMessages,
-    estimateTokensFromText,
-    getBillingUsageSessionRecords,
-    recordModelUsage,
-    refundReserve,
-    reserveCredits,
-    runWithBillingUsageSession,
-    settleCloudinaryStorageReserve,
-    settleReservedCredits,
+  BillingError,
+  applyCancelFloorDebit,
+  createRequestId,
+  estimateCloudinaryStorageReserve,
+  estimateReserveForModels,
+  estimateTokensFromMessages,
+  estimateTokensFromText,
+  getBillingUsageSessionRecords,
+  refundReserve,
+  reserveCredits,
+  runWithBillingUsageSession,
+  settleCloudinaryStorageReserve,
+  settleReservedCredits,
 } from "../billing";
-import { adminAuth, isFirebaseConfigError } from "../firebase-admin";
 import { getAuthUid } from "../auth";
-import { removeStoragePath, saveUserBuffer, STORAGE_ROOT, writeDocBySegments } from "../local-storage";
 import {
     finishJob,
     isCancelRequested,
     markDisconnected,
     startJob,
 } from "../processing-jobs";
-import { getAuasV2Config, runAuasPre2008Analysis } from "../analise-pos-recorte";
-import { createFileCheckpointStore } from "../analise-pos-recorte/checkpoint-store";
+import { getAuasV2Config } from "../analise-pos-recorte";
+
 import { countLayerPolygons } from "../analise-pos-recorte/polygons";
 import { derivePhases } from "./phases";
 import {
-    ClientAbortError,
-    isSseConnectionClosed,
-    jobCache,
-    pruneJobCache,
-    sendSSE,
-    sleepMs,
-    startSseHeartbeat,
-    throwIfClientDisconnected,
-    processClip,
-    parsePersistedClipContext,
-    mapToObjectGeometry,
-    objectToMapGeometry,
-    clipFeaturesToPolygon,
+  ClientAbortError,
+  jobCache,
+  pruneJobCache,
+  sendSSE,
+  startSseHeartbeat,
+  processClip,
+  mapToObjectGeometry,
 } from "./clip-pipeline";
 import {
     readPersistedSimcarClipForUid,
@@ -63,21 +51,19 @@ import { generateAndPersistSimcarReport } from "./report";
 import { generateAndPersistSimcarReportDocx } from "./report-docx";
 import type { SimcarReportArtifact } from "./report";
 import {
-    getFixedAcAvnSatelliteKeys,
-    getOrderedSatelliteKeys,
-    normalizeAssistantContent,
-    compactChatMessages,
-    callTextFollowUp,
-    streamTextFollowUp,
-    buildAnalysisPrompt,
-    processAuasAnalysis,
-    handleAuasAnalyzeV2Route,
-    sendAcAvnComplete,
-    processAnalysis,
-    buildEstimatedUsageForFallback,
-    attachOptionalAuth,
-    getSimcarAiRuntimeConfig,
-    runAcAvnSatelliteAnalysis,
+  getFixedAcAvnSatelliteKeys,
+  getOrderedSatelliteKeys,
+  normalizeAssistantContent,
+  compactChatMessages,
+  callTextFollowUp,
+  streamTextFollowUp,
+  buildAnalysisPrompt,
+  processAuasAnalysis,
+  handleAuasAnalyzeV2Route,
+  sendAcAvnComplete,
+  processAnalysis,
+  buildEstimatedUsageForFallback,
+  attachOptionalAuth,
 } from "./analysis";
 import { handlePos2008Route, handleAcVegetacaoRoute, handleImageryCatalogRoute } from "./phase2-3-handlers";
 import {
@@ -88,13 +74,12 @@ import {
     SIMCAR_FINAL_UNIFIED_TEXT_MODELS,
 } from "./analysis";
 import {
-    uploadRawBufferToCloudinary,
-    uploadBufferToCloudinary,
-    deleteFromCloudinary,
-    getCloudinaryAiUrl,
+  uploadRawBufferToCloudinary,
+  uploadBufferToCloudinary,
+  deleteFromCloudinary,
 } from "./cloudinary";
 import { CACHE_TTL_MS, DIRECT_COPY_LAYERS, isExcludedFromExport, SIMCAR_OPERATION_BILLING_MODEL, TEMPLATE_LAYERS } from "./constants";
-import type { CachedJob, LayerSummary, PersistedClipContextV1 } from "./types";
+import type { CachedJob, PersistedClipContextV1 } from "./types";
 import type { Geometry } from "geojson";
 import { toPublicApiUrl } from "./constants";
 import { AUAS_SATELLITE_KEYS } from "./analysis";

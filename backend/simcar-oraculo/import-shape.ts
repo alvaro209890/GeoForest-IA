@@ -1,4 +1,4 @@
-import { assertSimcarCredentials, assertTestCarId, getSimcarOraculoConfig } from "./config";
+import { assertSimcarCredentials, assertTestCarId } from "./config";
 import {
   getSimcarToken,
   simcarBuscarStatusProcessamento,
@@ -10,10 +10,7 @@ import {
 } from "./client";
 import { enqueueSimcar } from "./queue";
 import type { OraculoProgress, SimcarImportOutcome } from "./types";
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
+import { sleep } from "../lib/job-utils";
 
 /**
  * FINALIZADO sozinho = sucesso; COM_PENDENCIA/REPROVADO = reprovado na prática.

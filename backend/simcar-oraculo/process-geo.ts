@@ -1,4 +1,4 @@
-import { assertSimcarCredentials, assertTestCarId, getSimcarOraculoConfig } from "./config";
+import { assertSimcarCredentials, assertTestCarId } from "./config";
 import {
   getSimcarToken,
   simcarBuscarStatusProcessamento,
@@ -10,10 +10,7 @@ import {
 import { enqueueSimcar } from "./queue";
 import { isImportOk } from "./import-shape";
 import type { OraculoProgress, SimcarProcessOutcome } from "./types";
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
+import { sleep } from "../lib/job-utils";
 
 /**
  * Dispara ProcessarGeo no projeto-teste e aguarda conclusão.

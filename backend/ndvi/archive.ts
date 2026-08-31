@@ -14,24 +14,13 @@ import path from "node:path";
 import { NDVI_ARCHIVE_ROOT } from "./constants";
 import { orbitKey, safeSegment } from "./naming";
 import type { NdviArchiveRecord } from "./types";
+import { ensureDir, writeJsonAtomic } from "../lib/fs-json";
 
 const STORAGE_ROOT =
   process.env.LOCAL_DATA_ROOT ||
   "/media/server/HD Backup/Servidores_NAO_MEXA/Banco_de_dados/GeoForest";
 
 const NDVI_INDEX_DIR = path.join(STORAGE_ROOT, "ndvi_archive", "images");
-
-function ensureDir(dir: string): void {
-  fs.mkdirSync(dir, { recursive: true });
-}
-
-/** Escrita atômica: temp + rename. `writeJsonAtomic` do repo é privada, então vive aqui. */
-function writeJsonAtomic(filePath: string, data: unknown): void {
-  ensureDir(path.dirname(filePath));
-  const tmp = `${filePath}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
-  fs.renameSync(tmp, filePath);
-}
 
 /** Cópia atômica com conferência de tamanho, no molde do `saveCbersArchiveAsset`. */
 export function saveNdviArchiveAsset(args: {

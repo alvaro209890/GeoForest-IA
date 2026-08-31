@@ -4,29 +4,19 @@
  *
  * Extraído de simcar-clip.ts (Plano 02, Fase 6a).
  */
-
 import path from "path";
 import fs from "fs";
 import type { Express, Request, Response } from "express";
 import crypto from "crypto";
-import archiver from "archiver";
 import proj4 from "proj4";
-import ExcelJS from "exceljs";
-import PDFDocument from "pdfkit";
 import sharp from "sharp";
-import { inflateRawSync } from "zlib";
 import {
-    area as turfArea,
-    bbox as turfBbox,
-    booleanPointInPolygon as turfBooleanPointInPolygon,
-    featureCollection as turfFeatureCollection,
-    intersect as turfIntersect,
-    polygon as turfPolygon,
-    multiPolygon as turfMultiPolygon,
-    point as turfPoint,
-    union as turfUnion,
-    buffer as turfBuffer,
-    kinks as turfKinks,
+  area as turfArea,
+  bbox as turfBbox,
+  featureCollection as turfFeatureCollection,
+  intersect as turfIntersect,
+  union as turfUnion,
+  buffer as turfBuffer,
 } from "@turf/turf";
 import type {
     Feature,
@@ -36,64 +26,30 @@ import type {
     Polygon,
 } from "geojson";
 import { fileURLToPath } from "url";
-
 // Internal modules
 import { AC_AUAS_PROMPT_GLOSSARY, FALSE_COLOR_PROMPT_NOTE, MIXED_SOURCE_PROMPT_NOTE, POUSIO_PROMPT_RULE } from "../analise-pos-recorte/groq-vision-core";
-import { extractZipEntries, detectUtmProj, reprojectBbox, resolveShapefileCrs } from "../geo-utils";
+import { detectUtmProj, reprojectBbox } from "../geo-utils";
+import { toPolygonOrMultiFeature } from "../wfs-intersection";
+import { parseDbfSchema } from "../shapefile-writer";
 import {
-    buildWfsUrl,
-    fetchJsonWithTimeout,
-    fetchTextWithTimeout,
-    getCapabilitiesCached,
-    getGeometryFieldForLayer,
-    polygonToWkt,
-    normalizePolygonGeometry,
-    toPolygonOrMultiFeature,
-    WFS_TIMEOUT_MS,
-    WFS_PAGE_SIZE,
-    type SupportedPolygonGeometry,
-} from "../wfs-intersection";
-import {
-    fetchSigefBoundaryByParcelCode,
-    parsePolygonGeometryFromGml,
-    SIGEF_WFS_TIMEOUT_MS,
-} from "../sigef-client";
-import {
-    parseDbfSchema,
-    buildShpAndShx,
-    buildPointShpAndShx,
-    buildDbfBuffer,
-    geojsonToPolyRecords,
-    geojsonToShpRecords,
-    ringSignedArea,
-    type DbfFieldDef,
-    type ShpRecord,
-} from "../shapefile-writer";
-import {
-    BillingError,
-    applyCancelFloorDebit,
-    buildUsageFromGroq,
-    createRequestId,
-    estimateCloudinaryStorageReserve,
-    estimateImageTokens,
-    estimateReserveForModels,
-    estimateTokensFromMessages,
-    estimateTokensFromText,
-    getBillingUsageSessionRecords,
-    recordModelUsage,
-    refundReserve,
-    reserveCredits,
-    runWithBillingUsageSession,
-    settleCloudinaryStorageReserve,
-    settleReservedCredits,
+  BillingError,
+  applyCancelFloorDebit,
+  buildUsageFromGroq,
+  createRequestId,
+  estimateReserveForModels,
+  estimateTokensFromMessages,
+  estimateTokensFromText,
+  recordModelUsage,
+  refundReserve,
+  reserveCredits,
+  runWithBillingUsageSession,
+  settleReservedCredits,
 } from "../billing";
 import { adminAuth, isFirebaseConfigError } from "../firebase-admin";
-import { removeStoragePath, saveUserBuffer, STORAGE_ROOT, writeDocBySegments } from "../local-storage";
 import {
-    finishJob,
-    isCancelRequested,
-    markDisconnected,
-    startJob,
+  finishJob,
+  markDisconnected,
+  startJob,
 } from "../processing-jobs";
 import {
     getAuasV2Config,
@@ -104,73 +60,39 @@ import {
     type AuasV2Progress,
 } from "../analise-pos-recorte";
 import { createFileCheckpointStore } from "../analise-pos-recorte/checkpoint-store";
-import { buildDirectCopyLayerRecords } from "./air-atp-generator";
 import {
-    ClientAbortError,
-    isSseConnectionClosed,
-    jobCache,
-    pruneJobCache,
-    sendSSE,
-    sleepMs,
-    startSseHeartbeat,
-    throwIfClientDisconnected,
-    processClip,
-    parsePersistedClipContext,
-    mapToObjectGeometry,
-    objectToMapGeometry,
-    clipFeaturesToPolygon,
+  ClientAbortError,
+  sendSSE,
+  sleepMs,
+  startSseHeartbeat,
+  throwIfClientDisconnected,
+  clipFeaturesToPolygon,
 } from "./clip-pipeline";
-import type {
-    LayerSummary,
-    PersistedClipContextV1,
-} from "./clip-pipeline";
+import type { LayerSummary } from "./clip-pipeline";
 import {
-    readPersistedSimcarClip,
-    hydrateCachedJob,
-    persistSimcarClipProcessingState,
-    persistSimcarClipArtifacts,
-    parseCachedContextFromOutputZip,
+  hydrateCachedJob,
+  persistSimcarClipArtifacts,
 } from "./hydration";
 import { generateAndPersistSimcarReport } from "./report";
 import type { SimcarReportArtifact } from "./report";
+import { simplifyGeometryForOverlay } from "./polygon-ops";
 import {
-    douglasPeucker,
-    computeAreaHa,
-    unionPolygonFeatures,
-    unionPolygonGeometries,
-    isPointOrMultiPoint,
-    pointInsidePolygon,
-    pointInsideAnyPolygon,
-    extractPointCoords,
-    simplifyGeometryForOverlay,
-    perpendicularDistance,
-} from "./polygon-ops";
-import {
-    extractZipEntriesByExtension,
-    readFullShapefile,
-    getDbfRecordCount,
-    readDbfRecord,
-    bboxIntersects,
-    featureBbox,
-    ringsToFeature,
-    parseUserShapefile,
-    discoverLayerMapping,
+  extractZipEntriesByExtension,
+  getDbfRecordCount,
+  readDbfRecord,
+  bboxIntersects,
+  ringsToFeature,
 } from "./shapefile-io";
 import {
-    compressForVision,
-    uploadToCloudinary,
-    getCloudinaryAiUrl,
-    deleteFromCloudinary,
-    uploadRawBufferToCloudinary,
-    uploadBufferToCloudinary,
-    buildVisionContentParts,
-    reduceImageSet,
-    estimateBytesFromDataUrl,
-    isTruncationFinishReason,
+  compressForVision,
+  uploadToCloudinary,
+  getCloudinaryAiUrl,
+  buildVisionContentParts,
+  reduceImageSet,
+  estimateBytesFromDataUrl,
+  isTruncationFinishReason,
 } from "./cloudinary";
 import type { AiImage } from "./types";
-import { fetchCarBoundaryByNumber } from "./car-lookup";
-import { SEMA_WMS_AUTHKEY, SEMA_WMS_BASE, toPublicApiUrl } from "./constants";
 import {
     acervoCandidates,
     describeSceneProvenance,
@@ -184,24 +106,7 @@ import {
     expandBboxForContext,
     sensorGroundResolutionM,
 } from "../analise-pos-recorte/wms-scenes";
-import {
-    fetchWfsClipFeatures,
-    fetchWfsIntersectsFeatures,
-    fetchWfsBboxFeatures,
-} from "./wfs-client";
 import type { WfsClipFetchResult } from "./wfs-client";
-import {
-    readTemplateSchemas,
-    mapAttributes,
-    setMappedAttribute,
-    applyLayerAttributeRules,
-} from "./attribute-mapper";
-import {
-    dedupeWarnings,
-    appendLayerWarning,
-    inspectPropertyLayerConsistency,
-    buildQuantitativeXlsx,
-} from "./area-calculator";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

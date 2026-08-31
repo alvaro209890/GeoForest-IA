@@ -28,6 +28,7 @@ import {
   type NdviPlatform,
 } from "./naming";
 import { NdviFailure, type NdviSceneRef } from "./types";
+import { fetchJsonWithTimeout } from "../lib/http";
 
 const PC_STAC_ROOT = String(
   process.env.LANDSAT_PC_STAC_ROOT || "https://planetarycomputer.microsoft.com/api/stac/v1",
@@ -53,15 +54,11 @@ export type NdviCandidate = {
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    if (!res.ok) throw new Error(`STAC ${url} respondeu ${res.status}.`);
-    return (await res.json()) as T;
-  } finally {
-    clearTimeout(timer);
-  }
+  return fetchJsonWithTimeout<T>(url, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    init,
+    httpError: ({ status }) => `STAC ${url} respondeu ${status}.`,
+  });
 }
 
 /** Janela sazonal do ano: miolo da seca, onde a resposta espectral é comparável. */

@@ -11,6 +11,7 @@ import {
 } from "@turf/turf";
 import type { Feature, LineString, MultiPolygon, Polygon, Position } from "geojson";
 import { formatDmsPair } from "./coords";
+import { sleep } from "../lib/job-utils";
 
 const OSRM_BASE =
   String(process.env.CROQUI_OSRM_BASE_URL || "https://router.project-osrm.org").replace(/\/$/, "");
@@ -123,10 +124,6 @@ function centroidFromPolygon(polygon: Polygon | MultiPolygon): [number, number] 
     n++;
   }
   return n ? [sx / n, sy / n] : [0, 0];
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatFetchError(error: unknown): string {

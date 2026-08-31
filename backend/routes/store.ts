@@ -5,7 +5,6 @@ import {
   writeDocBySegments,
   deleteDocBySegments,
   listCollectionBySegments,
-  stripUndefinedDeep,
 } from "../local-storage";
 
 export function registerStoreRoutes(app: Express) {

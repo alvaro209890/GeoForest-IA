@@ -7,26 +7,7 @@ import type {
   CbersScene,
   CbersSceneJobState,
 } from './types';
-
-const isPlainObject = (value: unknown): value is Record<string, any> => {
-  if (!value || typeof value !== 'object') return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-};
-
-const toIsoDateFromUnknown = (value: any) => {
-  if (!value) return new Date().toISOString();
-  if (typeof value === 'string') return value;
-  if (typeof value?.toDate === 'function') {
-    try {
-      return value.toDate().toISOString();
-    } catch {
-      return new Date().toISOString();
-    }
-  }
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
-};
+import { isPlainObject, toIsoDateFromUnknown } from '@/dashboard/lib/values';
 
 export function mapCbersDocToHistoryItem(docId: string, data: any): CbersHistoryItem {
   const rawStatus = String(data?.status || '').trim().toLowerCase();

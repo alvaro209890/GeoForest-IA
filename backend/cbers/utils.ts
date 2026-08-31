@@ -10,6 +10,10 @@ import type { Feature, Geometry, MultiPolygon, Polygon } from "geojson";
 import { fetchCarBoundaryByNumber, parseUserShapefile } from "../simcar";
 import { FETCH_TIMEOUT_MS } from "./constants";
 import { CbersAreaContext, CbersScene } from "./types";
+import { parseBase64Zip as parseBase64ZipShared } from "../lib/job-utils";
+import { fetchJsonWithTimeout } from "../lib/http";
+
+export { sleep } from "../lib/job-utils";
 
 export function gdalCommandEnv(): NodeJS.ProcessEnv {
   return {
@@ -29,10 +33,6 @@ export function gdalCommandEnv(): NodeJS.ProcessEnv {
 export function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function fileSizeSafe(filePath: string): number {
@@ -57,13 +57,12 @@ export function safeName(value: unknown, fallback = "cbers_4a_wpm.tif"): string 
 }
 
 
+/** ZIP da área do imóvel (mensagens próprias do módulo). */
 export function parseBase64Zip(raw: unknown): Buffer {
-  const value = String(raw || "").trim();
-  const payload = value.includes(",") ? value.split(",").pop() || "" : value;
-  if (!payload) throw new Error("ZIP da área é obrigatório.");
-  const buffer = Buffer.from(payload, "base64");
-  if (buffer.length < 22) throw new Error("ZIP da área é inválido ou muito pequeno.");
-  return buffer;
+  return parseBase64ZipShared(raw, {
+    missing: "ZIP da área é obrigatório.",
+    invalid: "ZIP da área é inválido ou muito pequeno.",
+  });
 }
 
 export function parseOptionalAreaContext(raw: unknown): CbersAreaContext {
@@ -164,25 +163,12 @@ export function hashPropertyGeometry(geometry?: Polygon | MultiPolygon | null): 
 }
 
 export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      ...init,
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        ...(init?.headers || {}),
-      },
-    });
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`INPE STAC ${response.status}: ${text.slice(0, 300)}`);
-    }
-    return (await response.json()) as T;
-  } finally {
-    clearTimeout(timer);
-  }
+  return fetchJsonWithTimeout<T>(url, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    init,
+    defaultHeaders: { Accept: "application/json" },
+    httpError: ({ status, body }) => `INPE STAC ${status}: ${body.slice(0, 300)}`,
+  });
 }
 
 

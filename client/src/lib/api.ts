@@ -56,6 +56,26 @@ export async function readApiError(response: Response): Promise<any> {
   }
 }
 
+/**
+ * Mesma leitura de erro, mas devolvendo só a mensagem — é o que os painéis
+ * mostram no toast. Estava duplicada em `ContainmentAnalysis` e
+ * `GeometryErrorsAnalysis`.
+ */
+export async function readApiErrorMessage(response: Response): Promise<string> {
+  try {
+    const text = await response.text();
+    if (!text) return `Erro ${response.status}`;
+    try {
+      const json = JSON.parse(text);
+      return json?.error || json?.message || text;
+    } catch {
+      return text;
+    }
+  } catch {
+    return `Erro ${response.status}`;
+  }
+}
+
 export type ApiFetchOptions = {
   auth?: boolean;
 };

@@ -26,6 +26,7 @@ import {
 } from "./constants";
 import type { NdviSceneComposition } from "./constants";
 import type { NdviSceneCompositionState } from "./types";
+import { sleep } from "../lib/job-utils";
 
 /** Reexporta utilitários do módulo NDVI (sem reimplementar). */
 export {
@@ -34,10 +35,6 @@ export {
   publishNdviGeoTiff,
   verifyNdviWmsPublication,
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(r => setTimeout(r, ms));
-}
 
 async function geoserverFetch(
   restPath: string,

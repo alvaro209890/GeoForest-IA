@@ -6,7 +6,6 @@
  * camada vêm do catálogo runtime. Comparabilidade (mesma bbox/dimensão/overlay)
  * é garantida pelos mesmos helpers da Fase 1.
  */
-import type { Geometry } from "geojson";
 
 import {
   buildAuasPolygonOverlaySvg,

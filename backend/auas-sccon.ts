@@ -35,13 +35,12 @@ import {
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 
 import {
-    detectCrs,
-    getZipLayerGroups,
-    parsePolygonRecords,
-    ringGroupsForRecord,
-    SIRGAS_2000_PRJ,
-    type ParsedPolygonRecord,
-    type ZipEntry,
+  detectCrs,
+  getZipLayerGroups,
+  parsePolygonRecords,
+  ringGroupsForRecord,
+  SIRGAS_2000_PRJ,
+  type ParsedPolygonRecord,
 } from "./vertices-proximas";
 import {
     buildDbfBuffer,

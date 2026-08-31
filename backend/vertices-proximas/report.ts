@@ -6,6 +6,9 @@ import type { DbfFieldDef, PointShpRecord } from "../shapefile-writer";
 import { buildDbfBuffer, buildPointShpAndShx } from "../shapefile-writer";
 import { SIRGAS_2000_PRJ } from "./constants";
 import { VertexPair } from "./types";
+import { csvEscape } from "../lib/job-utils";
+
+export { csvEscape } from "../lib/job-utils";
 
 export const midpointFields: DbfFieldDef[] = [
   { name: "camada", type: "C", length: 40, decimals: 0 },
@@ -93,11 +96,6 @@ export function pairToVertexRecords(pair: VertexPair): PointShpRecord[] {
       },
     },
   ];
-}
-
-export function csvEscape(value: unknown): string {
-  const text = String(value ?? "");
-  return /[",\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 export function buildCsv(pairs: VertexPair[]): Buffer {

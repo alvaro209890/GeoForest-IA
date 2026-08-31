@@ -15,6 +15,7 @@ import {
 } from "./municipio-mt";
 import type { OraculoProgress, ShapeContext } from "./types";
 import { isOraculoPipelineCancelledError } from "./errors";
+import { sleep } from "../lib/job-utils";
 
 type Requirement = Record<string, any>;
 type RequestBbox = {
@@ -40,8 +41,6 @@ export type PrepareProjectResult = {
   baserefWaitedMs: number;
   warnings: string[];
 };
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function defaultClient(): PrepareProjectClient {
   return {

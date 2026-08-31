@@ -7,6 +7,9 @@ import { buildDbfBuffer, buildPointShpAndShx, buildShpAndShx, geojsonToShpRecord
 import { LAYER_LEVEL_TIPOS } from "./constants";
 import { GapPolygon, GeometryErrorRow, LayerFixResult, OverlapPolygon, RuleViolationPolygon } from "./types";
 import { safeSegment } from "./utils";
+import { csvEscape } from "../lib/job-utils";
+
+export { csvEscape } from "../lib/job-utils";
 
 export const errorPointFields: DbfFieldDef[] = [
   { name: "camada", type: "C", length: 40, decimals: 0 },
@@ -63,11 +66,6 @@ export function rowToPointRecord(row: GeometryErrorRow): PointShpRecord {
       detalhe: row.detalhe,
     },
   };
-}
-
-export function csvEscape(value: unknown): string {
-  const text = String(value ?? "");
-  return /[",\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 export function buildCsv(rows: GeometryErrorRow[]): Buffer {

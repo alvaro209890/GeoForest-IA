@@ -8,10 +8,11 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { NDVI_ARCHIVE_ROOT, NDVI_INDEX_DIR } from "../ndvi/archive";
+import { NDVI_INDEX_DIR } from "../ndvi/archive";
 import { safeSegment } from "../ndvi/naming";
 import { NDVI_SCENE_ARCHIVE_ROOT } from "./constants";
 import type { NdviSceneComposition } from "./constants";
+import { ensureDir, writeJsonAtomic } from "../lib/fs-json";
 
 /** Raiz do acervo da cena completa (default: mesma do NDVI pós-recorte). */
 export { NDVI_SCENE_ARCHIVE_ROOT };
@@ -44,18 +45,6 @@ export type NdviSceneArchiveRecord = {
   updatedAt: string;
   userDeletedAt?: string | null;
 };
-
-function ensureDir(dir: string): void {
-  fs.mkdirSync(dir, { recursive: true });
-}
-
-/** Escrita atômica: temp + rename (mesmo padrão do `backend/ndvi/archive.ts`). */
-function writeJsonAtomic(filePath: string, data: unknown): void {
-  ensureDir(path.dirname(filePath));
-  const tmp = `${filePath}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
-  fs.renameSync(tmp, filePath);
-}
 
 /**
  * Copia o GeoTIFF RGB 8 bits da composição para `NDVI_SCENE_ARCHIVE_ROOT/<path>_<row>/<ano>/`,

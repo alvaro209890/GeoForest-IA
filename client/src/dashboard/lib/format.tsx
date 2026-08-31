@@ -5,6 +5,9 @@
 import React from 'react';
 import { apiUrl, resolveBackendUrl } from '@/lib/api';
 import type { ChatMessage } from '@/dashboard/types/history';
+import { isPlainObject } from './values';
+
+export { isPlainObject } from './values';
 
 export const sanitizeMessagesForFirestore = (msgs: ChatMessage[]) =>
   msgs.map((m) => {
@@ -18,12 +21,6 @@ export const sanitizeMessagesForFirestore = (msgs: ChatMessage[]) =>
     if (!clean.meta) delete (clean as any).meta;
     return clean;
   });
-
-export const isPlainObject = (value: unknown): value is Record<string, any> => {
-  if (!value || typeof value !== 'object') return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-};
 
 export const stripUndefinedDeep = <T,>(value: T): T => {
   if (Array.isArray(value)) {

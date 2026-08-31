@@ -10,7 +10,6 @@ import {
     intersect as turfIntersect,
     union as turfUnion,
 } from "@turf/turf";
-import { toPolygonOrMultiFeature } from "../wfs-intersection";
 import { unionPolygonGeometries, computeAreaHa } from "./polygon-ops";
 import type { LayerSummary } from "./types";
 

@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 import path from "node:path";
 import {
   getAbsoluteStoragePath,
-  saveSimcarOraculoArtifact,
   saveSimcarOraculoJobSnapshot,
 } from "../local-storage";
 import { assertTestCarId, getSimcarOraculoConfig } from "./config";
@@ -12,26 +11,18 @@ import {
   IMPORT_AUTOFIX_ACTION_TYPES,
   PROCESS_AUTOFIX_ACTION_TYPES,
   type ApplyFixPlanResult,
-  type FixAction,
-  type FixDiffSummary,
-  type FixPlan,
   type PlannerPreviousRound,
 } from "./autofix/types";
-import { simcarDownload, simcarPost, withSimcarAuthRetry } from "./client";
 import {
   OraculoPipelineCancelledError,
   isOraculoPipelineCancelledError,
 } from "./errors";
-import { importZipOnTestProjectUnlocked } from "./import-shape";
 import {
   appendOraculoTimelineEvent,
   persistOraculoJob,
   readOraculoJob,
 } from "./job-store";
-import { prepareTestProject } from "./prepare-project";
-import { processGeoOnTestProjectUnlocked } from "./process-geo";
-import { enqueueSimcar, getSimcarQueueLength } from "./queue";
-import { parseSemaReportPdf } from "./sema-report-parse";
+import { getSimcarQueueLength } from "./queue";
 import { extractShapeContext } from "./shape-context";
 import type {
   AutofixStopReason,
@@ -40,8 +31,6 @@ import type {
   OraculoProgress,
   OraculoRoundResult,
   ShapeContext,
-  SimcarImportOutcome,
-  SimcarProcessOutcome,
 } from "./types";
 
 import {
