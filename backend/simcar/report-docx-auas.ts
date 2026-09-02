@@ -249,6 +249,8 @@ export async function auasScenesGalleryBlocks(
                 blocks.push(
                     new Paragraph({
                         alignment: AlignmentType.CENTER,
+                        // A legenda seguinte não deve ficar sozinha na próxima página.
+                        keepNext: true,
                         spacing: { before: 120, after: 40 },
                         children: [new ImageRun({ type: figuraImg.tipo, data: figuraImg.data, transformation: { width: largura, height: altura } })],
                     }),
