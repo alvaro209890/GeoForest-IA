@@ -477,10 +477,11 @@ describe("origem dos vetores (recorte × ZIP vetorizado)", () => {
         expect(nota.detail).toContain("vetorização em revisão");
     });
 
-    it("no modo recorte, diz que os vetores vieram da base estadual", () => {
+    it("no modo recorte, identifica a base SIMCAR sem presumir consulta direta ao WFS estadual", () => {
         const nota = vectorSourceNote("auto-clip");
-        expect(nota.label).toContain("base da SEMA-MT");
-        expect(nota.detail).toContain("WFS estadual");
+        expect(nota.label).toContain("base publicada do SIMCAR");
+        expect(nota.detail).toContain("cópia local");
+        expect(nota.detail).not.toContain("WFS estadual");
     });
 
     it("as duas notas são distintas — senão o box não informa nada", () => {

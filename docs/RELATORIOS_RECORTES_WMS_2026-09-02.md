@@ -6,6 +6,7 @@
 - Resultado pré-2008 inconclusivo não pode ser descrito como evidência de supressão posterior. Ausência de evidência não comprova a data da conversão.
 - Vegetação na AC com resultado inconclusivo não recebe indicação verde de ausência de vegetação apenas porque nenhuma detecção foi confirmada.
 - PDF e DOCX consomem o mesmo modelo em `backend/simcar/report-theme.ts`.
+- A origem dos vetores não presume consulta direta ao WFS estadual: também admite a cópia SIMCAR local, identificada no registro da execução.
 
 Verificação: 78 testes de `report-annex`, `report-theme` e `report-docx` passaram no Windows.
 

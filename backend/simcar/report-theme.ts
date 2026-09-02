@@ -139,9 +139,9 @@ export function vectorSourceNote(value: unknown): { label: string; detail: strin
         };
     }
     return {
-        label: "Origem dos vetores: recorte automático contra a base da SEMA-MT",
+        label: "Origem dos vetores: recorte automático da base publicada do SIMCAR",
         detail:
-            "As camadas ambientais foram recortadas do WFS estadual para o perímetro do imóvel; os quantitativos refletem o que está publicado na base.",
+            "As camadas ambientais foram recortadas da base SIMCAR utilizada na execução para o perímetro do imóvel; os quantitativos refletem essa base, que pode ser uma cópia local. Consulte os metadados do recorte para identificar a origem e as camadas indisponíveis.",
     };
 }
 
