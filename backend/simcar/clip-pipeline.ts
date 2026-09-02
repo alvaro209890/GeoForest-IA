@@ -27,7 +27,6 @@ import type {
 } from "geojson";
 import { isCancelRequested } from "../processing-jobs";
 import {
-  getCapabilitiesCached,
   polygonToWkt,
   normalizePolygonGeometry,
   toPolygonOrMultiFeature,
@@ -72,12 +71,11 @@ import {
 } from "./polygon-ops";
 import {
     parseUserShapefile,
-    discoverLayerMapping,
     featureBbox,
 } from "./shapefile-io";
 import { buildQuantitativeXlsx, appendLayerWarning, dedupeWarnings } from "./area-calculator";
 import { fetchCarBoundaryByNumber } from "./car-lookup";
-import { fetchWfsBboxFeatures, fetchWfsClipFeatures } from "./wfs-client";
+import { fetchLocalSimcarBboxFeatures, resolveLocalSimcarWfsLayer } from "./local-wfs-client";
 import { isExcludedExportEntry, isExcludedFromExport, toPublicApiUrl } from "./constants";
 import { snapClippedGeometryToBoundary, CLIP_SNAP_TOLERANCE_METERS } from "../simcar-clip-snap";
 import type { CachedJob, ClipResult, ClippedPointResult, ClippedPolygonResult, LayerSummary, PersistedClipContextV1, WfsClipFetchResult, WfsFeature } from "./types";
@@ -662,18 +660,14 @@ export async function processClip(
     }
     throwIfClientDisconnected(res);
 
-    // 4. SEMA-MT WFS GetCapabilities -> discover layer mapping
-    let layerMapping = new Map<string, string>();
-    try {
-        const caps = await getCapabilitiesCached(false);
-        const wfsNames = [...caps.layerNames];
-        layerMapping = discoverLayerMapping(TEMPLATE_LAYERS, wfsNames);
-        console.log(`[SIMCAR CLIP] SEMA WFS layer mapping: ${layerMapping.size} layers matched`);
-    } catch (err: any) {
-        console.error("[SIMCAR CLIP] WFS capabilities error:", err.message);
-        sendSSE(res, { type: "error", message: "Serviço WFS da SEMA-MT indisponível." });
-        return { ok: false, cloudinaryStoredBytes: 0 };
+    // 4. As camadas vêm do GeoServer local, que publica a base SIMCAR baixada.
+    // Não há fallback para o WFS externo da SEMA.
+    const layerMapping = new Map<string, string>();
+    for (const layer of TEMPLATE_LAYERS) {
+        const localLayer = resolveLocalSimcarWfsLayer(layer);
+        if (localLayer) layerMapping.set(layer, localLayer);
     }
+    console.log(`[SIMCAR CLIP] Base local WMS/WFS: ${layerMapping.size} camadas publicadas disponíveis`);
     throwIfClientDisconnected(res);
 
     // 5. Process each layer
@@ -731,9 +725,8 @@ export async function processClip(
             continue;
         }
 
-        // Category 2: SEMA-MT WFS query + local clip.
-        // River layers are queried by BBOX because large buffered polygons can make
-        // GeoServer reject INTERSECTS WKT with HTTP 400; local clipping keeps the configured margin.
+        // Category 2: GeoServer local sobre a base SIMCAR baixada + clip local.
+        // Todas as camadas usam BBOX e o recorte fino é aplicado abaixo.
         const isRiverLayer = RIVER_CLIP_LAYERS.has(layerName);
         const isSpringLayer = layerName === SPRING_LAYER_NAME;
         // Reservatórios usam o MESMO buffer dos rios para seleção, mas são mantidos
@@ -745,23 +738,20 @@ export async function processClip(
         const clipBoundaries = isRiverLayer
             ? [riverClipBoundary.polygon]
             : userPolygons;
-        const clipWkt = isRiverLayer
-            ? riverClipBoundary.wkt
-            : userWkt;
-        const wfsTypeName = layerMapping.get(layerName);
-        if (!wfsTypeName) {
+        const localWfsTypeName = layerMapping.get(layerName);
+        if (!localWfsTypeName) {
             sendSSE(res, {
                 type: "progress",
                 layer: layerName,
                 current,
                 total,
-                status: "no_wfs_match",
+                status: "no_local_match",
             });
             layerSummaries.push({
                 name: layerName,
                 source: "wfs",
                 features: 0,
-                warning: "Camada não encontrada no WFS da SEMA-MT",
+                warning: "Camada não está publicada na base local SIMCAR.",
             });
             continue;
         }
@@ -772,22 +762,23 @@ export async function processClip(
             layer: layerName,
             current,
             total,
-            status: "fetching",
+            status: "fetching_local",
         });
 
         let wfsFetch: WfsClipFetchResult;
         try {
-            wfsFetch = isRiverLayer || isSpringLayer || isWholeFeatureBufferLayer
-                ? await fetchWfsBboxFeatures(wfsTypeName, featureBbox(riverClipBoundary.polygon), "EPSG:4674")
-                : await fetchWfsClipFeatures(wfsTypeName, clipWkt, "EPSG:4674");
+            const sourceBoundary = isRiverLayer || isSpringLayer || isWholeFeatureBufferLayer
+                ? riverClipBoundary.polygon
+                : userPolygon;
+            wfsFetch = await fetchLocalSimcarBboxFeatures(localWfsTypeName, featureBbox(sourceBoundary));
         } catch (err: any) {
             if (err instanceof ClientAbortError) throw err;
-            console.error(`[SIMCAR CLIP] WFS fetch error for ${layerName}:`, err.message);
+            console.error(`[SIMCAR CLIP] Local WFS fetch error for ${layerName}:`, err.message);
             layerSummaries.push({
                 name: layerName,
                 source: "wfs",
                 features: 0,
-                warning: `Erro WFS: ${err.message?.slice(0, 100)}`,
+                warning: `Erro na base local: ${err.message?.slice(0, 100)}`,
             });
             continue;
         }

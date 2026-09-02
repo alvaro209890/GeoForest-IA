@@ -118,14 +118,22 @@ export const SEMA_SOURCE: WmsSource = {
 };
 
 /**
- * Chave de desligamento. O acervo local é o caminho preferencial, mas se o
- * GeoServer estiver fora ou o catálogo suspeito, `false` devolve o pipeline
- * inteiro para a SEMA sem tocar em código.
+ * Chave de desligamento operacional do acervo local. Com ele desligado, a
+ * análise fica sem cena; não há troca silenciosa para a SEMA.
  */
 export function isAcervoEnabled(): boolean {
     const raw = String(process.env.SIMCAR_ACERVO_LOCAL_ENABLED ?? "").trim().toLowerCase();
     if (raw === "false" || raw === "0" || raw === "off") return false;
     return true;
+}
+
+/**
+ * A produção usa exclusivamente o acervo local publicado no WMS da IMAP.
+ * O escape hatch existe apenas para recuperação operacional explícita, nunca
+ * como fallback silencioso de uma análise ou laudo.
+ */
+export function isSemaWmsFallbackAllowed(): boolean {
+    return String(process.env.SIMCAR_ALLOW_SEMA_WMS_FALLBACK || "").trim().toLowerCase() === "true";
 }
 
 /**
@@ -151,7 +159,7 @@ function catalogPath(): string | null {
     if (configured) {
         const resolvido = path.resolve(configured);
         if (fs.existsSync(resolvido)) return resolvido;
-        console.warn(`[ACERVO] ACERVO_LANDSAT_JSON aponta para arquivo inexistente (${resolvido}); usando apenas a SEMA.`);
+        console.warn(`[ACERVO] ACERVO_LANDSAT_JSON aponta para arquivo inexistente (${resolvido}); análise sem fallback externo.`);
         return null;
     }
 
@@ -168,7 +176,7 @@ export function loadAcervoCatalog(): AcervoCatalog | null {
     if (catalogCache !== undefined) return catalogCache;
     const found = catalogPath();
     if (!found) {
-        console.warn("[ACERVO] config/acervo-landsat.json não encontrado; usando apenas a SEMA.");
+        console.warn("[ACERVO] config/acervo-landsat.json não encontrado; análise sem fallback externo.");
         catalogCache = null;
         return catalogCache;
     }
@@ -264,8 +272,7 @@ export function matchesSensorFamily(satelliteKey: string, platform?: string): bo
 
 /**
  * Candidatas do acervo para uma chave de satélite, na ordem de preferência.
- * Lista vazia significa "não temos" — quem chama emenda as candidatas da SEMA
- * na sequência.
+ * Lista vazia significa que a análise deve informar indisponibilidade da cena.
  */
 export function acervoCandidates(satelliteKey: string, year: number, bbox: Bbox): WmsCandidate[] {
     const key = String(satelliteKey || "").toLowerCase();

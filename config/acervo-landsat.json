@@ -727,8 +727,8 @@
         -12.126810570589088
       ],
       "status": "confirmado",
-      "rank": 0,
-      "motivo": "20 dia(s) do 22/07",
+      "rank": 1,
+      "motivo": "20 dia(s) do 22/07; reserva após a cena de referência de 15/05",
       "revisar": false
     },
     {
@@ -763,9 +763,9 @@
         -50.96283049032786,
         -12.063157908303623
       ],
-      "status": "automatico",
-      "rank": 2,
-      "motivo": "68 dia(s) do 22/07"
+      "status": "confirmado",
+      "rank": 0,
+      "motivo": "Cena de referência validada pela equipe: LC5_224_069_20070515_COMP543"
     },
     {
       "layer": "cbers:landsat_224_069_2008_landsat_5_20080720_224_069_comp5431_geototal",

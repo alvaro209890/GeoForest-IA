@@ -17,6 +17,7 @@ import {
     describeSceneProvenance,
     formatSceneDate,
     isMostlyEmptyRender,
+    isSemaWmsFallbackAllowed,
     loadAcervoCatalog,
     matchesSensorFamily,
     measureEmptyRenderRatio,
@@ -74,6 +75,7 @@ beforeEach(() => {
 afterEach(() => {
     delete process.env.ACERVO_LANDSAT_JSON;
     delete process.env.SIMCAR_ACERVO_LOCAL_ENABLED;
+    delete process.env.SIMCAR_ALLOW_SEMA_WMS_FALLBACK;
     resetAcervoCatalogCache();
 });
 
@@ -146,12 +148,12 @@ describe("resolveAcervoLandsat", () => {
         expect(resolveAcervoLandsat(2003, IMOVEL)).toHaveLength(1);
     });
 
-    it("ano sem cena devolve vazio — quem chama emenda a SEMA", () => {
+    it("ano sem cena devolve vazio — a análise não troca de fonte silenciosamente", () => {
         escreverCatalogo({ landsat: [cena()] });
         expect(resolveAcervoLandsat(2004, IMOVEL)).toHaveLength(0);
     });
 
-    it("a chave de desligamento devolve tudo para a SEMA", () => {
+    it("a chave de desligamento não devolve cena alguma", () => {
         escreverCatalogo({ landsat: [cena()] });
         process.env.SIMCAR_ACERVO_LOCAL_ENABLED = "false";
         expect(resolveAcervoLandsat(2003, IMOVEL)).toHaveLength(0);
@@ -178,6 +180,11 @@ describe("resolveAcervoSpot", () => {
 });
 
 describe("acervoCandidates", () => {
+    it("não habilita fallback da SEMA sem autorização operacional explícita", () => {
+        expect(isSemaWmsFallbackAllowed()).toBe(false);
+        process.env.SIMCAR_ALLOW_SEMA_WMS_FALLBACK = "true";
+        expect(isSemaWmsFallbackAllowed()).toBe(true);
+    });
     it("Sentinel-2 não tem acervo: trocar por Landsat mudaria o sensor sem mudar o rótulo", () => {
         escreverCatalogo({ landsat: [cena({ year: 2019, platform: "landsat-8" })] });
         expect(acervoCandidates("sentinel2_2019", 2019, IMOVEL)).toHaveLength(0);
@@ -268,11 +275,18 @@ describe("catálogo curado (config/acervo-landsat.json)", () => {
         expect(achadas.some((c) => /20090723_224_069_c543$/.test(c.layer))).toBe(false);
     });
 
-    it("2010 e 2023 da órbita 224/069 caem na SEMA — as cenas locais estão deslocadas", () => {
+    it("2010 e 2023 da órbita 224/069 ficam indisponíveis — as cenas locais estão deslocadas", () => {
         const so224069 = (year: number) =>
             resolveAcervoLandsat(year, IMOVEL).filter((c) => c.path === "224" && c.row === "069");
         expect(so224069(2010)).toHaveLength(0);
         expect(so224069(2023)).toHaveLength(0);
+    });
+
+    it("prioriza a cena 15/05/2007 indicada como referência", () => {
+        const achadas = resolveAcervoLandsat(2007, IMOVEL)
+            .filter((c) => c.path === "224" && c.row === "069");
+        expect(achadas[0]?.layer).toContain("20070515");
+        expect(achadas[0]?.status).toBe("confirmado");
     });
 });
 

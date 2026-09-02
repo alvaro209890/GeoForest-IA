@@ -5508,13 +5508,14 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       <span className="text-sm font-semibold text-emerald-400 tabular-nums min-w-[3ch] text-right">{pct}%</span>
                     </div>
                     <p className="text-[10px] text-slate-500 mt-2">
-                      {(simcarClipProgress.status === 'fetching' || simcarClipProgress.status === 'fetching_local') &&
-                        'Lendo feições no WFS da SEMA-MT...'}
+                      {simcarClipProgress.status === 'fetching' && 'Lendo feições no WFS...'}
+                      {simcarClipProgress.status === 'fetching_local' &&
+                        'Lendo feições na base local SIMCAR publicada no WMS...'}
                       {simcarClipProgress.status === 'clipping' && 'Recortando feições...'}
                       {simcarClipProgress.status === 'copying_property' && 'Copiando polígono do imóvel...'}
                       {simcarClipProgress.status === 'building_zip' && 'Montando arquivo ZIP...'}
                       {simcarClipProgress.status === 'no_wfs_match' && 'Camada não encontrada no WFS'}
-                      {simcarClipProgress.status === 'no_local_match' && 'Camada não encontrada no WFS da SEMA-MT'}
+                      {simcarClipProgress.status === 'no_local_match' && 'Camada não publicada na base local SIMCAR'}
                     </p>
                   </section>
                 );

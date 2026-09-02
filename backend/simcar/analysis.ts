@@ -97,6 +97,7 @@ import {
     acervoCandidates,
     describeSceneProvenance,
     isMostlyEmptyRender,
+    isSemaWmsFallbackAllowed,
     SEMA_SOURCE,
     type WmsCandidate,
     type WmsSource,
@@ -1258,8 +1259,14 @@ export async function fetchSatelliteImage(
     const semaLayers = Array.from(new Set([sat.wmsLayer, ...(sat.wmsAliases || [])].filter(Boolean)));
     const candidates: WmsCandidate[] = [
         ...acervoCandidates(satelliteKey, sat.year, bbox),
-        ...semaLayers.map((layer) => ({ layer, source: SEMA_SOURCE })),
+        ...(isSemaWmsFallbackAllowed()
+            ? semaLayers.map((layer) => ({ layer, source: SEMA_SOURCE }))
+            : []),
     ];
+    if (candidates.length === 0) {
+        console.warn(`[${logPrefix}] ${sat.label}: não há cena que cubra o imóvel no acervo local.`);
+        return null;
+    }
 
     const isSpot = satelliteKey.toLowerCase().startsWith("spot");
     const spotDeadline = isSpot ? Date.now() + 35_000 : Number.POSITIVE_INFINITY;

@@ -7,6 +7,15 @@ mais de uma — "normal só 1 está correta, outras estão deslocadas".
 **Decisão do Álvaro:** misturar. Cena nossa no ano em que existe, mosaico da
 SEMA no ano em que falta.
 
+> **Atualização operacional — 2026-09-02.** As análises pós-recorte usam
+> exclusivamente o acervo IMAP publicado no WMS local. Não há mais fallback
+> silencioso para a SEMA: se o catálogo não tiver cena íntegra que cubra o
+> imóvel, a fase informa a indisponibilidade para revisão técnica. A única
+> exceção é a variável de recuperação explícita
+> `SIMCAR_ALLOW_SEMA_WMS_FALLBACK=true`, que não é configurada em produção.
+> Para 224/069 em 2007, a referência prioritária é
+> `LC5_224_069_20070515_COMP543` (15/05/2007), validada visualmente pela equipe.
+
 ## Por que vale a pena
 
 O GeoServer da casa roda no **mesmo host do backend** (Jetty 8081, backend 3001):
@@ -41,8 +50,8 @@ Dois ganhos, um de imagem e um de prova:
 Os **30 jobs com contexto** no banco caem todos entre lon −52,5…−52,1 e
 lat −12,7…−12,5 — dentro da 224/069, a única órbita com a janela inteira. Na
 prática, hoje, o acervo cobre 100% do que é analisado. Mas são 8 das ~60
-órbitas que cobrem MT: **a SEMA continua sendo o caminho normal fora dessa
-mancha**, não um plano B.
+órbitas que cobrem MT: fora da mancha, a fase fica **indisponível para revisão**
+até que a cena seja incorporada ao acervo local; ela não consulta a SEMA.
 
 ## As quatro armadilhas, medidas
 
