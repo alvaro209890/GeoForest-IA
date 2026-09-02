@@ -77,7 +77,7 @@ export function extractPolygonsFromLayer(
       properties: {},
       geometry,
     };
-    const areaM2 = turfArea(feature);
+    const areaM2 = Math.abs(turfArea(feature));
     const [minX, minY, maxX, maxY] = turfBbox(feature) as [number, number, number, number];
     const centroidFeature = turfCentroid(feature);
     const [cx, cy] = centroidFeature.geometry.coordinates as [number, number];
