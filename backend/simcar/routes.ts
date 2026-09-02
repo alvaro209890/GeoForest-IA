@@ -104,6 +104,7 @@ export function registerSimcarClipRoutes(app: Express) {
 
     // SSE endpoint for clip processing
     app.post("/api/simcar/clip", attachOptionalAuth, async (req: Request, res: Response) => {
+        let sseHeartbeat: ReturnType<typeof setInterval> | null = null;
         let billingUid = "";
         let billingEnabled = false;
         let operationRequestId = "";
@@ -177,6 +178,7 @@ export function registerSimcarClipRoutes(app: Express) {
                 markDisconnected(processingJobId);
             });
             sendSSE(res, { type: "job_started", jobId: processingJobId });
+            sseHeartbeat = startSseHeartbeat(res);
             if (billingEnabled) {
                 await persistSimcarClipProcessingState({
                     uid,
@@ -444,6 +446,7 @@ export function registerSimcarClipRoutes(app: Express) {
             }
             sendSSE(res, { type: "error", message: err.message || "Erro interno inesperado." });
         } finally {
+            if (sseHeartbeat) clearInterval(sseHeartbeat);
             if (!res.writableEnded) res.end();
         }
     });
