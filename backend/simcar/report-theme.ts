@@ -241,13 +241,13 @@ export function reportPhotoAnnexHeading(kind: ReportKind): { title: string; subt
             return {
                 title: "Anexo Fotográfico — Cenas por Polígono AUAS (série 2009–2019)",
                 subtitle:
-                    "Série anual dos mosaicos da SEMA-MT, em falsa-cor (vegetação densa em verde forte/neon). Overlay vermelho = perímetro declarado; a troca de sensor ao longo da série não é mudança de cobertura.",
+                    "Série anual das fontes WMS registradas na análise, em falsa-cor (vegetação densa em verde forte/neon). Overlay vermelho = perímetro declarado; a troca de sensor ao longo da série não é mudança de cobertura.",
             };
         case "AC_VEG":
             return {
                 title: "Anexo Fotográfico — Cenas por Polígono de Área Consolidada",
                 subtitle:
-                    "Cena atual e infravermelho do mosaico da SEMA-MT. Overlay vermelho = perímetro da AC declarada; vegetação nativa remanescente aparece em verde forte/neon na composição falsa-cor.",
+                    "Cenas disponíveis nas fontes WMS registradas na análise; fontes ausentes são declaradas como limitações. Overlay vermelho = perímetro da AC declarada; a interpretação das cores depende do sensor e da composição informados.",
             };
         default:
             return null;
@@ -410,7 +410,9 @@ export function buildAuasFindings(auasMeta: any, kind = detectReportKind(auasMet
                 tone: alert ? "danger" : auasMeta?.status === "SEM_EVIDENCIA_PRE_2008" ? "ok" : "warn",
                 detail: alert
                     ? "Há polígono declarado como AUAS com uso já implantado antes do marco — se confirmado, a área é consolidada (AC), não supressão pós-2008."
-                    : "Nenhum polígono AUAS apresentou uso do solo antes do marco de 2008 — coerente com supressão posterior.",
+                    : auasMeta?.status === "SEM_EVIDENCIA_PRE_2008" && Number(summary.inconclusiveCount || 0) === 0 && Number(summary.doubtCount || 0) === 0
+                        ? "Não foi identificada evidência de uso anterior ao marco nas cenas analisadas; a ausência de evidência não comprova a data da conversão."
+                        : "A evidência disponível não permite concluir se o uso foi implantado antes ou depois do marco de 22/07/2008 — conferir as limitações e revisar manualmente.",
             },
             {
                 label: "Polígonos AUAS analisados",
@@ -477,15 +479,18 @@ export function buildAuasFindings(auasMeta: any, kind = detectReportKind(auasMet
     if (kind === "AC_VEG") {
         const summary = auasMeta?.summary || {};
         const apparent = Number(summary.apparentVegetationCount || 0);
+        const inconclusive = Number(summary.inconclusiveCount || 0) > 0;
         return [
             {
                 label: "AC com vegetação aparente na imagem",
                 status: String(apparent),
-                tone: apparent > 0 ? "danger" : "ok",
+                tone: apparent > 0 ? "danger" : inconclusive ? "warn" : "ok",
                 detail:
                     apparent > 0
                         ? "Há Área Consolidada com feição de vegetação nativa na cena atual — revisar o polígono declarado."
-                        : "Nenhuma AC apresentou feição de vegetação nativa relevante na cena atual.",
+                        : inconclusive
+                            ? "Há AC com resultado inconclusivo; a ausência de detecção não descarta vegetação nativa. Conferir as cenas disponíveis e as limitações."
+                            : "Não foi identificada feição de vegetação nativa relevante nas cenas analisadas.",
             },
             {
                 label: "AC com vegetação declarada (AVN)",

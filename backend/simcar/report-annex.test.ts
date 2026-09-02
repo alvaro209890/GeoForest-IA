@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
 
-import { detectReportKind, reportPhotoAnnexHeading } from "./report-theme";
+import { buildAuasFindings, detectReportKind, reportPhotoAnnexHeading } from "./report-theme";
 import { compressReportFigure } from "./report-text";
 import { persistSceneForReport, sceneWorthPersisting } from "../analise-pos-recorte/scene-persistence";
 
@@ -29,10 +29,33 @@ describe("reportPhotoAnnexHeading", () => {
         expect(reportPhotoAnnexHeading("GENERICO")).toBeNull();
     });
 
+    it("não atribui à SEMA cenas que podem vir do acervo local", () => {
+        for (const kind of ["AUAS_POS2008", "AC_VEG"] as const) {
+            const heading = reportPhotoAnnexHeading(kind)!;
+            expect(heading.subtitle).not.toContain("SEMA-MT");
+            expect(heading.subtitle).toContain("fontes WMS registradas na análise");
+        }
+        expect(reportPhotoAnnexHeading("AC_VEG")!.subtitle).toContain("fontes ausentes");
+    });
+
     it("o kind das 3 fases é detectado pelo meta persistido", () => {
         expect(detectReportKind({ rulesVersion: "auas-pre2008-v2", schemaVersion: 2 })).toBe("AUAS_PRE2008");
         expect(detectReportKind({ phase: "POS_2008" })).toBe("AUAS_POS2008");
         expect(detectReportKind({ phase: "AC_VEG" })).toBe("AC_VEG");
+    });
+});
+
+describe("limitações visuais no resumo", () => {
+    it("pré-2008 inconclusivo não vira alegação de supressão posterior", () => {
+        const finding = buildAuasFindings({ schemaVersion: 2, rulesVersion: "auas-pre2008-v2", status: "INCONCLUSIVO", summary: { polygonCount: 1, inconclusiveCount: 1 } })[0];
+        expect(finding.tone).toBe("warn");
+        expect(finding.detail).toContain("não permite concluir");
+        expect(finding.detail).not.toContain("coerente com supressão posterior");
+    });
+    it("AC sem conclusão visual não recebe indicação verde de ausência de vegetação", () => {
+        const finding = buildAuasFindings({ phase: "AC_VEG", summary: { polygonCount: 1, apparentVegetationCount: 0, inconclusiveCount: 1 } })[0];
+        expect(finding.tone).toBe("warn");
+        expect(finding.detail).toContain("não descarta vegetação");
     });
 });
 
