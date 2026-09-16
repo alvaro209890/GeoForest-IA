@@ -477,11 +477,11 @@ describe("origem dos vetores (recorte × ZIP vetorizado)", () => {
         expect(nota.detail).toContain("vetorização em revisão");
     });
 
-    it("no modo recorte, identifica a base SIMCAR sem presumir consulta direta ao WFS estadual", () => {
+    it("no modo recorte, identifica o WFS oficial e a politica sem fallback", () => {
         const nota = vectorSourceNote("auto-clip");
-        expect(nota.label).toContain("base publicada do SIMCAR");
-        expect(nota.detail).toContain("cópia local");
-        expect(nota.detail).not.toContain("WFS estadual");
+        expect(nota.label).toContain("WFS oficial");
+        expect(nota.detail).toContain("não substitui essa fonte por cópia local");
+        expect(nota.detail).toContain("sem gerar ZIP parcial");
     });
 
     it("as duas notas são distintas — senão o box não informa nada", () => {

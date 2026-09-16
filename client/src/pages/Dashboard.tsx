@@ -4803,7 +4803,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                       </h2>
                       <p className="text-[11px] sm:text-xs text-slate-400">
                         {simcarClipMode === 'auto-clip'
-                          ? 'Envie o shapefile do imóvel e receba as camadas SIMCAR Digital da SEMA-MT recortadas'
+                          ? 'Recorte direto no WFS oficial da SEMA-MT; se o serviço estiver fora, o sistema avisa e não gera ZIP parcial'
                           : 'Envie o ZIP do modelo vetorizado para analisar diretamente com IA, sem recorte WFS'}
                       </p>
                       {isSimcarModeLocked && (
@@ -5509,6 +5509,7 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                     </div>
                     <p className="text-[10px] text-slate-500 mt-2">
                       {simcarClipProgress.status === 'fetching' && 'Lendo feições no WFS...'}
+                      {simcarClipProgress.status === 'checking_wfs' && 'Verificando o WFS oficial da SEMA-MT...'}
                       {simcarClipProgress.status === 'fetching_local' &&
                         'Lendo feições na base local SIMCAR publicada no WMS...'}
                       {simcarClipProgress.status === 'clipping' && 'Recortando feições...'}

@@ -75,7 +75,11 @@ import {
 } from "./shapefile-io";
 import { buildQuantitativeXlsx, appendLayerWarning, dedupeWarnings } from "./area-calculator";
 import { fetchCarBoundaryByNumber } from "./car-lookup";
-import { fetchLocalSimcarBboxFeatures, resolveLocalSimcarWfsLayer } from "./local-wfs-client";
+import {
+    fetchCompleteSemaWfsLayer,
+    loadSemaWfsLayerMapping,
+    SemaWfsSourceError,
+} from "./sema-wfs-source";
 import { isExcludedExportEntry, isExcludedFromExport, toPublicApiUrl } from "./constants";
 import { snapClippedGeometryToBoundary, CLIP_SNAP_TOLERANCE_METERS } from "../simcar-clip-snap";
 import type { CachedJob, ClipResult, ClippedPointResult, ClippedPolygonResult, LayerSummary, PersistedClipContextV1, WfsClipFetchResult, WfsFeature } from "./types";
@@ -660,14 +664,33 @@ export async function processClip(
     }
     throwIfClientDisconnected(res);
 
-    // 4. As camadas vêm do GeoServer local, que publica a base SIMCAR baixada.
-    // Não há fallback para o WFS externo da SEMA.
-    const layerMapping = new Map<string, string>();
-    for (const layer of TEMPLATE_LAYERS) {
-        const localLayer = resolveLocalSimcarWfsLayer(layer);
-        if (localLayer) layerMapping.set(layer, localLayer);
+    // 4. O recorte automatico usa exclusivamente o WFS oficial da SEMA-MT.
+    // Um GetCapabilities novo e obrigatorio evita que cache antigo esconda uma
+    // queda atual. Nao existe fallback para copia local ou WMS.
+    sendSSE(res, {
+        type: "progress",
+        layer: "WFS SEMA-MT",
+        current: 0,
+        total,
+        status: "checking_wfs",
+    });
+    let layerMapping: Map<string, string>;
+    try {
+        layerMapping = await loadSemaWfsLayerMapping(TEMPLATE_LAYERS);
+        console.log(`[SIMCAR CLIP] SEMA WFS layer mapping: ${layerMapping.size} layers matched`);
+    } catch (err: any) {
+        const sourceError = err instanceof SemaWfsSourceError
+            ? err
+            : new SemaWfsSourceError(
+                "O WFS da SEMA-MT está indisponível. O recorte foi cancelado e nenhum ZIP parcial foi gerado. Tente novamente quando o serviço voltar.",
+                "unavailable",
+                undefined,
+                { cause: err },
+            );
+        console.error("[SIMCAR CLIP] SEMA WFS capabilities error:", err?.message || err);
+        sendSSE(res, { type: "error", code: sourceError.code, message: sourceError.message });
+        return { ok: false, cloudinaryStoredBytes: 0 };
     }
-    console.log(`[SIMCAR CLIP] Base local WMS/WFS: ${layerMapping.size} camadas publicadas disponíveis`);
     throwIfClientDisconnected(res);
 
     // 5. Process each layer
@@ -725,8 +748,7 @@ export async function processClip(
             continue;
         }
 
-        // Category 2: GeoServer local sobre a base SIMCAR baixada + clip local.
-        // Todas as camadas usam BBOX e o recorte fino é aplicado abaixo.
+        // Category 2: WFS oficial da SEMA-MT + clip geometrico fino local.
         const isRiverLayer = RIVER_CLIP_LAYERS.has(layerName);
         const isSpringLayer = layerName === SPRING_LAYER_NAME;
         // Reservatórios usam o MESMO buffer dos rios para seleção, mas são mantidos
@@ -738,20 +760,23 @@ export async function processClip(
         const clipBoundaries = isRiverLayer
             ? [riverClipBoundary.polygon]
             : userPolygons;
-        const localWfsTypeName = layerMapping.get(layerName);
-        if (!localWfsTypeName) {
+        const clipWkt = isRiverLayer
+            ? riverClipBoundary.wkt
+            : userWkt;
+        const wfsTypeName = layerMapping.get(layerName);
+        if (!wfsTypeName) {
             sendSSE(res, {
                 type: "progress",
                 layer: layerName,
                 current,
                 total,
-                status: "no_local_match",
+                status: "no_wfs_match",
             });
             layerSummaries.push({
                 name: layerName,
                 source: "wfs",
                 features: 0,
-                warning: "Camada não está publicada na base local SIMCAR.",
+                warning: "Camada não encontrada no WFS oficial da SEMA-MT.",
             });
             continue;
         }
@@ -762,25 +787,40 @@ export async function processClip(
             layer: layerName,
             current,
             total,
-            status: "fetching_local",
+            status: "fetching",
         });
 
         let wfsFetch: WfsClipFetchResult;
         try {
-            const sourceBoundary = isRiverLayer || isSpringLayer || isWholeFeatureBufferLayer
-                ? riverClipBoundary.polygon
-                : userPolygon;
-            wfsFetch = await fetchLocalSimcarBboxFeatures(localWfsTypeName, featureBbox(sourceBoundary));
+            wfsFetch = await fetchCompleteSemaWfsLayer({
+                layerName,
+                typeName: wfsTypeName,
+                bbox: isRiverLayer || isSpringLayer || isWholeFeatureBufferLayer
+                    ? featureBbox(riverClipBoundary.polygon)
+                    : undefined,
+                polygonWkt: isRiverLayer || isSpringLayer || isWholeFeatureBufferLayer
+                    ? undefined
+                    : clipWkt,
+                srsName: "EPSG:4674",
+            });
         } catch (err: any) {
             if (err instanceof ClientAbortError) throw err;
-            console.error(`[SIMCAR CLIP] Local WFS fetch error for ${layerName}:`, err.message);
-            layerSummaries.push({
-                name: layerName,
-                source: "wfs",
-                features: 0,
-                warning: `Erro na base local: ${err.message?.slice(0, 100)}`,
+            const sourceError = err instanceof SemaWfsSourceError
+                ? err
+                : new SemaWfsSourceError(
+                    "O WFS da SEMA-MT está indisponível. O recorte foi cancelado e nenhum ZIP parcial foi gerado. Tente novamente quando o serviço voltar.",
+                    "unavailable",
+                    layerName,
+                    { cause: err },
+                );
+            console.error(`[SIMCAR CLIP] SEMA WFS fetch error for ${layerName}:`, err?.message || err);
+            sendSSE(res, {
+                type: "error",
+                code: sourceError.code,
+                layer: layerName,
+                message: sourceError.message,
             });
-            continue;
+            return { ok: false, cloudinaryStoredBytes: 0 };
         }
         throwIfClientDisconnected(res);
 
