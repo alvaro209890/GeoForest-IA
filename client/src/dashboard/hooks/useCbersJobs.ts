@@ -252,10 +252,6 @@ export function useCbersJobs({
       toast.info('Esta folha já está disponível no WMS. Use a imagem publicada em vez de gerar novamente.');
       return;
     }
-    if (scene.coversArea === false) {
-      toast.error(`Cena cobre apenas ${(scene.coveragePercent ?? 0).toFixed(2)}% da área.`);
-      return;
-    }
     setCbersSelectedSceneId(scene.id);
     setCbersSelectedSceneIds((prev) => {
       if (prev.includes(scene.id)) return prev.filter((id) => id !== scene.id);
@@ -301,7 +297,7 @@ export function useCbersJobs({
 
   useEffect(() => {
     const missing = cbersSelectedScenes
-      .filter((scene) => scene.coversArea !== false && !scene.estimate)
+      .filter((scene) => !scene.estimate)
       .map((scene) => scene.id);
     if (missing.length > 0) void estimateCbersScenes(missing);
   }, [cbersSelectedScenes, estimateCbersScenes]);
@@ -407,14 +403,14 @@ export function useCbersJobs({
     }
     const blocked = targetSceneIds
       .map((id) => cbersScenes.find((scene) => scene.id === id))
-      .find((scene) => scene?.coversArea === false || scene?.wmsAvailable || (scene?.level && scene.level !== 'L4'));
+      .find((scene) => scene?.wmsAvailable || (scene?.level && scene.level !== 'L4'));
     if (blocked) {
       toast.error(
         blocked.wmsAvailable
           ? `A folha da cena ${blocked.id} já está disponível no WMS. Use a imagem existente.`
           : blocked.level && blocked.level !== 'L4'
             ? `A cena ${blocked.id} é ${blocked.level}; a geração aceita somente L4.`
-            : `Cena ${blocked.id} não cobre 100% da área.`
+            : `Cena ${blocked.id} não pode ser gerada.`
       );
       return;
     }

@@ -303,7 +303,7 @@ export function CbersSceneSelector({ cbers }: CbersPanelProps) {
         <button
           type="button"
           onClick={() => void startCbersProcessing()}
-          disabled={cbersSelectedSceneIds.length === 0 || cbersProcessing || cbersSelectedScenes.some((scene) => scene.coversArea === false || scene.wmsAvailable || (scene.level && scene.level !== 'L4'))}
+          disabled={cbersSelectedSceneIds.length === 0 || cbersProcessing || cbersSelectedScenes.some((scene) => scene.wmsAvailable || (scene.level && scene.level !== 'L4'))}
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {cbersProcessing ? <Loader2 size={17} className="animate-spin" /> : <Cpu size={17} />}
@@ -325,7 +325,7 @@ export function CbersSceneSelector({ cbers }: CbersPanelProps) {
               const hasCoverage = typeof scene.coveragePercent === 'number' && Number.isFinite(scene.coveragePercent);
               const availableOnWms = scene.wmsAvailable && scene.wmsUrl;
               const legacyNonL4 = Boolean(scene.level && scene.level !== 'L4');
-              const blocked = scene.coversArea === false || Boolean(availableOnWms) || legacyNonL4;
+              const blocked = Boolean(availableOnWms) || legacyNonL4;
               const zipHref = resolveBackendUrl(cbersSceneZipPath(scene));
               return (
                 <div

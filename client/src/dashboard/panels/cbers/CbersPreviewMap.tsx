@@ -45,7 +45,7 @@ export function CbersPreviewMap({ cbers }: CbersPanelProps) {
           : 'Sem data';
         const selected = cbersSelectedSceneIds.includes(cbersPreviewScene.id);
         const availableOnWms = cbersPreviewScene.wmsAvailable && cbersPreviewScene.wmsUrl;
-        const blocked = cbersPreviewScene.coversArea === false || Boolean(availableOnWms) || Boolean(cbersPreviewScene.level && cbersPreviewScene.level !== 'L4');
+        const blocked = Boolean(availableOnWms) || Boolean(cbersPreviewScene.level && cbersPreviewScene.level !== 'L4');
         const estimate = cbersPreviewScene.estimate;
         const zipHref = resolveBackendUrl(cbersSceneZipPath(cbersPreviewScene));
         return createPortal(
@@ -190,8 +190,8 @@ export function CbersPreviewMap({ cbers }: CbersPanelProps) {
                     </div>
                   )}
                   {cbersPreviewScene.coversArea === false && (
-                    <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200">
-                      Esta cena não cobre 100% do imóvel e está bloqueada para evitar GeoTIFF incompleto.
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-200">
+                      Atenção: esta cena não cobre 100% do imóvel. A folha pode ser gerada mesmo assim, mas o GeoTIFF não conterá o imóvel inteiro.
                     </div>
                   )}
                   {cbersPreviewScene.bbox && (

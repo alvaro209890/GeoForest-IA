@@ -62,9 +62,6 @@ export async function processCbersScene(args: {
   currentScene = sceneFromStacFeature(item, args.propertyGeometry, collection);
   const scene = currentScene;
   if (!scene) throw new Error("Cena STAC sem as bandas obrigatórias BAND3, BAND4, BAND2 e BAND0.");
-  if (scene.coversArea === false) {
-    throw new Error(`Cena ${scene.id} cobre apenas ${scene.coveragePercent ?? 0}% da área.`);
-  }
   currentEstimate = await estimateSceneAssets({ itemId: args.itemId, collectionId: collection.collectionId, areaHa: args.areaHa, scene });
   const estimate = currentEstimate;
   report({ stage: "scene", percent: 7, message: `Cena selecionada: ${scene.id}.` });
