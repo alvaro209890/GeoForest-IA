@@ -81,7 +81,12 @@ import {
     SemaWfsSourceError,
 } from "./sema-wfs-source";
 import { isExcludedExportEntry, isExcludedFromExport, toPublicApiUrl } from "./constants";
-import { snapClippedGeometryToBoundary, CLIP_SNAP_TOLERANCE_METERS } from "../simcar-clip-snap";
+import { snapClippedGeometryToBoundary } from "../simcar-clip-snap";
+import {
+    eraseRiverOverlap,
+    extendRiverMask,
+    RiverTopologyError,
+} from "./river-topology";
 import type { CachedJob, ClipResult, ClippedPointResult, ClippedPolygonResult, LayerSummary, PersistedClipContextV1, WfsClipFetchResult, WfsFeature } from "./types";
 
 export type { CachedJob, ClipResult, ClippedPointResult, ClippedPolygonResult, LayerSummary, PersistedClipContextV1, WfsClipFetchResult, WfsFeature };
@@ -168,6 +173,18 @@ export function sleepMs(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function orderLayersForRiverTopology(layerNames: string[]): string[] {
+    const priority = (layerName: string) => {
+        if (DIRECT_COPY_LAYERS.has(layerName)) return 0;
+        if (RIVER_CLIP_LAYERS.has(layerName)) return 1;
+        return 2;
+    };
+    return layerNames
+        .map((layerName, index) => ({ layerName, index }))
+        .sort((left, right) => priority(left.layerName) - priority(right.layerName) || left.index - right.index)
+        .map(({ layerName }) => layerName);
+}
+
 export function clipFeaturesToPolygon(
     features: WfsFeature[],
     userPolygons:
@@ -175,7 +192,7 @@ export function clipFeaturesToPolygon(
         | Array<Feature<Polygon | MultiPolygon>>,
     options: {
         pointClipPolygons?: Array<Feature<Polygon | MultiPolygon>>;
-        /** Snap dos recortes na divisa; padrão CLIP_SNAP_TOLERANCE_METERS, 0 desliga. */
+        /** Snap opcional dos recortes na divisa. O padrão 0 preserva a geometria oficial do WFS. */
         snapToleranceMeters?: number;
     } = {},
 ): ClipResult[] {
@@ -187,7 +204,10 @@ export function clipFeaturesToPolygon(
     const pointClipPolygons = options.pointClipPolygons?.length
         ? options.pointClipPolygons
         : clipPolygons;
-    const snapTol = options.snapToleranceMeters ?? CLIP_SNAP_TOLERANCE_METERS;
+    // O recorte oficial precisa manter a topologia recebida do WFS. O antigo
+    // padrão de 1,5 m expandia AVN/Área Consolidada sobre rios próximos à
+    // divisa do imóvel, criando sobreposições que não existem no WMS.
+    const snapTol = options.snapToleranceMeters ?? 0;
 
     for (const feature of features) {
         if (!feature.geometry) continue;
@@ -553,7 +573,8 @@ export async function processClip(
         ? requestedLayers.filter((l) => (TEMPLATE_LAYERS as readonly string[]).includes(l))
         : [...TEMPLATE_LAYERS];
 
-    const total = layerNames.length;
+    const processingLayerNames = orderLayersForRiverTopology(layerNames);
+    const total = processingLayerNames.length;
     const layerSummaries: LayerSummary[] = [];
     const jobWarnings: string[] = [];
     let totalFeaturesClipped = 0;
@@ -697,10 +718,11 @@ export async function processClip(
     const clippedLayers = new Map<string, { records: ShpRecord[]; fieldDefs: DbfFieldDef[] }>();
     const clippedPointLayers = new Map<string, { records: Array<{ coordinates: [number, number]; attributes: Record<string, string | number | null> }>; fieldDefs: DbfFieldDef[] }>();
     const clippedGeometries = new Map<string, Geometry[]>();
+    let riverMask: Feature<Polygon | MultiPolygon> | null = null;
 
-    for (let i = 0; i < layerNames.length; i++) {
+    for (let i = 0; i < processingLayerNames.length; i++) {
         throwIfClientDisconnected(res);
-        const layerName = layerNames[i];
+        const layerName = processingLayerNames[i];
         const current = i + 1;
         if (DIRECT_COPY_LAYERS.has(layerName)) {
             sendSSE(res, {
@@ -836,16 +858,45 @@ export async function processClip(
             continue;
         }
 
-        const clipped = isWholeFeatureBufferLayer
+        let clipped = isWholeFeatureBufferLayer
             ? selectWholeFeaturesIntersecting(wfsFeatures, riverClipBoundary.polygon)
             : clipFeaturesToPolygon(wfsFeatures, clipBoundaries, {
                 pointClipPolygons: isSpringLayer && clippedRiverFeatures.length > 0
                     ? [...userPolygons, ...clippedRiverFeatures]
                     : undefined,
-                // Rios recortam contra a fronteira expandida (buffer de 500 m);
-                // encostar na borda do buffer seria artificial.
-                snapToleranceMeters: isRiverLayer ? 0 : undefined,
+                // Não altera a geometria oficial após a interseção. O snap de
+                // 1,5 m preenchia frestas reais e invadia rios junto à divisa.
+                snapToleranceMeters: 0,
             });
+        try {
+            // A ordem garante que cada classe de rio perde o que já pertence a
+            // uma classe hidrográfica anterior. Depois, todas as demais
+            // camadas poligonais perdem a união completa dos rios.
+            clipped = eraseRiverOverlap(clipped, riverMask);
+            if (isRiverLayer) {
+                riverMask = extendRiverMask(
+                    riverMask,
+                    clipped
+                        .filter((feature): feature is ClippedPolygonResult => feature.kind === "polygon")
+                        .map((feature) => feature.geometry),
+                );
+            }
+        } catch (error) {
+            const topologyError = error instanceof RiverTopologyError
+                ? error
+                : new RiverTopologyError(
+                    "Não foi possível garantir a separação topológica dos rios. O recorte foi cancelado e nenhum ZIP foi gerado.",
+                    { cause: error },
+                );
+            console.error(`[SIMCAR CLIP] River topology error for ${layerName}:`, error);
+            sendSSE(res, {
+                type: "error",
+                code: topologyError.code,
+                layer: layerName,
+                message: topologyError.message,
+            });
+            return { ok: false, cloudinaryStoredBytes: 0 };
+        }
         throwIfClientDisconnected(res);
 
         if (!clipped.length) {
