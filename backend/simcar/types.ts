@@ -70,6 +70,9 @@ export type LayerSummary = {
 export type CachedJob = {
     uid?: string;
     buffer?: Buffer;
+    topologyZipBuffer?: Buffer;
+    topologyZipUrl?: string;
+    topologyFilename?: string;
     expiresAt: number;
     filename: string;
     bbox?: [number, number, number, number];
@@ -96,6 +99,7 @@ export type PersistedClipContextV1 = {
     clippedGeometries: Record<string, Geometry[]>;
     inputZipUrl?: string;
     outputZipUrl?: string;
+    topologyZipUrl?: string;
     warnings?: string[];
     propertySourceLayer?: "ATP" | "AIR";
 };

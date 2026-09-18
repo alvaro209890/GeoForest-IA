@@ -87,7 +87,9 @@ import {
     LAND_COVER_LAYERS,
     layerPolygonGeometries,
     validateOfficialCoverage,
+    type CoverageTopologyStats,
 } from "./coverage-topology";
+import { buildTopologyAnomaliesZip } from "./topology-zip";
 import { clipOfficialFeaturesExactly, ExactClipError } from "./exact-clip";
 import type { CachedJob, ClipResult, ClippedPointResult, ClippedPolygonResult, LayerSummary, PersistedClipContextV1, WfsClipFetchResult, WfsFeature } from "./types";
 
@@ -556,9 +558,12 @@ export async function processClip(
     jobId?: string;
     filename?: string;
     downloadUrl?: string;
+    topologyDownloadUrl?: string;
     inputZipUrl?: string;
     outputZipUrl?: string;
+    topologyZipUrl?: string;
     contextUrl?: string;
+    topologyZipBuffer?: Buffer;
     summary?: {
         propertyAreaHa: number;
         crs: string;
@@ -568,6 +573,12 @@ export async function processClip(
         processingTimeMs: number;
         layers: LayerSummary[];
         warnings?: string[];
+        topologyDownloadUrl?: string;
+        topologyStats?: {
+            gapAreaM2: number;
+            landCoverOverlapAreaM2: number;
+            inundatedOverlapAreaM2: number;
+        };
     };
 }> {
     const startTime = Date.now();
@@ -909,6 +920,7 @@ export async function processClip(
     const coverageLayersRequested = LAND_COVER_LAYERS.every((layerName) =>
         processingLayerNames.includes(layerName)
     );
+    let topologyStats: CoverageTopologyStats | undefined;
     try {
         if (!coverageLayersRequested) {
             console.log("[SIMCAR CLIP] Full land-cover topology skipped for an explicit partial-layer request.");
@@ -917,7 +929,7 @@ export async function processClip(
         for (const [layerName, output] of wfsLayerOutputs) {
             layerResults.set(layerName, output.clipped);
         }
-        const topologyStats = await validateOfficialCoverage({
+        topologyStats = await validateOfficialCoverage({
             layers: layerResults,
             propertyPolygons: userPolygons,
             strict: Boolean(process.env.SIMCAR_STRICT_COVERAGE),
@@ -1062,10 +1074,34 @@ export async function processClip(
     }
     throwIfClientDisconnected(res);
 
+    // 6c. Build topology anomalies ZIP (vazios e sobreposições da base oficial)
+    let topologyZipBuffer: Buffer | undefined;
+    const currentTopologyStats = topologyStats;
+    const hasTopologyAnomalies = currentTopologyStats && (
+        currentTopologyStats.gapAreaM2 > 0.01 ||
+        currentTopologyStats.landCoverOverlapAreaM2 > 0.01 ||
+        currentTopologyStats.inundatedOverlapAreaM2 > 0.01
+    );
+    if (hasTopologyAnomalies && currentTopologyStats) {
+        try {
+            topologyZipBuffer = await buildTopologyAnomaliesZip({
+                topologyStats: currentTopologyStats,
+                propertyAreaHa: areaHa,
+                airIdentificacao,
+                crs: "EPSG:4674",
+            });
+            console.log(`[SIMCAR CLIP] Topology anomalies ZIP built: ${topologyZipBuffer.length} bytes`);
+        } catch (err: any) {
+            console.error("[SIMCAR CLIP] Error building topology anomalies ZIP:", err?.message || err);
+        }
+    }
+    throwIfClientDisconnected(res);
+
     // 7. Cache the result (including geometry for AI analysis)
     const jobId = String(forcedJobId || "").trim() || crypto.randomUUID();
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const filename = `SIMCAR_Recorte_${timestamp}.zip`;
+    const topologyFilename = `SIMCAR_Inconsistencias_Topologicas_${timestamp}.zip`;
 
     // Compute bbox from user polygon for WMS snapshots
     const polyCoords = userPolygon.geometry.type === "Polygon"
@@ -1083,18 +1119,23 @@ export async function processClip(
     // 7b. Upload ZIPs to Cloudinary for persistence
     let inputZipUrl: string | undefined;
     let outputZipUrl: string | undefined;
+    let topologyZipUrl: string | undefined;
     let contextJsonUrl: string | undefined;
     let cloudinaryStoredBytes = 0;
     try {
         sendSSE(res, { type: "progress", layer: "UPLOAD", current: total, total, status: "uploading_cloudinary" });
-        const [inUrl, outUrl] = await Promise.all([
+        const [inUrl, outUrl, topUrl] = await Promise.all([
             propertyZip
                 ? uploadBufferToCloudinary(propertyZip, `simcar_input_${jobId.slice(0, 8)}`, uid)
                 : Promise.resolve(""),
             uploadBufferToCloudinary(zipBuffer, `simcar_output_${jobId.slice(0, 8)}`, uid),
+            topologyZipBuffer
+                ? uploadBufferToCloudinary(topologyZipBuffer, `simcar_topologia_${jobId.slice(0, 8)}`, uid)
+                : Promise.resolve(""),
         ]);
         inputZipUrl = inUrl || undefined;
         outputZipUrl = outUrl;
+        topologyZipUrl = topUrl || undefined;
         const persistedContext: PersistedClipContextV1 = {
             version: 1,
             jobId,
@@ -1107,6 +1148,7 @@ export async function processClip(
             clippedGeometries: mapToObjectGeometry(clippedGeometries),
             inputZipUrl: inUrl || undefined,
             outputZipUrl: outUrl,
+            topologyZipUrl,
             warnings: dedupeWarnings(jobWarnings),
         };
         const contextBuffer = Buffer.from(JSON.stringify(persistedContext), "utf8");
@@ -1116,8 +1158,8 @@ export async function processClip(
             "application/json",
             uid,
         );
-        cloudinaryStoredBytes = (propertyZip?.length || 0) + zipBuffer.length + contextBuffer.length;
-        console.log(`[SIMCAR CLIP] Cloudinary: input=${inUrl}, output=${outUrl}, context=${contextJsonUrl}`);
+        cloudinaryStoredBytes = (propertyZip?.length || 0) + zipBuffer.length + (topologyZipBuffer?.length || 0) + contextBuffer.length;
+        console.log(`[SIMCAR CLIP] Cloudinary: input=${inUrl}, output=${outUrl}, topologia=${topUrl}, context=${contextJsonUrl}`);
     } catch (err: any) {
         console.error("[SIMCAR CLIP] Cloudinary ZIP upload error:", err.message);
         // Non-fatal: continue without Cloudinary URLs
@@ -1126,6 +1168,9 @@ export async function processClip(
     jobCache.set(jobId, {
         uid,
         buffer: zipBuffer,
+        topologyZipBuffer,
+        topologyZipUrl,
+        topologyFilename,
         expiresAt: Date.now() + CACHE_TTL_MS,
         filename,
         bbox: jobBbox,
@@ -1143,6 +1188,10 @@ export async function processClip(
     const processingTimeMs = Date.now() - startTime;
     const layersWithData = layerSummaries.filter((l) => l.features > 0).length;
 
+    const topologyDownloadUrl = (topologyZipBuffer || topologyZipUrl)
+        ? toPublicApiUrl(`/api/simcar/clip/download/${jobId}/topologia`)
+        : undefined;
+
     const summaryPayload = {
         propertyAreaHa: areaHa,
         crs: "EPSG:4674",
@@ -1152,14 +1201,22 @@ export async function processClip(
         processingTimeMs,
         layers: layerSummaries,
         warnings: dedupeWarnings(jobWarnings),
+        topologyDownloadUrl,
+        topologyStats: topologyStats ? {
+            gapAreaM2: topologyStats.gapAreaM2,
+            landCoverOverlapAreaM2: topologyStats.landCoverOverlapAreaM2,
+            inundatedOverlapAreaM2: topologyStats.inundatedOverlapAreaM2,
+        } : undefined,
     };
     const downloadUrl = toPublicApiUrl(`/api/simcar/clip/download/${jobId}`);
     sendSSE(res, {
         type: "complete",
         jobId,
         downloadUrl,
+        topologyDownloadUrl,
         inputZipUrl,
         outputZipUrl,
+        topologyZipUrl,
         contextUrl: contextJsonUrl,
         summary: summaryPayload,
     });
@@ -1169,9 +1226,12 @@ export async function processClip(
         jobId,
         filename,
         downloadUrl,
+        topologyDownloadUrl,
         inputZipUrl,
         outputZipUrl,
+        topologyZipUrl,
         contextUrl: contextJsonUrl,
         summary: summaryPayload,
+        topologyZipBuffer,
     };
 }

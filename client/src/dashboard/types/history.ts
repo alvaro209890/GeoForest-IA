@@ -239,6 +239,12 @@ export type SimcarClipSummary = {
   processingTimeMs: number;
   layers: SimcarLayerSummary[];
   warnings?: string[];
+  topologyDownloadUrl?: string;
+  topologyStats?: {
+    gapAreaM2: number;
+    landCoverOverlapAreaM2: number;
+    inundatedOverlapAreaM2: number;
+  };
 };
 
 export type SimcarClipHistoryItem = {
@@ -246,6 +252,8 @@ export type SimcarClipHistoryItem = {
   timestamp: string;
   filename: string;
   downloadUrl: string;
+  topologyDownloadUrl?: string;
+  topologyZipUrl?: string;
   totalFeatures: number;
   propertyAreaHa: number;
   layersWithData: number;

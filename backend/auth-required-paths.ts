@@ -24,6 +24,8 @@ export const AUTH_REQUIRED_PATHS: (string | RegExp)[] = [
   /^\/api\/simcar\/clip\/[^/]+$/,
   // Download do ZIP de um job de recorte (2 segmentos — a regex acima não cobre).
   /^\/api\/simcar\/clip\/download\/[^/]+$/,
+  /^\/api\/simcar\/clip\/download\/[^/]+\/topologia$/,
+  /^\/api\/simcar\/clip\/download-topology\/[^/]+$/,
   "/api/simcar/receipts/search",
   /^\/api\/simcar\/receipts\/download\/[^/]+$/,
   "/api/cbers-wpm/search",

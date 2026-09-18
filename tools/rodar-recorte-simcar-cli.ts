@@ -69,6 +69,15 @@ async function main() {
         } else {
             console.log("sem buffer no cache; chaves do job:", job ? Object.keys(job).join(",") : "null");
         }
+
+        const topBuf = (job as any)?.topologyZipBuffer;
+        if (topBuf) {
+            const outAbs = path.resolve(outPath);
+            const outTopology = outAbs.replace(/\.zip$/i, "_topologia_inconsistencias.zip");
+            fs.mkdirSync(path.dirname(outTopology), { recursive: true });
+            fs.writeFileSync(outTopology, topBuf);
+            console.log("ZIP TOPOLOGIA SALVO: " + outTopology + " (" + topBuf.length + " bytes)");
+        }
     }
 }
 

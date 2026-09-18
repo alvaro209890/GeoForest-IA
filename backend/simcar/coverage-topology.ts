@@ -133,10 +133,19 @@ export class CoverageTopologyError extends Error {
   }
 }
 
+export type TopologyDiscrepancyItem = {
+  tipo: "VAZIO" | "SOBREPOSICAO";
+  subtipo: string;
+  areaM2: number;
+  geometry: Polygon | MultiPolygon;
+};
+
 export type CoverageTopologyStats = {
   gapAreaM2: number;
   landCoverOverlapAreaM2: number;
   inundatedOverlapAreaM2: number;
+  gapsGeometry?: Polygon | MultiPolygon | null;
+  overlaps?: TopologyDiscrepancyItem[];
 };
 
 /**
@@ -184,6 +193,7 @@ export async function validateOfficialCoverage(args: {
     const gapAreaM2 = areaM2(gaps);
 
     let landCoverOverlapAreaM2 = 0;
+    const overlaps: TopologyDiscrepancyItem[] = [];
     for (let i = 0; i < LAND_COVER_LAYERS.length; i += 1) {
       const left = landMasks.get(LAND_COVER_LAYERS[i]);
       if (!left) continue;
@@ -194,7 +204,16 @@ export async function validateOfficialCoverage(args: {
         const inside = overlap
           ? overlay(runtime, "intersection", overlap, property, "a sobreposição dentro da ATP")
           : null;
-        landCoverOverlapAreaM2 += areaM2(inside);
+        const ovArea = areaM2(inside);
+        landCoverOverlapAreaM2 += ovArea;
+        if (inside && ovArea > NUMERIC_AREA_TOLERANCE_M2) {
+          overlaps.push({
+            tipo: "SOBREPOSICAO",
+            subtipo: `${LAND_COVER_LAYERS[i]}_x_${LAND_COVER_LAYERS[j]}`,
+            areaM2: ovArea,
+            geometry: inside.geometry,
+          });
+        }
       }
     }
 
@@ -212,6 +231,14 @@ export async function validateOfficialCoverage(args: {
       ? overlay(runtime, "intersection", waterOverlap, property, "a sobreposição com água dentro da ATP")
       : null;
     const inundatedOverlapAreaM2 = areaM2(waterOverlapInside);
+    if (waterOverlapInside && inundatedOverlapAreaM2 > NUMERIC_AREA_TOLERANCE_M2) {
+      overlaps.push({
+        tipo: "SOBREPOSICAO",
+        subtipo: "SOLO_x_AGUA",
+        areaM2: inundatedOverlapAreaM2,
+        geometry: waterOverlapInside.geometry,
+      });
+    }
 
     const isStrict = args.strict !== false;
     if (
@@ -225,7 +252,13 @@ export async function validateOfficialCoverage(args: {
       );
     }
 
-    return { gapAreaM2, landCoverOverlapAreaM2, inundatedOverlapAreaM2 };
+    return {
+      gapAreaM2,
+      landCoverOverlapAreaM2,
+      inundatedOverlapAreaM2,
+      gapsGeometry: gaps && gapAreaM2 > NUMERIC_AREA_TOLERANCE_M2 ? gaps.geometry : null,
+      overlaps,
+    };
   } catch (error) {
     if (error instanceof CoverageTopologyError) throw error;
     throw new CoverageTopologyError(

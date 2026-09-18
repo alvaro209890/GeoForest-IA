@@ -5328,6 +5328,8 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                     conversationId: nanoid(),
                                     inputZipUrl: event.inputZipUrl || undefined,
                                     outputZipUrl: event.outputZipUrl || undefined,
+                                    topologyZipUrl: event.topologyZipUrl || undefined,
+                                    topologyDownloadUrl: summary?.topologyDownloadUrl || (event.topologyDownloadUrl ? resolveBackendDownloadUrl(event.topologyDownloadUrl, event.topologyZipUrl) : undefined),
                                     contextUrl: event.contextUrl || undefined,
                                     sourceMode: 'auto-clip',
                                     status: 'completed',
@@ -5541,13 +5543,30 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 return (
                   <>
                     {summaryWarnings.length > 0 && (
-                      <section className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-amber-300">Avisos de qualidade</p>
-                        <div className="mt-2 space-y-1">
-                          {summaryWarnings.map((warning) => (
-                            <p key={warning} className="text-xs text-amber-100/90">{warning}</p>
-                          ))}
+                      <section className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 space-y-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wider text-amber-300">Avisos de qualidade</p>
+                          <div className="mt-2 space-y-1">
+                            {summaryWarnings.map((warning) => (
+                              <p key={warning} className="text-xs text-amber-100/90">{warning}</p>
+                            ))}
+                          </div>
                         </div>
+                        {Boolean(simcarClipSummary?.topologyDownloadUrl || (simcarClipDownloadUrl && `${simcarClipDownloadUrl}/topologia`)) && (
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => downloadSimcarZip(
+                                simcarClipSummary?.topologyDownloadUrl || `${simcarClipDownloadUrl}/topologia`,
+                                `SIMCAR_Inconsistencias_Topologicas_${(simcarClipJobId || 'resultado').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`
+                              )}
+                              className="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/30 text-xs font-medium transition-colors inline-flex items-center gap-2"
+                            >
+                              <Download size={14} />
+                              Baixar Vazios e Sobreposições (ZIP separado)
+                            </button>
+                          </div>
+                        )}
                       </section>
                     )}
                     {simcarClipMode === 'auto-clip' && (
@@ -5579,17 +5598,33 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                                 Processado em {(simcarClipSummary.processingTimeMs / 1000).toFixed(1)}s • CRS: {simcarClipSummary.crs}
                               </p>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => downloadSimcarZip(
-                                simcarClipDownloadUrl,
-                                `SIMCAR_Recorte_${(simcarClipJobId || 'resultado').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`
+                            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                              {Boolean(simcarClipSummary?.topologyDownloadUrl || (simcarClipDownloadUrl && `${simcarClipDownloadUrl}/topologia`)) && (
+                                <button
+                                  type="button"
+                                  onClick={() => downloadSimcarZip(
+                                    simcarClipSummary?.topologyDownloadUrl || `${simcarClipDownloadUrl}/topologia`,
+                                    `SIMCAR_Inconsistencias_Topologicas_${(simcarClipJobId || 'resultado').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`
+                                  )}
+                                  className="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/30 text-xs font-medium transition-colors flex items-center gap-1.5 justify-center"
+                                  title="Baixar shapefiles de vazios e sobreposições identificados na base oficial"
+                                >
+                                  <Download size={14} />
+                                  Vazios e Sobreposições (ZIP)
+                                </button>
                               )}
-                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/30 w-full sm:w-auto justify-center sm:justify-start"
-                            >
-                              <Download size={14} />
-                              Baixar ZIP
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => downloadSimcarZip(
+                                  simcarClipDownloadUrl,
+                                  `SIMCAR_Recorte_${(simcarClipJobId || 'resultado').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`
+                                )}
+                                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/30 justify-center"
+                              >
+                                <Download size={14} />
+                                Baixar ZIP
+                              </button>
+                            </div>
                           </div>
 
                           {/* Layers with data */}

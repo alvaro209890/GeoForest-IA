@@ -33,6 +33,16 @@ export const normalizeSimcarClipSummary = (raw: any): SimcarClipSummary | null =
     warnings: Array.isArray(raw?.warnings)
       ? raw.warnings.map((item: any) => String(item || '').trim()).filter(Boolean)
       : undefined,
+    topologyDownloadUrl: typeof raw?.topologyDownloadUrl === 'string' && raw.topologyDownloadUrl.trim()
+      ? raw.topologyDownloadUrl.trim()
+      : undefined,
+    topologyStats: raw?.topologyStats && typeof raw.topologyStats === 'object'
+      ? {
+          gapAreaM2: toNumber(raw.topologyStats.gapAreaM2),
+          landCoverOverlapAreaM2: toNumber(raw.topologyStats.landCoverOverlapAreaM2),
+          inundatedOverlapAreaM2: toNumber(raw.topologyStats.inundatedOverlapAreaM2),
+        }
+      : undefined,
   };
 };
 

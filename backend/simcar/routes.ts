@@ -752,6 +752,47 @@ export function registerSimcarClipRoutes(app: Express) {
         res.send(cached.buffer);
     });
 
+    // Download de inconsistências topológicas (vazios e sobreposições da base oficial)
+    const handleTopologyDownload = (req: Request, res: Response) => {
+        const { jobId } = req.params;
+        const uid = String(req.authUid || "").trim();
+        if (!uid) {
+            res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+            return;
+        }
+        const cachedCandidate = jobCache.get(jobId);
+        const cached = cachedCandidate && cachedCandidate.uid === uid ? cachedCandidate : undefined;
+
+        if (cached && cached.expiresAt > Date.now()) {
+            if (cached.topologyZipBuffer) {
+                const filename = cached.topologyFilename || `SIMCAR_Inconsistencias_Topologicas_${jobId}.zip`;
+                res.setHeader("Content-Type", "application/zip");
+                res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+                res.setHeader("Content-Length", cached.topologyZipBuffer.length.toString());
+                res.send(cached.topologyZipBuffer);
+                return;
+            }
+            if (cached.topologyZipUrl) {
+                res.redirect(toPublicApiUrl(cached.topologyZipUrl));
+                return;
+            }
+        }
+
+        const persisted = readPersistedSimcarClipForUid(uid, jobId);
+        const persistedTopologyUrl = String(persisted?.topologyZipUrl || "").trim();
+        if (persistedTopologyUrl) {
+            res.redirect(toPublicApiUrl(persistedTopologyUrl));
+            return;
+        }
+
+        res.status(404).json({
+            error: "Arquivo de divergências topológicas não encontrado ou expirado para este imóvel.",
+        });
+    };
+
+    app.get("/api/simcar/clip/download/:jobId/topologia", handleTopologyDownload);
+    app.get("/api/simcar/clip/download-topology/:jobId", handleTopologyDownload);
+
     // Estado das 3 fases da análise pós-recorte (plano analise-pos-recorte, F0.5).
     // O painel do front monta os cards a partir daqui, sem baixar os laudos inteiros.
     app.get("/api/simcar/clip/phases/:jobId", async (req: Request, res: Response) => {
