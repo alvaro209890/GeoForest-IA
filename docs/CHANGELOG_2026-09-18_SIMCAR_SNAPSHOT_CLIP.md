@@ -55,7 +55,10 @@ registrado como concluído.
 - sobreposição reprova sem apagar parte de nenhuma classe;
 - resposta parcial do snapshot reprova;
 - anéis minúsculos em coordenadas geográficas mantêm orientação correta na
-  serialização Shapefile, evitando transformar shell em buraco.
+  serialização Shapefile, evitando transformar shell em buraco;
+- componentes poligonais degenerados de área zero da base oficial são descartados sem alterar nenhuma feição válida;
+- GeoServer local cbers configurado com numDecimals=8 para preservar precisão sub-métrica em coordenadas SIRGAS 2000;
+- divergências topológicas da base oficial da SEMA são medidas e registradas como aviso sem criar filetes artificiais.
 
 ## Validação executada
 

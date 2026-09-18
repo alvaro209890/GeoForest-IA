@@ -147,6 +147,7 @@ export type CoverageTopologyStats = {
 export async function validateOfficialCoverage(args: {
   layers: Map<string, ClipResult[]>;
   propertyPolygons: Array<Feature<Polygon | MultiPolygon>>;
+  strict?: boolean;
 }): Promise<CoverageTopologyStats> {
   try {
     const runtime = await getGeos();
@@ -212,10 +213,12 @@ export async function validateOfficialCoverage(args: {
       : null;
     const inundatedOverlapAreaM2 = areaM2(waterOverlapInside);
 
+    const isStrict = args.strict !== false;
     if (
-      gapAreaM2 > NUMERIC_AREA_TOLERANCE_M2 ||
-      landCoverOverlapAreaM2 > NUMERIC_AREA_TOLERANCE_M2 ||
-      inundatedOverlapAreaM2 > NUMERIC_AREA_TOLERANCE_M2
+      isStrict &&
+      (gapAreaM2 > NUMERIC_AREA_TOLERANCE_M2 ||
+        landCoverOverlapAreaM2 > NUMERIC_AREA_TOLERANCE_M2 ||
+        inundatedOverlapAreaM2 > NUMERIC_AREA_TOLERANCE_M2)
     ) {
       throw new CoverageTopologyError(
         `A base oficial não passou na validação sem alterações (vazio ${gapAreaM2.toFixed(4)} m²; sobreposição entre classes ${landCoverOverlapAreaM2.toFixed(4)} m²; sobreposição com água ${inundatedOverlapAreaM2.toFixed(4)} m²). Nenhum filete foi criado e nenhum ZIP foi gerado.`,

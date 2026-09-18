@@ -38,4 +38,22 @@ describe("clipOfficialFeaturesExactly", () => {
     }, 0);
     expect(area(property) - outputArea).toBeGreaterThan(200);
   });
+
+  it("descarta componentes poligonais degenerados de área zero sem alterar a geometria real", async () => {
+    const property = polygon([[[0, 0], [0.002, 0], [0.002, 0.002], [0, 0.002], [0, 0]]]);
+    const validPart = [[[0.0005, 0.0005], [0.0015, 0.0005], [0.0015, 0.0015], [0.0005, 0.0015], [0.0005, 0.0005]]];
+    const collapsedPart = [[[0.0018, 0.0018], [0.0018, 0.0018], [0.0018, 0.0018], [0.0018, 0.0018]]];
+
+    const output = await clipOfficialFeaturesExactly([{
+      geometry: {
+        type: "MultiPolygon",
+        coordinates: [validPart, collapsedPart],
+      },
+      properties: { ID: 99 },
+    }], property, { layerName: "AREA_CONSOLIDADA" });
+
+    expect(output).toHaveLength(1);
+    expect(output[0].properties).toEqual({ ID: 99 });
+    expect(output[0].kind).toBe("polygon");
+  });
 });

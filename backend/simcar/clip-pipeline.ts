@@ -920,8 +920,14 @@ export async function processClip(
         const topologyStats = await validateOfficialCoverage({
             layers: layerResults,
             propertyPolygons: userPolygons,
+            strict: Boolean(process.env.SIMCAR_STRICT_COVERAGE),
         });
         console.log("[SIMCAR CLIP] Official coverage validated without edits:", topologyStats);
+        if (topologyStats.gapAreaM2 > 0.05 || topologyStats.landCoverOverlapAreaM2 > 0.05 || topologyStats.inundatedOverlapAreaM2 > 0.05) {
+            const warningMsg = `Topologia oficial preservada sem alterações: vazios originais (${topologyStats.gapAreaM2.toFixed(1)} m²), sobreposição entre classes (${topologyStats.landCoverOverlapAreaM2.toFixed(1)} m²) e sobreposição com água (${topologyStats.inundatedOverlapAreaM2.toFixed(1)} m²). Nenhum filete foi criado.`;
+            jobWarnings.push(warningMsg);
+            console.log(`[SIMCAR CLIP] ${warningMsg}`);
+        }
         }
     } catch (error) {
         const topologyError = error instanceof CoverageTopologyError

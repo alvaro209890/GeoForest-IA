@@ -89,6 +89,54 @@ function exactIntersection(
   }
 }
 
+function ringArea(ring: number[][]): number {
+  if (!Array.isArray(ring) || ring.length < 4) return 0;
+  let sum = 0;
+  for (let i = 0; i < ring.length - 1; i += 1) {
+    const p1 = ring[i];
+    const p2 = ring[i + 1];
+    if (!p1 || !p2) continue;
+    sum += p1[0] * p2[1] - p2[0] * p1[1];
+  }
+  return Math.abs(sum) / 2;
+}
+
+function cleanPolygonRings(rings: number[][][]): number[][][] | null {
+  if (!Array.isArray(rings) || rings.length === 0) return null;
+  const exterior = rings[0];
+  if (!exterior || ringArea(exterior) <= 1e-14) return null;
+  const validRings: number[][][] = [exterior];
+  for (let i = 1; i < rings.length; i += 1) {
+    const hole = rings[i];
+    if (hole && ringArea(hole) > 1e-14) {
+      validRings.push(hole);
+    }
+  }
+  return validRings;
+}
+
+export function filterDegeneratePolygonGeometry(
+  geometry: Polygon | MultiPolygon,
+): Polygon | MultiPolygon | null {
+  if (geometry.type === "Polygon") {
+    const cleaned = cleanPolygonRings(geometry.coordinates);
+    return cleaned ? { type: "Polygon", coordinates: cleaned } : null;
+  }
+  if (geometry.type === "MultiPolygon") {
+    const validPolygons: number[][][][] = [];
+    for (const poly of geometry.coordinates) {
+      const cleaned = cleanPolygonRings(poly);
+      if (cleaned) validPolygons.push(cleaned);
+    }
+    if (validPolygons.length === 0) return null;
+    if (validPolygons.length === 1) {
+      return { type: "Polygon", coordinates: validPolygons[0] };
+    }
+    return { type: "MultiPolygon", coordinates: validPolygons };
+  }
+  return null;
+}
+
 export class ExactClipError extends Error {
   readonly code = "SIMCAR_EXACT_CLIP_FAILED";
 
@@ -126,11 +174,13 @@ export async function clipOfficialFeaturesExactly(
     if (!sourceFeature.geometry) continue;
     const sourcePolygon = toPolygonOrMultiFeature(sourceFeature.geometry);
     if (sourcePolygon) {
+      const cleanedGeometry = filterDegeneratePolygonGeometry(sourcePolygon.geometry);
+      if (!cleanedGeometry) continue;
       for (const boundary of boundaries) {
         try {
           const geometry = exactIntersection(
             runtime,
-            sourcePolygon.geometry,
+            cleanedGeometry,
             boundary.geometry,
             `${options.layerName || "camada"}, feição ${featureIndex + 1}`,
           );
