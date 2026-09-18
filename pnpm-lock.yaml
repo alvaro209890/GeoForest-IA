@@ -148,6 +148,9 @@ importers:
       framer-motion:
         specifier: ^12.23.22
         version: 12.23.22(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+      geos-wasm:
+        specifier: 3.1.1
+        version: 3.1.1
       input-otp:
         specifier: ^1.4.2
         version: 1.4.2(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
@@ -4239,6 +4242,9 @@ packages:
 
   geokdbush@2.0.1:
     resolution: {integrity: sha512-0M8so1Qx6+jJ1xpirpCNrgUsWAzIcQ3LrLmh0KJPBYI3gH7vy70nY5zEEjSp9Tn0nBt6Q2Fh922oL08lfib4Zg==}
+
+  geos-wasm@3.1.1:
+    resolution: {integrity: sha512-igWIBE9Ua2f2dw+MjaF3ogwUB45tLSTVdCYBpsHa9fenmtgyfaspjDhWTBhEaftZxATdEPaSwS707ELFYVvm9w==}
 
   get-caller-file@2.0.5:
     resolution: {integrity: sha512-DyFP3BM/3YHTQOCUL/w0OZHR0lpKeGrxotcHWcqNEdnltqFwXVfhEBQ94eIo34AfQpo0rGki4cyIiftY06h2Fg==}
@@ -11952,6 +11958,8 @@ snapshots:
   geokdbush@2.0.1:
     dependencies:
       tinyqueue: 2.0.3
+
+  geos-wasm@3.1.1: {}
 
   get-caller-file@2.0.5: {}
 

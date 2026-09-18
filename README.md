@@ -157,18 +157,18 @@ Roteador central que monta todos os endpoints:
 - Métricas do servidor (CPU, RAM, disco, temperatura)
 - Health check, keep-alive, rotas CRUD de storage
 
-### `simcar-clip.ts` (Recorte SIMCAR)
-**Maior módulo (~9.920 linhas).** Realiza o recorte de camadas do SIMCAR/SEMA-MT:
+### `backend/simcar/clip-pipeline.ts` (Recorte SIMCAR)
+Realiza o recorte das camadas do SIMCAR/SEMA-MT:
 
-1. **Recorte WFS:** Busca feições via WFS SEMA-MT usando CQL `INTERSECTS`
-2. **Shapefile local:** Fallback para shapes na pasta `SIMCAR_LOCAL_SHAPES_ROOT`
-3. **Geração de shapefiles:** .shp/.shx/.dbf no template "Arquivo Modelo.zip"
-4. **Análise de imagens:** Visão computacional (Groq) do recorte SIMCAR
-5. **Análise AUAS:** Áreas de Uso Alternativo do Solo
-6. **Relatórios:** XLSX quantitativo + PDF
+1. **Fonte oficial congelada:** consulta o snapshot Shape-ZIP da SEMA baixado e validado mensalmente, publicado no GeoServer local
+2. **Recorte exato:** aplica somente `GEOSIntersection(feição oficial, ATP)`, sem snap, preenchimento, diferença entre classes ou reconstrução topológica
+3. **Falha fechada:** snapshot ausente/desatualizado, consulta parcial, vazio ou sobreposição cancelam o job sem gerar ZIP
+4. **Geração de shapefiles:** .shp/.shx/.dbf no template "Arquivo Modelo.zip"
+5. **Análise de imagens:** Visão computacional (Groq) do recorte SIMCAR
+6. **Análise AUAS e relatórios:** XLSX quantitativo + PDF
 
 **Geometrias suportadas no recorte:**
-- **Polygon/MultiPolygon** — interseção via `turfIntersect`
+- **Polygon/MultiPolygon** — interseção robusta via GEOS, sem grade de precisão ou ajuste posterior
 - **Point/MultiPoint** (ex: NASCENTE) — teste de contenção via **ray-casting**, mantido como Point (ShapeType 1)
 - MultiPolygons são corretamente convertidos em **múltiplos registros** no shapefile (não achatados como buracos)
 
@@ -297,19 +297,22 @@ histórico como nas outras abas.
 2. Parse → polígono unificado em EPSG:4674
        │
        ▼
-3. GetCapabilities WFS SEMA-MT → descobre camadas
+3. Valida o manifest do snapshot mensal e o GetCapabilities local
        │
        ▼
 4. Para cada camada (TEMPLATE_LAYERS):
        ├── "AIR"/"ATP" → cópia direta do imóvel
-       ├── WFS match → fetch + clipFeaturesToPolygon():
-       │   ├── Polygon → turfIntersect
+       ├── Snapshot match → fetch local + clipOfficialFeaturesExactly():
+       │   ├── Polygon → GEOSIntersection com a ATP
        │   ├── Point → ray-casting, mantido como Point
        │   └── Outros → ignorados
-       └── Sem WFS → tenta shape local (simcar_digital)
+       └── Sem camada oficial → mantém a camada do template vazia
        │
        ▼
-5. ZIP final:
+5. Validação somente leitura → qualquer vazio/sobreposição reprova, sem corrigir
+       │
+       ▼
+6. ZIP final:
    ├── .shp (ShapeType 5 Polygon ou ShapeType 1 Point)
    ├── .shx + .dbf + .prj
    ├── QUANTITATIVOS.xlsx
@@ -680,7 +683,10 @@ Esse script faz: `git pull` → `npm run build` → `firebase deploy` → `syste
 | `LANDSAT_ARCHIVE_ROOT` | `/media/server/HD Backup/RASTER/LANDSAT` | Acervo Landsat |
 | `LANDSAT_STAC_ROOT` | `https://landsatlook.usgs.gov/stac-server` | STAC USGS |
 | `SEMA_WMS_BASE_URL` | — | WMS SEMA-MT |
-| `SIMCAR_LOCAL_SHAPES_ROOT` | — | Pasta shapes locais SIMCAR |
+| `SIMCAR_LOCAL_SHAPES_ROOT` | — | Pasta shapes locais para análises auxiliares |
+| `SIMCAR_LOCAL_WFS_BASE_URL` | `http://127.0.0.1:8081/geoserver/cbers/ows` | GeoServer do snapshot mensal oficial |
+| `SIMCAR_SNAPSHOT_MANIFEST_PATH` | `/media/server/HD Backup/VETOR/CAR_Digital/current/manifest.json` | Manifest validado do snapshot usado no recorte |
+| `SIMCAR_SNAPSHOT_MAX_AGE_DAYS` | `45` | Idade máxima da base antes de cancelar o recorte |
 
 Arquivo de referência: [`config/geoforest-backend.env.example`](config/geoforest-backend.env.example)
 
@@ -688,6 +694,7 @@ Arquivo de referência: [`config/geoforest-backend.env.example`](config/geofores
 
 ## Documentação Adicional
 
+- [`docs/CHANGELOG_2026-09-18_SIMCAR_SNAPSHOT_CLIP.md`](docs/CHANGELOG_2026-09-18_SIMCAR_SNAPSHOT_CLIP.md) — Recorte direto do snapshot mensal oficial, sem filetes ou reconstrução topológica
 - [`docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md`](docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md) — **Leia primeiro se for mexer em qualquer dado de usuário/job:** como funciona o armazenamento local (JSON em disco, não é Firestore real), o shim `localFirestore.ts`, a whitelist de collections e o checklist para adicionar uma nova aba de análise
 - [`docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md`](docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md) — Fix `INVALID_DOC_PATH` no import de ZIP (Erros de Geometria) + paridade de histórico
 - [`docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_UX_AUTH.md`](docs/CHANGELOG_2026-07-15_PROCESSAR_PROJETO_UX_AUTH.md) — Auth requireAuth, cards de histórico, PDF sem SEMA, reinício com outro ZIP, remoção generateFixed

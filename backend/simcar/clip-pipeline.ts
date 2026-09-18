@@ -76,17 +76,19 @@ import {
 import { buildQuantitativeXlsx, appendLayerWarning, dedupeWarnings } from "./area-calculator";
 import { fetchCarBoundaryByNumber } from "./car-lookup";
 import {
-    fetchCompleteSemaWfsLayer,
-    loadSemaWfsLayerMapping,
-    SemaWfsSourceError,
+    fetchCompleteSimcarSnapshotLayer,
+    loadSimcarSnapshotLayerMapping,
+    SimcarSnapshotSourceError,
 } from "./sema-wfs-source";
 import { isExcludedExportEntry, isExcludedFromExport, toPublicApiUrl } from "./constants";
 import { snapClippedGeometryToBoundary } from "../simcar-clip-snap";
 import {
-    eraseRiverOverlap,
-    extendRiverMask,
-    RiverTopologyError,
-} from "./river-topology";
+    CoverageTopologyError,
+    LAND_COVER_LAYERS,
+    layerPolygonGeometries,
+    validateOfficialCoverage,
+} from "./coverage-topology";
+import { clipOfficialFeaturesExactly, ExactClipError } from "./exact-clip";
 import type { CachedJob, ClipResult, ClippedPointResult, ClippedPolygonResult, LayerSummary, PersistedClipContextV1, WfsClipFetchResult, WfsFeature } from "./types";
 
 export type { CachedJob, ClipResult, ClippedPointResult, ClippedPolygonResult, LayerSummary, PersistedClipContextV1, WfsClipFetchResult, WfsFeature };
@@ -573,7 +575,7 @@ export async function processClip(
         ? requestedLayers.filter((l) => (TEMPLATE_LAYERS as readonly string[]).includes(l))
         : [...TEMPLATE_LAYERS];
 
-    const processingLayerNames = orderLayersForRiverTopology(layerNames);
+    const processingLayerNames = layerNames;
     const total = processingLayerNames.length;
     const layerSummaries: LayerSummary[] = [];
     const jobWarnings: string[] = [];
@@ -586,19 +588,15 @@ export async function processClip(
     // contra cada lote separadamente; `userPolygon` (unificado) só é usado para
     // bbox, área total e consulta WFS.
     let userPolygons: Feature<Polygon | MultiPolygon>[];
-    let userGeometry: any;
     let areaHa: number;
-    let userWkt: string;
 
     if (sigefParcelCode) {
         sendSSE(res, { type: "progress", layer: "SIGEF", stage: `Buscando parcela certificada no WFS do INCRA (pode levar até ${Math.round(SIGEF_WFS_TIMEOUT_MS / 1000)}s)...`, percent: 2 });
         try {
             const feature = await fetchSigefBoundaryByParcelCode(sigefParcelCode);
-            userGeometry = feature.geometry;
             userPolygon = feature;
             userPolygons = [feature];
             areaHa = computeAreaHa(feature);
-            userWkt = polygonToWkt(userGeometry);
             sendSSE(res, { type: "progress", layer: "SIGEF", stage: `Parcela SIGEF localizada — ${areaHa.toFixed(2)} ha`, percent: 5 });
         } catch (err: any) {
             const message = err?.message || "Erro ao buscar certificação SIGEF no WFS do INCRA.";
@@ -613,11 +611,9 @@ export async function processClip(
         sendSSE(res, { type: "progress", layer: "WFS", stage: "Buscando limite do CAR no SEMA WFS...", percent: 2 });
         try {
             const feature = await fetchCarBoundaryByNumber(carNumber);
-            userGeometry = feature.geometry;
             userPolygon = feature;
             userPolygons = [feature];
             areaHa = computeAreaHa(feature);
-            userWkt = polygonToWkt(userGeometry);
             sendSSE(res, { type: "progress", layer: "WFS", stage: `CAR localizado — ${areaHa.toFixed(2)} ha`, percent: 5 });
         } catch (err: any) {
             const message = err?.message || "Erro ao buscar CAR no WFS da SEMA.";
@@ -638,9 +634,7 @@ export async function processClip(
         }
         userPolygon = userResult.polygon;
         userPolygons = userResult.polygons;
-        userGeometry = userResult.geometry;
         areaHa = userResult.areaHa;
-        userWkt = polygonToWkt(userGeometry);
     } else {
         sendSSE(res, { type: "error", message: "Nenhum limite territorial fornecido (ZIP ou CAR)." });
         return { ok: false, cloudinaryStoredBytes: 0 };
@@ -685,30 +679,33 @@ export async function processClip(
     }
     throwIfClientDisconnected(res);
 
-    // 4. O recorte automatico usa exclusivamente o WFS oficial da SEMA-MT.
-    // Um GetCapabilities novo e obrigatorio evita que cache antigo esconda uma
-    // queda atual. Nao existe fallback para copia local ou WMS.
+    // 4. O recorte automático usa exclusivamente o snapshot mensal oficial da
+    // SEMA-MT. A base precisa estar validada, atualizada e publicada no
+    // GeoServer local; não há fallback para consultas remotas ou cópias parciais.
     sendSSE(res, {
         type: "progress",
-        layer: "WFS SEMA-MT",
+        layer: "SIMCAR Digital mensal",
         current: 0,
         total,
-        status: "checking_wfs",
+        status: "checking_snapshot",
     });
     let layerMapping: Map<string, string>;
     try {
-        layerMapping = await loadSemaWfsLayerMapping(TEMPLATE_LAYERS);
-        console.log(`[SIMCAR CLIP] SEMA WFS layer mapping: ${layerMapping.size} layers matched`);
+        const snapshotMapping = await loadSimcarSnapshotLayerMapping(TEMPLATE_LAYERS);
+        layerMapping = snapshotMapping.layers;
+        console.log(
+            `[SIMCAR CLIP] Snapshot ${snapshotMapping.snapshot.snapshot}: ${layerMapping.size} camadas; idade ${snapshotMapping.snapshot.ageDays.toFixed(1)} dias`,
+        );
     } catch (err: any) {
-        const sourceError = err instanceof SemaWfsSourceError
+        const sourceError = err instanceof SimcarSnapshotSourceError
             ? err
-            : new SemaWfsSourceError(
-                "O WFS da SEMA-MT está indisponível. O recorte foi cancelado e nenhum ZIP parcial foi gerado. Tente novamente quando o serviço voltar.",
+            : new SimcarSnapshotSourceError(
+                "A cópia mensal oficial do SIMCAR Digital está indisponível. O recorte foi cancelado e nenhum ZIP parcial foi gerado.",
                 "unavailable",
                 undefined,
                 { cause: err },
             );
-        console.error("[SIMCAR CLIP] SEMA WFS capabilities error:", err?.message || err);
+        console.error("[SIMCAR CLIP] Snapshot validation error:", err?.message || err);
         sendSSE(res, { type: "error", code: sourceError.code, message: sourceError.message });
         return { ok: false, cloudinaryStoredBytes: 0 };
     }
@@ -718,7 +715,9 @@ export async function processClip(
     const clippedLayers = new Map<string, { records: ShpRecord[]; fieldDefs: DbfFieldDef[] }>();
     const clippedPointLayers = new Map<string, { records: Array<{ coordinates: [number, number]; attributes: Record<string, string | number | null> }>; fieldDefs: DbfFieldDef[] }>();
     const clippedGeometries = new Map<string, Geometry[]>();
-    let riverMask: Feature<Polygon | MultiPolygon> | null = null;
+    // Os resultados do snapshot ficam em GeoJSON até todas as camadas estarem
+    // disponíveis. A validação final é somente leitura e nunca corrige shapes.
+    const wfsLayerOutputs = new Map<string, { clipped: ClipResult[]; wfsFetch: WfsClipFetchResult }>();
 
     for (let i = 0; i < processingLayerNames.length; i++) {
         throwIfClientDisconnected(res);
@@ -770,7 +769,7 @@ export async function processClip(
             continue;
         }
 
-        // Category 2: WFS oficial da SEMA-MT + clip geometrico fino local.
+        // Category 2: snapshot oficial mensal + interseção exata com a ATP.
         const isRiverLayer = RIVER_CLIP_LAYERS.has(layerName);
         const isSpringLayer = layerName === SPRING_LAYER_NAME;
         // Reservatórios usam o MESMO buffer dos rios para seleção, mas são mantidos
@@ -782,9 +781,6 @@ export async function processClip(
         const clipBoundaries = isRiverLayer
             ? [riverClipBoundary.polygon]
             : userPolygons;
-        const clipWkt = isRiverLayer
-            ? riverClipBoundary.wkt
-            : userWkt;
         const wfsTypeName = layerMapping.get(layerName);
         if (!wfsTypeName) {
             sendSSE(res, {
@@ -798,7 +794,7 @@ export async function processClip(
                 name: layerName,
                 source: "wfs",
                 features: 0,
-                warning: "Camada não encontrada no WFS oficial da SEMA-MT.",
+                warning: "Camada não disponível no snapshot mensal oficial do SIMCAR Digital.",
             });
             continue;
         }
@@ -814,28 +810,24 @@ export async function processClip(
 
         let wfsFetch: WfsClipFetchResult;
         try {
-            wfsFetch = await fetchCompleteSemaWfsLayer({
+            wfsFetch = await fetchCompleteSimcarSnapshotLayer({
                 layerName,
                 typeName: wfsTypeName,
                 bbox: isRiverLayer || isSpringLayer || isWholeFeatureBufferLayer
                     ? featureBbox(riverClipBoundary.polygon)
-                    : undefined,
-                polygonWkt: isRiverLayer || isSpringLayer || isWholeFeatureBufferLayer
-                    ? undefined
-                    : clipWkt,
-                srsName: "EPSG:4674",
+                    : featureBbox(userPolygon),
             });
         } catch (err: any) {
             if (err instanceof ClientAbortError) throw err;
-            const sourceError = err instanceof SemaWfsSourceError
+            const sourceError = err instanceof SimcarSnapshotSourceError
                 ? err
-                : new SemaWfsSourceError(
-                    "O WFS da SEMA-MT está indisponível. O recorte foi cancelado e nenhum ZIP parcial foi gerado. Tente novamente quando o serviço voltar.",
+                : new SimcarSnapshotSourceError(
+                    "A cópia mensal oficial do SIMCAR Digital está indisponível. O recorte foi cancelado e nenhum ZIP parcial foi gerado.",
                     "unavailable",
                     layerName,
                     { cause: err },
                 );
-            console.error(`[SIMCAR CLIP] SEMA WFS fetch error for ${layerName}:`, err?.message || err);
+            console.error(`[SIMCAR CLIP] Snapshot fetch error for ${layerName}:`, err?.message || err);
             sendSSE(res, {
                 type: "error",
                 code: sourceError.code,
@@ -858,37 +850,24 @@ export async function processClip(
             continue;
         }
 
-        let clipped = isWholeFeatureBufferLayer
-            ? selectWholeFeaturesIntersecting(wfsFeatures, riverClipBoundary.polygon)
-            : clipFeaturesToPolygon(wfsFeatures, clipBoundaries, {
-                pointClipPolygons: isSpringLayer && clippedRiverFeatures.length > 0
-                    ? [...userPolygons, ...clippedRiverFeatures]
-                    : undefined,
-                // Não altera a geometria oficial após a interseção. O snap de
-                // 1,5 m preenchia frestas reais e invadia rios junto à divisa.
-                snapToleranceMeters: 0,
-            });
+        let clipped: ClipResult[];
         try {
-            // A ordem garante que cada classe de rio perde o que já pertence a
-            // uma classe hidrográfica anterior. Depois, todas as demais
-            // camadas poligonais perdem a união completa dos rios.
-            clipped = eraseRiverOverlap(clipped, riverMask);
-            if (isRiverLayer) {
-                riverMask = extendRiverMask(
-                    riverMask,
-                    clipped
-                        .filter((feature): feature is ClippedPolygonResult => feature.kind === "polygon")
-                        .map((feature) => feature.geometry),
-                );
-            }
+            clipped = isWholeFeatureBufferLayer
+                ? selectWholeFeaturesIntersecting(wfsFeatures, riverClipBoundary.polygon)
+                : await clipOfficialFeaturesExactly(wfsFeatures, clipBoundaries, {
+                    pointClipPolygons: isSpringLayer && clippedRiverFeatures.length > 0
+                        ? [...userPolygons, ...clippedRiverFeatures]
+                        : undefined,
+                    layerName,
+                });
         } catch (error) {
-            const topologyError = error instanceof RiverTopologyError
+            const topologyError = error instanceof ExactClipError
                 ? error
-                : new RiverTopologyError(
-                    "Não foi possível garantir a separação topológica dos rios. O recorte foi cancelado e nenhum ZIP foi gerado.",
+                : new ExactClipError(
+                    "Não foi possível recortar a geometria oficial sem alterá-la. O recorte foi cancelado e nenhum ZIP foi gerado.",
                     { cause: error },
                 );
-            console.error(`[SIMCAR CLIP] River topology error for ${layerName}:`, error);
+            console.error(`[SIMCAR CLIP] Exact clip error for ${layerName}:`, error);
             sendSSE(res, {
                 type: "error",
                 code: topologyError.code,
@@ -918,14 +897,73 @@ export async function processClip(
             status: "clipping",
             features: clipped.length,
         });
+        wfsLayerOutputs.set(layerName, { clipped, wfsFetch });
+        const geometries = layerPolygonGeometries(clipped);
+        if (geometries.length > 0) clippedGeometries.set(layerName, geometries);
+    }
+    throwIfClientDisconnected(res);
 
-        // Build shapefile records
+    // 5b. AVN/AUAS/AREA_CONSOLIDADA e a água precisam formar a mesma partição
+    // mostrada na base oficial. Esta etapa apenas mede: nunca dissolve, subtrai,
+    // preenche vazio, cria filete ou move vértice.
+    const coverageLayersRequested = LAND_COVER_LAYERS.every((layerName) =>
+        processingLayerNames.includes(layerName)
+    );
+    try {
+        if (!coverageLayersRequested) {
+            console.log("[SIMCAR CLIP] Full land-cover topology skipped for an explicit partial-layer request.");
+        } else {
+        const layerResults = new Map<string, ClipResult[]>();
+        for (const [layerName, output] of wfsLayerOutputs) {
+            layerResults.set(layerName, output.clipped);
+        }
+        const topologyStats = await validateOfficialCoverage({
+            layers: layerResults,
+            propertyPolygons: userPolygons,
+        });
+        console.log("[SIMCAR CLIP] Official coverage validated without edits:", topologyStats);
+        }
+    } catch (error) {
+        const topologyError = error instanceof CoverageTopologyError
+            ? error
+            : new CoverageTopologyError(
+                "Não foi possível validar a cobertura oficial sem alterar os shapes. O recorte foi cancelado e nenhum ZIP foi gerado.",
+                { cause: error },
+            );
+        console.error("[SIMCAR CLIP] Coverage topology error:", error);
+        sendSSE(res, {
+            type: "error",
+            code: topologyError.code,
+            message: topologyError.message,
+        });
+        return { ok: false, cloudinaryStoredBytes: 0 };
+    }
+    throwIfClientDisconnected(res);
+
+    // 5c. Somente depois da validacao global as geometrias sao serializadas.
+    // Assim nenhum SHP parcial pode escapar antes de a cobertura ser provada.
+    for (const layerName of processingLayerNames) {
+        if (DIRECT_COPY_LAYERS.has(layerName)) continue;
+        const output = wfsLayerOutputs.get(layerName);
+        if (!output) continue; // camada sem match ou WFS vazio ja resumida acima
+        const { clipped, wfsFetch } = output;
+
+        if (!clipped.length) {
+            const summary = appendLayerWarning({
+                name: layerName,
+                source: "wfs",
+                features: 0,
+            }, wfsFetch.warnings, wfsFetch.partial);
+            if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);
+            layerSummaries.push(summary);
+            continue;
+        }
+
         const fieldDefs = templateSchemas.get(layerName) || [
             { name: "ID", type: "N" as const, length: 10, decimals: 0 },
         ];
         const expectedShapeType = templateShapeTypes.get(layerName.toUpperCase()) ?? 5;
         const isPointLayer = expectedShapeType === 1 || expectedShapeType === 8;
-
         const records: ShpRecord[] = [];
         const pointRecords: Array<{ coordinates: [number, number]; attributes: Record<string, string | number | null> }> = [];
         let layerAreaHa = 0;
@@ -934,11 +972,8 @@ export async function processClip(
             if (featIndex % 50 === 0) throwIfClientDisconnected(res);
             const feat = clipped[featIndex];
             if (feat.kind === "polygon" && !isPointLayer) {
-                // Usa geojsonToPolyRecords para tratar MultiPolygon corretamente:
-                // cada polígono vira um ShpRecord separado (não buracos)
                 const polyRecords = geojsonToPolyRecords(feat.geometry as any);
                 if (!polyRecords.length) continue;
-
                 for (const polyRec of polyRecords) {
                     const attributes = applyLayerAttributeRules(
                         layerName,
@@ -948,17 +983,16 @@ export async function processClip(
                     );
                     records.push({ type: "polygon", rings: polyRec.rings, attributes });
                 }
-
                 try {
                     const geom = normalizePolygonGeometry(feat.geometry);
                     if (geom) {
-                        const f = geom.type === "Polygon"
+                        const feature = geom.type === "Polygon"
                             ? turfPolygon(geom.coordinates)
                             : turfMultiPolygon(geom.coordinates);
-                        layerAreaHa += turfArea(f) / 10000;
+                        layerAreaHa += turfArea(feature) / 10000;
                     }
                 } catch {
-                    // Ignore area calculation errors
+                    // A validacao topologica ja ocorreu; area e apenas resumo.
                 }
             } else if (feat.kind === "point" && isPointLayer) {
                 for (const coord of feat.pointCoords) {
@@ -973,25 +1007,10 @@ export async function processClip(
             }
         }
 
-        const hasPolygons = records.length > 0;
-        const hasPoints = pointRecords.length > 0;
-
-        if (hasPolygons) {
-            clippedLayers.set(layerName, { records, fieldDefs });
-        }
-        if (hasPoints) {
-            // Store points separately with a flag so buildOutputZip can handle them
+        if (records.length > 0) clippedLayers.set(layerName, { records, fieldDefs });
+        if (pointRecords.length > 0) {
             clippedPointLayers.set(layerName, { records: pointRecords, fieldDefs });
         }
-
-        // Store clipped geometries for AI analysis rendering
-        const geoJsonGeoms = clipped
-            .filter((f): f is ClippedPolygonResult => f.kind === "polygon")
-            .map((f) => f.geometry);
-        if (geoJsonGeoms.length > 0) {
-            clippedGeometries.set(layerName, geoJsonGeoms);
-        }
-
         totalFeaturesClipped += records.length + pointRecords.length;
         const featureCount = records.length + pointRecords.length;
         const summary = appendLayerWarning({
@@ -1002,7 +1021,6 @@ export async function processClip(
         }, wfsFetch.warnings, wfsFetch.partial);
         if (summary.warning) jobWarnings.push(`${layerName}: ${summary.warning}`);
         layerSummaries.push(summary);
-        throwIfClientDisconnected(res);
     }
     throwIfClientDisconnected(res);
 

@@ -1,27 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  fetchCompleteSemaWfsLayer,
-  loadSemaWfsLayerMapping,
-  SemaWfsSourceError,
-  type SemaWfsSourceDependencies,
+  fetchCompleteSimcarSnapshotLayer,
+  loadSimcarSnapshotLayerMapping,
+  type SimcarSnapshotSourceDependencies,
 } from "./sema-wfs-source";
 
+const AVN_TYPE = "cbers:car_digital_simcar_d_simcar_d_avn";
+const AVN_STORE = AVN_TYPE.split(":")[1];
+
 function dependencies(
-  overrides: Partial<SemaWfsSourceDependencies> = {}
-): SemaWfsSourceDependencies {
+  overrides: Partial<SimcarSnapshotSourceDependencies> = {},
+): SimcarSnapshotSourceDependencies {
   return {
-    getCapabilities: vi.fn(async () => ({
-      expiresAt: Date.now() + 60_000,
-      layerNames: new Set(["Geoportal:SIMCAR_D_AVN"]),
-      featureTypeCount: 1,
+    readSnapshot: vi.fn(() => ({
+      snapshot: "20260901T050002Z",
+      generatedAt: "2026-09-01T05:35:43Z",
+      ageDays: 17,
+      storeNames: new Set([AVN_STORE]),
     })),
-    discoverMapping: vi.fn(() => new Map([["AVN", "Geoportal:SIMCAR_D_AVN"]])),
+    getCapabilities: vi.fn(async () => new Set([AVN_TYPE])),
+    resolveLayer: vi.fn((layerName) => layerName === "AVN" ? AVN_TYPE : null),
     fetchByBbox: vi.fn(async () => ({
-      features: [],
-      warnings: [],
-      partial: false,
-    })),
-    fetchByPolygon: vi.fn(async () => ({
       features: [],
       warnings: [],
       partial: false,
@@ -30,29 +29,26 @@ function dependencies(
   };
 }
 
-describe("fonte obrigatoria WFS do recorte SIMCAR", () => {
-  it("forca GetCapabilities novo para nao esconder queda atual com cache", async () => {
-    const deps = dependencies();
-    const mapping = await loadSemaWfsLayerMapping(["AVN"], deps);
-
-    expect(deps.getCapabilities).toHaveBeenCalledWith(true);
-    expect(mapping.get("AVN")).toBe("Geoportal:SIMCAR_D_AVN");
+describe("fonte mensal oficial do recorte SIMCAR", () => {
+  it("mapeia somente uma camada presente no manifest e no GeoServer local", async () => {
+    const result = await loadSimcarSnapshotLayerMapping(["AVN"], dependencies());
+    expect(result.layers.get("AVN")).toBe(AVN_TYPE);
+    expect(result.snapshot.snapshot).toBe("20260901T050002Z");
   });
 
-  it("cancela quando o WFS esta fora em vez de recorrer a outra base", async () => {
+  it("cancela quando o snapshot não pode ser validado", async () => {
     const deps = dependencies({
-      getCapabilities: vi.fn(async () => {
-        throw new Error("fetch failed");
+      readSnapshot: vi.fn(() => {
+        throw new Error("manifest ausente");
       }),
     });
-
-    await expect(loadSemaWfsLayerMapping(["AVN"], deps)).rejects.toMatchObject({
-      code: "SEMA_WFS_SOURCE_UNAVAILABLE",
+    await expect(loadSimcarSnapshotLayerMapping(["AVN"], deps)).rejects.toMatchObject({
+      code: "SIMCAR_SNAPSHOT_SOURCE_UNAVAILABLE",
       failure: "unavailable",
     });
   });
 
-  it("rejeita resposta parcial para nunca gerar ZIP truncado", async () => {
+  it("rejeita consulta parcial para nunca gerar ZIP truncado", async () => {
     const deps = dependencies({
       fetchByBbox: vi.fn(async () => ({
         features: [],
@@ -60,53 +56,27 @@ describe("fonte obrigatoria WFS do recorte SIMCAR", () => {
         partial: true,
       })),
     });
-
-    await expect(
-      fetchCompleteSemaWfsLayer(
-        {
-          layerName: "AVN",
-          typeName: "Geoportal:SIMCAR_D_AVN",
-          bbox: [-52.4, -12.4, -52.3, -12.3],
-        },
-        deps
-      )
-    ).rejects.toMatchObject({
-      code: "SEMA_WFS_SOURCE_UNAVAILABLE",
+    await expect(fetchCompleteSimcarSnapshotLayer({
+      layerName: "AVN",
+      typeName: AVN_TYPE,
+      bbox: [-52.4, -12.4, -52.3, -12.3],
+    }, deps)).rejects.toMatchObject({
       failure: "partial",
       layerName: "AVN",
     });
   });
 
-  it("propaga resultado completo do WFS oficial", async () => {
+  it("propaga resposta completa da cópia mensal", async () => {
     const complete = {
       features: [{ geometry: null, properties: { ID: 1 } }],
       warnings: [],
       partial: false,
     };
-    const deps = dependencies({ fetchByPolygon: vi.fn(async () => complete) });
-
-    await expect(
-      fetchCompleteSemaWfsLayer(
-        {
-          layerName: "AVN",
-          typeName: "Geoportal:SIMCAR_D_AVN",
-          polygonWkt: "POLYGON((-52 -12,-52 -13,-51 -13,-52 -12))",
-        },
-        deps
-      )
-    ).resolves.toEqual(complete);
-  });
-
-  it("mantem erro de contrato distinguivel de uma resposta vazia valida", async () => {
-    const deps = dependencies();
-    await expect(
-      fetchCompleteSemaWfsLayer(
-        {
-          layerName: "AVN",
-          typeName: "Geoportal:SIMCAR_D_AVN",
-        },
-        deps
-      )
-    ).rejects.toBeInstanceOf(SemaWfsSourceError);
+    const deps = dependencies({ fetchByBbox: vi.fn(async () => complete) });
+    await expect(fetchCompleteSimcarSnapshotLayer({
+      layerName: "AVN",
+      typeName: AVN_TYPE,
+      bbox: [-52.4, -12.4, -52.3, -12.3],
+    }, deps)).resolves.toEqual(complete);
   });
 });

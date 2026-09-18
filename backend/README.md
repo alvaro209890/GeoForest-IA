@@ -19,7 +19,10 @@ https://geoforest-api.cursar.space → Cloudflare Tunnel → localhost:3001
 - `CLOUDINARY_FOLDER` — Pasta de destino no Cloudinary (default: geoforest)
 - `SEMA_WMS_BASE_URL` — URL base do WMS SEMA-MT
 - `SEMA_WMS_AUTHKEY` — Auth key do WMS SEMA
-- `SIMCAR_LOCAL_SHAPES_ROOT` — Pasta com shapes locais SIMCAR
+- `SIMCAR_LOCAL_SHAPES_ROOT` — Pasta com shapes locais SIMCAR usada por análises auxiliares
+- `SIMCAR_SNAPSHOT_MANIFEST_PATH` — Manifest do snapshot mensal oficial usado pelo recorte (padrão: `/media/server/HD Backup/VETOR/CAR_Digital/current/manifest.json`)
+- `SIMCAR_SNAPSHOT_MAX_AGE_DAYS` — Idade máxima do snapshot oficial antes de cancelar o recorte (padrão: `45`)
+- `SIMCAR_LOCAL_WFS_BASE_URL` — GeoServer local que publica o snapshot oficial (padrão: `http://127.0.0.1:8081/geoserver/cbers/ows`)
 - `SIMCAR_ANALYSIS_MODE` — `efficient` (default) ou `detailed`
 - `SIMCAR_SYNTHESIS_TEXT_MODELS` — Cadeia de modelos Groq para síntese textual (separados por `,`, `;` ou quebra de linha)
 - `SIMCAR_SYNTHESIS_PRIMARY_TEXT_MODEL` — Modelo Groq preferido na síntese

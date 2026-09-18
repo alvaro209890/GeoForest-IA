@@ -1,8 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildShpAndShx, geojsonToShpRecords } from './shapefile-writer';
+import { buildShpAndShx, geojsonToShpRecords, ringSignedArea } from './shapefile-writer';
 
 describe('geojsonToShpRecords', () => {
+  it('preserves the orientation of centimetric rings at real geographic coordinates', () => {
+    const tinyCounterClockwise = [
+      [-52.473476, -12.268692],
+      [-52.47347599, -12.268692],
+      [-52.47347599, -12.26869199],
+      [-52.473476, -12.26869199],
+      [-52.473476, -12.268692],
+    ];
+
+    // This used to collapse to exactly zero because products around 640 were
+    // subtracted to recover an area around 1e-16 square degrees.
+    expect(Math.abs(ringSignedArea(tinyCounterClockwise))).toBeGreaterThan(0);
+    const [record] = geojsonToShpRecords(
+      { type: 'Polygon', coordinates: [tinyCounterClockwise] },
+      { ID: 1 },
+    );
+    expect(ringSignedArea(record.rings[0])).toBeGreaterThan(0); // Shapefile shell = CW
+  });
+
   it('creates one shapefile record per MultiPolygon polygon and repeats the AIR identification on all records', () => {
     const geometry = {
       type: 'MultiPolygon',

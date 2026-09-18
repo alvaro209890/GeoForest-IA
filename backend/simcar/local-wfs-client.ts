@@ -1,9 +1,5 @@
-/**
- * Cliente do GeoServer local para os vetores SIMCAR já baixados no servidor.
- *
- * O recorte consulta a mesma base publicada no workspace `cbers`; jamais faz
- * request ao WFS da SEMA. O clip geométrico fino continua no pipeline.
- */
+/** Cliente do GeoServer local que publica o snapshot mensal oficial do SIMCAR. */
+import fs from "node:fs";
 import type { WfsClipFetchResult, WfsFeature } from "./types";
 import { WFS_MAX_FEATURES } from "./constants";
 
@@ -17,6 +13,73 @@ const LOCAL_LAYER_ALIASES: Record<string, string> = {
     VEREDA: "veredas",
 };
 
+export const SIMCAR_SNAPSHOT_MANIFEST_PATH = String(
+    process.env.SIMCAR_SNAPSHOT_MANIFEST_PATH ||
+    "/media/server/HD Backup/VETOR/CAR_Digital/current/manifest.json",
+);
+
+export const SIMCAR_SNAPSHOT_MAX_AGE_DAYS = Math.max(
+    1,
+    Number(process.env.SIMCAR_SNAPSHOT_MAX_AGE_DAYS || 45),
+);
+
+export type SimcarSnapshotInfo = {
+    snapshot: string;
+    generatedAt: string;
+    ageDays: number;
+    storeNames: Set<string>;
+};
+
+export class LocalSimcarSourceError extends Error {
+    readonly code = "SIMCAR_SNAPSHOT_UNAVAILABLE";
+
+    constructor(message: string, options?: { cause?: unknown }) {
+        super(message, options);
+        this.name = "LocalSimcarSourceError";
+    }
+}
+
+export function readValidatedSimcarSnapshot(
+    manifestPath = SIMCAR_SNAPSHOT_MANIFEST_PATH,
+    nowMs = Date.now(),
+): SimcarSnapshotInfo {
+    let raw: any;
+    try {
+        raw = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    } catch (error) {
+        throw new LocalSimcarSourceError(
+            "A cópia mensal oficial do SIMCAR Digital não está disponível. O recorte foi cancelado; tente novamente após a atualização da base.",
+            { cause: error },
+        );
+    }
+
+    const snapshot = String(raw?.snapshot || "").trim();
+    const generatedAt = String(raw?.generated_at || "").trim();
+    const generatedMs = Date.parse(generatedAt);
+    const layers = Array.isArray(raw?.groups)
+        ? raw.groups.flatMap((group: any) => Array.isArray(group?.layers) ? group.layers : [])
+        : [];
+    const storeNames = new Set<string>(
+        layers
+            .map((layer: any) => String(layer?.store_name || "").trim())
+            .filter(Boolean),
+    );
+    const ageDays = (nowMs - generatedMs) / 86_400_000;
+    if (
+        !snapshot ||
+        !Number.isFinite(generatedMs) ||
+        generatedMs > nowMs + 86_400_000 ||
+        ageDays > SIMCAR_SNAPSHOT_MAX_AGE_DAYS ||
+        storeNames.size === 0
+    ) {
+        throw new LocalSimcarSourceError(
+            `A cópia mensal oficial do SIMCAR Digital está ausente, inválida ou desatualizada (limite ${SIMCAR_SNAPSHOT_MAX_AGE_DAYS} dias). O recorte foi cancelado e nenhum ZIP foi gerado.`,
+        );
+    }
+
+    return { snapshot, generatedAt, ageDays, storeNames };
+}
+
 export function resolveLocalSimcarWfsLayer(templateLayer: string): string | null {
     const name = String(templateLayer || "").trim().toUpperCase();
     if (!name || name === "AIR" || name === "ATP") return null;
@@ -24,6 +87,35 @@ export function resolveLocalSimcarWfsLayer(templateLayer: string): string | null
     const unavailable = new Set(["AREA_USO_RESTRITO", "AREA_ALTITUDE_1800", "ARLREM", "RIO_ACIMA_600"]);
     if (unavailable.has(name)) return null;
     return `${LOCAL_LAYER_PREFIX}${suffix}`;
+}
+
+export async function getLocalSimcarLayerNames(): Promise<Set<string>> {
+    const url = buildLocalWfsUrl({
+        service: "WFS",
+        version: "2.0.0",
+        request: "GetCapabilities",
+    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    try {
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) throw new Error(`GeoServer local ${response.status}`);
+        const xml = await response.text();
+        const names = new Set<string>();
+        for (const match of xml.matchAll(/<FeatureType\b[\s\S]*?<Name>\s*([^<]+)\s*<\/Name>[\s\S]*?<\/FeatureType>/gi)) {
+            const name = String(match[1] || "").trim();
+            if (name) names.add(name);
+        }
+        if (names.size === 0) throw new Error("GetCapabilities local sem camadas");
+        return names;
+    } catch (error) {
+        throw new LocalSimcarSourceError(
+            "A cópia mensal oficial do SIMCAR Digital está temporariamente indisponível. O recorte foi cancelado e nenhum ZIP parcial foi gerado.",
+            { cause: error },
+        );
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 function buildLocalWfsUrl(params: Record<string, string | number>): string {
@@ -58,7 +150,19 @@ export async function fetchLocalSimcarBboxFeatures(
             count,
             startIndex,
         });
-        const response = await fetch(url);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 60_000);
+        let response: Response;
+        try {
+            response = await fetch(url, { signal: controller.signal });
+        } catch (error) {
+            throw new LocalSimcarSourceError(
+                "A cópia mensal oficial do SIMCAR Digital está temporariamente indisponível. O recorte foi cancelado e nenhum ZIP parcial foi gerado.",
+                { cause: error },
+            );
+        } finally {
+            clearTimeout(timeout);
+        }
         if (!response.ok) {
             const detail = await response.text().catch(() => "");
             throw new Error(`WFS local ${response.status}: ${detail.slice(0, 180)}`);

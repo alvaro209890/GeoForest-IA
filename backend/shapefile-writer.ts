@@ -372,9 +372,20 @@ export function buildDbfBuffer(
  * Positiva = CW (horário), Negativa = CCW (anti-horário).
  */
 export function ringSignedArea(ring: number[][]): number {
+    if (ring.length < 3) return 0;
+    // Translacao local evita cancelamento catastrofico em aneis centimetricos
+    // guardados em coordenadas geograficas grandes (ex.: lon -52, lat -12).
+    // A formula anterior somava produtos ~600 para obter area ~1e-14 e podia
+    // devolver zero, fazendo o shell sair como buraco no ArcGIS.
+    const originX = ring[0][0];
+    const originY = ring[0][1];
     let area = 0;
     for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-        area += ring[i][0] * ring[j][1] - ring[j][0] * ring[i][1];
+        const xi = ring[i][0] - originX;
+        const yi = ring[i][1] - originY;
+        const xj = ring[j][0] - originX;
+        const yj = ring[j][1] - originY;
+        area += xi * yj - xj * yi;
     }
     return area / 2;
 }
