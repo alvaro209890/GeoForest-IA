@@ -182,7 +182,7 @@ export function registerVerticesRoutes(app: Express): void {
       return;
     }
     requestCancel(jobId, uid);
-    removeStoragePath(String(data.outputRelativePath || ""));
+    removeStoragePath(String(data.outputRelativePath || ""), uid);
     persistVerticesJob(uid, jobId, { status: "deleted", deletedAt: new Date().toISOString() });
     res.json({ ok: true });
   });

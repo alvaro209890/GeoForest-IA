@@ -243,8 +243,8 @@ export function registerOverlapRoutes(app: Express): void {
       return;
     }
     requestCancel(jobId, uid);
-    removeStoragePath(String(data.outputRelativePath || ""));
-    removeStoragePath(String(data.inputRelativePath || ""));
+    removeStoragePath(String(data.outputRelativePath || ""), uid);
+    removeStoragePath(String(data.inputRelativePath || ""), uid);
     persistJob(uid, jobId, { status: "deleted", deletedAt: new Date().toISOString() });
     res.json({ ok: true });
   });
