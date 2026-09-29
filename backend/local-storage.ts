@@ -195,7 +195,7 @@ export function getUserProfile(uid: string): PlainObject | null {
  * Ficava duplicada dentro de `resolveDocPathFromSegments` e
  * `resolveCollectionDirFromSegments`, e era realocada a cada chamada.
  */
-const ALLOWED_COLLECTIONS = new Set([
+export const ALLOWED_COLLECTIONS: ReadonlySet<string> = new Set([
   "conversations",
   "simcar_clips",
   "cbers_wpm_jobs",

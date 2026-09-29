@@ -5,6 +5,7 @@
 import express, { Express, Request, Response } from "express";
 import { createCorsMiddleware } from "./middleware/cors";
 import { createRequestLogger } from "./middleware/request-logger";
+import { storageGuard } from "./middleware/storage-guard";
 import { requireAuth, attachOptionalAuth } from "./auth";
 import { STORAGE_ROOT } from "./local-storage";
 import { CBERS_ARCHIVE_ROOT } from "./cbers/archive";
@@ -33,7 +34,9 @@ export function createApp(logBackend: Logger): Express {
   app.use("/api/storage/users/:uid/simcar-oraculo", (_req: Request, res: Response) => {
     res.status(404).json({ error: "Arquivo não encontrado." });
   });
-  app.use("/api/storage", express.static(STORAGE_ROOT));
+  // O static é público: a guarda barra os docs JSON do banco (conversas, jobs,
+  // perfil, índices) e deixa passar só artefato (ZIP/PDF/imagem).
+  app.use("/api/storage", storageGuard, express.static(STORAGE_ROOT));
   app.use("/api/raster", express.static(CBERS_ARCHIVE_ROOT));
   app.use("/api/raster-ndvi", express.static(NDVI_ARCHIVE_ROOT));
 
