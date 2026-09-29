@@ -35,12 +35,40 @@ export function ringsSharedBoundaryLengthM(
   const bM: [number, number][] = [];
   for (const p of ringA) aM.push(project(p));
   for (const p of ringB) bM.push(project(p));
+  // Bbox de cada aresta de ringB expandida por `tolM`. Uma amostra de uma aresta
+  // de A só pode ficar a ≤ tolM da aresta k de B se a bbox da aresta de A tocar
+  // a bbox expandida de k — então o filtro abaixo dá o MESMO resultado da
+  // varredura completa, só sem testar arestas distantes. Sem ele, o ZIP real do
+  // teste_1 (anéis com milhares de vértices) levava 40–65 s síncronos e
+  // estourava o timeout de RPC de 60 s do worker do vitest.
+  const nB = bM.length - 1;
+  const bMinX = new Float64Array(nB);
+  const bMaxX = new Float64Array(nB);
+  const bMinY = new Float64Array(nB);
+  const bMaxY = new Float64Array(nB);
+  for (let k = 0; k < nB; k += 1) {
+    bMinX[k] = Math.min(bM[k][0], bM[k + 1][0]) - tolM;
+    bMaxX[k] = Math.max(bM[k][0], bM[k + 1][0]) + tolM;
+    bMinY[k] = Math.min(bM[k][1], bM[k + 1][1]) - tolM;
+    bMaxY[k] = Math.max(bM[k][1], bM[k + 1][1]) + tolM;
+  }
+  const candidates: number[] = [];
   let shared = 0;
   for (let i = 0; i < aM.length - 1; i += 1) {
     const [x1, y1] = aM[i];
     const [x2, y2] = aM[i + 1];
     const seglen = Math.hypot(x2 - x1, y2 - y1);
     if (seglen < 1e-6) continue;
+    const sMinX = Math.min(x1, x2);
+    const sMaxX = Math.max(x1, x2);
+    const sMinY = Math.min(y1, y2);
+    const sMaxY = Math.max(y1, y2);
+    candidates.length = 0;
+    for (let k = 0; k < nB; k += 1) {
+      if (bMaxX[k] < sMinX || bMinX[k] > sMaxX || bMaxY[k] < sMinY || bMinY[k] > sMaxY) continue;
+      candidates.push(k);
+    }
+    if (!candidates.length) continue; // nenhuma amostra pode estar colada em B
     // ~0,5 m por amostra (mín. 4) — suficiente p/ capturar colagem contínua
     const steps = Math.max(4, Math.ceil(seglen / 0.5));
     let on = 0;
@@ -49,7 +77,7 @@ export function ringsSharedBoundaryLengthM(
       const px = x1 + t * (x2 - x1);
       const py = y1 + t * (y2 - y1);
       let ok = false;
-      for (let k = 0; k < bM.length - 1; k += 1) {
+      for (const k of candidates) {
         if (pointToSegmentDistanceM(px, py, bM[k][0], bM[k][1], bM[k + 1][0], bM[k + 1][1]) <= tolM) {
           ok = true;
           break;
