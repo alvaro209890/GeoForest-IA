@@ -236,6 +236,7 @@ export function labelForOption(
 async function routeToProperty(
   waypoints: Position[],
   atpGeometry: Polygon | MultiPolygon,
+  options: { rethrow?: boolean } = {},
 ): Promise<CroquiRoute | null> {
   try {
     const [candidate] = await fetchDrivingRoutes(waypoints);
@@ -248,7 +249,10 @@ async function routeToProperty(
       [dest.lon, dest.lat],
     ]);
     return ensureRouteReachesPolygon(rerouted[0], atpGeometry);
-  } catch {
+  } catch (error) {
+    // Desvios (via points) podem falhar à vontade; a rota primária não — ali o
+    // motivo real do OSRM (NoRoute/NoSegment/indisponível) tem que chegar ao usuário.
+    if (options.rethrow) throw error;
     return null;
   }
 }
@@ -276,7 +280,7 @@ export async function discoverRouteOptions(args: DiscoverRouteOptionsArgs): Prom
   const notify = args.onProgress || (() => {});
   const deadline = Date.now() + BUDGET_MS;
 
-  const primary = await routeToProperty([start, [destLon, destLat]], atpGeometry);
+  const primary = await routeToProperty([start, [destLon, destLat]], atpGeometry, { rethrow: true });
   if (!primary) throw new Error("Não foi possível calcular a rota viária até a propriedade.");
 
   const accepted: CroquiRoute[] = [primary];

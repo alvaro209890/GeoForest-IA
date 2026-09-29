@@ -260,6 +260,13 @@ export function markPersistedRunningJobsInterrupted(): number {
         name: "ndvi_scene_jobs",
         activeStatuses: new Set(["processing"]),
       },
+      {
+        // Job CBERS sem registro em processing_jobs (ex.: os fantasmas criados
+        // pelo NDVI antes do fix). No boot nenhum job está vivo, então todo
+        // "processing" aqui é órfão — senão o front faz polling dele para sempre.
+        name: "cbers_wpm_jobs",
+        activeStatuses: new Set(["processing"]),
+      },
     ] as const;
 
     for (const collection of standaloneCollections) {
@@ -273,9 +280,20 @@ export function markPersistedRunningJobsInterrupted(): number {
         if (!collection.activeStatuses.has(status)) continue;
 
         const isNdviScene = collection.name === "ndvi_scene_jobs";
+        const isCbers = collection.name === "cbers_wpm_jobs";
         writeDocBySegments(
           ["users", uid, collection.name, jobId],
-          isNdviScene
+          isCbers
+            ? {
+                // Mesmo formato do ramo de processing_jobs: o front do CBERS só
+                // reconhece completed/failed/cancelled.
+                status: "failed",
+                stage: "interrupted",
+                error,
+                message: error,
+                scenes: markCbersScenesInterrupted(data, error),
+              }
+            : isNdviScene
             ? {
                 status: "failed",
                 stage: "interrupted",

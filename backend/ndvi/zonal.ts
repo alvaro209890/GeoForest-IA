@@ -77,6 +77,10 @@ export async function measureFeature(args: {
   featureIndex: number;
   geometry: Geometry;
 }): Promise<NdviZonalStat | null> {
+  // O progresso da zonal é relatado por `measureAll` (x/total). Sem `onProgress`
+  // explícito, o `runCommand` do CBERS persiste o patch em `cbers_wpm_jobs/<id>`
+  // e cria um job CBERS fantasma "processing" que nunca termina.
+  const semProgresso = () => undefined;
   const areaHa = areaHaOf(args.geometry);
   const nome = `zonal_${args.layer}_${args.featureIndex}`;
   const cutline = writeCutline(args.tmpDir, nome, args.geometry);
@@ -100,6 +104,7 @@ export async function measureFeature(args: {
       spanPercent: 0,
       stage: "zonal",
       message: `Medindo ${args.layer} #${args.featureIndex + 1}.`,
+      onProgress: semProgresso,
     });
   } catch (erro) {
     if (erro instanceof NdviCancelError) throw erro;

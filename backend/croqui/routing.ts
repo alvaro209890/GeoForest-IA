@@ -136,6 +136,34 @@ function formatFetchError(error: unknown): string {
   return message;
 }
 
+/** Erro determinístico do OSRM (4xx): repetir não muda a resposta. */
+export class OsrmRequestError extends Error {
+  readonly osrmCode: string;
+  constructor(message: string, osrmCode: string) {
+    super(message);
+    this.name = "OsrmRequestError";
+    this.osrmCode = osrmCode;
+  }
+}
+
+/** Traduz o `code` do OSRM para o motivo real — "não foi possível calcular" não diz nada ao usuário. */
+export function describeOsrmFailure(status: number, body: { code?: unknown; message?: unknown } | null): string {
+  const code = String(body?.code || "").trim();
+  const detail = String(body?.message || "").trim();
+  const sufixo = code ? ` (OSRM ${status}: ${code}${detail ? ` — ${detail}` : ""})` : ` (OSRM ${status})`;
+  switch (code) {
+    case "NoRoute":
+      return `Não existe rota viária no OpenStreetMap ligando o ponto de partida ao imóvel${sufixo}. Escolha outro ponto de partida.`;
+    case "NoSegment":
+      return `O ponto de partida ou o imóvel está longe demais de qualquer via mapeada no OpenStreetMap${sufixo}. Escolha um ponto sobre uma estrada.`;
+    case "InvalidValue":
+    case "InvalidQuery":
+      return `Coordenada inválida enviada ao roteador${sufixo}.`;
+    default:
+      return `O roteador recusou a requisição${sufixo}.`;
+  }
+}
+
 async function fetchOsrmJson(url: string): Promise<Record<string, unknown>> {
   const attempts = Number(process.env.CROQUI_OSRM_RETRIES || 3);
   let lastError: unknown = null;
@@ -145,11 +173,16 @@ async function fetchOsrmJson(url: string): Promise<Record<string, unknown>> {
         headers: { Accept: "application/json" },
         signal: AbortSignal.timeout(60000),
       });
+      if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+        const body = (await response.json().catch(() => null)) as { code?: unknown; message?: unknown } | null;
+        throw new OsrmRequestError(describeOsrmFailure(response.status, body), String(body?.code || ""));
+      }
       if (!response.ok) {
         throw new Error(`OSRM indisponível (${response.status}). Verifique CROQUI_OSRM_BASE_URL.`);
       }
       return (await response.json()) as Record<string, unknown>;
     } catch (error) {
+      if (error instanceof OsrmRequestError) throw error;
       lastError = error;
       if (attempt < attempts) await sleep(1000 * attempt);
     }
@@ -327,7 +360,10 @@ export async function fetchDrivingRoutes(
     routes?: OsrmRouteJson[];
   };
   if (data.code !== "Ok" || !data.routes?.length) {
-    throw new Error("Não foi possível calcular a rota viária até a propriedade.");
+    throw new OsrmRequestError(
+      describeOsrmFailure(200, data as { code?: unknown; message?: unknown }),
+      String(data.code || ""),
+    );
   }
   return data.routes.map(buildRoute);
 }

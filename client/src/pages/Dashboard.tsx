@@ -1947,6 +1947,9 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
 
     let active = true;
     const poll = async () => {
+      // Aba em segundo plano: o Chrome ainda dispara o timer (1x/min) e cada
+      // tick relê processing_jobs inteiro do HD. O intervalo retoma ao voltar.
+      if (document.visibilityState === 'hidden') return;
       try {
         const jobsRef = collection(db, 'users', uid, 'processing_jobs');
         const jobsSnap = await getDocs(query(jobsRef, orderBy('updatedAtMs', 'desc')));
@@ -1994,6 +1997,7 @@ export default function Dashboard({ initialView = 'simcar-clip', hideSidebar = f
 
     let alive = true;
     const pollClipServerState = async () => {
+      if (document.visibilityState === 'hidden') return;
       try {
         const jobsRef = collection(db, 'users', uid, 'processing_jobs');
         const jobsSnap = await getDocs(query(jobsRef, orderBy('updatedAtMs', 'desc')));

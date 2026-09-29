@@ -339,6 +339,9 @@ async function gerarFiguras(
       jobId: args.input.ndviJobId,
       rgbPath: args.rgbPath,
       outPath: png,
+      // Sem isto o runCommand do CBERS grava em cbers_wpm_jobs (job fantasma).
+      // No-op de propósito: o rgbToPng reporta percent 0 e faria a barra do NDVI voltar.
+      onProgress: () => undefined,
     });
     if (!fs.existsSync(png)) return [];
     return [
