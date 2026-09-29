@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { describeUpstreamError } from "./lib/upstream-error";
 
 const APF_CONSULTA_URL =
   "https://monitoramento.sema.mt.gov.br/apfruralconsulta/index.aspx";
@@ -420,7 +421,10 @@ export function registerApfReceiptRoutes(app: Express) {
       } else if (msg.includes("formato incorreto")) {
         res.status(400).json({ error: msg });
       } else {
-        res.status(502).json({ error: "Falha ao consultar APF no portal da SEMA-MT." });
+        res.status(502).json({
+          error: `Falha ao consultar APF no portal da SEMA-MT: ${describeUpstreamError(error, "o portal APF da SEMA-MT")}`,
+          code: "APF_PORTAL_INDISPONIVEL",
+        });
       }
     }
   });
@@ -460,8 +464,16 @@ export function registerApfReceiptRoutes(app: Express) {
 
       if (msg.includes("APF_DOWNLOAD_INVALID_PDF")) {
         res.status(502).json({ error: "O arquivo retornado não é um PDF válido." });
+      } else if (msg === "APF_DOWNLOAD_FAILED") {
+        res.status(502).json({
+          error:
+            "O portal APF da SEMA-MT não devolveu o PDF nem mensagem de erro (a APF pode não ter PDF liberado para este CPF/CNPJ).",
+          code: "APF_DOWNLOAD_FAILED",
+        });
       } else {
-        res.status(502).json({ error: msg || "Falha ao baixar APF." });
+        res.status(502).json({
+          error: `Falha ao baixar APF: ${describeUpstreamError(error, "o portal APF da SEMA-MT")}`,
+        });
       }
     }
   });
