@@ -84,4 +84,30 @@ describe("recuperação de jobs no boot", () => {
       storage.readDocBySegments(["users", uid, "ndvi_scene_jobs", "job-ndvi-final"]),
     ).toMatchObject({ status: "completed", stage: "completed", percent: 100 });
   });
+
+  it("encerra job CBERS órfão (sem processing_jobs) e preserva os finais", () => {
+    const uid = "uid-cbers-orfao";
+    // Formato real dos fantasmas vistos em produção (set/2026): criado pelo NDVI,
+    // sem registro em processing_jobs, parado em stage "figure".
+    storage.writeDocBySegments(["users", uid, "cbers_wpm_jobs", "fantasma"], {
+      status: "processing",
+      stage: "figure",
+      percent: 0,
+      message: "Gerando figura do NDVI.",
+    });
+    storage.writeDocBySegments(["users", uid, "cbers_wpm_jobs", "pronto"], {
+      status: "completed",
+      percent: 100,
+    });
+
+    const interrupted = processingJobs.markPersistedRunningJobsInterrupted();
+
+    expect(interrupted).toBe(1);
+    expect(
+      storage.readDocBySegments(["users", uid, "cbers_wpm_jobs", "fantasma"]),
+    ).toMatchObject({ status: "failed", stage: "interrupted" });
+    expect(
+      storage.readDocBySegments(["users", uid, "cbers_wpm_jobs", "pronto"]),
+    ).toMatchObject({ status: "completed", percent: 100 });
+  });
 });

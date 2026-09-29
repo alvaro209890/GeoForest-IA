@@ -28,6 +28,7 @@ import {
   fetchDrivingRoutes,
   fetchNearestOnRoad,
   interiorDestination,
+  isUserFacingRouteFailure,
   trimRouteAtPolygon,
   type CroquiRoute,
 } from "./routing";
@@ -251,9 +252,10 @@ async function routeToProperty(
     ]);
     return ensureRouteReachesPolygon(rerouted[0], atpGeometry);
   } catch (error) {
-    // Na rota principal, OSRM fora do ar tem de chegar ao usuário como tal —
-    // senão vira "não foi possível calcular a rota" e parece defeito do imóvel.
-    if (options.rethrowUnavailable && /OSRM/i.test(String((error as Error)?.message || ""))) throw error;
+    // Na rota principal, a falha do roteador tem de chegar ao usuário com o
+    // motivo real — senão vira "não foi possível calcular a rota" e parece
+    // defeito do imóvel. Desvios (via points) podem falhar à vontade.
+    if (options.rethrowUnavailable && isUserFacingRouteFailure(error)) throw error;
     return null;
   }
 }

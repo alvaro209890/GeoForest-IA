@@ -512,6 +512,7 @@ export function useCbersJobs({
     if (!cbersProcessing || !cbersJobId) return;
     let active = true;
     const pollStatus = async () => {
+      if (document.visibilityState === 'hidden') return;
       try {
         const response = await apiFetch(`/api/cbers-wpm/jobs/${encodeURIComponent(cbersJobId)}/status`, {
           method: 'GET',
