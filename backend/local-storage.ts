@@ -203,6 +203,9 @@ const ALLOWED_COLLECTIONS = new Set([
   "vertices_jobs",
   "processing_jobs",
   "containment_jobs",
+  // Aba Sobreposições (backend/overlap/): faltava aqui desde 28/07 e todo
+  // upload/process respondia 400 "INVALID_DOC_PATH".
+  "overlap_jobs",
   "geometry_errors_jobs",
   "processar_projeto_jobs",
   "simcar_oraculo_jobs",
