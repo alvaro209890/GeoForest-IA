@@ -6,12 +6,25 @@ import type { CroquiRoute, RouteWaypoint } from "./routing";
  * Roteiro no padrão dos croquis modelo: parágrafo corrido em que cada trecho
  * traz a distância percorrida seguida do DMS do ponto de CHEGADA desse trecho.
  *
- *   O presente croqui se inicia na cidade Querência no ponto (A) seguindo pela
+ *   O presente croqui se inicia na cidade de Querência - MT no ponto (A) seguindo pela
  *   MT-243 no sentido sul.
  *   Siga em frente por 1,1 km até o ponto (B).
  *   Vire à direita e siga por 5,1 km até o ponto (C).
  *   O destino estará à esquerda.
  */
+
+/**
+ * "na cidade de Querência - MT" — regra do Álvaro (29/09/2026): nunca "na cidade
+ * Querência". Tira um "- MT"/"/MT" que já venha no nome para não duplicar; sem
+ * município conhecido, cai no estado em vez de chamar "Mato Grosso" de cidade.
+ */
+export function localDePartida(municipioNome: string | null | undefined): string {
+  const nome = String(municipioNome || "")
+    .replace(/\s*[-–/]\s*MT\s*$/i, "")
+    .trim();
+  if (!nome || /^mato grosso$/i.test(nome)) return "no estado de Mato Grosso";
+  return `na cidade de ${nome} - MT`;
+}
 
 function comVia(road: string): string {
   const clean = String(road || "").trim();
@@ -53,7 +66,7 @@ function legPhrase(
 /**
  * Abertura do roteiro, no padrão fixo pedido pelo Álvaro:
  *
- *   O presente croqui se inicia na cidade X no ponto X seguindo pela
+ *   O presente croqui se inicia na cidade de X - MT no ponto X seguindo pela
  *   rua/avenida/estrada X no sentido X.
  *
  * `usouVia` avisa que a via já foi nomeada aqui — nos modelos, o primeiro
@@ -69,9 +82,7 @@ function introPhrase(args: {
   sentido: string | null;
 }): { text: string; usouVia: boolean } {
   const { municipioNome, landmark, primeiraVia, startDms, sentido } = args;
-  const cidade = municipioNome.trim() || "Mato Grosso";
-
-  const base = `O presente croqui se inicia na cidade ${cidade} no ponto ${startDms}`;
+  const base = `O presente croqui se inicia ${localDePartida(municipioNome)} no ponto ${startDms}`;
 
   if (primeiraVia) {
     const s = sentido ? ` no sentido ${sentido}` : "";
@@ -82,11 +93,12 @@ function introPhrase(args: {
   }
 
   // Sem via nomeada (OSRM não trouxe nome nem sigla): usa o landmark como
-  // referência de onde o traçado começa.
-  const suffix = landmark.introSuffix || `no município de ${cidade}`;
+  // referência de onde o traçado começa. Sem landmark curado, só o sentido —
+  // repetir o município logo depois de "na cidade de X - MT" ficava redundante.
+  const suffix = landmark.introSuffix ? ` ${landmark.introSuffix}` : "";
   const s = sentido ? ` no sentido ${sentido}` : "";
   return {
-    text: `${base} seguindo ${suffix}${s}.`,
+    text: suffix || s ? `${base} seguindo${suffix}${s}.` : `${base}.`,
     usouVia: false,
   };
 }
@@ -102,7 +114,7 @@ export function buildCroquiNarrative(args: {
   const waypoints = route.waypoints;
 
   if (!waypoints.length) {
-    return `O presente croqui se inicia na cidade ${municipioNome}. Onde se encontra a ${
+    return `O presente croqui se inicia ${localDePartida(municipioNome)}, onde se encontra a ${
       route.destinationLabel || "propriedade"
     }.`;
   }

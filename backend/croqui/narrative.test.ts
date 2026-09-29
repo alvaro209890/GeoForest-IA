@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { bearingDegrees, formatDmsPair, sentidoCardeal } from "./coords";
 import type { CroquiLandmark } from "./landmarks";
-import { buildCroquiDocxParagraphs, buildCroquiNarrative } from "./narrative";
+import { buildCroquiDocxParagraphs, buildCroquiNarrative, localDePartida } from "./narrative";
 import type { CroquiRoute, ManeuverKind, RouteWaypoint } from "./routing";
 
 function waypoint(
@@ -75,7 +75,7 @@ describe("croqui narrative", () => {
     });
 
     expect(texto).toBe(
-      `O presente croqui se inicia na cidade Querência no ponto (12°35'56.51"S, 52°13'10.50"O) ` +
+      `O presente croqui se inicia na cidade de Querência - MT no ponto (12°35'56.51"S, 52°13'10.50"O) ` +
         `seguindo pela MT-243 no sentido sul. ` +
         `Siga em frente por 1,1 km até o ponto (12°36'31.72"S, 52°13'10.41"O). ` +
         `Vire à direita e siga por 5,1 km até o ponto (12°37'43.69"S, 52°15'18.81"O). ` +
@@ -150,7 +150,7 @@ describe("croqui narrative", () => {
       ),
     });
     expect(texto).toMatch(
-      /^O presente croqui se inicia na cidade Querência no ponto \(.+\) seguindo pela MT-242 no sentido sudoeste\./,
+      /^O presente croqui se inicia na cidade de Querência - MT no ponto \(.+\) seguindo pela MT-242 no sentido sudoeste\./,
     );
     expect(texto).toContain("Siga em frente por 3 km");
     expect(texto).not.toContain("pela MT-242 por");
@@ -178,7 +178,7 @@ describe("croqui narrative", () => {
       ),
     });
     expect(texto).toMatch(
-      /^O presente croqui se inicia na cidade Querência no ponto \(.+\) seguindo na rotatória entre a Av\. Norte e a MT-109/,
+      /^O presente croqui se inicia na cidade de Querência - MT no ponto \(.+\) seguindo na rotatória entre a Av\. Norte e a MT-109/,
     );
     expect(texto).toContain("Siga em frente por 3 km");
     expect(texto).toContain("Vire à esquerda e siga em frente pela MT-243 por 600 m");
@@ -195,8 +195,35 @@ describe("croqui narrative", () => {
       ),
     });
     expect(texto).toMatch(
-      /^O presente croqui se inicia na cidade Ribeirão Cascalheira no ponto \(.+\) seguindo no município de Ribeirão Cascalheira/,
+      /^O presente croqui se inicia na cidade de Ribeirão Cascalheira - MT no ponto \(.+\) seguindo no sentido sudeste\./,
     );
+  });
+
+  it("nunca escreve 'na cidade X' — sempre 'na cidade de X - MT'", () => {
+    // Regra do Álvaro (29/09/2026): "na cidade Querência" saiu em croqui entregue.
+    const casos = ["Querência", "Querência - MT", "Canarana/MT", "  Água Boa  ", "", "Mato Grosso"];
+    for (const municipioNome of casos) {
+      for (const wps of [
+        [waypoint(-52.2, -12.6, 3000, "depart", "MT-242"), waypoint(-52.21, -12.61, 0, "arrive")],
+        [waypoint(-52.2, -12.6, 3000, "depart"), waypoint(-52.21, -12.61, 0, "arrive")],
+        [],
+      ]) {
+        const texto = buildCroquiNarrative({
+          municipioNome,
+          propertyName: "Fazenda Teste",
+          landmark: sedeLandmark,
+          route: route(wps, null),
+        });
+        expect(texto).not.toMatch(/na cidade (?!de )/);
+        expect(texto).not.toMatch(/MT - MT|MT\/MT/);
+        expect(texto).toMatch(
+          /^O presente croqui se inicia (na cidade de [^,.]+ - MT|no estado de Mato Grosso)[ ,.]/,
+        );
+      }
+    }
+    expect(localDePartida("Querência")).toBe("na cidade de Querência - MT");
+    expect(localDePartida("Canarana/MT")).toBe("na cidade de Canarana - MT");
+    expect(localDePartida("")).toBe("no estado de Mato Grosso");
   });
 
   it("gera o DOCX como parágrafo único", () => {
