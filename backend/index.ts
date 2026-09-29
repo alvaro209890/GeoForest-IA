@@ -1,6 +1,11 @@
 ﻿import express from "express";
 import dns from "node:dns";
 dns.setDefaultResultOrder("ipv4first");
+import net from "node:net";
+// O OSRM público (Europa) leva ~260 ms para abrir o TCP daqui e este host não
+// tem rota IPv6. Com o default de 250 ms por tentativa do Node 22, o fetch
+// desistia com ETIMEDOUT e todo croqui caía em "Não foi possível calcular a rota".
+net.setDefaultAutoSelectFamilyAttemptTimeout(2500);
 import { createServer } from "http";
 import path from "path";
 import crypto from "crypto";

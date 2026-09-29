@@ -68,7 +68,10 @@ async function buildOutputZip(files: Array<{ name: string; buffer: Buffer }>): P
 }
 
 type CroquiContext = {
+  /** Município de onde o croqui parte (o escolhido, ou o do imóvel). */
   municipioNome: string;
+  /** Município onde o imóvel está — não muda com a partida escolhida. */
+  municipioImovel: string;
   landmark: ReturnType<typeof resolveLandmark>;
   centLon: number;
   centLat: number;
@@ -94,6 +97,7 @@ async function resolveCroquiContext(
 
   return {
     municipioNome,
+    municipioImovel: municipioDetectado.nome || "Mato Grosso",
     landmark: resolveLandmark(
       municipioNome,
       ibge,
@@ -125,6 +129,7 @@ export async function buildCroquiRouteOptions(args: {
   municipioPartida?: string | null;
 }): Promise<{
   municipioNome: string;
+  municipioImovel: string;
   options: RouteOption[];
   start: { lon: number; lat: number; label: string; source: "curado" | "sede-ibge" | "centroide" | "customizado" };
 }> {
@@ -145,7 +150,7 @@ export async function buildCroquiRouteOptions(args: {
     destination: args.sedePoint ?? null,
     onProgress: args.onProgress,
   });
-  return { municipioNome: context.municipioNome, options, start };
+  return { municipioNome: context.municipioNome, municipioImovel: context.municipioImovel, options, start };
 }
 
 /** Anéis externos do imóvel, leves, para o mapinha de escolha. */
@@ -472,7 +477,7 @@ export function registerCroquiRoutes(app: Express): void {
           ? { lon: rawStartLon, lat: rawStartLat }
           : null;
 
-      const { municipioNome, options, start: startPoint } = await buildCroquiRouteOptions({
+      const { municipioNome, municipioImovel, options, start: startPoint } = await buildCroquiRouteOptions({
         atpGeometry: parsed.geometry,
         startOverride,
         sedePoint,
@@ -487,15 +492,15 @@ export function registerCroquiRoutes(app: Express): void {
       const atpRings = outlineRings(parsed.geometry);
 
       persistJob(uid, uploadId, {
-        municipioNome,
-        municipioPartida: municipioPartida || municipioNome,
+        municipioNome: municipioImovel,
+        municipioPartida: municipioNome,
         routesRelativePath,
         routeOptions: payload.map(({ coordinates, ...rest }) => rest),
       });
       res.json({
         ok: true,
-        municipioNome,
-        municipioPartida: municipioPartida || municipioNome,
+        municipioNome: municipioImovel,
+        municipioPartida: municipioNome,
         options: payload,
         atp: atpRings,
         start: [startPoint.lon, startPoint.lat],
