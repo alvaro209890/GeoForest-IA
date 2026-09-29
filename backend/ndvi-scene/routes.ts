@@ -246,10 +246,10 @@ export function registerNdviSceneRoutes(app: Express): void {
     const data = readDocBySegments(["users", uid, "ndvi_scene_jobs", jobId]);
     if (data) {
       requestCancel(jobId, uid);
-      removeStoragePath(String(data.outputRelativePath || data.outputUrl || ""));
+      removeStoragePath(String(data.outputRelativePath || data.outputUrl || ""), uid);
       if (Array.isArray(data.scenes)) {
         for (const scene of data.scenes) {
-          removeStoragePath(String(scene?.outputRelativePath || scene?.outputUrl || ""));
+          removeStoragePath(String(scene?.outputRelativePath || scene?.outputUrl || ""), uid);
         }
       }
       markNdviSceneArchiveUserDeleted(uid, jobId);

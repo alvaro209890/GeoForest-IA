@@ -214,8 +214,8 @@ export function registerProcessarProjetoRoutes(app: Express): void {
       const jobId = String(req.params.jobId || "").trim();
       requestCancel(jobId, uid);
       const data = readDocBySegments(["users", uid, "processar_projeto_jobs", jobId]);
-      if (data?.inputRelativePath) removeStoragePath(String(data.inputRelativePath));
-      if (data?.outputRelativePath) removeStoragePath(String(data.outputRelativePath));
+      if (data?.inputRelativePath) removeStoragePath(String(data.inputRelativePath), uid);
+      if (data?.outputRelativePath) removeStoragePath(String(data.outputRelativePath), uid);
       persistJob(uid, jobId, { status: "deleted", message: "Removido." });
       closeSubscribers(jobId);
       res.json({ ok: true });

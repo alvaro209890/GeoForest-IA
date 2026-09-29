@@ -774,9 +774,9 @@ export function registerCroquiRoutes(app: Express): void {
       return;
     }
     requestCancel(jobId, uid);
-    removeStoragePath(String(data.outputRelativePath || ""));
-    removeStoragePath(String(data.inputRelativePath || ""));
-    removeStoragePath(String(data.routesRelativePath || ""));
+    removeStoragePath(String(data.outputRelativePath || ""), uid);
+    removeStoragePath(String(data.inputRelativePath || ""), uid);
+    removeStoragePath(String(data.routesRelativePath || ""), uid);
     persistJob(uid, jobId, { status: "deleted", deletedAt: new Date().toISOString() });
     res.json({ ok: true });
   });

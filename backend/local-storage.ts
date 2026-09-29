@@ -423,17 +423,48 @@ export function saveUserFileFromPath(args: {
 export function getAbsoluteStoragePath(relativePath: string): string {
   const normalized = path.normalize(relativePath).replace(/^(\.\.(\/|\\|$))+/, "");
   const absolute = path.resolve(STORAGE_ROOT, normalized);
-  if (!absolute.startsWith(STORAGE_ROOT)) {
+  // `startsWith(STORAGE_ROOT)` sozinho aceitava diretório irmão (`<root>-x/...`).
+  if (absolute !== STORAGE_ROOT && !absolute.startsWith(`${STORAGE_ROOT}${path.sep}`)) {
     throw new Error("INVALID_STORAGE_PATH");
   }
   return absolute;
 }
 
-export function removeStoragePath(relativePath: string | undefined | null): void {
-  const clean = storageUrlToRelativePath(relativePath) || String(relativePath || "").trim().replace(/^\/api\/storage\//, "");
-  if (!clean) return;
-  const absolute = getAbsoluteStoragePath(clean);
-  if (fs.existsSync(absolute)) fs.rmSync(absolute, { force: true });
+/**
+ * Apaga um arquivo do storage local (limpeza best-effort de job). Devolve se apagou.
+ *
+ * - Só atua em caminho do storage (`users/...` ou `/api/storage/...`). URL de outra
+ *   rota — `/api/landsat/wms-download?...`, `/api/cbers-wpm/wms-download?...` — é
+ *   ignorada; antes ela lançava INVALID_STORAGE_PATH dentro de handler async e o
+ *   DELETE ficava pendurado sem resposta.
+ * - Com `ownerUid`, só apaga dentro de `users/<ownerUid>/`. Os docs de job são
+ *   graváveis pelo próprio usuário via PUT /api/store/doc, então o caminho que vem
+ *   do doc não é confiável: sem a checagem, um doc forjado apagava arquivo alheio.
+ * - Nunca lança: erro de disco vira log, não request pendurado.
+ */
+export function removeStoragePath(
+  relativePath: string | undefined | null,
+  ownerUid?: string,
+): boolean {
+  const raw = storageUrlToRelativePath(relativePath);
+  if (!raw) return false;
+  const clean = path.posix.normalize(raw.replace(/\\/g, "/"));
+  if (ownerUid !== undefined) {
+    const owner = safeSegment(ownerUid);
+    if (!owner || !clean.startsWith(`users/${owner}/`)) {
+      console.warn(`[storage] remoção recusada: "${clean}" não pertence a users/${owner || "(sem uid)"}/`);
+      return false;
+    }
+  }
+  try {
+    const absolute = getAbsoluteStoragePath(clean);
+    if (!fs.existsSync(absolute)) return false;
+    fs.rmSync(absolute, { force: true });
+    return true;
+  } catch (error) {
+    console.warn(`[storage] falha ao remover "${clean}":`, error);
+    return false;
+  }
 }
 
 export function storageUrlToRelativePath(urlOrPath: string | undefined | null): string | null {

@@ -164,7 +164,7 @@ export function registerSimcarLotesRoutes(app: Express): void {
     const status = String(data.status || "").toLowerCase();
     // Cancelar um job em andamento preserva o ZIP parcial; remover um concluído apaga.
     if (status !== "processing") {
-      removeStoragePath(String(data.outputRelativePath || ""));
+      removeStoragePath(String(data.outputRelativePath || ""), uid);
       persistLotesJob(uid, jobId, { status: "deleted", deletedAt: new Date().toISOString() });
     }
     res.json({ ok: true });

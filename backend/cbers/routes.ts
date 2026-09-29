@@ -280,12 +280,12 @@ export function registerCbersWpmRoutes(app: Express): void {
       return;
     }
     requestCancel(jobId, uid);
-    removeStoragePath(String(data.outputRelativePath || data.outputUrl || ""));
-    removeStoragePath(String(data.batchZipRelativePath || data.batchZipUrl || ""));
+    removeStoragePath(String(data.outputRelativePath || data.outputUrl || ""), uid);
+    removeStoragePath(String(data.batchZipRelativePath || data.batchZipUrl || ""), uid);
     if (Array.isArray(data.scenes)) {
       for (const scene of data.scenes) {
-        removeStoragePath(String(scene?.outputRelativePath || scene?.outputUrl || ""));
-        removeStoragePath(String(scene?.batchZipRelativePath || scene?.batchZipUrl || ""));
+        removeStoragePath(String(scene?.outputRelativePath || scene?.outputUrl || ""), uid);
+        removeStoragePath(String(scene?.batchZipRelativePath || scene?.batchZipUrl || ""), uid);
       }
     }
     markCbersArchiveUserDeleted(uid, jobId);

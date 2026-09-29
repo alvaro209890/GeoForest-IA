@@ -232,7 +232,7 @@ export function registerLandsatRoutes(app: Express): void {
     const jobId = String(req.params.jobId || "").trim();
     requestCancel(jobId, uid);
     const data = readDocBySegments(["users", uid, "landsat_jobs", jobId]);
-    removeStoragePath(String(data?.outputRelativePath || data?.outputUrl || ""));
+    removeStoragePath(String(data?.outputRelativePath || data?.outputUrl || ""), uid);
     deleteDocBySegments(["users", uid, "landsat_jobs", jobId]);
     res.json({ ok: true });
   });
