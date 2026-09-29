@@ -2,7 +2,7 @@
  * Detector: pares de vértices dentro da tolerância e análise por camada.
  */
 import "../proj-defs";
-import proj4 from "proj4";
+import { projectPoint } from "../lib/proj-cache";
 import { detectCrs, layerBbox, parsePolygonRecords, ringGroupsForRecord } from "./shapefile-io";
 import { CodedCrs, LayerSelection, ProcessSettings, VertexPair, VertexPoint } from "./types";
 
@@ -18,7 +18,7 @@ export function estimateUtmProjFromLonLat(lon: number, lat: number): { label: st
 export function toMetricPoint(point: [number, number], crs: CodedCrs, metricProjDef: string): [number, number] {
   if (crs.kind === "geographic") {
     const source = crs.projDef || "EPSG:4326";
-    const out = proj4(source, metricProjDef, point) as [number, number];
+    const out = projectPoint(source, metricProjDef, point);
     return Number.isFinite(out[0]) && Number.isFinite(out[1]) ? out : point;
   }
   return point;

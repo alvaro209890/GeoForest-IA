@@ -2,7 +2,7 @@
  * Helpers geométricos compartilhados pelos detectores (projeção métrica, áreas, hull, amostragem).
  */
 import "../proj-defs";
-import proj4 from "proj4";
+import { getProjConverter, projectPoint } from "../lib/proj-cache";
 import { featureCollection as turfFeatureCollection, union as turfUnion } from "@turf/turf";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 import type { CodedCrs, ParsedPolygonRecord } from "../vertices-proximas";
@@ -109,13 +109,14 @@ export function buildMetricBridge(records: ParsedPolygonRecord[]): MetricBridge 
   lat /= n;
   const { projDef } = estimateUtmProjFromLonLat(lon, lat);
   try {
+    const conv = getProjConverter("EPSG:4326", projDef);
     return {
       toMetric: (p) => {
-        const out = proj4("EPSG:4326", projDef, [Number(p[0]), Number(p[1])]) as [number, number];
+        const out = conv.forward([Number(p[0]), Number(p[1])]) as [number, number];
         return Number.isFinite(out[0]) && Number.isFinite(out[1]) ? out : [Number(p[0]), Number(p[1])];
       },
       fromMetric: (p) => {
-        const out = proj4(projDef, "EPSG:4326", [Number(p[0]), Number(p[1])]) as [number, number];
+        const out = conv.inverse([Number(p[0]), Number(p[1])]) as [number, number];
         return Number.isFinite(out[0]) && Number.isFinite(out[1]) ? out : [Number(p[0]), Number(p[1])];
       },
     };
@@ -212,7 +213,7 @@ export function polygonMetricAreaM2(polygon: number[][][], crs: CodedCrs, metric
   const toMetric = (pt: number[]): number[] => {
     if (crs.kind === "geographic") {
       const src = crs.projDef || "EPSG:4326";
-      const out = proj4(src, metricProjDef, [pt[0], pt[1]]) as [number, number];
+      const out = projectPoint(src, metricProjDef, pt);
       return Number.isFinite(out[0]) && Number.isFinite(out[1]) ? out : pt;
     }
     return pt;
@@ -366,7 +367,7 @@ export function sampleRingEveryMeters(
   // Mesma regra de `candidateWidthM` em detectors/gaps.ts.
   const toM =
     crs.kind === "geographic"
-      ? proj4(crs.projDef || "EPSG:4326", metricProjDef)
+      ? getProjConverter(crs.projDef || "EPSG:4326", metricProjDef)
       : null;
   const out: number[][] = [];
   for (let i = 0; i < ring.length - 1; i += 1) {

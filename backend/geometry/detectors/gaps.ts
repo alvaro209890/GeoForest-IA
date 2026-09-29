@@ -5,7 +5,7 @@ import { convex as turfConvex, difference as turfDifference, featureCollection a
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 import type { CodedCrs, ParsedPolygonRecord } from "../../vertices-proximas";
 import { CodedFeature, GapPolygon, GeometryErrorRow } from "../types";
-import proj4 from "proj4";
+import { projectPoint } from "../../lib/proj-cache";
 import { bboxesTouch, convexHull, geometryBbox, metricProjForCrs, minWidth, polygonMetricAreaM2, recordToGeoJSON, unionFeatures } from "../utils";
 
 /**
@@ -88,7 +88,7 @@ function candidateWidthM(ring: number[][], crs: CodedCrs, metricProjDef: string)
   const points = ring.map((pt) => {
     if (crs.kind === "geographic") {
       const src = crs.projDef || "EPSG:4326";
-      const out = proj4(src, metricProjDef, [pt[0], pt[1]]) as [number, number];
+      const out = projectPoint(src, metricProjDef, pt);
       return (Number.isFinite(out[0]) && Number.isFinite(out[1]) ? out : [pt[0], pt[1]]) as [number, number];
     }
     return [pt[0], pt[1]] as [number, number];
