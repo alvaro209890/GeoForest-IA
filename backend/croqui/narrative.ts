@@ -140,6 +140,30 @@ export function buildCroquiNarrative(args: {
   });
   const parts: string[] = [intro.text];
 
+  // Com sede: o roteiro vai até a entrada do imóvel e o trecho interno vira uma
+  // frase só — "Dali, siga pela estrada interna por X até a sede da
+  // propriedade, localizada no ponto (DMS)." (Álvaro, 29/09/2026).
+  const entrada = waypoints.findIndex((w) => w.entrance);
+  if (route.destinationLabel === "sede da propriedade" && entrada > 0 && entrada < waypoints.length - 1) {
+    const externos: string[] = [];
+    for (let i = 0; i < entrada; i++) {
+      if (waypoints[i].distanceToNextM <= 0) continue;
+      const isFirst = externos.length === 0;
+      externos.push(legPhrase(waypoints[i], waypoints[i + 1], isFirst, isFirst && intro.usouVia));
+    }
+    if (externos.length) {
+      externos[externos.length - 1] = externos[externos.length - 1].replace(/\.$/, ", na entrada da propriedade.");
+    }
+    let internoM = 0;
+    for (let i = entrada; i < waypoints.length - 1; i++) internoM += waypoints[i].distanceToNextM;
+    const sede = waypoints[waypoints.length - 1];
+    parts.push(
+      ...externos,
+      `Dali, siga pela estrada interna por ${formatDistance(internoM)} até a sede da propriedade, localizada no ponto ${sede.dms}.`,
+    );
+    return parts.join(" ");
+  }
+
   const legs: string[] = [];
   for (let i = 0; i < waypoints.length - 1; i++) {
     if (waypoints[i].distanceToNextM <= 0) continue;

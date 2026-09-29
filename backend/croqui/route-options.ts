@@ -31,6 +31,7 @@ import {
   trimRouteAtPolygon,
   type CroquiRoute,
 } from "./routing";
+import { SEDE_LABEL, extendThroughInternalRoad, markPropertyEntrance } from "./sede-route";
 
 export type RouteOptionSummary = {
   id: string;
@@ -338,7 +339,27 @@ export async function discoverRouteOptions(args: DiscoverRouteOptionsArgs): Prom
   // shapefile trouxe o ponto, senão num ponto interior. Aplicado antes de
   // medir e rotular, para o mapa e o PDF mostrarem o mesmo traçado.
   const dest = interiorDestination(atpGeometry, destination || null);
+  const sede = dest.label === SEDE_LABEL ? { lon: dest.lon, lat: dest.lat } : null;
+  // Com sede, cada caminho segue pela estrada interna até ela (quando o OSM a
+  // conhece). Caminhos que entram pela mesma porteira fazem a mesma consulta.
+  const internalMemo = new Map<string, Promise<CroquiRoute[]>>();
+  const cachedFetch: typeof fetchDrivingRoutes = (points, options) => {
+    const key = JSON.stringify(points.map(([lon, lat]) => [lon.toFixed(5), lat.toFixed(5)]));
+    let pending = internalMemo.get(key);
+    if (!pending) {
+      pending = fetchDrivingRoutes(points, options);
+      internalMemo.set(key, pending);
+    }
+    return pending;
+  };
+  if (sede) notify("Procurando a estrada interna até a sede...");
   for (let i = 0; i < accepted.length; i++) {
+    if (sede) {
+      const internal = await extendThroughInternalRoad(accepted[i], atpGeometry, sede, cachedFetch);
+      const reached = internal || extendRouteToInsidePoint(accepted[i], atpGeometry, dest).route;
+      accepted[i] = markPropertyEntrance(reached, atpGeometry);
+      continue;
+    }
     const extended = extendRouteToInsidePoint(accepted[i], atpGeometry, dest);
     if (extended.extended) accepted[i] = extended.route;
   }

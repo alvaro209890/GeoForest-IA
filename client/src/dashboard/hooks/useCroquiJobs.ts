@@ -34,6 +34,13 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
   const [croquiRoutes, setCroquiRoutes] = useState<CroquiRouteOptionsResponse | null>(null);
   const [croquiRouteId, setCroquiRouteId] = useState<string | null>(null);
   const [croquiLoadingRoutes, setCroquiLoadingRoutes] = useState(false);
+  /** null = ainda não respondido; o backend usa a sede do ZIP, se houver. */
+  const [croquiPossuiSede, setCroquiPossuiSede] = useState<boolean | null>(null);
+  const [croquiSede, setCroquiSede] = useState<[number, number] | null>(null);
+  /** Partida escolhida no mapa — sobrevive a recalcular por causa da sede. */
+  const [croquiStartOverride, setCroquiStartOverride] = useState<{ lon: number; lat: number } | null>(null);
+  /** Vértices editados no site, por caminho. */
+  const [croquiEditedCoords, setCroquiEditedCoords] = useState<Record<string, [number, number][]>>({});
 
   const [availableUploads, setAvailableUploads] = useState<CroquiUploadSummary[]>([]);
   const [availableUploadsLoading, setAvailableUploadsLoading] = useState(false);
@@ -60,6 +67,10 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     setCroquiRoutes(null);
     setCroquiRouteId(null);
     setCroquiLoadingRoutes(false);
+    setCroquiPossuiSede(null);
+    setCroquiSede(null);
+    setCroquiStartOverride(null);
+    setCroquiEditedCoords({});
   }, []);
 
   const applyCroquiJobPatch = useCallback((job: CroquiHistoryItem) => {
@@ -181,6 +192,10 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     // Os caminhos são do ATP anterior; trocar o ZIP invalida a escolha.
     setCroquiRoutes(null);
     setCroquiRouteId(null);
+    setCroquiPossuiSede(null);
+    setCroquiSede(null);
+    setCroquiStartOverride(null);
+    setCroquiEditedCoords({});
     if (file) setCroquiFilename(file.name);
   }, []);
 
@@ -247,6 +262,10 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
       setCroquiMunicipioPartida(summary.municipioNome || null);
       setCroquiRoutes(null);
       setCroquiRouteId(null);
+      setCroquiPossuiSede(null);
+      setCroquiSede(null);
+      setCroquiStartOverride(null);
+      setCroquiEditedCoords({});
       setCroquiError(null);
       setCroquiProcessing(false);
       setCroquiProgress(0);
@@ -264,9 +283,13 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
       uploadId: string,
       startOverride?: { lon: number; lat: number } | null,
       municipioPartidaOverride?: string | null,
+      sedeOverride?: { possuiSede: boolean; sede: [number, number] | null },
     ): Promise<CroquiRouteOptionsResponse | null> => {
       setCroquiLoadingRoutes(true);
       setCroquiError(null);
+      // undefined = mantém a partida escolhida antes; null = volta para a cidade.
+      const startToSend = startOverride !== undefined ? startOverride : croquiStartOverride;
+      const sedeToSend = sedeOverride ?? { possuiSede: croquiPossuiSede, sede: croquiSede };
       try {
         const municipioToSend =
           municipioPartidaOverride !== undefined
@@ -277,8 +300,12 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             uploadId,
-            ...(startOverride ? { startLon: startOverride.lon, startLat: startOverride.lat } : {}),
+            ...(startToSend ? { startLon: startToSend.lon, startLat: startToSend.lat } : {}),
             ...(municipioToSend ? { municipioPartida: municipioToSend } : {}),
+            ...(sedeToSend.possuiSede !== null ? { possuiSede: sedeToSend.possuiSede } : {}),
+            ...(sedeToSend.possuiSede && sedeToSend.sede
+              ? { sedeLon: sedeToSend.sede[0], sedeLat: sedeToSend.sede[1] }
+              : {}),
           }),
         });
         if (!response.ok) {
@@ -294,7 +321,15 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
           start: Array.isArray(data?.start) ? data.start : null,
           startLabel: data?.startLabel ? String(data.startLabel) : undefined,
           startSource: data?.startSource ? String(data.startSource) : undefined,
+          possuiSede: typeof data?.possuiSede === 'boolean' ? data.possuiSede : undefined,
+          sede: Array.isArray(data?.sede) ? (data.sede as [number, number]) : null,
+          sedeFromZip: !!data?.sedeFromZip,
         };
+        setCroquiStartOverride(startToSend ?? null);
+        setCroquiPossuiSede(parsed.possuiSede ?? false);
+        setCroquiSede(parsed.sede ?? null);
+        // Caminhos novos: edições do traçado anterior não valem mais.
+        setCroquiEditedCoords({});
         const activeMunicipio = parsed.municipioPartida || parsed.municipioNome;
         if (activeMunicipio) setCroquiMunicipioPartida(activeMunicipio);
         if (parsed.municipioNome) setCroquiMunicipio(parsed.municipioNome);
@@ -313,8 +348,43 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
         setCroquiLoadingRoutes(false);
       }
     },
-    [apiFetch, croquiMunicipioPartida],
+    [apiFetch, croquiMunicipioPartida, croquiStartOverride, croquiPossuiSede, croquiSede],
   );
+
+  /** "Possui sede?" — recalcula os caminhos terminando (ou não) na sede. */
+  const changeCroquiPossuiSede = useCallback(
+    async (possui: boolean): Promise<CroquiRouteOptionsResponse | null> => {
+      setCroquiPossuiSede(possui);
+      if (!croquiUploadId) return null;
+      return loadCroquiRouteOptions(croquiUploadId, undefined, undefined, {
+        possuiSede: possui,
+        sede: possui ? croquiSede : null,
+      });
+    },
+    [croquiUploadId, croquiSede, loadCroquiRouteOptions],
+  );
+
+  /** Sede clicada/arrastada no mapa — o backend valida que fica dentro do imóvel. */
+  const changeCroquiSede = useCallback(
+    async (lon: number, lat: number): Promise<CroquiRouteOptionsResponse | null> => {
+      if (!croquiUploadId) return null;
+      return loadCroquiRouteOptions(croquiUploadId, undefined, undefined, {
+        possuiSede: true,
+        sede: [lon, lat],
+      });
+    },
+    [croquiUploadId, loadCroquiRouteOptions],
+  );
+
+  /** Vértices editados de um caminho; null desfaz a edição. */
+  const setCroquiEditedRoute = useCallback((routeId: string, coords: [number, number][] | null) => {
+    setCroquiEditedCoords((prev) => {
+      const next = { ...prev };
+      if (coords && coords.length >= 2) next[routeId] = coords;
+      else delete next[routeId];
+      return next;
+    });
+  }, []);
 
   /** Move a partida do croqui e manda o backend recalcular os caminhos a partir dali. */
   const recalculateCroquiFromPoint = useCallback(
@@ -361,16 +431,22 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
       if (!uploadId) return;
     }
 
-    let routeOptionId = chosenRouteId ?? croquiRouteId;
-    if (!routeOptionId) {
-      const found = croquiRoutes || (await loadCroquiRouteOptions(uploadId));
+    // Primeiro clique só mostra os caminhos: antes de gerar, a pessoa confere o
+    // traçado, diz se há sede e, se quiser, ajusta os vértices.
+    if (!croquiRoutes) {
+      const found = await loadCroquiRouteOptions(uploadId);
       if (!found) return;
-      if (found.options.length > 1) {
-        toast.info('Escolha por qual caminho o croqui deve seguir.');
-        return;
-      }
-      routeOptionId = found.options[0]?.id || null;
+      toast.info('Confira o caminho no mapa (sede e vértices) e clique em gerar.');
+      return;
     }
+    let routeOptionId = chosenRouteId ?? croquiRouteId ?? croquiRoutes.options[0]?.id ?? null;
+    if (croquiPossuiSede && !croquiSede) {
+      const message = 'Marque no mapa onde fica a sede da propriedade.';
+      setCroquiError(message);
+      toast.error(message);
+      return;
+    }
+    const editedCoordinates = routeOptionId ? croquiEditedCoords[routeOptionId] : undefined;
 
     setCroquiProcessing(true);
     setCroquiError(null);
@@ -381,7 +457,16 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
       const response = await apiFetch('/api/croqui/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uploadId, title, propertyName, routeOptionId, municipioPartida }),
+        body: JSON.stringify({
+          uploadId,
+          title,
+          propertyName,
+          routeOptionId,
+          municipioPartida,
+          possuiSede: !!croquiPossuiSede,
+          ...(croquiPossuiSede && croquiSede ? { sedeLon: croquiSede[0], sedeLat: croquiSede[1] } : {}),
+          ...(editedCoordinates ? { editedCoordinates } : {}),
+        }),
       });
       if (!response.ok) {
         const err = await readApiError(response);
@@ -418,6 +503,9 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     croquiRouteId,
     croquiRoutes,
     croquiTitle,
+    croquiPossuiSede,
+    croquiSede,
+    croquiEditedCoords,
     croquiUploadId,
     loadCroquiRouteOptions,
     uploadCroquiZip,
@@ -467,6 +555,12 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     croquiMunicipioPartida,
     setCroquiMunicipioPartida,
     changeCroquiMunicipioPartida,
+    croquiPossuiSede,
+    changeCroquiPossuiSede,
+    croquiSede,
+    changeCroquiSede,
+    croquiEditedCoords,
+    setCroquiEditedRoute,
     croquiFile,
     croquiUploading,
     croquiRoutes,

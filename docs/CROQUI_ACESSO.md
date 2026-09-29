@@ -154,6 +154,36 @@ Cloudflare e não pode estourar). As rotas ficam num JSON em `croqui/routes`, e 
 No front, `RoutePicker.tsx` desenha os traçados sobre o contorno da ATP num SVG próprio
 (`routePreview.ts`, Web Mercator em radianos nos dois eixos). Não há biblioteca de mapa envolvida.
 
+## Sede da propriedade e edição do caminho (29/09/2026)
+
+Pedido do Álvaro. No mapa de escolha (`RoutePicker` / `StartPointMap`):
+
+- **"A propriedade possui sede?" — Sim / Não.** Sem resposta, vale o ZIP: se ele traz um
+  layer de pontos com um ponto dentro do imóvel, a sede já vem marcada (`sedeFromZip`).
+- **Sim:** o próximo clique no mapa marca a sede (pino verde, arrastável). O backend recusa
+  sede fora do polígono. Os caminhos são recalculados terminando NELA: da porteira, o OSRM
+  é consultado até a sede e o trajeto só é aceito se ≥ 70 % dos pontos ficam dentro do
+  imóvel e ele chega perto da sede (`extendThroughInternalRoad`); senão, linha reta.
+- **Não:** termina no interior do imóvel, como antes, e o texto nunca fala em sede — nem a
+  sede do ZIP é usada.
+- **Texto com sede:** `…até o ponto (DMS), na entrada da propriedade. Dali, siga pela estrada
+  interna por X até a sede da propriedade, localizada no ponto (DMS).` A entrada é a última
+  travessia da divisa de fora para dentro (`markPropertyEntrance`); ponto do roteiro a menos
+  de 100 m dela é absorvido, e os pontos internos saem do roteiro (sem pino órfão no PDF).
+- **Editar vértices:** "Editar vértices do caminho" deixa arrastar os pontos, criar ponto no
+  "+" e apagar com botão direito/duplo clique. A linha segue exatamente os vértices
+  (`buildRouteFromEditedLine`): pontos originais que continuam sobre ela mantêm manobra e
+  via; vértice novo com curva ≥ 30° vira "Vire à esquerda/direita"; trecho editado fica sem
+  nome de via. O traçado do mapa sai com Douglas-Peucker de ~4 m (`simplifyForEditing`), não
+  mais amostragem grossa — é essa linha que volta editada.
+- Mudar partida, município ou sede recalcula os caminhos e descarta as edições.
+- O primeiro clique em gerar só busca os caminhos: o croqui sai no segundo, depois de
+  conferir sede e vértices.
+
+API: `POST /api/croqui/route-options` aceita `possuiSede`, `sedeLon`, `sedeLat` e devolve
+`possuiSede`, `sede`, `sedeFromZip`; `POST /api/croqui/process` aceita os mesmos mais
+`editedCoordinates` (`[[lon, lat], …]`). Testes: `backend/croqui/sede-route.test.ts`.
+
 ## Roteiro
 
 Parágrafo corrido, no padrão dos modelos `chacara_02` e `Fazenda Irmãos Sebald`. A abertura é um

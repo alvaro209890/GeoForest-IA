@@ -47,6 +47,12 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
     croquiMunicipio,
     croquiMunicipioPartida,
     changeCroquiMunicipioPartida,
+    croquiPossuiSede,
+    changeCroquiPossuiSede,
+    croquiSede,
+    changeCroquiSede,
+    croquiEditedCoords,
+    setCroquiEditedRoute,
     croquiFilename,
     croquiRoutes,
     croquiRouteId,
@@ -338,9 +344,11 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
               {busy ? <Loader2 size={16} className="animate-spin" /> : <Map size={16} />}
               {croquiLoadingRoutes
                 ? 'Procurando caminhos...'
-                : hasChoice
-                  ? 'Gerar croqui com este caminho'
-                  : 'Gerar croqui'}
+                : !croquiRoutes
+                  ? 'Buscar caminhos'
+                  : hasChoice
+                    ? 'Gerar croqui com este caminho'
+                    : 'Gerar croqui'}
             </button>
             {!!croquiRoutes && (
               <button
@@ -384,6 +392,7 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
                       ? 'O mais curto nem sempre é o que se usa em campo. Escolha o traçado correto antes de gerar — ele vai para o PDF, o Word e o KML.'
                       : 'Confira o traçado sobre o mapa de satélite antes de gerar o croqui.'}
                     {' '}Navegue livremente pelo mapa e arraste ou clique para mudar de onde o croqui parte.
+                    {' '}Diga se a propriedade possui sede (e marque onde fica) e, se precisar, edite os vértices do caminho.
                   </p>
                 </div>
               </div>
@@ -400,6 +409,12 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
                   croquiMunicipio
                 }
                 onMunicipioChange={changeCroquiMunicipioPartida}
+                possuiSede={croquiPossuiSede}
+                sede={croquiSede}
+                onPossuiSedeChange={(possui) => void changeCroquiPossuiSede(possui)}
+                onPlaceSede={(lon, lat) => void changeCroquiSede(lon, lat)}
+                editedCoords={croquiEditedCoords}
+                onEditRoute={setCroquiEditedRoute}
               />
             </div>
           )}

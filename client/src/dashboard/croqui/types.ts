@@ -33,6 +33,12 @@ export type CroquiRouteOptionsResponse = {
   /** De onde veio o ponto de partida: "sede de X", "ponto escolhido no mapa"... */
   startLabel?: string;
   startSource?: string;
+  /** A propriedade possui sede (escolha do usuário; sem escolha, vem do ZIP). */
+  possuiSede?: boolean;
+  /** Onde fica a sede, [lon, lat]. */
+  sede?: [number, number] | null;
+  /** O ZIP trouxe um ponto de sede dentro do imóvel. */
+  sedeFromZip?: boolean;
 };
 
 export type CroquiHistoryItem = {

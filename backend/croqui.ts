@@ -14,7 +14,7 @@ import type { Express, Request, Response } from "express";
 import archiver from "archiver";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import { centroid } from "@turf/turf";
+import { booleanPointInPolygon, centroid, point as turfPoint } from "@turf/turf";
 import type { Polygon, MultiPolygon } from "geojson";
 import {
   getAbsoluteStoragePath,
@@ -29,6 +29,7 @@ import { detectarMunicipioMtComFallback, getMunicipioFeatureByIbge } from "./sim
 import { safeFileStem } from "./croqui/coords";
 import { findSedeMunicipal, listarMunicipiosMt, resolveLandmark } from "./croqui/landmarks";
 import { buildCroquiNarrative } from "./croqui/narrative";
+import { buildRouteFromEditedLine, finalizeCroquiRoute, simplifyForEditing } from "./croqui/sede-route";
 import {
   destinationOnPolygonBoundary,
   ensureRouteEndsInsidePolygon,
@@ -173,7 +174,7 @@ export function toRouteOptionPayload(
     totalDistanceM: option.totalDistanceM,
     roads: option.roads,
     recommended: option.recommended,
-    coordinates: decimateCoordinates(option.route.coordinates) as number[][],
+    coordinates: simplifyForEditing(option.route.coordinates) as number[][],
   };
 }
 
@@ -228,7 +229,8 @@ export async function generateCroquiArtifacts(args: {
   const route = args.route || (await routeToBoundary(atpGeometry, landmark, centLon, centLat, args.sedePoint));
   // Rota guardada (escolhida pelo usuário) já termina dentro; reforça a
   // garantia aqui também, para nenhum caminho de geração escapar do fim interior.
-  const finalRoute = ensureRouteEndsInsidePolygon(route, atpGeometry, args.sedePoint);
+  // Com sede: termina nela e marca a entrada no imóvel; sem sede: interior do imóvel.
+  const finalRoute = finalizeCroquiRoute(route, atpGeometry, args.sedePoint ?? null);
 
   const narrative = buildCroquiNarrative({ municipioNome, propertyName, landmark, route: finalRoute });
   const fileStem = safeFileStem(title);
@@ -299,6 +301,8 @@ async function runCroquiJob(args: {
   route?: CroquiRoute | null;
   routeLabel?: string;
   municipioPartida?: string | null;
+  /** Sede marcada pelo usuário (null = propriedade sem sede). */
+  sedePoint?: SedePoint | null;
 }): Promise<void> {
   const { uid, jobId, upload, title, propertyName, municipioPartida } = args;
   try {
@@ -315,7 +319,7 @@ async function runCroquiJob(args: {
     if (parsed.polygons.length !== 1) {
       throw new Error("O ZIP deve conter exatamente um polígono ATP.");
     }
-    const sedePoint = findSedePoint(inputZipBuffer, parsed.geometry);
+    const sedePoint = args.sedePoint ?? null;
 
     progress(uid, jobId, {
       stage: "route",
@@ -386,6 +390,55 @@ async function runCroquiJob(args: {
   } finally {
     closeSubscribers(jobId);
   }
+}
+
+type SedeResolvida = { possuiSede: boolean; sede: SedePoint | null; fromZip: SedePoint | null };
+
+/**
+ * "Possui sede?" é escolha do usuário. Sem resposta ainda, vale o ZIP: se ele
+ * trouxe um ponto de sede dentro do imóvel, a sede já vem marcada. Com "sim",
+ * vale o ponto clicado no mapa (ou o guardado, ou o do ZIP); com "não", o
+ * croqui ignora qualquer sede, inclusive a do ZIP.
+ */
+function resolveSede(
+  body: any,
+  zipBuffer: Buffer,
+  geometry: Polygon | MultiPolygon,
+  stored?: Record<string, unknown> | null,
+): SedeResolvida {
+  const fromZip = findSedePoint(zipBuffer, geometry);
+  const rawFlag = typeof body?.possuiSede === "boolean" ? body.possuiSede : stored?.possuiSede;
+  const possuiSede = typeof rawFlag === "boolean" ? rawFlag : !!fromZip;
+  if (!possuiSede) return { possuiSede, sede: null, fromZip };
+
+  const feature = { type: "Feature" as const, properties: {}, geometry };
+  const lon = Number(body?.sedeLon);
+  const lat = Number(body?.sedeLat);
+  if (Number.isFinite(lon) && Number.isFinite(lat)) {
+    if (!booleanPointInPolygon(turfPoint([lon, lat]), feature)) {
+      throw new Error("A sede precisa ficar dentro do imóvel. Clique num ponto dentro do polígono.");
+    }
+    return { possuiSede, sede: { lon, lat }, fromZip };
+  }
+  const saved = Array.isArray(stored?.sede) ? (stored!.sede as number[]) : null;
+  if (saved && Number.isFinite(saved[0]) && Number.isFinite(saved[1])) {
+    return { possuiSede, sede: { lon: saved[0], lat: saved[1] }, fromZip };
+  }
+  return { possuiSede, sede: fromZip, fromZip };
+}
+
+/** Vértices editados no site: [[lon, lat], ...]; null quando não veio edição válida. */
+function parseEditedCoordinates(raw: unknown): number[][] | null {
+  if (!Array.isArray(raw) || raw.length < 2 || raw.length > 5000) return null;
+  const out: number[][] = [];
+  for (const p of raw) {
+    if (!Array.isArray(p) || p.length < 2) return null;
+    const lon = Number(p[0]);
+    const lat = Number(p[1]);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat) || Math.abs(lon) > 180 || Math.abs(lat) > 90) return null;
+    out.push([lon, lat]);
+  }
+  return out;
 }
 
 export function registerCroquiRoutes(app: Express): void {
@@ -463,7 +516,8 @@ export function registerCroquiRoutes(app: Express): void {
       if (parsed.polygons.length !== 1) {
         throw new Error("O ZIP deve conter exatamente um polígono ATP.");
       }
-      const sedePoint = findSedePoint(inputZipBuffer, parsed.geometry);
+      const sedeInfo = resolveSede(req.body, inputZipBuffer, parsed.geometry, upload);
+      const sedePoint = sedeInfo.sede;
 
       const rawStartLon = Number((req.body as any)?.startLon);
       const rawStartLat = Number((req.body as any)?.startLat);
@@ -494,6 +548,8 @@ export function registerCroquiRoutes(app: Express): void {
       persistJob(uid, uploadId, {
         municipioNome: municipioImovel,
         municipioPartida: municipioNome,
+        possuiSede: sedeInfo.possuiSede,
+        sede: sedePoint ? [sedePoint.lon, sedePoint.lat] : null,
         routesRelativePath,
         routeOptions: payload.map(({ coordinates, ...rest }) => rest),
       });
@@ -501,6 +557,9 @@ export function registerCroquiRoutes(app: Express): void {
         ok: true,
         municipioNome: municipioImovel,
         municipioPartida: municipioNome,
+        possuiSede: sedeInfo.possuiSede,
+        sede: sedePoint ? [sedePoint.lon, sedePoint.lat] : null,
+        sedeFromZip: !!sedeInfo.fromZip,
         options: payload,
         atp: atpRings,
         start: [startPoint.lon, startPoint.lat],
@@ -564,6 +623,21 @@ export function registerCroquiRoutes(app: Express): void {
         routeLabel = summaries.find((option) => option.id === routeOptionId)?.label || routeOptionId;
       }
 
+      const inputZipBuffer = fs.readFileSync(getAbsoluteStoragePath(String(upload.inputRelativePath || "")));
+      const parsedAtp = parseUserShapefile(inputZipBuffer);
+      const sedeInfo = resolveSede(req.body, inputZipBuffer, parsedAtp.geometry, upload);
+      if (sedeInfo.possuiSede && !sedeInfo.sede) {
+        res.status(400).json({ error: "Marque no mapa onde fica a sede da propriedade." });
+        return;
+      }
+
+      // Caminho com vértices editados no site: a linha é a do usuário.
+      const edited = parseEditedCoordinates((req.body as any)?.editedCoordinates);
+      if (edited) {
+        route = buildRouteFromEditedLine(edited, route);
+        routeLabel = `${routeLabel || "Caminho"} (editado)`;
+      }
+
       const job = startJob({
         uid,
         endpoint: "/api/croqui/process",
@@ -579,6 +653,9 @@ export function registerCroquiRoutes(app: Express): void {
         municipioPartida: municipioPartida || null,
         routeOptionId: routeOptionId || null,
         routeLabel: routeLabel || null,
+        routeEdited: !!edited,
+        possuiSede: sedeInfo.possuiSede,
+        sede: sedeInfo.sede ? [sedeInfo.sede.lon, sedeInfo.sede.lat] : null,
         status: "processing",
         stage: "queued",
         percent: 1,
@@ -586,7 +663,17 @@ export function registerCroquiRoutes(app: Express): void {
         createdAt: new Date().toISOString(),
       });
       res.status(202).json({ ok: true, jobId: job.jobId });
-      void runCroquiJob({ uid, jobId: job.jobId, upload, title, propertyName, route, routeLabel, municipioPartida });
+      void runCroquiJob({
+        uid,
+        jobId: job.jobId,
+        upload,
+        title,
+        propertyName,
+        route,
+        routeLabel,
+        municipioPartida,
+        sedePoint: sedeInfo.sede,
+      });
     } catch (error: any) {
       res.status(400).json({ error: error?.message || "Falha ao iniciar croqui." });
     }

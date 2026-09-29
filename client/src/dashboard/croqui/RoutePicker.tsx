@@ -1,8 +1,20 @@
-import { Building2, CheckCircle2, ChevronDown, Loader2, MapPin, RotateCcw, Route } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import {
+  Building2,
+  CheckCircle2,
+  ChevronDown,
+  Home,
+  Loader2,
+  MapPin,
+  PenLine,
+  RotateCcw,
+  Route,
+  Undo2,
+} from 'lucide-react';
 import type { CroquiRouteOptionsResponse } from './types';
 import { formatKm, routeColor } from './routePreview';
 import { MUNICIPIOS_MT } from './municipiosMt';
-import StartPointMap from './StartPointMap';
+import StartPointMap, { type MapClickMode } from './StartPointMap';
 
 export type RoutePickerProps = {
   data: CroquiRouteOptionsResponse;
@@ -13,13 +25,26 @@ export type RoutePickerProps = {
   municipioPartida?: string | null;
   onMunicipioChange?: (municipio: string) => void;
   onResetToCityCenter?: () => void;
+  /** null = ainda não respondido (vale o que veio do ZIP). */
+  possuiSede?: boolean | null;
+  sede?: [number, number] | null;
+  onPossuiSedeChange?: (possui: boolean) => void;
+  onPlaceSede?: (lon: number, lat: number) => void;
+  editedCoords?: Record<string, [number, number][]>;
+  onEditRoute?: (routeId: string, coords: [number, number][] | null) => void;
 };
+
+function formatCoord([lon, lat]: [number, number]): string {
+  return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+}
 
 /**
  * O caminho mais curto nem sempre é o que se usa em campo. Aqui os corredores
  * encontrados aparecem lado a lado, sobre um mapa de satélite navegável
  * (pan/zoom livres), com opção de selecionar o município de partida ou arrastar/
- * clicar pra mudar de onde o croqui parte — antes de gerar.
+ * clicar pra mudar de onde o croqui parte — antes de gerar. Também é aqui que
+ * se diz se a propriedade tem sede (e onde) e que se ajustam os vértices do
+ * caminho escolhido.
  */
 export default function RoutePicker({
   data,
@@ -30,10 +55,26 @@ export default function RoutePicker({
   municipioPartida,
   onMunicipioChange,
   onResetToCityCenter,
+  possuiSede,
+  sede,
+  onPossuiSedeChange,
+  onPlaceSede,
+  editedCoords,
+  onEditRoute,
 }: RoutePickerProps) {
   const currentMunicipio =
     municipioPartida || data.municipioPartida || data.municipioNome || 'Canarana';
   const isCustomStart = data.startSource === 'customizado';
+  const temSede = !!possuiSede;
+  const [clickMode, setClickMode] = useState<MapClickMode>('partida');
+  const [editing, setEditing] = useState(false);
+  const selectedEdited = !!(selectedId && editedCoords?.[selectedId]);
+
+  // Sede marcada como "sim" e ainda sem ponto: o próximo clique no mapa é a sede.
+  useEffect(() => {
+    if (temSede && !sede) setClickMode('sede');
+    else if (!temSede) setClickMode('partida');
+  }, [temSede, sede]);
 
   const handleSelectMunicipio = (novo: string) => {
     if (!novo || novo === currentMunicipio || disabled) return;
@@ -49,6 +90,18 @@ export default function RoutePicker({
     }
   };
 
+  const handlePlaceSede = (lon: number, lat: number) => {
+    onPlaceSede?.(lon, lat);
+    setClickMode('partida');
+  };
+
+  const toggleBtn = (active: boolean) =>
+    `rounded-lg border px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-50 ${
+      active
+        ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-100'
+        : 'border-white/10 bg-black/30 text-slate-300 hover:border-white/25'
+    }`;
+
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
       <StartPointMap
@@ -57,6 +110,13 @@ export default function RoutePicker({
         onSelect={onSelect}
         onMoveStart={onMoveStart}
         disabled={disabled}
+        clickMode={clickMode}
+        possuiSede={temSede}
+        sede={sede}
+        onPlaceSede={handlePlaceSede}
+        editing={editing}
+        editedCoords={editedCoords}
+        onEditRoute={onEditRoute}
       />
 
       <div className="space-y-3">
@@ -120,14 +180,114 @@ export default function RoutePicker({
           </div>
         </div>
 
-        {/* Status da Partida / Rótulo */}
-        {data.startLabel && (
-          <p className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 text-xs text-slate-400">
-            <span className="font-semibold text-amber-200">Partida atual:</span> {data.startLabel}
-            {isCustomStart && (
-              <span className="ml-1 text-[10px] text-slate-500">(ajustado no mapa)</span>
+        {/* Sede da propriedade */}
+        <div className="rounded-xl border border-emerald-400/25 bg-emerald-500/[0.06] p-3 space-y-2">
+          <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-emerald-200">
+            <Home size={14} className="text-emerald-400" />
+            Sede da propriedade
+          </span>
+          <p className="text-[11px] text-slate-400">A propriedade possui sede?</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => !temSede && onPossuiSedeChange?.(true)}
+              className={toggleBtn(temSede)}
+            >
+              Sim
+            </button>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => possuiSede !== false && onPossuiSedeChange?.(false)}
+              className={toggleBtn(possuiSede === false)}
+            >
+              Não
+            </button>
+          </div>
+
+          {temSede && (
+            <>
+              {sede ? (
+                <p className="text-[11px] text-emerald-100/90">
+                  Sede marcada em <strong>{formatCoord(sede)}</strong>. O croqui termina nela, seguindo a
+                  estrada interna quando o mapa a conhece.
+                </p>
+              ) : (
+                <p className="text-[11px] font-semibold text-amber-300">
+                  Clique no mapa onde fica a sede (dentro do imóvel).
+                </p>
+              )}
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wider text-slate-500">O clique no mapa marca</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={disabled || editing}
+                    onClick={() => setClickMode('partida')}
+                    className={toggleBtn(clickMode === 'partida')}
+                  >
+                    Partida
+                  </button>
+                  <button
+                    type="button"
+                    disabled={disabled || editing}
+                    onClick={() => setClickMode('sede')}
+                    className={toggleBtn(clickMode === 'sede')}
+                  >
+                    Sede
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+          {possuiSede === false && (
+            <p className="text-[11px] text-slate-400">Sem sede: o croqui termina dentro do imóvel.</p>
+          )}
+        </div>
+
+        {/* Edição dos vértices */}
+        {onEditRoute && selectedId && (
+          <div className="rounded-xl border border-sky-400/25 bg-sky-500/[0.06] p-3 space-y-2">
+            <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-sky-200">
+              <PenLine size={14} className="text-sky-400" />
+              Ajustar o caminho
+            </span>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => setEditing((v) => !v)}
+                className={`rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50 ${
+                  editing
+                    ? 'border-sky-400/60 bg-sky-500/20 text-sky-100'
+                    : 'border-white/10 bg-black/30 text-slate-200 hover:border-white/25'
+                }`}
+              >
+                {editing ? 'Concluir edição' : 'Editar vértices do caminho'}
+              </button>
+              {selectedEdited && (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onEditRoute(selectedId, null)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:border-white/25 disabled:opacity-50"
+                >
+                  <Undo2 size={12} />
+                  Desfazer edição
+                </button>
+              )}
+            </div>
+            {editing && (
+              <p className="text-[11px] text-sky-100/80">
+                Arraste os pontos brancos; clique num “+” para criar um ponto; botão direito ou duplo clique
+                apaga um ponto. A linha passa exatamente por onde os pontos ficarem.
+              </p>
             )}
-          </p>
+            <p className="text-[10px] text-slate-500">
+              Mudar a partida, o município ou a sede recalcula os caminhos e descarta as edições.
+            </p>
+          </div>
         )}
 
         {/* Título de caminhos avaliados */}
@@ -147,6 +307,7 @@ export default function RoutePicker({
         <div className="space-y-2">
           {data.options.map((option, index) => {
             const selected = option.id === selectedId;
+            const edited = !!editedCoords?.[option.id];
             return (
               <button
                 key={option.id}
@@ -173,12 +334,20 @@ export default function RoutePicker({
                       {formatKm(option.totalDistanceM)}
                       {option.roads.length > 0 && ` · ${option.roads.join(', ')}`}
                     </p>
-                    {option.recommended && (
-                      <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-200">
-                        <CheckCircle2 size={10} />
-                        Mais curto
-                      </span>
-                    )}
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {option.recommended && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-200">
+                          <CheckCircle2 size={10} />
+                          Mais curto
+                        </span>
+                      )}
+                      {edited && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                          <PenLine size={10} />
+                          Editado
+                        </span>
+                      )}
+                    </div>
                   </div>
                   {selected && <MapPin size={16} className="shrink-0 text-amber-300" />}
                 </div>

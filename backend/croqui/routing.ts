@@ -40,6 +40,8 @@ export type RouteWaypoint = {
   roadName: string;
   /** Índice do ponto correspondente na geometria da rota. */
   coordIndex: number;
+  /** Onde o caminho cruza a divisa e entra no imóvel (croqui com sede). */
+  entrance?: boolean;
 };
 
 export type CroquiRoute = {
@@ -367,7 +369,7 @@ export async function fetchNearestOnRoad(
   }
 }
 
-function polygonBoundaryLines(geometry: Polygon | MultiPolygon): Feature<LineString>[] {
+export function polygonBoundaryLines(geometry: Polygon | MultiPolygon): Feature<LineString>[] {
   const asLine = polygonToLine({ type: "Feature", properties: {}, geometry } as never) as
     | Feature<LineString>
     | { type: "FeatureCollection"; features: Feature<LineString>[] };
