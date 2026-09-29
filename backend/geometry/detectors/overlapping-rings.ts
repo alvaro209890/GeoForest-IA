@@ -2,7 +2,7 @@
  * Detector: anéis sobrepostos dentro do MESMO registro (borda compartilhada ≥ 1 m).
  */
 import "../../proj-defs";
-import proj4 from "proj4";
+import { getProjConverter } from "../../lib/proj-cache";
 import { featureCollection as turfFeatureCollection, intersect as turfIntersect } from "@turf/turf";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 import type { CodedCrs, ParsedPolygonRecord } from "../../vertices-proximas";
@@ -25,7 +25,7 @@ export function ringsSharedBoundaryLengthM(
   if (ringA.length < 2 || ringB.length < 2) return 0;
   const projected = crs?.kind === "projected";
   // SIRGAS 2000 ≈ WGS84 no domínio do MT; evita depender de defs EPSG no proj4.
-  const toM = projected ? null : proj4("WGS84", metricProjDef);
+  const toM = projected ? null : getProjConverter("WGS84", metricProjDef);
   const project = (p: number[]): [number, number] => {
     if (!toM) return [Number(p[0]), Number(p[1])];
     const m = toM.forward([Number(p[0]), Number(p[1])]) as [number, number];
