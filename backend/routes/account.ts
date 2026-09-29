@@ -38,16 +38,28 @@ export function registerAccountRoutes(app: Express) {
 
   app.patch("/api/me", async (req: Request, res: Response) => {
     const uid = String((req as any).authUid || "").trim();
-    const current = readDocBySegments(["users", uid]) || {};
-    const next = writeDocBySegments(
-      ["users", uid],
-      stripUndefinedDeep({
-        ...current,
-        ...materializeServerTimestamps((req.body as any) || {}),
-        uid,
-      }),
-      { merge: true },
-    );
-    res.json(next);
+    if (!uid) {
+      res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+      return;
+    }
+    try {
+      const current = readDocBySegments(["users", uid]) || {};
+      const next = writeDocBySegments(
+        ["users", uid],
+        stripUndefinedDeep({
+          ...current,
+          ...materializeServerTimestamps((req.body as any) || {}),
+          uid,
+        }),
+        { merge: true },
+      );
+      res.json(next);
+    } catch (error: any) {
+      console.error("[/api/me] falha ao gravar perfil:", error);
+      res.status(500).json({
+        error: `Falha ao gravar o perfil no banco local: ${String(error?.code || error?.message || "erro sem mensagem")}.`,
+        code: "PROFILE_WRITE_FAILED",
+      });
+    }
   });
 }

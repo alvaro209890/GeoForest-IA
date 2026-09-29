@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { describeUpstreamError } from "./lib/upstream-error";
 
 const SIMCAR_PUBLIC_API =
   "https://monitoramento.sema.mt.gov.br/simcar/tecnico.api/api/Publico";
@@ -173,7 +174,10 @@ export function registerSimcarReceiptRoutes(app: Express) {
         return;
       }
       console.error("[SIMCAR RECEIPTS] search failed:", error);
-      res.status(502).json({ error: "Falha ao consultar recibos no SIMCAR público." });
+      res.status(502).json({
+        error: `Falha ao consultar recibos no SIMCAR público: ${describeUpstreamError(error, "o SIMCAR público")}`,
+        code: "SIMCAR_PUBLICO_INDISPONIVEL",
+      });
     }
   });
 
@@ -194,7 +198,14 @@ export function registerSimcarReceiptRoutes(app: Express) {
       res.send(pdf);
     } catch (error) {
       console.error("[SIMCAR RECEIPTS] download failed:", error);
-      res.status(502).json({ error: "Falha ao baixar o recibo no SIMCAR público." });
+      const detail =
+        String((error as any)?.message || "") === "SIMCAR_DOWNLOAD_INVALID_PDF"
+          ? "o SIMCAR respondeu, mas o arquivo devolvido não é um PDF."
+          : describeUpstreamError(error, "o SIMCAR público");
+      res.status(502).json({
+        error: `Falha ao baixar o recibo no SIMCAR público: ${detail}`,
+        code: "SIMCAR_PUBLICO_INDISPONIVEL",
+      });
     }
   });
 }
