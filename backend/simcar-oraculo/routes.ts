@@ -68,6 +68,28 @@ function uidOf(req: Request): string {
   return String((req as any).authUid || "").trim();
 }
 
+/**
+ * Fluxo oráculo DESATIVADO PARA SEMPRE (decisão do Álvaro, 2026-08-05 —
+ * docs/FLUXO_ORACULO_SIMCAR_DESATIVADO.md). As rotas seguem registradas, mas
+ * nenhuma delas pode logar no SIMCAR com a conta técnica do servidor: a sessão
+ * é única (derruba quem estiver usando) e erro de login suspende a conta da RT.
+ * Leitura de job/artefato já persistido continua liberada.
+ */
+export const ORACULO_DESATIVADO_CODE = "SIMCAR_ORACULO_DESATIVADO";
+
+/** Sempre `true`. É função (e não `return` direto) para o TS seguir checando o código legado abaixo da guarda. */
+function oraculoFluxoDesativado(): boolean {
+  return true;
+}
+
+function sendOraculoDesativado(res: Response): void {
+  res.status(410).json({
+    error:
+      "O fluxo oráculo SIMCAR (importar/processar com a conta técnica do servidor) foi desativado em 05/08/2026 e não será religado.",
+    code: ORACULO_DESATIVADO_CODE,
+  });
+}
+
 export function buildImportCompletionPatch(args: {
   outcome: SimcarImportOutcome;
   importPdfRelativePath: string | null;
@@ -142,6 +164,10 @@ export function registerSimcarOraculoRoutes(app: Express): void {
         res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
         return;
       }
+      if (oraculoFluxoDesativado()) {
+        sendOraculoDesativado(res);
+        return;
+      }
       const c = getSimcarOraculoConfig();
       if (!c.credentialsConfigured) {
         res.status(503).json({
@@ -173,6 +199,10 @@ export function registerSimcarOraculoRoutes(app: Express): void {
         res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
         return;
       }
+      if (oraculoFluxoDesativado()) {
+        sendOraculoDesativado(res);
+        return;
+      }
       const c = getSimcarOraculoConfig();
       if (!c.credentialsConfigured) {
         res.status(503).json({
@@ -193,6 +223,10 @@ export function registerSimcarOraculoRoutes(app: Express): void {
       const uid = uidOf(req);
       if (!uid) {
         res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      if (oraculoFluxoDesativado()) {
+        sendOraculoDesativado(res);
         return;
       }
       const cfg = getSimcarOraculoConfig();
@@ -431,6 +465,10 @@ export function registerSimcarOraculoRoutes(app: Express): void {
         res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
         return;
       }
+      if (oraculoFluxoDesativado()) {
+        sendOraculoDesativado(res);
+        return;
+      }
       const c = getSimcarOraculoConfig();
       if (!c.credentialsConfigured) {
         res.status(503).json({
@@ -524,6 +562,10 @@ export function registerSimcarOraculoRoutes(app: Express): void {
       const uid = uidOf(req);
       if (!uid) {
         res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+        return;
+      }
+      if (oraculoFluxoDesativado()) {
+        sendOraculoDesativado(res);
         return;
       }
       const c = getSimcarOraculoConfig();
