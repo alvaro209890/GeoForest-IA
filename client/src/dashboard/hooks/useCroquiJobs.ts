@@ -28,6 +28,7 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
   const [croquiTitle, setCroquiTitle] = useState('');
   const [croquiPropertyName, setCroquiPropertyName] = useState('');
   const [croquiMunicipio, setCroquiMunicipio] = useState('');
+  const [croquiMunicipioPartida, setCroquiMunicipioPartida] = useState<string | null>(null);
   const [croquiFile, setCroquiFile] = useState<File | null>(null);
   const [croquiUploading, setCroquiUploading] = useState(false);
   const [croquiRoutes, setCroquiRoutes] = useState<CroquiRouteOptionsResponse | null>(null);
@@ -54,6 +55,7 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     setCroquiFiles([]);
     setCroquiFilename('');
     setCroquiMunicipio('');
+    setCroquiMunicipioPartida(null);
     setCroquiFile(null);
     setCroquiRoutes(null);
     setCroquiRouteId(null);
@@ -137,6 +139,13 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
       setCroquiTitle(entry.title || '');
       setCroquiPropertyName(entry.propertyName || '');
       setCroquiMunicipio(entry.municipioNome || '');
+      if (entry.municipioPartida) {
+        setCroquiMunicipioPartida(entry.municipioPartida);
+      } else if (entry.municipioNome) {
+        setCroquiMunicipioPartida(entry.municipioNome);
+      } else {
+        setCroquiMunicipioPartida(null);
+      }
       setCroquiProgress(entry.percent);
       setCroquiStage(entry.stage || '');
       setCroquiMessage(entry.message || '');
@@ -235,6 +244,7 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
       setCroquiTitle('');
       setCroquiPropertyName('');
       setCroquiMunicipio(summary.municipioNome || '');
+      setCroquiMunicipioPartida(summary.municipioNome || null);
       setCroquiRoutes(null);
       setCroquiRouteId(null);
       setCroquiError(null);
@@ -253,16 +263,22 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     async (
       uploadId: string,
       startOverride?: { lon: number; lat: number } | null,
+      municipioPartidaOverride?: string | null,
     ): Promise<CroquiRouteOptionsResponse | null> => {
       setCroquiLoadingRoutes(true);
       setCroquiError(null);
       try {
+        const municipioToSend =
+          municipioPartidaOverride !== undefined
+            ? (municipioPartidaOverride || undefined)
+            : (croquiMunicipioPartida || undefined);
         const response = await apiFetch('/api/croqui/route-options', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             uploadId,
             ...(startOverride ? { startLon: startOverride.lon, startLat: startOverride.lat } : {}),
+            ...(municipioToSend ? { municipioPartida: municipioToSend } : {}),
           }),
         });
         if (!response.ok) {
@@ -272,12 +288,15 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
         const data = await response.json();
         const parsed: CroquiRouteOptionsResponse = {
           municipioNome: String(data?.municipioNome || ''),
+          municipioPartida: data?.municipioPartida ? String(data.municipioPartida) : undefined,
           options: Array.isArray(data?.options) ? data.options : [],
           atp: Array.isArray(data?.atp) ? data.atp : [],
           start: Array.isArray(data?.start) ? data.start : null,
           startLabel: data?.startLabel ? String(data.startLabel) : undefined,
           startSource: data?.startSource ? String(data.startSource) : undefined,
         };
+        const activeMunicipio = parsed.municipioPartida || parsed.municipioNome;
+        if (activeMunicipio) setCroquiMunicipioPartida(activeMunicipio);
         if (parsed.municipioNome) setCroquiMunicipio(parsed.municipioNome);
         setCroquiRoutes(parsed);
         setCroquiRouteId(
@@ -294,7 +313,7 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
         setCroquiLoadingRoutes(false);
       }
     },
-    [apiFetch],
+    [apiFetch, croquiMunicipioPartida],
   );
 
   /** Move a partida do croqui e manda o backend recalcular os caminhos a partir dali. */
@@ -304,7 +323,18 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
         toast.error('Envie o ZIP da ATP antes de mudar o ponto de partida.');
         return null;
       }
-      return loadCroquiRouteOptions(croquiUploadId, { lon, lat });
+      return loadCroquiRouteOptions(croquiUploadId, { lon, lat }, croquiMunicipioPartida);
+    },
+    [croquiUploadId, croquiMunicipioPartida, loadCroquiRouteOptions],
+  );
+
+  /** Altera o município de partida do croqui e recalcula os caminhos a partir da nova sede. */
+  const changeCroquiMunicipioPartida = useCallback(
+    async (municipio: string): Promise<CroquiRouteOptionsResponse | null> => {
+      setCroquiMunicipioPartida(municipio);
+      if (!croquiUploadId) return null;
+      // Ao mudar de município, limpamos o ponto customizado para focar na nova sede
+      return loadCroquiRouteOptions(croquiUploadId, null, municipio);
     },
     [croquiUploadId, loadCroquiRouteOptions],
   );
@@ -347,10 +377,11 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     setCroquiProgress(1);
     setCroquiMessage('Gerando croqui...');
     try {
+      const municipioPartida = croquiMunicipioPartida || croquiMunicipio || undefined;
       const response = await apiFetch('/api/croqui/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uploadId, title, propertyName, routeOptionId }),
+        body: JSON.stringify({ uploadId, title, propertyName, routeOptionId, municipioPartida }),
       });
       if (!response.ok) {
         const err = await readApiError(response);
@@ -433,6 +464,9 @@ export function useCroquiJobs({ apiFetch, downloadZip, fileToBase64Payload }: Us
     croquiPropertyName,
     setCroquiPropertyName,
     croquiMunicipio,
+    croquiMunicipioPartida,
+    setCroquiMunicipioPartida,
+    changeCroquiMunicipioPartida,
     croquiFile,
     croquiUploading,
     croquiRoutes,

@@ -27,7 +27,7 @@ import { finishJob, isCancelRequested, requestCancel, startJob } from "./process
 import { parseUserShapefile } from "./simcar";
 import { detectarMunicipioMtComFallback, getMunicipioFeatureByIbge } from "./simcar-oraculo/municipio-mt";
 import { safeFileStem } from "./croqui/coords";
-import { resolveLandmark } from "./croqui/landmarks";
+import { findSedeMunicipal, listarMunicipiosMt, resolveLandmark } from "./croqui/landmarks";
 import { buildCroquiNarrative } from "./croqui/narrative";
 import {
   destinationOnPolygonBoundary,
@@ -75,20 +75,29 @@ type CroquiContext = {
 };
 
 /** Município, ponto de partida e centroide — o que toda rota do croqui precisa. */
-async function resolveCroquiContext(atpGeometry: Polygon | MultiPolygon): Promise<CroquiContext> {
+async function resolveCroquiContext(
+  atpGeometry: Polygon | MultiPolygon,
+  municipioPartida?: string | null,
+): Promise<CroquiContext> {
   const c = centroid({ type: "Feature", properties: {}, geometry: atpGeometry });
   const [centLon, centLat] = c.geometry.coordinates;
-  const municipio = (await detectarMunicipioMtComFallback([centLon, centLat])) || {
+  const municipioDetectado = (await detectarMunicipioMtComFallback([centLon, centLat])) || {
     nome: null,
     ibge: null,
     fonte: "nao-detectado" as const,
   };
+
+  const sedeEscolhida = municipioPartida ? findSedeMunicipal(municipioPartida) : null;
+  const municipioNome =
+    sedeEscolhida?.nome || (municipioPartida?.trim() || municipioDetectado.nome || "Mato Grosso");
+  const ibge = sedeEscolhida?.ibge || (sedeEscolhida ? null : municipioDetectado.ibge);
+
   return {
-    municipioNome: municipio.nome || "Mato Grosso",
+    municipioNome,
     landmark: resolveLandmark(
-      municipio.nome,
-      municipio.ibge,
-      getMunicipioFeatureByIbge(municipio.ibge),
+      municipioNome,
+      ibge,
+      ibge ? getMunicipioFeatureByIbge(ibge) : getMunicipioFeatureByIbge(municipioDetectado.ibge),
     ),
     centLon,
     centLat,
@@ -103,6 +112,9 @@ async function resolveCroquiContext(atpGeometry: Polygon | MultiPolygon): Promis
  * curado não é onde ele realmente sai em campo) e mandar recalcular os
  * caminhos a partir dali — o município e o centroide do imóvel continuam
  * vindo do ATP, só a partida muda.
+ *
+ * `municipioPartida` permite selecionar a cidade de partida (ex.: sede do
+ * município vizinho de onde se parte para a fazenda).
  */
 export async function buildCroquiRouteOptions(args: {
   atpGeometry: Polygon | MultiPolygon;
@@ -110,12 +122,13 @@ export async function buildCroquiRouteOptions(args: {
   /** Ponto da sede da propriedade, detectado no ZIP da ATP. */
   sedePoint?: SedePoint | null;
   onProgress?: (message: string) => void;
+  municipioPartida?: string | null;
 }): Promise<{
   municipioNome: string;
   options: RouteOption[];
   start: { lon: number; lat: number; label: string; source: "curado" | "sede-ibge" | "centroide" | "customizado" };
 }> {
-  const context = await resolveCroquiContext(args.atpGeometry);
+  const context = await resolveCroquiContext(args.atpGeometry, args.municipioPartida);
   const override = args.startOverride;
   const hasOverride =
     !!override && Number.isFinite(override.lon) && Number.isFinite(override.lat);
@@ -194,6 +207,7 @@ export async function generateCroquiArtifacts(args: {
   route?: CroquiRoute | null;
   /** Ponto da sede da propriedade, detectado no ZIP da ATP. */
   sedePoint?: SedePoint | null;
+  municipioPartida?: string | null;
 }): Promise<{
   narrative: string;
   municipioNome: string;
@@ -201,8 +215,11 @@ export async function generateCroquiArtifacts(args: {
   hasBasemapImage: boolean;
   basemapProvider: BasemapProvider | null;
 }> {
-  const { atpGeometry, title, propertyName } = args;
-  const { municipioNome, landmark, centLon, centLat } = await resolveCroquiContext(atpGeometry);
+  const { atpGeometry, title, propertyName, municipioPartida } = args;
+  const { municipioNome, landmark, centLon, centLat } = await resolveCroquiContext(
+    atpGeometry,
+    municipioPartida,
+  );
   const route = args.route || (await routeToBoundary(atpGeometry, landmark, centLon, centLat, args.sedePoint));
   // Rota guardada (escolhida pelo usuário) já termina dentro; reforça a
   // garantia aqui também, para nenhum caminho de geração escapar do fim interior.
@@ -276,8 +293,9 @@ async function runCroquiJob(args: {
   propertyName: string;
   route?: CroquiRoute | null;
   routeLabel?: string;
+  municipioPartida?: string | null;
 }): Promise<void> {
-  const { uid, jobId, upload, title, propertyName } = args;
+  const { uid, jobId, upload, title, propertyName, municipioPartida } = args;
   try {
     if (isCancelRequested(jobId)) {
       progress(uid, jobId, { status: "cancelled", percent: 100, message: "Cancelado." });
@@ -307,6 +325,7 @@ async function runCroquiJob(args: {
       propertyName,
       route: args.route,
       sedePoint,
+      municipioPartida,
     });
 
     if (isCancelRequested(jobId)) {
@@ -404,6 +423,16 @@ export function registerCroquiRoutes(app: Express): void {
     }
   });
 
+  app.get("/api/croqui/municipios", (_req: Request, res: Response) => {
+    try {
+      const municipios = listarMunicipiosMt();
+      res.json({ ok: true, municipios });
+    } catch (error: any) {
+      console.error("[CROQUI] municipios failed:", error?.message || error);
+      res.status(500).json({ error: error?.message || "Falha ao listar municípios de MT." });
+    }
+  });
+
   app.post("/api/croqui/route-options", async (req: Request, res: Response) => {
     try {
       const uid = String((req as any).authUid || "").trim();
@@ -433,6 +462,11 @@ export function registerCroquiRoutes(app: Express): void {
 
       const rawStartLon = Number((req.body as any)?.startLon);
       const rawStartLat = Number((req.body as any)?.startLat);
+      const rawMunicipioPartida = (req.body as any)?.municipioPartida;
+      const municipioPartida =
+        typeof rawMunicipioPartida === "string" && rawMunicipioPartida.trim()
+          ? rawMunicipioPartida.trim()
+          : null;
       const startOverride =
         Number.isFinite(rawStartLon) && Number.isFinite(rawStartLat)
           ? { lon: rawStartLon, lat: rawStartLat }
@@ -442,6 +476,7 @@ export function registerCroquiRoutes(app: Express): void {
         atpGeometry: parsed.geometry,
         startOverride,
         sedePoint,
+        municipioPartida,
       });
       const routesRelativePath = saveRouteOptions(uid, uploadId, options);
       const payload = options.map(toRouteOptionPayload);
@@ -453,12 +488,14 @@ export function registerCroquiRoutes(app: Express): void {
 
       persistJob(uid, uploadId, {
         municipioNome,
+        municipioPartida: municipioPartida || municipioNome,
         routesRelativePath,
         routeOptions: payload.map(({ coordinates, ...rest }) => rest),
       });
       res.json({
         ok: true,
         municipioNome,
+        municipioPartida: municipioPartida || municipioNome,
         options: payload,
         atp: atpRings,
         start: [startPoint.lon, startPoint.lat],
@@ -499,6 +536,16 @@ export function registerCroquiRoutes(app: Express): void {
         return;
       }
 
+      const rawMunicipioPartida = (req.body as any)?.municipioPartida;
+      const municipioPartida =
+        typeof rawMunicipioPartida === "string" && rawMunicipioPartida.trim()
+          ? rawMunicipioPartida.trim()
+          : (typeof upload.municipioPartida === "string" && upload.municipioPartida.trim()
+              ? upload.municipioPartida.trim()
+              : (typeof upload.municipioNome === "string" && upload.municipioNome.trim()
+                  ? upload.municipioNome.trim()
+                  : null));
+
       const routeOptionId = String((req.body as any)?.routeOptionId || "").trim();
       let route: CroquiRoute | null = null;
       let routeLabel = "";
@@ -515,7 +562,7 @@ export function registerCroquiRoutes(app: Express): void {
       const job = startJob({
         uid,
         endpoint: "/api/croqui/process",
-        metadata: { uploadId, title, propertyName, filename: upload.filename, routeOptionId },
+        metadata: { uploadId, title, propertyName, filename: upload.filename, routeOptionId, municipioPartida },
       });
       persistJob(uid, job.jobId, {
         type: "process",
@@ -523,6 +570,8 @@ export function registerCroquiRoutes(app: Express): void {
         filename: upload.filename,
         title,
         propertyName,
+        municipioNome: municipioPartida || (upload.municipioNome as string) || null,
+        municipioPartida: municipioPartida || null,
         routeOptionId: routeOptionId || null,
         routeLabel: routeLabel || null,
         status: "processing",
@@ -532,7 +581,7 @@ export function registerCroquiRoutes(app: Express): void {
         createdAt: new Date().toISOString(),
       });
       res.status(202).json({ ok: true, jobId: job.jobId });
-      void runCroquiJob({ uid, jobId: job.jobId, upload, title, propertyName, route, routeLabel });
+      void runCroquiJob({ uid, jobId: job.jobId, upload, title, propertyName, route, routeLabel, municipioPartida });
     } catch (error: any) {
       res.status(400).json({ error: error?.message || "Falha ao iniciar croqui." });
     }

@@ -101,14 +101,21 @@ O shapefile ATP enviado fica salvo por 24h e pode ser reutilizado sem subir o ZI
 O endpoint `GET /api/croqui/uploads` retorna a lista; `selectExistingUpload` no frontend
 preenche o `uploadId` e o `filename` sem precisar fazer upload de novo.
 
-## Ponto de partida
+## Ponto de partida e seleção de município
+
+O croqui permite selecionar qualquer um dos **142 municípios de Mato Grosso** como ponto de partida da rota.
+
+Por padrão, o sistema detecta automaticamente o município onde o imóvel está situado. No painel de opções (`RoutePicker`), o usuário pode trocar para qualquer outro município de MT através de um seletor dedicado — útil quando a fazenda tem acesso viário por cidade vizinha (ex.: Canarana em vez de Gaúcha do Norte, Querência em vez de Ribeirão Cascalheira).
+
+Ao trocar de município, os caminhos de acesso são recalculados instantaneamente partindo da sede da cidade selecionada. Caso o usuário queira refinar o ponto exato, pode clicar ou arrastar o pino amarelo no mapa Leaflet (com botão para "Restaurar sede" a qualquer momento).
 
 `resolveLandmark` consulta, nesta ordem:
 
 1. **Landmark curado** (`LANDMARKS_BY_IBGE` em `backend/croqui/landmarks.ts`) — conferido à mão
-   contra um croqui modelo. Hoje só Querência, com a rotatória da MT-109 com a Av. Norte.
-2. **Sede do município** (`config/sedes-mt.json`) — 142 municípios, cada sede validada dentro do
+   contra um croqui modelo. Ex.: Querência (`5107065`), com a rotatória da MT-109 com a Av. Norte.
+2. **Sede do município** (`config/sedes-mt.json`) — 142 municípios de MT, cada sede validada dentro do
    polígono da malha IBGE e encaixada na via mais próxima pelo OSRM (todas a ≤ 65 m de estrada).
+   `carregarSedesPorNome()` indexa por nome normalizado para permitir busca com ou sem acentos.
 3. **Centroide da malha** — último recurso; cai com frequência longe de qualquer estrada.
 
 Use um landmark curado quando a sede não for o ponto de partida certo para aquele município.

@@ -45,6 +45,8 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
     croquiDownload,
     croquiFiles,
     croquiMunicipio,
+    croquiMunicipioPartida,
+    changeCroquiMunicipioPartida,
     croquiFilename,
     croquiRoutes,
     croquiRouteId,
@@ -361,9 +363,9 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
           </div>
 
           {croquiLoadingRoutes && (
-            <p className="flex items-center gap-2 text-xs text-slate-400">
+            <p className="flex items-center gap-2 text-xs text-amber-300">
               <Loader2 size={13} className="animate-spin" />
-              Procurando os caminhos de acesso possíveis — isso leva alguns segundos.
+              Procurando caminhos de acesso{croquiMunicipioPartida ? ` a partir de ${croquiMunicipioPartida}` : ''} — isso leva alguns segundos.
             </p>
           )}
 
@@ -391,6 +393,13 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
                 onSelect={setCroquiRouteId}
                 disabled={busy}
                 onMoveStart={handleMoveStart}
+                municipioPartida={
+                  croquiMunicipioPartida ||
+                  croquiRoutes.municipioPartida ||
+                  croquiRoutes.municipioNome ||
+                  croquiMunicipio
+                }
+                onMunicipioChange={changeCroquiMunicipioPartida}
               />
             </div>
           )}
@@ -407,8 +416,19 @@ export default function CroquiPanel({ croqui }: CroquiPanelProps) {
             </div>
           )}
 
-          {croquiMunicipio && (
-            <p className="text-xs text-amber-200/80">Município detectado: {croquiMunicipio}</p>
+          {(croquiMunicipio || croquiMunicipioPartida) && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {croquiMunicipio && (
+                <span className="text-slate-400">
+                  Município do imóvel: <strong className="text-slate-200">{croquiMunicipio}</strong>
+                </span>
+              )}
+              {croquiMunicipioPartida && croquiMunicipioPartida !== croquiMunicipio && (
+                <span className="text-amber-200/90 font-medium">
+                  • Partida do croqui: <strong className="text-amber-300">{croquiMunicipioPartida}</strong>
+                </span>
+              )}
+            </div>
           )}
 
           {croquiError && (

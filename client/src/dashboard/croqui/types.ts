@@ -17,8 +17,16 @@ export type CroquiRouteOption = {
   coordinates: [number, number][];
 };
 
+export type MunicipioOption = {
+  ibge: string;
+  nome: string;
+  lon?: number;
+  lat?: number;
+};
+
 export type CroquiRouteOptionsResponse = {
   municipioNome: string;
+  municipioPartida?: string;
   options: CroquiRouteOption[];
   atp: [number, number][][];
   start: [number, number] | null;
@@ -34,6 +42,7 @@ export type CroquiHistoryItem = {
   title?: string;
   propertyName?: string;
   municipioNome?: string;
+  municipioPartida?: string;
   timestamp: string;
   createdAt?: string;
   updatedAt?: string;

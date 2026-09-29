@@ -17,7 +17,8 @@ export type CroquiLandmark = {
 
 /** Pontos conferidos à mão contra os croquis modelo; têm prioridade sobre a sede. */
 const LANDMARKS_BY_IBGE: Record<string, Omit<CroquiLandmark, "fonte">> = {
-  "5107909": {
+  // Querência — rotatória de saída para a MT-109
+  "5107065": {
     label: "rotatória entre a Av. Norte e a MT-109",
     lon: -52.2196222,
     lat: -12.5900389,
@@ -26,7 +27,7 @@ const LANDMARKS_BY_IBGE: Record<string, Omit<CroquiLandmark, "fonte">> = {
 };
 
 const LANDMARKS_BY_NAME: Record<string, Omit<CroquiLandmark, "fonte">> = {
-  QUERENCIA: LANDMARKS_BY_IBGE["5107909"],
+  QUERENCIA: LANDMARKS_BY_IBGE["5107065"],
 };
 
 type SedeMunicipal = {
@@ -40,6 +41,7 @@ type SedeMunicipal = {
 };
 
 let sedesCache: Map<string, SedeMunicipal> | null = null;
+let sedesPorNomeCache: Map<string, SedeMunicipal> | null = null;
 
 function sedesPath(): string | null {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -57,12 +59,16 @@ export function carregarSedesMt(): Map<string, SedeMunicipal> {
   if (sedesCache) return sedesCache;
   const found = sedesPath();
   const map = new Map<string, SedeMunicipal>();
+  const mapNome = new Map<string, SedeMunicipal>();
   if (found) {
     try {
       const parsed = JSON.parse(fs.readFileSync(found, "utf8")) as { items?: SedeMunicipal[] };
       for (const item of parsed.items || []) {
         if (item?.ibge && Number.isFinite(item.lon) && Number.isFinite(item.lat)) {
           map.set(String(item.ibge), item);
+          if (item.nome) {
+            mapNome.set(normalizarNomeMunicipio(item.nome), item);
+          }
         }
       }
     } catch (error) {
@@ -70,11 +76,51 @@ export function carregarSedesMt(): Map<string, SedeMunicipal> {
     }
   }
   sedesCache = map;
+  sedesPorNomeCache = mapNome;
   return map;
+}
+
+export function carregarSedesPorNome(): Map<string, SedeMunicipal> {
+  if (!sedesPorNomeCache) carregarSedesMt();
+  return sedesPorNomeCache || new Map();
 }
 
 export function __resetSedesCacheForTests(): void {
   sedesCache = null;
+  sedesPorNomeCache = null;
+}
+
+export function findSedeMunicipal(termoOuIbge: string | null | undefined): SedeMunicipal | null {
+  if (!termoOuIbge) return null;
+  const trimmed = termoOuIbge.trim();
+  if (!trimmed) return null;
+  const porIbge = carregarSedesMt();
+  if (porIbge.has(trimmed)) return porIbge.get(trimmed) || null;
+  const porNome = carregarSedesPorNome();
+  const key = normalizarNomeMunicipio(trimmed);
+  if (porNome.has(key)) return porNome.get(key) || null;
+  return null;
+}
+
+export type MunicipioPartidaInfo = {
+  ibge: string;
+  nome: string;
+  lon: number;
+  lat: number;
+};
+
+export function listarMunicipiosMt(): MunicipioPartidaInfo[] {
+  const sedes = carregarSedesMt();
+  const list: MunicipioPartidaInfo[] = [];
+  for (const s of sedes.values()) {
+    list.push({
+      ibge: s.ibge,
+      nome: s.nome,
+      lon: Number.isFinite(s.lonVia) && s.lonVia !== null ? s.lonVia : s.lon,
+      lat: Number.isFinite(s.latVia) && s.latVia !== null ? s.latVia : s.lat,
+    });
+  }
+  return list.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 }
 
 export type PlaceLabel = { nome: string; lon: number; lat: number };
@@ -107,7 +153,9 @@ export function resolveLandmark(
   const key = normalizarNomeMunicipio(municipioNome || "");
   if (key && LANDMARKS_BY_NAME[key]) return { ...LANDMARKS_BY_NAME[key], fonte: "curado" };
 
-  const sede = ibge ? carregarSedesMt().get(ibge) : null;
+  const sede =
+    (ibge ? carregarSedesMt().get(ibge) : null) ||
+    (key ? carregarSedesPorNome().get(key) : null);
   if (sede) {
     const temVia = Number.isFinite(sede.lonVia) && Number.isFinite(sede.latVia);
     return {
