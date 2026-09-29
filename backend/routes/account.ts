@@ -27,13 +27,27 @@ export function registerAccountRoutes(app: Express) {
 
   app.get("/api/me", async (req: Request, res: Response) => {
     const uid = String((req as any).authUid || "").trim();
-    const token = await adminAuth.verifyIdToken(String(req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
-    const profile = upsertUserProfile({
-      uid,
-      email: String(token.email || "").trim(),
-      fullName: String(token.name || "").trim() || String(token.email || "").split("@")[0],
-    });
-    res.json(profile);
+    if (!uid) {
+      res.status(401).json({ error: "Usuário não autenticado.", code: "UNAUTHENTICATED" });
+      return;
+    }
+    // Mesmo motivo do PATCH: rejeição em handler async no Express 4 deixa a
+    // requisição pendurada (verifyIdToken ou erro de disco no upsert).
+    try {
+      const token = await adminAuth.verifyIdToken(String(req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
+      const profile = upsertUserProfile({
+        uid,
+        email: String(token.email || "").trim(),
+        fullName: String(token.name || "").trim() || String(token.email || "").split("@")[0],
+      });
+      res.json(profile);
+    } catch (error: any) {
+      console.error("[/api/me] falha ao ler/provisionar perfil:", error);
+      res.status(500).json({
+        error: `Falha ao ler o perfil: ${String(error?.code || error?.message || "erro sem mensagem")}.`,
+        code: "PROFILE_READ_FAILED",
+      });
+    }
   });
 
   app.patch("/api/me", async (req: Request, res: Response) => {
