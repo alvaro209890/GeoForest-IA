@@ -1,6 +1,8 @@
 /**
  * Configuração do pipeline CBERS (STAC, coleções, timeouts, realce, GeoServer).
  */
+import path from "node:path";
+import { STORAGE_ROOT } from "../local-storage";
 import { CbersCollectionConfig, CbersCollectionLevel } from "./types";
 
 export const STAC_ROOT = String(
@@ -15,7 +17,9 @@ export const CBERS_COLLECTIONS: CbersCollectionConfig[] = [
   },
 ];
 export const CBERS_REQUIRED_ASSETS = ["BAND3", "BAND4", "BAND2", "BAND0"] as const;
-export const CBERS_TMP_ROOT = process.env.CBERS_TMP_ROOT || "/tmp/geoforest-cbers-wpm";
+// No HD do storage, não em /tmp: uma folha WPM inteira passa de 14 GB de intermediários
+// (bandas + fusão 16 bits + saída 8 bits) e o SSD do sistema não comporta.
+export const CBERS_TMP_ROOT = process.env.CBERS_TMP_ROOT || path.join(STORAGE_ROOT, "_tmp", "cbers-wpm");
 export const CBERS_SEARCH_LIMIT = Math.max(1, Number(process.env.CBERS_SEARCH_LIMIT || 50));
 export const CBERS_ORBIT_POINT_SEARCH_MAX_PAGES = Math.max(
   1,
