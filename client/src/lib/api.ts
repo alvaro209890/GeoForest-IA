@@ -25,7 +25,22 @@ export function apiUrl(path: string): string {
 export function resolveBackendUrl(url?: string): string {
   const raw = String(url || '').trim();
   if (!raw) return '';
-  return raw.startsWith('/api/') ? apiUrl(raw) : raw;
+  if (raw.startsWith('/api/')) return apiUrl(raw);
+
+  // O histórico pode guardar o domínio anterior à conexão usada pelo app.
+  // Resolve apenas rotas da nossa API; arquivos externos mantêm sua origem.
+  try {
+    const parsed = new URL(raw);
+    if (
+      parsed.origin === DEFAULT_PRODUCTION_API_BASE &&
+      parsed.pathname.startsWith('/api/')
+    ) {
+      return apiUrl(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+    }
+  } catch {
+    // Preserva valores que não são URLs absolutas.
+  }
+  return raw;
 }
 
 export async function fileToBase64(file: File): Promise<string> {
