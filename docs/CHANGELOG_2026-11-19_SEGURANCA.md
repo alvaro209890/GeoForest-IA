@@ -66,22 +66,26 @@ Coloque em `~/.config/geoforest/backend.env` só se precisar mudar:
 |---|---|---|
 | `RATE_LIMIT_ENABLED` | `1` | `0` desliga o rate limit |
 | `RATE_LIMIT_GENERAL_PER_MIN` | `3000` | requisições/min por IP em `/api` |
-| `RATE_LIMIT_HEAVY_PER_MIN` | `60` | requisições/min por IP nas rotas caras |
-| `RATE_LIMIT_WINDOW_MS` | `60000` | janela |
+| `RATE_LIMIT_HEAVY_PER_MIN` | `60` | requisições/min por IP nas rotas caras || `RATE_LIMIT_WINDOW_MS` | `60000` | janela |
 | `SIMCAR_ORACULO_ROUTES_ENABLED` | `0` | `1` volta a registrar as rotas do oráculo |
 
-Rotas classificadas como **caras** (balde de 60/min): `chat`/`chat-stream`, uploads,
+Rotas classificadas como **caras** (balde de `RATE_LIMIT_HEAVY_PER_MIN`): `chat`/`chat-stream`, uploads,
 `/api/simcar/clip*`, `simcar-lotes/process|parse-recibos`, busca/estimate/jobs de
 Landsat/CBERS/NDVI, `*/wms-download`, `map/snapshot`, `map/intersection-hectares`,
 `geometry/bbox`, `apf/search|download`, `upload|process|processar|importar` dos sete
 grupos de job, `solicitacao-prioridade/process` e `auas-sccon/process`.
+
+> **Produção (19/11/2026):** `~/.config/geoforest/backend.env` recebeu
+> `RATE_LIMIT_GENERAL_PER_MIN=6000` e `RATE_LIMIT_HEAVY_PER_MIN=180` para o escritório
+> inteiro (que sai por um IP só, atrás do NAT). Os defaults do código continuam 3000/60.
+> Backup do env ao lado do arquivo (`.env.bak-seguranca-*`).
 
 ## O que **não** foi mudado (de propósito)
 
 | Item | Por quê |
 |---|---|
 | Cadastro público (`createUserWithEmailAndPassword`) | Desligar agora bloquearia gente nova e é decisão do Álvaro. **Recomendação:** desabilitar signup no Firebase Console > Authentication > Settings, ou restringir por domínio de e-mail |
-| `POST /api/simcar/clip` sem token | Documentado e usado pelos scripts do escritório (recorte em lote). Ficou com rate limit de 60/min. Para exigir token: ver seção "Próximo passo" |
+| `POST /api/simcar/clip` sem token | Documentado e usado pelos scripts do escritório (recorte em lote). Ficou com o rate limit de rotas caras. Para exigir token: loopback direto continuaria liberado (scripts no server) e o resto passaria a exigir Bearer — precisa adicionar `/api/simcar/clip` à allowlist e testar antes |
 | `/api/raster` e `/api/raster-ndvi` públicos | São tiles de satélite; não têm dado de usuário |
 | `/api/runtime/version` público | O painel usa para detecção de recurso; não expõe segredo (só booleanos e nomes de modelo) |
 | `/api/models` público | O painel chama com `{ auth: false }` de propósito |
