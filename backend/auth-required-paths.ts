@@ -9,6 +9,10 @@
 export const AUTH_REQUIRED_PATHS: (string | RegExp)[] = [
   "/api/chat",
   "/api/chat-stream",
+  // Busca/baixa documento de APF por CPF/CNPJ: consulta dado pessoal e gasta
+  // chamada a serviço externo. O painel já envia token (`apiFetch`).
+  "/api/apf/search",
+  "/api/apf/download",
   "/api/simcar/clip/import-vectorized",
   "/api/simcar/clip/analyze",
   "/api/simcar/clip/analyze-auas",

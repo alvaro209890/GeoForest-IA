@@ -9,6 +9,34 @@ import path from "node:path";
 import { parsePdfSafe } from "../lib/map-utils";
 import { saveUserBuffer } from "../local-storage";
 
+/**
+ * Teto do arquivo decodificado. O corpo JSON já é limitado a 25 MB pelo
+ * `express.json`; aqui garantimos que o base64 não vire um arquivo maior.
+ */
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Extensão só sai daqui — nunca do nome que o cliente mandou. Antes, um
+ * `data:text/html;base64,…` com `filename: "x.html"` era gravado em
+ * `/api/storage` e servido como HTML (XSS armazenado no domínio da API).
+ */
+const ALLOWED_IMAGE_MIME: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+function safeBaseName(raw: unknown, fallback: string): string {
+  const base = path
+    .basename(String(raw || fallback))
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/\.[^.]+$/, "")
+    .slice(0, 120);
+  return base || fallback;
+}
+
 function estimateBytesFromDataUrl(dataUrl: string): number {
   const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
   if (!match) return 0;
@@ -37,13 +65,24 @@ export function registerUploadRoutes(app: Express): void {
         res.status(400).json({ error: "dataUrl inválido." });
         return;
       }
-      const mimeType = match[1] || "image/png";
-      const ext = mimeType.split("/")[1] || "png";
+      const mimeType = String(match[1] || "").split(";")[0].trim().toLowerCase();
+      const ext = ALLOWED_IMAGE_MIME[mimeType];
+      if (!ext) {
+        res.status(400).json({
+          error: "Formato de imagem não suportado. Envie PNG, JPEG, WebP ou GIF.",
+          code: "UNSUPPORTED_IMAGE_TYPE",
+        });
+        return;
+      }
       const buffer = Buffer.from(match[2], "base64");
+      if (buffer.length > MAX_UPLOAD_BYTES) {
+        res.status(413).json({ error: "Imagem maior que o limite de 25 MB." });
+        return;
+      }
       const stored = saveUserBuffer({
         uid,
         area: "attachments/images",
-        filename: `${Date.now()}_${filename || `image.${ext}`}`,
+        filename: `${Date.now()}_${safeBaseName(filename, "image")}.${ext}`,
         buffer,
       });
       res.json({
@@ -79,9 +118,19 @@ export function registerUploadRoutes(app: Express): void {
         res.status(400).json({ error: "dataUrl de PDF inválido." });
         return;
       }
-      const mimeType = match[1] || "application/pdf";
       const base64Payload = match[2];
       const fileBuffer = Buffer.from(base64Payload, "base64");
+      if (fileBuffer.length > MAX_UPLOAD_BYTES) {
+        res.status(413).json({ error: "PDF maior que o limite de 25 MB." });
+        return;
+      }
+      if (fileBuffer.subarray(0, 5).toString("latin1") !== "%PDF-") {
+        res.status(400).json({
+          error: "O arquivo enviado não é um PDF válido.",
+          code: "INVALID_PDF_SIGNATURE",
+        });
+        return;
+      }
 
       let extractedText = "";
       let pageCount = 0;
@@ -98,9 +147,8 @@ export function registerUploadRoutes(app: Express): void {
       } catch (err) {
         console.warn("[/api/upload-file] failed to parse PDF text:", err);
       }
-      const uploadFilename = filename && filename.toLowerCase().endsWith(".pdf")
-        ? filename
-        : `${filename || "documento"}.pdf`;
+      // Nome e extensão são normalizados aqui: o cliente nunca escolhe o path.
+      const uploadFilename = `${safeBaseName(filename, "documento")}.pdf`;
       const stored = saveUserBuffer({
         uid,
         area: "attachments/pdfs",

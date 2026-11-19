@@ -72,6 +72,12 @@ async function startServer() {
   registerHealthRoutes(app, knowledgeBase);
   registerUploadRoutes(app);
 
+  // Rota /api inexistente responde JSON 404. Antes caía no catch-all do SPA e
+  // devolvia index.html com HTTP 200 — o app tentava parsear HTML como JSON.
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "Rota de API não encontrada.", code: "NOT_FOUND" });
+  });
+
   // Serve static files from dist/public in production
   const staticPath =
     process.env.NODE_ENV === "production"

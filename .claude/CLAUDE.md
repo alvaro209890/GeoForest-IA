@@ -37,8 +37,11 @@ systemctl --user restart geoforest-backend.service
 npx firebase deploy --only hosting   # site único: ia-florestal
 ```
 
-> Push no `main` já dispara o auto-sync do servidor (build + restart + deploy em
-> até 2 min). Ver `docs/AUTO_SYNC.md`.
+> ⚠️ **Desde 16/10/2026 o `geoforest-autosync.timer` está desabilitado** (incidente de
+> cadeia de suprimentos). `push` no `main` **não** builda nem reinicia nada: deploy é
+> manual — `pnpm build` + `systemctl --user restart geoforest-backend.service`
+> (+ `firebase deploy --only hosting` só quando o front mudou). Ver
+> `docs/AUTO_SYNC.md` e `docs/CHANGELOG_2026-11-19_SEGURANCA.md`.
 
 ## Key Files
 
@@ -46,6 +49,7 @@ npx firebase deploy --only hosting   # site único: ia-florestal
 |------|---------|
 | `backend/index.ts` | **Só o boot** (142 linhas): logger, `createApp()`, knowledge base, registro das rotas, static, `listen`, keep-alive |
 | `backend/app.ts` + `backend/routes/_registry.ts` | Factory do Express (CORS, auth, static) e registro das rotas de módulo |
+| `backend/middleware/security-headers.ts` · `rate-limit.ts` · `storage-guard.ts` | Endurecimento (19/11/2026): cabeçalhos, rate limit por IP (balde geral + rotas caras) e bloqueio dos JSON privados em `/api/storage`. Ver `docs/CHANGELOG_2026-11-19_SEGURANCA.md` — **rota cara nova entra em `HEAVY_PATTERNS`** |
 | `backend/routes/chat.ts` | `/api/chat` e `/api/chat-stream` (auto-seleção de modelo, guardrails, continuação de stream). Registrado em `startServer()`, **não** no `_registry` — depende da knowledge base |
 | `backend/routes/uploads.ts` | `/api/upload-image`, `/api/upload-file`, `/api/file-proxy` |
 | `backend/routes/health.ts` | `/api/health`, `/api/knowledge/health`, `/api/runtime/version` |
