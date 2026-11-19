@@ -101,12 +101,34 @@ curl -s -o /dev/null -w '%{http_code}\n' https://geoforest-api.cursar.space/api/
 # APF sem token = 401
 curl -s -o /dev/null -w '%{http_code}\n' -X POST https://geoforest-api.cursar.space/api/apf/search -H 'Content-Type: application/json' -d '{}'
 
-# oráculo desligado = 410 (mesmo com token válido)
+# oráculo desligado: sem token = 401 (auth vem antes); com token = 410
 curl -s https://geoforest-api.cursar.space/api/simcar-oraculo/health
 
 # rate limit se anuncia
 curl -sI https://geoforest-api.cursar.space/api/health | grep -i ratelimit
 ```
+
+## Dependências (auditoria `pnpm audit --prod`, 19/11/2026)
+
+`pnpm audit --prod` acusa **170 advisories** (3 críticos, 69 altos). Nenhum deles foi
+corrigido nesta passagem de propósito: os críticos e a maioria dos altos são
+**transitivos de Firebase Admin/gRPC/protobufjs, libvips (`sharp`) e do toolchain de
+build**, e subir essas versões mexe em binário nativo e no SDK de auth — o risco de
+derrubar o app é maior do que o ganho imediato.
+
+O que realmente toca nossa superfície HTTP é DoS de parsing (`body-parser`,
+`path-to-regexp`, `proxy-addr`, `form-data`) e está **amortecido pelo rate limit**
+introduzido aqui. Backlog recomendado, em ordem:
+
+| Pacote | Versão segura | Por que ficou para depois |
+|---|---|---|
+| `body-parser` | `1.20.9` | patch de `express`; seguro, mas exige reinstalar `node_modules` |
+| `path-to-regexp` | `0.1.13` | idem |
+| `proxy-addr` | `2.0.8` | idem |
+| `axios` | `1.16.0` | não é usado no backend |
+| `sharp` | `0.35.5` | binário nativo (libvips) — precisa de janela de teste com CBERS/Landsat |
+| `zod` | `4.6.6` | usado só em validação pontual |
+| `protobufjs` / `node-forge` / `@grpc/grpc-js` | ver advisory | transitivos do Firebase Admin |
 
 ## Testes
 
