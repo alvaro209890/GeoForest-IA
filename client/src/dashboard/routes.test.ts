@@ -14,6 +14,7 @@ describe('dashboard routes', () => {
     ['/dashboard/auas', 'auas-sccon'],
     ['/dashboard/sobreposicoes', 'sobreposicoes'],
     ['/dashboard/croqui', 'croqui'],
+    ['/dashboard/fotos', 'relatorio-fotografico'],
     ['/dashboard/manual', 'features'],
     ['/dashboard/configuracoes', 'settings'],
     ['/dashboard/chat', 'simcar-clip'],

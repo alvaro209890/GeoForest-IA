@@ -50,6 +50,7 @@ npx firebase deploy --only hosting   # site único: ia-florestal
 | `backend/index.ts` | **Só o boot** (142 linhas): logger, `createApp()`, knowledge base, registro das rotas, static, `listen`, keep-alive |
 | `backend/app.ts` + `backend/routes/_registry.ts` | Factory do Express (CORS, auth, static) e registro das rotas de módulo |
 | `backend/middleware/security-headers.ts` · `rate-limit.ts` · `storage-guard.ts` | Endurecimento (19/11/2026): cabeçalhos, rate limit por IP (balde geral + rotas caras) e bloqueio dos JSON privados em `/api/storage`. Ver `docs/CHANGELOG_2026-11-19_SEGURANCA.md` — **rota cara nova entra em `HEAVY_PATTERNS`** |
+| `backend/relatorio-fotografico/` | Aba Fotos (`/dashboard/fotos`): DeepSeek v4.1 Flash (`ocg/`, raciocínio max) pelo 9Router seleciona as fotos; Word no modelo IMAP. A chave sai do `.env` do Hermes/Optimus. Ver `docs/CHANGELOG_2026-11-24_RELATORIO_FOTOGRAFICO.md` |
 | `backend/routes/chat.ts` | `/api/chat` e `/api/chat-stream` (auto-seleção de modelo, guardrails, continuação de stream). Registrado em `startServer()`, **não** no `_registry` — depende da knowledge base |
 | `backend/routes/uploads.ts` | `/api/upload-image`, `/api/upload-file`, `/api/file-proxy` |
 | `backend/routes/health.ts` | `/api/health`, `/api/knowledge/health`, `/api/runtime/version` |

@@ -132,6 +132,8 @@ export const AUTH_REQUIRED_PATHS: (string | RegExp)[] = [
   "/api/billing/me",
   "/api/billing/topups/manual",
   "/api/billing/ledger",
+  "/api/relatorio-fotografico/analisar",
+  "/api/relatorio-fotografico/docx",
   "/api/solicitacao-prioridade/process",
   /^\/api\/solicitacao-prioridade\/download\/[^/]+$/,
 ];

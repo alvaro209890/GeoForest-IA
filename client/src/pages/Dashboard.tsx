@@ -40,6 +40,7 @@ import {
   Combine,
   Map as MapIcon,
   Sprout,
+  Camera,
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -167,6 +168,7 @@ const SobreposicoesPanel = lazy(() => import('@/dashboard/panels/SobreposicoesPa
 const FiscalizacaoPanel = lazy(() => import('@/dashboard/panels/FiscalizacaoPanel'));
 const CroquiPanel = lazy(() => import('@/dashboard/panels/CroquiPanel'));
 const SolicitacaoPrioridadePanel = lazy(() => import('@/components/SolicitacaoPrioridadePanel'));
+const RelatorioFotograficoPanel = lazy(() => import('@/components/RelatorioFotograficoPanel'));
 const SimcarLotesPanel = lazy(() => import('@/components/SimcarLotesPanel'));
 const NdviPanel = lazy(() => import('@/dashboard/panels/ndvi/NdviPanel'));
 
@@ -4699,6 +4701,12 @@ Arquivo de imagem previamente anexado pelo usuário.`;
                 hint="Os recibos aparecem aqui"
               />
             )
+          ) : activeView === 'relatorio-fotografico' ? (
+            <HistoryEmptyState
+              Icon={Camera}
+              title="Relatório fotográfico"
+              hint="As fotos e o objetivo ficam no painel"
+            />
           ) : (
             /* ─── Chat removido — use as abas acima ─── */
             <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -6712,6 +6720,16 @@ progress={
             </div>
           }>
             <CroquiPanel croqui={croqui} />
+          </Suspense>
+        ) : activeView === 'relatorio-fotografico' ? (
+          <Suspense fallback={
+            <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-8 custom-scrollbar">
+              <div className="max-w-6xl mx-auto">
+                <div className="rounded-2xl border border-white/10 bg-[#0e1612]/70 p-6 text-sm text-slate-300">Carregando relatório fotográfico...</div>
+              </div>
+            </div>
+          }>
+            <RelatorioFotograficoPanel />
           </Suspense>
         ) : activeView === 'solicitacao-prioridade' ? (
           <Suspense fallback={

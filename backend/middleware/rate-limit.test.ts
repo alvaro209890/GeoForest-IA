@@ -56,6 +56,8 @@ describe("isHeavyPath", () => {
     expect(isHeavyPath("/api/chat-stream")).toBe(true);
     expect(isHeavyPath("/api/apf/search")).toBe(true);
     expect(isHeavyPath("/api/landsat/wms-download")).toBe(true);
+    expect(isHeavyPath("/api/relatorio-fotografico/analisar")).toBe(true);
+    expect(isHeavyPath("/api/relatorio-fotografico/docx")).toBe(true);
   });
 
   it("não marca leitura barata nem health", () => {

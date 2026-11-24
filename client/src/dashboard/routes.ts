@@ -17,6 +17,7 @@ export const DASHBOARD_PATH_TO_VIEW: Record<string, DashboardView> = {
   '/dashboard/croqui': 'croqui',
   '/dashboard/ndvi': 'ndvi',
   '/dashboard/solicitacao': 'solicitacao-prioridade',
+  '/dashboard/fotos': 'relatorio-fotografico',
   '/dashboard/manual': 'features',
   '/dashboard/configuracoes': 'settings',
   '/dashboard/chat': 'simcar-clip',
@@ -35,6 +36,7 @@ export const DASHBOARD_VIEW_TO_PATH: Record<DashboardView, string> = {
   croqui: '/dashboard/croqui',
   ndvi: '/dashboard/ndvi',
   'solicitacao-prioridade': '/dashboard/solicitacao',
+  'relatorio-fotografico': '/dashboard/fotos',
   features: '/dashboard/manual',
   settings: '/dashboard/configuracoes',
 };

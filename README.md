@@ -20,6 +20,7 @@ Sistema de apoio à Engenharia Florestal com inteligência artificial, voltado p
 - [Camadas SIMCAR Recortadas](#camadas-simcar-recortadas)
 - [Vértices Próximas](#vértices-próximas)
 - [Áreas Não Contidas (Containment SIMCAR)](#áreas-não-contidas-containment-simcar)
+- [Relatório fotográfico](#relatório-fotográfico)
 - [Auto-update do Frontend (sem Ctrl+F5)](#auto-update-do-frontend-sem-ctrlf5)
 - [CBERS e WMS Local](#cbers-e-wms-local)
 - [Banco de Conhecimento](#banco-de-conhecimento)
@@ -424,6 +425,25 @@ npx vitest run --root . backend/simcar-processar-geo.test.ts backend/processar-p
 
 ---
 
+## Relatório fotográfico
+
+Aba **Fotos** em `/dashboard/fotos`. A pessoa escreve o objetivo, sobe até 30 fotos e o DeepSeek v4.1 Flash (`ocg/deepseek-v4.1-flash`, raciocínio máximo, pelo OpenCode Go no 9Router da VPS) vê as imagens, escolhe a ordem e escreve as legendas. Dá para montar a parcial sem IA. O Word sai no modelo oficial da IMAP: capa, retrato em pares e paisagem em linha própria.
+
+Quem usa o painel não configura modelo nem chave. O endereço, o modelo e o esforço estão no código. A chave é a mesma do Hermes e do Optimus (`/srv/optimus/hermes-optimus/.env`, `/srv/optimus-geo/hermes/.env` ou o `.env` do Hermes local). `NINEROUTER_API_KEY` no `backend.env` só substitui essa chave quando estiver preenchida.
+
+**Rotas (exigem login, balde de rotas caras):**
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| POST | `/api/relatorio-fotografico/analisar` | SSE: vê as fotos e devolve a seleção |
+| POST | `/api/relatorio-fotografico/docx` | Word no modelo IMAP |
+
+**Arquivos:** `backend/relatorio-fotografico/`, `client/src/components/RelatorioFotograficoPanel.tsx`, modelo em `backend/relatorio-fotografico/assets/modelo-relatorio-fotografico.docx`.
+
+**Changelog:** [`docs/CHANGELOG_2026-11-24_RELATORIO_FOTOGRAFICO.md`](docs/CHANGELOG_2026-11-24_RELATORIO_FOTOGRAFICO.md)
+
+---
+
 ## Auto-update do Frontend (sem Ctrl+F5)
 
 Cada build injeta um `__APP_BUILD_ID__` e grava `version.json`. O módulo `client/src/lib/autoUpdate.ts` compara periodicamente (e ao focar a aba) o `buildId` servido; se mudou, recarrega a página uma vez. Combinado com o `no-cache` do HTML e o hash imutável dos bundles, garante que tanto novos logins quanto abas já abertas recebam a versão nova sem refresh manual.
@@ -687,6 +707,10 @@ Esse script faz: `git pull` → `npm run build` → `firebase deploy` → `syste
 | `SIMCAR_LOCAL_WFS_BASE_URL` | `http://127.0.0.1:8081/geoserver/cbers/ows` | GeoServer do snapshot mensal oficial |
 | `SIMCAR_SNAPSHOT_MANIFEST_PATH` | `/media/server/HD Backup/VETOR/CAR_Digital/current/manifest.json` | Manifest validado do snapshot usado no recorte |
 | `SIMCAR_SNAPSHOT_MAX_AGE_DAYS` | `45` | Idade máxima da base antes de cancelar o recorte |
+| `NINEROUTER_BASE_URL` | `http://100.104.255.35:20128/v1` | 9Router da VPS, usado pelo relatório fotográfico |
+| `NINEROUTER_API_KEY` | chave do Hermes/Optimus | Só preencha para trocar a chave. Vazio usa o `.env` que o Hermes e o Optimus já leem |
+| `RELATORIO_FOTO_MODEL` | `ocg/deepseek-v4.1-flash` | Modelo da seleção de fotos |
+| `RELATORIO_FOTO_REASONING` | `max` | Esforço de raciocínio |
 
 Arquivo de referência: [`config/geoforest-backend.env.example`](config/geoforest-backend.env.example)
 
@@ -694,6 +718,7 @@ Arquivo de referência: [`config/geoforest-backend.env.example`](config/geofores
 
 ## Documentação Adicional
 
+- [`docs/CHANGELOG_2026-11-24_RELATORIO_FOTOGRAFICO.md`](docs/CHANGELOG_2026-11-24_RELATORIO_FOTOGRAFICO.md) — Aba Fotos: DeepSeek v4.1 Flash no 9Router seleciona as fotos e o Word sai no modelo IMAP
 - [`docs/CHANGELOG_2026-09-18_SIMCAR_SNAPSHOT_CLIP.md`](docs/CHANGELOG_2026-09-18_SIMCAR_SNAPSHOT_CLIP.md) — Recorte direto do snapshot mensal oficial, sem filetes ou reconstrução topológica
 - [`docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md`](docs/ARMAZENAMENTO_LOCAL_FIRESTORE.md) — **Leia primeiro se for mexer em qualquer dado de usuário/job:** como funciona o armazenamento local (JSON em disco, não é Firestore real), o shim `localFirestore.ts`, a whitelist de collections e o checklist para adicionar uma nova aba de análise
 - [`docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md`](docs/CHANGELOG_2026-07-13_GEOMETRY_ERRORS_STORAGE.md) — Fix `INVALID_DOC_PATH` no import de ZIP (Erros de Geometria) + paridade de histórico

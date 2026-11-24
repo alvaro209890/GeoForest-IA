@@ -29,6 +29,7 @@ import { registerBillingRoutes } from "./billing";
 import { registerMapRoutes } from "./map";
 import { registerGeometryRoutes } from "./geometry";
 import { registerSolicitacaoPrioridadeRoutes } from "../solicitacao-prioridade";
+import { registerRelatorioFotograficoRoutes } from "../relatorio-fotografico/routes";
 
 export function registerAllRoutes(app: Express) {
   registerAccountRoutes(app);
@@ -60,4 +61,5 @@ export function registerAllRoutes(app: Express) {
   registerGeometryRoutes(app);
 
   registerSolicitacaoPrioridadeRoutes(app);
+  registerRelatorioFotograficoRoutes(app);
 }

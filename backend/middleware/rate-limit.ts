@@ -44,6 +44,7 @@ const HEAVY_PATTERNS: RegExp[] = [
   /^\/api\/apf\/(search|download)$/,
   /^\/api\/(croqui|vertices|overlap|containment|fiscalizacao|geometry-errors|processar-projeto)\/(upload|process|processar|importar|parse-recibos|route-options)$/,
   /^\/api\/solicitacao-prioridade\/process$/,
+  /^\/api\/relatorio-fotografico\/(analisar|docx)$/,
   /^\/api\/auas-sccon\/process$/,
 ];
 

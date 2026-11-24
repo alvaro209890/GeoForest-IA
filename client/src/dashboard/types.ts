@@ -44,6 +44,7 @@ export type DashboardView =
   | 'croqui'
   | 'ndvi'
   | 'solicitacao-prioridade'
+  | 'relatorio-fotografico'
   | 'features'
   | 'settings';
 
@@ -59,7 +60,8 @@ export type DashboardTabId =
   | 'fiscalizacao'
   | 'croqui'
   | 'ndvi'
-  | 'solicitacao-prioridade';
+  | 'solicitacao-prioridade'
+  | 'relatorio-fotografico';
 
 export const DASHBOARD_VIEW_LABELS: Record<DashboardView, string> = {
   'simcar-clip': 'Recorte SIMCAR',
@@ -74,6 +76,7 @@ export const DASHBOARD_VIEW_LABELS: Record<DashboardView, string> = {
   croqui: 'Croqui',
   ndvi: 'NDVI',
   'solicitacao-prioridade': 'Solicitação Prioridade',
+  'relatorio-fotografico': 'Relatório Fotográfico',
   features: 'Funcionalidades',
   settings: 'Configurações',
 };
