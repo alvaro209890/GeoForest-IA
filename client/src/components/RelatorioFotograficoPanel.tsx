@@ -556,7 +556,7 @@ export default function RelatorioFotograficoPanel() {
         <Passo
           numero={2}
           titulo="Envie as fotos"
-          descricao="Pode mandar todas as fotos da vistoria, até 30. A IA descarta as borradas, repetidas e as que não têm a ver com o objetivo."
+          descricao={`Pode mandar todas as fotos da vistoria, até ${MAX_FOTOS}. A IA descarta as borradas, repetidas e as que não têm a ver com o objetivo.`}
           feito={Boolean(organizado)}
         >
           <div

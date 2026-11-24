@@ -427,7 +427,7 @@ npx vitest run --root . backend/simcar-processar-geo.test.ts backend/processar-p
 
 ## Relatório fotográfico
 
-Aba **Fotos** em `/dashboard/fotos`, em 3 passos: **1. objetivo** (com exemplos prontos), **2. fotos** (até 30; a IA organiza, ou a pessoa organiza sozinha) e **3. revisar e baixar** (parciais editáveis, motivo de cada foto, fotos fora do relatório com "Pôr de volta" e prévia das páginas no papel timbrado). O DeepSeek v4.1 Flash (`ocg/deepseek-v4.1-flash`, raciocínio máximo, pelo OpenCode Go no 9Router da VPS) vê as imagens, escolhe a ordem e escreve as legendas; com 16–24 fotos leva de 2 a 6 minutos.
+Aba **Fotos** em `/dashboard/fotos`, em 3 passos: **1. objetivo** (com exemplos prontos), **2. fotos** (até 50; a IA organiza, ou a pessoa organiza sozinha) e **3. revisar e baixar** (parciais editáveis, motivo de cada foto, fotos fora do relatório com "Pôr de volta" e prévia das páginas no papel timbrado). O DeepSeek v4.1 Flash (`ocg/deepseek-v4.1-flash`, raciocínio máximo, pelo OpenCode Go no 9Router da VPS) vê as imagens, escolhe a ordem e escreve as legendas; com 16–24 fotos leva de 2 a 6 minutos.
 
 O Word segue o relatório fotográfico da IMAP (exemplo: MT-109, ponte): **quatro fotos em pé por página**, em duas fileiras de duas, cada uma até 6 × 10 cm; **duas fotos deitadas por página**, uma embaixo da outra, até 15 × 8,45 cm. Uma foto em pé isolada antes de uma deitada divide a página com ela. Legenda "Figura N." em Arial 10 pt centralizada, espaçamento simples, 0 pt antes/depois. A paginação é um módulo só (`shared/relatorio-fotografico/layout.ts`), usado pela prévia do painel e pelo Word: o que aparece na tela é o que sai no arquivo.
 

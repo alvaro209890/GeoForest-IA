@@ -50,7 +50,7 @@ export function createApp(logBackend: Logger): Express {
   app.use(createSecurityHeaders());
   app.use("/api", createRateLimiters());
 
-  app.use(express.json({ limit: "25mb" }));
+  app.use(express.json({ limit: "48mb" }));
 
   // CORS
   app.use(createCorsMiddleware());

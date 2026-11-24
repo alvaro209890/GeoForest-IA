@@ -42,7 +42,7 @@ export type SelecaoResposta = {
 /** Em que ponto a organização com IA está. */
 export type FaseAnalise = 'enviando' | 'recebidas' | 'pensando' | 'escrevendo';
 
-export const MAX_FOTOS = 30;
+export const MAX_FOTOS = 50;
 const LADO_WORD = 1400;
 const LADO_IA = 900;
 

@@ -4,7 +4,7 @@
 
 ## O que entrou
 
-Aba **Fotos** (`/dashboard/fotos`). A pessoa escreve o objetivo do relatório, carrega até 30 fotografias e pode:
+Aba **Fotos** (`/dashboard/fotos`). A pessoa escreve o objetivo do relatório, carrega até 50 fotografias e pode:
 
 - pedir ao DeepSeek v4.1 Flash que veja as fotos, escolha quais entram, a ordem e a legenda;
 - ou usar todas, sem IA, com o objetivo como legenda.
@@ -113,3 +113,5 @@ Fotos em pé saíam duas por página, lado a lado, com até 7,1 × 9,85 cm. No r
 - A prévia, o contador de páginas e o Word usam o mesmo `planPhotoPages`. O desenho do passo 2 mostra a grade de quatro.
 - O prompt da IA pede para deixar as fotos em pé juntas, para a página encher.
 - As duas fileiras saem na mesma tabela do Word. Em tabelas separadas, a fileira de baixo caía na página seguinte e o relatório voltava a ter duas fotos.
+
+O relatório aceita até 50 fotografias. O corpo JSON do backend subiu de 25 MB para 48 MB, para o envio das 50 fotos caber numa requisição.

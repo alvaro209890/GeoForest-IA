@@ -54,4 +54,4 @@ export type SelecaoRelatorio = {
 
 export const RELATORIO_FOTO_MODEL_PADRAO = "ocg/deepseek-v4.1-flash";
 export const RELATORIO_FOTO_RACIOCINIO_PADRAO = "max";
-export const RELATORIO_FOTO_MAX_FOTOS = 30;
+export const RELATORIO_FOTO_MAX_FOTOS = 50;
