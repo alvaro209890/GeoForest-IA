@@ -52,6 +52,18 @@ export function extractJsonObject(text: string): unknown {
   );
 }
 
+/**
+ * O Word já escreve "Figura N." antes de cada legenda. Se a IA mandar o prefixo,
+ * ele sai daqui para não virar "Figura 1. Figura 1. ...".
+ */
+export function limparLegenda(texto: string): string {
+  return String(texto || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(?:fig(?:ura)?\.?\s*\d*\s*[.:\-–—]\s*)+/i, "")
+    .trim();
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -99,7 +111,7 @@ export function normalizeSelecao(rawText: string, knownIds: string[]): SelecaoRe
       });
     }
     if (!fotos.length) return;
-    const legenda = String(record.legenda || record.caption || record.descricao || "").trim();
+    const legenda = limparLegenda(String(record.legenda || record.caption || record.descricao || ""));
     parciais.push({
       titulo: String(record.titulo || `Parcial ${index + 1}`).trim().slice(0, 120) || `Parcial ${index + 1}`,
       legenda: (legenda || "Registro fotográfico conforme o objetivo informado.").slice(0, 1200),

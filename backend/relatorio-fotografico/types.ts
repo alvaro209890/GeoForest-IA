@@ -1,4 +1,6 @@
 /** Contrato do relatório fotográfico (painel IMAP + seleção por IA). */
+import type { Orientacao } from "../../shared/relatorio-fotografico/layout";
+
 
 export class RelatorioFotoError extends Error {
   constructor(
@@ -17,7 +19,7 @@ export type FotoEntrada = {
   base64: string;
 };
 
-export type OrientacaoFoto = "portrait" | "landscape";
+export type OrientacaoFoto = Orientacao;
 
 export type FotoPronta = {
   id: string;
@@ -48,27 +50,6 @@ export type SelecaoRelatorio = {
   resumo: string;
   parciais: ParcialSelecao[];
   excluidas: FotoExcluida[];
-};
-
-export type FotoLayout = {
-  width: number;
-  height: number;
-  orientation: OrientacaoFoto;
-};
-
-export type ParcialLayout = {
-  caption: string;
-  photos: FotoLayout[];
-};
-
-export type BlocoFotos = {
-  orientation: OrientacaoFoto;
-  items: Array<{ photo: FotoLayout; number: number; caption: string }>;
-  height: number;
-};
-
-export type PaginaFotos = {
-  blocks: BlocoFotos[];
 };
 
 export const RELATORIO_FOTO_MODEL_PADRAO = "ocg/deepseek-v4.1-flash";

@@ -1,11 +1,11 @@
 /** Normaliza o upload: EXIF em pé, JPEG, teto de tamanho para a IA e para o Word. */
 import sharp from "sharp";
+import { orientacaoDe } from "../../shared/relatorio-fotografico/layout";
 import {
   RELATORIO_FOTO_MAX_FOTOS,
   RelatorioFotoError,
   type FotoEntrada,
   type FotoPronta,
-  type OrientacaoFoto,
 } from "./types";
 
 const MAX_BASE64_CHARS = 8_000_000;
@@ -27,9 +27,7 @@ function decodeBase64(value: string): Buffer {
   return buffer;
 }
 
-export function orientacaoDe(width: number, height: number): OrientacaoFoto {
-  return height > width ? "portrait" : "landscape";
-}
+export { orientacaoDe };
 
 export async function prepareFoto(entrada: FotoEntrada, alvo: "ia" | "docx"): Promise<FotoPronta> {
   const id = String(entrada.id || "").trim();

@@ -427,7 +427,9 @@ npx vitest run --root . backend/simcar-processar-geo.test.ts backend/processar-p
 
 ## Relatório fotográfico
 
-Aba **Fotos** em `/dashboard/fotos`. A pessoa escreve o objetivo, sobe até 30 fotos e o DeepSeek v4.1 Flash (`ocg/deepseek-v4.1-flash`, raciocínio máximo, pelo OpenCode Go no 9Router da VPS) vê as imagens, escolhe a ordem e escreve as legendas. Dá para montar a parcial sem IA. O Word sai no modelo oficial da IMAP: capa, retrato em pares e paisagem em linha própria.
+Aba **Fotos** em `/dashboard/fotos`, em 3 passos: **1. objetivo** (com exemplos prontos), **2. fotos** (até 30; a IA organiza, ou a pessoa organiza sozinha) e **3. revisar e baixar** (parciais editáveis, motivo de cada foto, fotos fora do relatório com "Pôr de volta" e prévia das páginas no papel timbrado). O DeepSeek v4.1 Flash (`ocg/deepseek-v4.1-flash`, raciocínio máximo, pelo OpenCode Go no 9Router da VPS) vê as imagens, escolhe a ordem e escreve as legendas; com 16–24 fotos leva de 2 a 6 minutos.
+
+O Word segue a **Padronização IMAP 2026** do `Painel_Gerencial_IMAP_v5`: duas fotos por página (duas em pé lado a lado; qualquer outro par uma embaixo da outra), paisagem até 15 × 8,45 cm, retrato até 7,1 × 9,85 cm, legenda "Figura N." em Arial 10 pt centralizada, espaçamento simples, 0 pt antes/depois. A paginação é um módulo só (`shared/relatorio-fotografico/layout.ts`), usado pela prévia do painel e pelo Word: o que aparece na tela é o que sai no arquivo.
 
 Quem usa o painel não configura modelo nem chave. O endereço, o modelo e o esforço estão no código. A chave é a mesma do Hermes e do Optimus (`/srv/optimus/hermes-optimus/.env`, `/srv/optimus-geo/hermes/.env` ou o `.env` do Hermes local). `NINEROUTER_API_KEY` no `backend.env` só substitui essa chave quando estiver preenchida.
 
@@ -438,7 +440,7 @@ Quem usa o painel não configura modelo nem chave. O endereço, o modelo e o esf
 | POST | `/api/relatorio-fotografico/analisar` | SSE: vê as fotos e devolve a seleção |
 | POST | `/api/relatorio-fotografico/docx` | Word no modelo IMAP |
 
-**Arquivos:** `backend/relatorio-fotografico/`, `client/src/components/RelatorioFotograficoPanel.tsx`, modelo em `backend/relatorio-fotografico/assets/modelo-relatorio-fotografico.docx`.
+**Arquivos:** `backend/relatorio-fotografico/`, `shared/relatorio-fotografico/layout.ts` (paginação comum), `client/src/components/RelatorioFotograficoPanel.tsx` + `client/src/components/relatorio-fotografico/` (leitura das fotos, SSE e prévia), fundos da prévia em `client/public/relatorio-fotografico/`, modelo em `backend/relatorio-fotografico/assets/modelo-relatorio-fotografico.docx`.
 
 **Changelog:** [`docs/CHANGELOG_2026-11-24_RELATORIO_FOTOGRAFICO.md`](docs/CHANGELOG_2026-11-24_RELATORIO_FOTOGRAFICO.md)
 

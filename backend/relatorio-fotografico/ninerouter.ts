@@ -70,6 +70,9 @@ export type ChatColetado = {
   reasoning: string;
 };
 
+/** Em que ponto a IA está: raciocinando sobre as fotos ou já escrevendo a resposta. */
+export type FaseIa = "pensando" | "escrevendo";
+
 export function nineRouterConfig(overrides?: { apiKey?: string; baseUrl?: string; model?: string; reasoning?: string }) {
   const apiKey = String(overrides?.apiKey ?? chaveNineRouter()).trim();
   const baseUrl = String(
@@ -102,11 +105,22 @@ function appendDelta(target: { content: string; reasoning: string }, payload: an
 }
 
 /** Junta o texto de um stream SSE no formato da API da OpenAI. */
-export async function collectOpenAiSse(stream: ReadableStream<Uint8Array>): Promise<ChatColetado> {
+export async function collectOpenAiSse(
+  stream: ReadableStream<Uint8Array>,
+  onFase?: (fase: FaseIa) => void,
+): Promise<ChatColetado> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   const target = { content: "", reasoning: "" };
+  let fase: FaseIa | null = null;
+  const avisar = () => {
+    const atual: FaseIa | null = target.content ? "escrevendo" : target.reasoning ? "pensando" : null;
+    if (atual && atual !== fase) {
+      fase = atual;
+      onFase?.(atual);
+    }
+  };
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -123,33 +137,43 @@ export async function collectOpenAiSse(stream: ReadableStream<Uint8Array>): Prom
       } catch {
         // Linha que não é JSON.
       }
+      avisar();
     }
   }
   return target;
 }
 
-const SYSTEM_PROMPT = `Você monta relatórios fotográficos da IMAP Engenharia e Soluções.
-O usuário informa o objetivo. Você VÊ as fotografias e decide quais entram, em que ordem e com qual legenda.
+const SYSTEM_PROMPT = `Você monta o relatório fotográfico de campo da IMAP Engenharia e Soluções (consultoria ambiental e fundiária em Mato Grosso).
+A pessoa escreve o objetivo do relatório. Você VÊ cada fotografia e decide:
+1. quais fotos entram e quais ficam de fora;
+2. em que ordem elas aparecem;
+3. como elas se agrupam em parciais.
+
+Parcial = grupo de fotos do mesmo assunto (ex.: acesso, sede, área de vegetação nativa, curso d'água, cerca, área aberta). Todas as fotos de uma parcial recebem a mesma legenda, que o Word numera como "Figura N. <legenda>".
+
+Como o Word é montado (use isso para ordenar):
+- duas fotos por página;
+- duas fotos em pé (retrato) seguidas ficam lado a lado; qualquer outro par fica uma embaixo da outra.
+
 Responda somente um JSON válido, sem markdown, neste formato:
 {
-  "resumo": "uma frase sobre a seleção",
+  "resumo": "uma frase simples: quantas fotos entraram, em quantas parciais, e quantas ficaram de fora",
   "parciais": [
     {
-      "titulo": "nome curto da parcial",
-      "legenda": "texto técnico repetido em cada figura desta parcial",
-      "fotos": [{ "id": "id enviado", "motivo": "por que esta foto entra" }]
+      "titulo": "assunto em 2 a 5 palavras",
+      "legenda": "frase técnica repetida em cada figura desta parcial",
+      "fotos": [{ "id": "id enviado", "motivo": "o que a foto mostra, em até 15 palavras" }]
     }
   ],
-  "excluidas": [{ "id": "id enviado", "motivo": "por que ficou de fora" }]
+  "excluidas": [{ "id": "id enviado", "motivo": "por que ficou de fora, em até 15 palavras" }]
 }
 Regras:
 - Use apenas ids recebidos. Cada foto no máximo uma vez.
-- A legenda descreve só o que dá para ver e o que o objetivo pede. Não invente área, coordenada, espécie, data ou nome de imóvel que não esteja no objetivo.
-- Legenda em português, uma ou duas frases, sem o prefixo "Figura".
-- Retratos ficam melhor em quantidade par, duas por linha. Paisagens ocupam a linha sozinhas. Agrupe com isso em mente, sem forçar uma foto ruim.
-- Exclua foto borrada, repetida, escura demais ou fora do objetivo, e diga o motivo.
-- Se todas servirem ao objetivo, não exclua só para encurtar.
-- Ordene as parciais na sequência em que o relatório deve ser lido.`;
+- Legenda: uma frase em português, no estilo dos relatórios de vistoria (ex.: "Vista parcial da área de vegetação nativa vistoriada."). Descreva só o que aparece na foto e o que o objetivo pede. Não invente área, coordenada, espécie, data ou nome de imóvel que não esteja no objetivo. Não escreva "Figura".
+- Motivo em linguagem simples, para quem não é técnico entender.
+- Ordene as parciais na sequência de uma vistoria: acesso, depois estruturas, depois a área objeto do relatório, por fim os detalhes.
+- Exclua foto borrada, repetida (quase igual a outra), escura demais ou sem relação com o objetivo, e diga o motivo.
+- Se todas servirem ao objetivo, não exclua só para encurtar.`;
 
 function imageContent(foto: FotoPronta): Array<Record<string, unknown>> {
   return [
@@ -172,6 +196,7 @@ export async function requestSelecaoFotos(args: {
   apiKey?: string;
   baseUrl?: string;
   signal?: AbortSignal;
+  onFase?: (fase: FaseIa) => void;
 }): Promise<{ content: string; model: string; reasoning: string }> {
   const config = nineRouterConfig({ apiKey: args.apiKey, baseUrl: args.baseUrl });
   if (!config.apiKey) {
@@ -234,7 +259,7 @@ export async function requestSelecaoFotos(args: {
       collected = { content: "", reasoning: "" };
       appendDelta(collected, payload);
     } else if (response.body) {
-      collected = await collectOpenAiSse(response.body);
+      collected = await collectOpenAiSse(response.body, args.onFase);
     } else {
       throw new RelatorioFotoError("O 9Router respondeu sem corpo.", 502, "NINEROUTER_VAZIO");
     }

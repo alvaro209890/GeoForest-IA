@@ -89,13 +89,23 @@ async function handleAnalisar(req: Request, res: Response): Promise<void> {
   try {
     writeSse(res, {
       type: "progress",
-      message: "DeepSeek v4.1 Flash está vendo as fotos, com raciocínio máximo.",
+      fase: "recebidas",
+      message: `${fotos.length} foto(s) recebida(s). A IA vai olhar uma por uma.`,
     });
     const resposta = await requestSelecaoFotos({
       projeto,
       objetivo,
       fotos,
       signal: abort.signal,
+      onFase: (fase) =>
+        writeSse(res, {
+          type: "progress",
+          fase,
+          message:
+            fase === "pensando"
+              ? "A IA está olhando as fotos e comparando com o objetivo."
+              : "A IA está escrevendo a seleção e as legendas.",
+        }),
     });
     const selecao = normalizeSelecao(resposta.content, fotos.map((foto) => foto.id));
     writeSse(res, {

@@ -2,6 +2,7 @@
   "include": [
     "client/src/**/*",
     "backend/**/*",
+    "shared/**/*",
     "vite.config.ts"
   ],
   "exclude": [

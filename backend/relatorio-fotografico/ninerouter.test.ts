@@ -46,9 +46,12 @@ describe("collectOpenAiSse", () => {
         controller.close();
       },
     });
-    const collected = await collectOpenAiSse(stream);
+    const fases: string[] = [];
+    const collected = await collectOpenAiSse(stream, (fase) => fases.push(fase));
     expect(collected.reasoning).toBe("penso");
     expect(collected.content).toBe('{"ok":true}');
+    // Avisa cada fase uma vez só, na ordem em que acontece.
+    expect(fases).toEqual(["pensando", "escrevendo"]);
   });
 });
 
