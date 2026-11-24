@@ -115,3 +115,11 @@ Fotos em pé saíam duas por página, lado a lado, com até 7,1 × 9,85 cm. No r
 - As duas fileiras saem na mesma tabela do Word. Em tabelas separadas, a fileira de baixo caía na página seguinte e o relatório voltava a ter duas fotos.
 
 O relatório aceita até 50 fotografias. O corpo JSON do backend subiu de 25 MB para 48 MB, para o envio das 50 fotos caber numa requisição.
+
+## Versão 4 — retratos centralizados e legendas espaçadas
+
+- A prévia e o Word usam as mesmas medidas de página. Os retratos ficam centralizados na folha, em até duas fileiras, com tamanho proporcional ao original. Uma foto sozinha pode ocupar até 19 cm de altura.
+- A grade mantém até quatro retratos por página. Legendas extensas podem abrir novas páginas. A ordem e a numeração das figuras seguem o relatório inteiro.
+- As legendas usam Arial 10 pt, com folga acima e recuo lateral nas duplas. A prévia mostra o texto completo, inclusive em legendas com mais de três linhas.
+- A tela de login e o painel são carregados em módulos. Se um deploy substituir um módulo antes de uma aba antiga carregá-lo, o app consulta o identificador publicado e faz um recarregamento normal ao detectar a troca. A verificação também roda ao voltar à aba, inclusive pelo histórico do navegador.
+- O tutorial e o exemplo da Fazenda Concórdia – Lote 142 foram atualizados com o novo layout.

@@ -639,7 +639,7 @@ export default function RelatorioFotograficoPanel() {
             <div className="flex items-center gap-3">
               <EsquemaPagina tipo="retrato" />
               <p className="text-[11px] leading-relaxed text-slate-400">
-                <strong className="text-slate-200">4 fotos em pé por página,</strong> em duas fileiras de duas.
+                <strong className="text-slate-200">Até 4 fotos em pé por página,</strong> centralizadas, com espaço para as legendas.
               </p>
             </div>
             <div className="flex items-center gap-3">

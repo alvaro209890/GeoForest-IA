@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CENTRO_CM, FLUXO_WORD_CM, IMAP_LAYOUT, planPhotoPages, textoFigura, type FotoMedida } from "./layout";
+import { PAGINA_CM, IMAP_LAYOUT, planPhotoPages, textoFigura, type FotoMedida } from "./layout";
 
 function foto(width: number, height: number): FotoMedida {
   return { width, height, orientation: height > width ? "portrait" : "landscape" };
@@ -20,16 +20,18 @@ describe("planPhotoPages (padrão IMAP 2026)", () => {
     expect(pages[1].blocks[1].items[0].caption).toBe("Sede");
   });
 
-  it("coloca duas fotos em pé lado a lado, no tamanho da MT-109", () => {
+  it("centraliza uma fileira de dois retratos na área útil", () => {
     const [page] = planPhotoPages([{ caption: "Vegetação", photos: [foto(300, 400), foto(300, 400)] }]);
     expect(page.blocks).toHaveLength(1);
     expect(page.blocks[0].orientation).toBe("portrait");
-    expect(page.blocks[0].items.map((item) => item.centerCm)).toEqual([CENTRO_CM.esquerda, CENTRO_CM.direita]);
+    const [a, b] = page.blocks[0].items;
+    expect((a.centerCm + b.centerCm) / 2).toBe(PAGINA_CM.w / 2);
+    expect(b.centerCm - a.centerCm - a.columnCm).toBeGreaterThan(1);
+    expect(page.blocks[0].topCm).toBeCloseTo((IMAP_LAYOUT.bottom + IMAP_LAYOUT.top - page.blocks[0].heightCm) / 2);
     for (const item of page.blocks[0].items) {
       expect(item.fit.w).toBeLessThanOrEqual(IMAP_LAYOUT.portraitW + 1e-9);
-      expect(item.fit.h).toBeLessThanOrEqual(IMAP_LAYOUT.portraitH + 1e-9);
-      expect(item.fit.w).toBeCloseTo(6, 5);
-      expect(item.fit.h).toBeCloseTo(8, 5);
+      expect(item.fit.w).toBeCloseTo(7.7, 5);
+      expect(item.fit.h).toBeGreaterThan(10);
     }
   });
 
@@ -37,18 +39,17 @@ describe("planPhotoPages (padrão IMAP 2026)", () => {
     const pages = planPhotoPages([
       {
         caption: "Caracterização da área após visita campo.",
-        photos: [foto(300, 500), foto(300, 500), foto(300, 500), foto(300, 500)],
+        photos: [foto(300, 400), foto(300, 400), foto(300, 400), foto(300, 400)],
       },
     ]);
     expect(pages).toHaveLength(1);
     expect(pages[0].blocks).toHaveLength(2);
     expect(pages[0].blocks[0].items.map((item) => item.number)).toEqual([1, 2]);
     expect(pages[0].blocks[1].items.map((item) => item.number)).toEqual([3, 4]);
-    expect(pages[0].blocks[0].items.map((item) => item.centerCm)).toEqual([7, 15]);
+    expect(pages[0].blocks[0].items.map((item) => item.centerCm)).toEqual([6.5, 14.5]);
     const ultima = pages[0].blocks[1];
-    expect(ultima.items[0].fit.w).toBeCloseTo(6, 5);
-    expect(ultima.items[0].fit.h).toBeCloseTo(10, 5);
-    expect(ultima.topCm + ultima.items[0].fit.h).toBeLessThan(FLUXO_WORD_CM.limiteRodape - 0.7);
+    expect(ultima.items[0].fit.h).toBeGreaterThan(9.5);
+    expect(ultima.topCm + ultima.heightCm).toBeLessThanOrEqual(IMAP_LAYOUT.bottom + 1e-9);
   });
 
   it("a quinta foto em pé abre outra página e três em pé fecham a fileira de baixo", () => {
@@ -56,12 +57,14 @@ describe("planPhotoPages (padrão IMAP 2026)", () => {
     expect(cinco).toHaveLength(2);
     expect(cinco[0].blocks.flatMap((block) => block.items.map((item) => item.number))).toEqual([1, 2, 3, 4]);
     expect(cinco[1].blocks.flatMap((block) => block.items.map((item) => item.number))).toEqual([5]);
-    expect(cinco[1].blocks[0].items[0].centerCm).toBe(CENTRO_CM.conteudo);
+    expect(cinco[1].blocks[0].items[0].centerCm).toBe(PAGINA_CM.w / 2);
+
+    expect(cinco[1].blocks[0].items[0].fit.h).toBeGreaterThan(16);
 
     const tres = planPhotoPages([{ caption: "Árvore", photos: [foto(300, 500), foto(300, 500), foto(300, 500)] }]);
     expect(tres).toHaveLength(1);
     expect(tres[0].blocks.map((block) => block.items.length)).toEqual([2, 1]);
-    expect(tres[0].blocks[1].items[0].centerCm).toBe(CENTRO_CM.conteudo);
+    expect(tres[0].blocks[1].items[0].centerCm).toBe(PAGINA_CM.w / 2);
   });
 
   it("empilha par misto e paisagem cabe em 15 × 8,45 cm", () => {
@@ -81,6 +84,18 @@ describe("planPhotoPages (padrão IMAP 2026)", () => {
     expect(pages).toHaveLength(2);
     expect(pages[1].blocks[0].items).toHaveLength(1);
     expect(pages[1].blocks[0].items[0].number).toBe(3);
+  });
+
+  it("abre mais páginas para legendas longas sem perder fotos nem mudar a ordem", () => {
+    const caption = "Vista parcial da área vistoriada. ".repeat(37).slice(0, 1200);
+    const pages = planPhotoPages([{ caption, photos: Array.from({ length: 4 }, () => foto(300, 400)) }]);
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages.flatMap(({ blocks }) => blocks.flatMap(({ items }) => items.map(({ number }) => number)))).toEqual([1, 2, 3, 4]);
+    for (const page of pages) {
+      const ultima = page.blocks.at(-1)!;
+      expect(ultima.topCm + ultima.heightCm).toBeLessThanOrEqual(IMAP_LAYOUT.bottom + 1e-9);
+      expect(ultima.items[0].caption).toBe(caption.trim());
+    }
   });
 
   it("monta o texto da figura", () => {

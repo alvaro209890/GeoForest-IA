@@ -5,6 +5,7 @@
  */
 import { useMemo } from 'react';
 import {
+  IMAP_LAYOUT,
   PAGINA_CM,
   planPhotoPages,
   textoFigura,
@@ -14,6 +15,7 @@ import type { FotoLocal, ParcialLocal } from './fotos';
 const LARGURA_PX = 196;
 const PX_POR_CM = LARGURA_PX / PAGINA_CM.w;
 const ALTURA_PX = PAGINA_CM.h * PX_POR_CM;
+const PX_POR_PT = 2.54 / 72 * PX_POR_CM;
 
 function Folha({ fundo, numero, children }: { fundo: string; numero: number; children?: React.ReactNode }) {
   return (
@@ -74,15 +76,16 @@ export default function PreviaWord({
             bloco.items.map((item) => {
               const larguraPx = item.fit.w * PX_POR_CM;
               const colunaPx = item.columnCm * PX_POR_CM;
+              const figuraPx = Math.max(larguraPx, colunaPx);
               const legenda = textoFigura(item.number, item.caption);
               return (
                 <div
                   key={item.photo.id}
                   className="absolute flex flex-col items-center"
                   style={{
-                    left: (item.centerCm * PX_POR_CM) - colunaPx / 2,
+                    left: item.centerCm * PX_POR_CM - figuraPx / 2,
                     top: bloco.topCm * PX_POR_CM,
-                    width: colunaPx,
+                    width: figuraPx,
                   }}
                   title={legenda}
                 >
@@ -90,11 +93,16 @@ export default function PreviaWord({
                     src={item.photo.previewUrl}
                     alt={item.photo.nome}
                     style={{ width: larguraPx, height: item.fit.h * PX_POR_CM }}
-                    className="object-cover"
+                    className="object-contain"
                   />
                   <p
-                    className="mt-[1px] line-clamp-3 text-center leading-[1.2] text-neutral-800"
-                    style={{ fontSize: 4.2 }}
+                    className="text-center text-neutral-800"
+                    style={{
+                      width: colunaPx,
+                      marginTop: IMAP_LAYOUT.captionGap * PX_POR_CM,
+                      font: `${IMAP_LAYOUT.captionFontPt * PX_POR_PT}px/${IMAP_LAYOUT.captionLinePt * PX_POR_PT}px Arial, sans-serif`,
+                      overflowWrap: 'anywhere',
+                    }}
                   >
                     {legenda}
                   </p>

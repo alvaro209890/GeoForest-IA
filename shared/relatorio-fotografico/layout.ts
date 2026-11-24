@@ -1,21 +1,4 @@
-/**
- * Paginação do relatório fotográfico no padrão IMAP 2026. O mesmo cálculo desenha
- * a prévia do painel e o Word, então o que a pessoa vê na tela é o que sai no arquivo.
- *
- * Medida das fotos em pé tirada do relatório da MT-109 (Ponte): quatro retratos por
- * página, cada um em 6 × 10 cm, duas fileiras de duas. Paisagem continua duas por
- * página, uma embaixo da outra, até 15 × 8,45 cm.
- *
- * Regras:
- * - fotos em pé seguidas entram de quatro em quatro (2×2); sobra de 1, 2 ou 3 fica
- *   na última página dessa sequência, no mesmo tamanho;
- * - fotos deitadas seguidas entram de duas em duas, uma embaixo da outra;
- * - uma foto em pé isolada antes de uma deitada divide a página com ela, empilhada;
- * - a numeração das figuras corre direto, de uma parcial para a outra;
- * - cada figura leva a legenda da sua parcial: "Figura N. <legenda>".
- *
- * Sem dependência de Node nem de DOM: roda no navegador e no backend.
- */
+/** Paginação e medidas comuns à prévia e ao Word do relatório fotográfico. */
 
 export type Orientacao = "portrait" | "landscape";
 
@@ -25,42 +8,27 @@ export type FotoMedida = {
   orientation: Orientacao;
 };
 
-/** Medidas da página A4 e da área das fotos, em centímetros. */
 export const PAGINA_CM = { w: 21, h: 29.7 } as const;
 export const IMAP_LAYOUT = {
-  top: 4.55,
-  bottom: 25.9,
+  top: 3.65,
+  bottom: 26.25,
+  tableW: 16,
+  gap: 0.62,
   landW: 15,
   landH: 8.45,
-  /** Retrato do relatório da MT-109: 170 × 283 pt ≈ 6 × 10 cm. */
-  portraitW: 6,
-  portraitH: 10,
-  gap: 1.15,
+  portraitW: 7.7,
+  portraitH: 11,
+  singlePortraitW: 13.5,
+  singlePortraitH: 19,
+  pairCaptionW: 6.85,
+  singleCaptionW: 14.8,
+  captionGap: 0.23,
+  captionLinePt: 12,
+  captionFontPt: 10,
 } as const;
 
-/**
- * Fluxo real do Word. A margem superior do modelo é 3 cm; a prévia das fotos em
- * pé soma a mesma folga inicial e o mesmo vão entre fileiras, para a miniatura
- * coincidir com o arquivo.
- */
-export const FLUXO_WORD_CM = {
-  margemTopo: 3,
-  folgaInicial: 0.38,
-  entreBlocos: 0.98,
-  /**
-   * Onde a primeira foto em pé começa, medido no Word com este modelo:
-   * a seção já abre com um parágrafo vazio (~3,60 cm a partir do topo da folha).
-   * As duas fileiras vão na mesma tabela, sem espaço extra entre elas.
-   */
-  topoRetrato: 3.6,
-  /** Vão em branco entre a legenda e a foto de baixo. Sem isso a legenda monta na fileira seguinte. */
-  folgaEntreFileiras: 0.75,
-  /** Linha verde do rodapé no papel timbrado da MT-109. A legenda fica acima dela. */
-  limiteRodape: 26.6,
-} as const;
-
-/** Centro horizontal (cm) de cada coluna na página. Retrato: 7 e 15 cm, como na MT-109. */
-export const CENTRO_CM = { esquerda: 7, direita: 15, meio: 10.5, conteudo: 11 } as const;
+/** Início do fluxo no Word a partir do modelo e dos parágrafos de quebra. */
+export const FLUXO_WORD_CM = { topoPrimeiraPagina: 3.54, topoAposQuebra: 3.12, margemEsquerda: 3 } as const;
 
 export type Medida = { w: number; h: number };
 
@@ -68,11 +36,8 @@ export type ItemFigura<T extends FotoMedida> = {
   photo: T;
   number: number;
   caption: string;
-  /** Tamanho da foto na página, em cm. */
   fit: Medida;
-  /** Centro horizontal da foto na página, em cm. */
   centerCm: number;
-  /** Largura máxima da coluna (cm), usada para quebrar a legenda. */
   columnCm: number;
 };
 
@@ -80,27 +45,20 @@ export type BlocoFigura<T extends FotoMedida> = {
   orientation: Orientacao;
   items: ItemFigura<T>[];
   topCm: number;
-  imgMaxH: number;
+  heightCm: number;
 };
 
-export type PaginaFiguras<T extends FotoMedida> = {
-  blocks: BlocoFigura<T>[];
-};
-
-export type ParcialComFotos<T extends FotoMedida> = {
-  caption: string;
-  photos: T[];
-};
+export type PaginaFiguras<T extends FotoMedida> = { blocks: BlocoFigura<T>[] };
+export type ParcialComFotos<T extends FotoMedida> = { caption: string; photos: T[] };
 
 export function orientacaoDe(width: number, height: number): Orientacao {
   return height > width ? "portrait" : "landscape";
 }
 
 export function textoFigura(numero: number, legenda: string): string {
-  return `Figura ${numero}. ${String(legenda || "").trim()}`;
+  return `Figura ${numero}. ${String(legenda || "").trim().replace(/\s+/g, " ")}`;
 }
 
-/** Cabe a foto em maxW × maxH (cm) sem distorcer. */
 export function photoFit(photo: { width: number; height: number }, maxW: number, maxH: number): Medida {
   const w = Number(photo.width) || 1200;
   const h = Number(photo.height) || 800;
@@ -108,122 +66,105 @@ export function photoFit(photo: { width: number; height: number }, maxW: number,
   return { w: Math.min(maxW, maxH * ratio), h: Math.min(maxH, maxW / ratio) };
 }
 
-/** Linhas estimadas da legenda (Arial 10 pt): ~36 caracteres na coluna de retrato (6 cm), ~87 na largura toda. */
-export function linhasDaLegenda(texto: string, portrait: boolean): number {
-  const porLinha = portrait ? 36 : 87;
-  return String(texto || "")
-    .split("\n")
-    .reduce((soma, linha) => soma + Math.max(1, Math.ceil(linha.length / porLinha)), 0);
-}
-
-function alturaDaLegenda(texto: string, portrait: boolean): number {
-  return Math.max(0.48, 0.41 * linhasDaLegenda(texto, portrait));
+/** Reserva espaço para a quebra natural do Arial 10 pt, com folga para o Word. */
+function alturaDaLegenda(texto: string, larguraCm: number): number {
+  const limite = larguraCm * 0.94 / (IMAP_LAYOUT.captionFontPt * 2.54 / 72);
+  let linhas = 1;
+  let ocupacao = 0;
+  for (const palavra of texto.split(" ")) {
+    let largura = 0;
+    for (const letra of palavra.normalize("NFD").replace(/\p{M}/gu, "")) {
+      if (/[ilI.,:;'!|]/.test(letra)) largura += 0.29;
+      else if (/[MW@%&mw]/.test(letra)) largura += 0.94;
+      else if (/[A-Z]/.test(letra)) largura += 0.74;
+      else largura += 0.57;
+    }
+    if (ocupacao && ocupacao + largura + 0.3 > limite) {
+      linhas += 1;
+      ocupacao = 0;
+    }
+    if (largura > limite) {
+      const extras = Math.ceil(largura / limite) - 1;
+      linhas += extras;
+      largura -= extras * limite;
+    }
+    ocupacao += largura + (ocupacao ? 0.3 : 0);
+  }
+  return IMAP_LAYOUT.captionGap + linhas * (IMAP_LAYOUT.captionLinePt * 2.54 / 72) + 0.08;
 }
 
 type Entrada<T extends FotoMedida> = { photo: T; caption: string; number: number };
 
-function centroDaColuna(naFileira: number, indice: number): number {
-  if (naFileira === 1) return CENTRO_CM.conteudo;
-  return indice === 0 ? CENTRO_CM.esquerda : CENTRO_CM.direita;
-}
-
-function retratoSeguidos<T extends FotoMedida>(fotos: Array<{ photo: T }>, inicio: number): number {
-  let n = 0;
-  while (inicio + n < fotos.length && fotos[inicio + n].photo.orientation === "portrait") n += 1;
-  return n;
-}
-
-/** Grade 2×2. Cada fileira é um bloco na prévia; no Word as fileiras vão na mesma tabela. */
-function paginaRetrato<T extends FotoMedida>(entries: Entrada<T>[]): PaginaFiguras<T> {
+function planejarPagina<T extends FotoMedida>(entries: Entrada<T>[], retratos: boolean): PaginaFiguras<T> | null {
   const rows: Entrada<T>[][] = [];
-  for (let i = 0; i < entries.length; i += 2) rows.push(entries.slice(i, i + 2));
+  const porLinha = retratos ? 2 : 1;
+  for (let i = 0; i < entries.length; i += porLinha) rows.push(entries.slice(i, i + porLinha));
 
-  const legendas = rows.map((row) =>
-    Math.max(...row.map((entry) => alturaDaLegenda(textoFigura(entry.number, entry.caption), true))),
-  );
-  const topo = FLUXO_WORD_CM.topoRetrato;
-  const folgas = FLUXO_WORD_CM.folgaEntreFileiras * Math.max(0, rows.length - 1);
-  const disponivel = FLUXO_WORD_CM.limiteRodape - topo - folgas - legendas.reduce((a, b) => a + b, 0);
-  const imgMaxH = Math.min(IMAP_LAYOUT.portraitH, Math.max(2.2, disponivel / rows.length));
-
-  let y = topo;
-  const blocks: BlocoFigura<T>[] = rows.map((row, rowIndex) => {
-    const items = row.map((entry, k) => ({
-      photo: entry.photo,
-      number: entry.number,
-      caption: entry.caption,
-      fit: photoFit(entry.photo, IMAP_LAYOUT.portraitW, imgMaxH),
-      centerCm: centroDaColuna(row.length, k),
-      columnCm: IMAP_LAYOUT.portraitW,
-    }));
-    const block: BlocoFigura<T> = { orientation: "portrait", topCm: y, imgMaxH, items };
-    const folga = rowIndex < rows.length - 1 ? FLUXO_WORD_CM.folgaEntreFileiras : 0;
-    y += Math.max(...items.map((item) => item.fit.h)) + legendas[rowIndex] + folga;
-    return block;
+  const legendas = rows.map((row) => {
+    const largura = row.length === 2 ? IMAP_LAYOUT.pairCaptionW : IMAP_LAYOUT.singleCaptionW;
+    return Math.max(...row.map((entry) => alturaDaLegenda(textoFigura(entry.number, entry.caption), largura)));
   });
-  return { blocks };
-}
+  const top = retratos ? IMAP_LAYOUT.top : 4.05;
+  const margemEntreFileiras = IMAP_LAYOUT.gap * (rows.length - 1);
+  const disponivel = IMAP_LAYOUT.bottom - top - margemEntreFileiras - legendas.reduce((a, b) => a + b, 0);
+  const maxAltura = disponivel / rows.length;
+  if (entries.length > 1 && maxAltura < 5) return null;
 
-/** Paisagem, ou uma foto em pé isolada junto de uma deitada: uma embaixo da outra. */
-function paginaEmpilhada<T extends FotoMedida>(entries: Entrada<T>[]): PaginaFiguras<T> {
-  const legendas = entries.map((entry) =>
-    alturaDaLegenda(textoFigura(entry.number, entry.caption), entry.photo.orientation === "portrait"),
-  );
-  const util =
-    IMAP_LAYOUT.bottom - IMAP_LAYOUT.top - IMAP_LAYOUT.gap - legendas.reduce((a, b) => a + b, 0) - 0.4;
-  const imgMaxH = Math.max(2.2, Math.min(IMAP_LAYOUT.landH, util / entries.length));
-  let y: number = IMAP_LAYOUT.top;
-  const blocks: BlocoFigura<T>[] = entries.map((entry, j) => {
-    const portrait = entry.photo.orientation === "portrait";
-    const maxW = portrait ? IMAP_LAYOUT.portraitW : IMAP_LAYOUT.landW;
-    const fit = photoFit(entry.photo, maxW, imgMaxH);
-    const block: BlocoFigura<T> = {
-      orientation: portrait ? "portrait" : "landscape",
-      topCm: y,
-      imgMaxH,
-      items: [
-        {
-          photo: entry.photo,
-          number: entry.number,
-          caption: entry.caption,
-          fit,
-          centerCm: CENTRO_CM.meio,
-          columnCm: maxW,
-        },
-      ],
-    };
-    y += fit.h + legendas[j] + IMAP_LAYOUT.gap;
-    return block;
+  const centralizado = (PAGINA_CM.w - IMAP_LAYOUT.tableW) / 2;
+  const blocks: BlocoFigura<T>[] = rows.map((row, j) => {
+    const dupla = row.length === 2;
+    const retratoSolo = retratos && entries.length === 1;
+    const items = row.map((entry, k) => {
+      const portrait = entry.photo.orientation === "portrait";
+      const maxW = retratoSolo ? IMAP_LAYOUT.singlePortraitW : portrait ? IMAP_LAYOUT.portraitW : IMAP_LAYOUT.landW;
+      const maxH = retratos
+        ? (rows.length === 1 ? IMAP_LAYOUT.singlePortraitH : IMAP_LAYOUT.portraitH)
+        : IMAP_LAYOUT.landH;
+      return {
+        ...entry,
+        fit: photoFit(entry.photo, maxW, Math.min(maxH, maxAltura)),
+        centerCm: dupla ? centralizado + IMAP_LAYOUT.tableW * (2 * k + 1) / 4 : PAGINA_CM.w / 2,
+        columnCm: dupla ? IMAP_LAYOUT.pairCaptionW : IMAP_LAYOUT.singleCaptionW,
+      };
+    });
+    const heightCm = Math.max(...items.map((item) => item.fit.h)) + legendas[j];
+    return { orientation: row[0].photo.orientation, items, topCm: 0, heightCm };
   });
+
+  const altura = blocks.reduce((soma, block) => soma + block.heightCm, margemEntreFileiras);
+  let y = retratos ? top + (IMAP_LAYOUT.bottom - top - altura) / 2 : top;
+  for (const block of blocks) {
+    block.topCm = y;
+    y += block.heightCm + IMAP_LAYOUT.gap;
+  }
   return { blocks };
 }
 
 export function planPhotoPages<T extends FotoMedida>(parciais: ParcialComFotos<T>[]): PaginaFiguras<T>[] {
   const fotos = parciais.flatMap((parcial) =>
-    (parcial.photos || []).map((photo) => ({ photo, caption: String(parcial.caption || "").trim() })),
-  );
+    (parcial.photos || []).map((photo) => ({ photo, caption: String(parcial.caption || "").trim().slice(0, 1200) })),
+  ).map((entry, index) => ({ ...entry, number: index + 1 }));
   const pages: PaginaFiguras<T>[] = [];
-  let i = 0;
-  let numero = 1;
 
-  while (i < fotos.length) {
-    const emPe = retratoSeguidos(fotos, i);
-    const gradeEmPe = emPe >= 2 || (emPe === 1 && i + emPe >= fotos.length);
-    let quantidade = Math.min(2, fotos.length - i);
-    if (gradeEmPe) quantidade = Math.min(4, emPe);
-    else if (fotos[i].photo.orientation === "landscape") quantidade = Math.min(2, contarDeitadas(fotos, i));
+  for (let i = 0; i < fotos.length;) {
+    const orientation = fotos[i].photo.orientation;
+    let seguidas = 1;
+    while (seguidas < 4 && fotos[i + seguidas]?.photo.orientation === orientation) seguidas += 1;
 
-    const entries = fotos.slice(i, i + quantidade).map((entry, j) => ({ ...entry, number: numero + j }));
-    pages.push(gradeEmPe ? paginaRetrato(entries) : paginaEmpilhada(entries));
-    numero += quantidade;
+    let retratos = orientation === "portrait" && (seguidas > 1 || i + 1 === fotos.length);
+    let quantidade = retratos ? seguidas : orientation === "landscape" ? Math.min(2, seguidas) : 2;
+    let page = planejarPagina(fotos.slice(i, i + quantidade), retratos);
+    if (!page && quantidade > 2) {
+      quantidade = 2;
+      page = planejarPagina(fotos.slice(i, i + quantidade), retratos);
+    }
+    if (!page) {
+      quantidade = 1;
+      retratos = orientation === "portrait";
+      page = planejarPagina(fotos.slice(i, i + 1), retratos)!;
+    }
+    pages.push(page);
     i += quantidade;
   }
-
   return pages;
-}
-
-function contarDeitadas<T extends FotoMedida>(fotos: Array<{ photo: T }>, inicio: number): number {
-  let n = 0;
-  while (inicio + n < fotos.length && fotos[inicio + n].photo.orientation === "landscape") n += 1;
-  return n;
 }
