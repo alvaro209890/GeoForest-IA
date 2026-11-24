@@ -152,8 +152,9 @@ A pessoa escreve o objetivo do relatório. Você VÊ cada fotografia e decide:
 Parcial = grupo de fotos do mesmo assunto (ex.: acesso, sede, área de vegetação nativa, curso d'água, cerca, área aberta). Todas as fotos de uma parcial recebem a mesma legenda, que o Word numera como "Figura N. <legenda>".
 
 Como o Word é montado (use isso para ordenar):
-- duas fotos por página;
-- duas fotos em pé (retrato) seguidas ficam lado a lado; qualquer outro par fica uma embaixo da outra.
+- fotos em pé (retrato) seguidas: quatro por página, duas em cima e duas embaixo;
+- fotos deitadas (paisagem) seguidas: duas por página, uma embaixo da outra;
+- deixe as fotos em pé juntas, para a página encher.
 
 Responda somente um JSON válido, sem markdown, neste formato:
 {

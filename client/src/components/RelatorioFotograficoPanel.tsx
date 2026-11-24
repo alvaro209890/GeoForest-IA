@@ -116,9 +116,11 @@ function EsquemaPagina({ tipo }: { tipo: 'retrato' | 'paisagem' }) {
   return (
     <div className="flex h-14 w-10 shrink-0 flex-col items-center justify-center gap-1 rounded-[3px] bg-white/90 p-1">
       {tipo === 'retrato' ? (
-        <div className="flex w-full gap-0.5">
-          <div className="h-6 flex-1 rounded-[1px] bg-emerald-600/70" />
-          <div className="h-6 flex-1 rounded-[1px] bg-emerald-600/70" />
+        <div className="grid h-12 w-full grid-cols-2 grid-rows-2 gap-0.5">
+          <div className="rounded-[1px] bg-emerald-600/70" />
+          <div className="rounded-[1px] bg-emerald-600/70" />
+          <div className="rounded-[1px] bg-emerald-600/70" />
+          <div className="rounded-[1px] bg-emerald-600/70" />
         </div>
       ) : (
         <>
@@ -163,7 +165,7 @@ export default function RelatorioFotograficoPanel() {
   const porId = useMemo(() => new Map(fotos.map((foto) => [foto.id, foto])), [fotos]);
   const objetivoOk = objetivo.trim().length >= OBJETIVO_MINIMO;
   const totalNoRelatorio = parciais.reduce((soma, parcial) => soma + parcial.fotoIds.length, 0);
-  const paginas = contarPaginas(parciais);
+  const paginas = contarPaginas(parciais, porId);
   const semLegenda = parciais.findIndex((parcial) => !parcial.legenda.trim());
 
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -637,13 +639,13 @@ export default function RelatorioFotograficoPanel() {
             <div className="flex items-center gap-3">
               <EsquemaPagina tipo="retrato" />
               <p className="text-[11px] leading-relaxed text-slate-400">
-                <strong className="text-slate-200">2 fotos por página.</strong> Duas fotos em pé seguidas ficam lado a lado.
+                <strong className="text-slate-200">4 fotos em pé por página,</strong> em duas fileiras de duas.
               </p>
             </div>
             <div className="flex items-center gap-3">
               <EsquemaPagina tipo="paisagem" />
               <p className="text-[11px] leading-relaxed text-slate-400">
-                Foto deitada ocupa a largura da página, uma embaixo da outra.
+                <strong className="text-slate-200">2 fotos deitadas por página,</strong> uma embaixo da outra.
               </p>
             </div>
           </div>

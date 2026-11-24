@@ -100,3 +100,16 @@ Três fotos de teste, objetivo de porteira, sede e vegetação. A seleção resp
 - A IA levou 348 s numa execução e 122 s na outra.
 - Saíram 16 fotos em 4 ou 5 parciais, e 8 ficaram de fora, com motivo: tremida, contraluz, repetida, girada, antena.
 - O Word teve 9 páginas, com capa e 8 páginas de 2 fotos.
+
+## Versão 3 — quatro fotos em pé (24/11/2026)
+
+> Autor: Cursor | 24/11/2026. Medido no `Relatório fotografico_MT_109 (1).pdf` (PEF da ponte na MT-109).
+
+Fotos em pé saíam duas por página, lado a lado, com até 7,1 × 9,85 cm. No relatório da ponte são **quatro por página**: duas fileiras de duas, cada foto 170 × 283 pt (6 × 10 cm), centros a 7 cm e 15 cm da borda esquerda. A legenda fica acima da linha verde do rodapé (26,6 cm).
+
+- Sequência de fotos em pé: de 4 em 4. Sobra de 1, 2 ou 3 na última página, no mesmo tamanho. A foto sozinha na fileira fica no centro da área útil (11 cm).
+- Fotos deitadas seguidas: continuam duas por página, uma embaixo da outra, até 15 × 8,45 cm.
+- Uma foto em pé isolada antes de uma deitada divide a página com ela.
+- A prévia, o contador de páginas e o Word usam o mesmo `planPhotoPages`. O desenho do passo 2 mostra a grade de quatro.
+- O prompt da IA pede para deixar as fotos em pé juntas, para a página encher.
+- As duas fileiras saem na mesma tabela do Word. Em tabelas separadas, a fileira de baixo caía na página seguinte e o relatório voltava a ter duas fotos.

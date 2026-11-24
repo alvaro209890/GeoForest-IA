@@ -29,9 +29,16 @@ function Folha({ fundo, numero, children }: { fundo: string; numero: number; chi
   );
 }
 
-export function contarPaginas(parciais: ParcialLocal[]): number {
-  const fotos = parciais.reduce((soma, parcial) => soma + parcial.fotoIds.length, 0);
-  return fotos ? 1 + Math.ceil(fotos / 2) : 0;
+export function contarPaginas(parciais: ParcialLocal[], porId: Map<string, FotoLocal>): number {
+  const paginas = planPhotoPages(
+    parciais.map((parcial) => ({
+      caption: parcial.legenda,
+      photos: parcial.fotoIds
+        .map((id) => porId.get(id))
+        .filter((foto): foto is FotoLocal => Boolean(foto)),
+    })),
+  );
+  return paginas.length ? 1 + paginas.length : 0;
 }
 
 export default function PreviaWord({

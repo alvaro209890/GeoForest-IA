@@ -3,16 +3,17 @@
  * O .docx de capa/cabeçalho/rodapé veio do Painel_Gerencial_IMAP. As fotos
  * entram na segunda seção, antes do sectPr final — o mesmo ponto do painel.
  *
- * Medidas, legenda e paginação seguem a "Padronização IMAP 2026" do painel v5
- * (`shared/relatorio-fotografico/layout.ts`): duas fotos por página, paisagem
- * até 15 × 8,45 cm, retrato até 7,1 × 9,85 cm, legenda Arial 10 pt centralizada,
- * espaçamento simples e 0 pt antes/depois.
+ * Medidas, legenda e paginação vêm de `shared/relatorio-fotografico/layout.ts`:
+ * quatro fotos em pé por página (6 × 10 cm, duas fileiras), duas deitadas por
+ * página (até 15 × 8,45 cm), legenda Arial 10 pt centralizada, espaçamento
+ * simples e 0 pt antes/depois.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
 import {
+  FLUXO_WORD_CM,
   planPhotoPages,
   textoFigura,
   type BlocoFigura,
@@ -89,30 +90,44 @@ function captionMarkup(text: string): string {
         `${index ? "<w:r><w:br/></w:r>" : ""}<w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="20"/><w:color w:val="242424"/></w:rPr><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r>`,
     )
     .join("");
-  return `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/><w:keepTogether/></w:pPr>${runs}</w:p>`;
+  return `<w:p><w:pPr><w:jc w:val="center"/><w:ind w:left="0" w:firstLine="0"/><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/><w:keepTogether/></w:pPr>${runs}</w:p>`;
 }
 
-function imgTable(
+function rowMarkup(
   block: BlocoFigura<FotoPronta>,
   relIds: Map<FotoPronta, string>,
   docIds: Map<FotoPronta, number>,
+  folgaAbaixo: boolean,
 ): string {
   const pair = block.items.length === 2;
   const widths = pair ? [4535, 4535] : [9070];
+  const folga = folgaAbaixo ? spacerMarkup(FLUXO_WORD_CM.folgaEntreFileiras) : "";
   const cells = block.items.map((item, index) => {
     const relation = relIds.get(item.photo);
     const id = docIds.get(item.photo);
     if (!relation || !id) throw new RelatorioFotoError("Fotografia sem vínculo no Word.", 500, "DOCX_REL");
     const image = photoMarkup(relation, id, item.fit.w / CM_POR_POLEGADA, item.fit.h / CM_POR_POLEGADA);
-    const imageP = `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/><w:keepNext/><w:keepTogether/></w:pPr><w:r><w:rPr><w:noProof/></w:rPr>${image}</w:r></w:p>`;
-    return `<w:tc><w:tcPr><w:tcW w:w="${widths[index]}" w:type="dxa"/>${pair ? "" : '<w:gridSpan w:val="2"/>'}<w:vAlign w:val="top"/></w:tcPr>${imageP}${captionMarkup(textoFigura(item.number, item.caption))}</w:tc>`;
+    const linha = Math.max(240, Math.round((item.fit.h / CM_POR_POLEGADA) * 1440));
+    const imageP = `<w:p><w:pPr><w:jc w:val="center"/><w:ind w:left="0" w:firstLine="0"/><w:spacing w:before="0" w:after="0" w:line="${linha}" w:lineRule="atLeast"/><w:keepNext/><w:keepTogether/></w:pPr><w:r><w:rPr><w:noProof/></w:rPr>${image}</w:r></w:p>`;
+    return `<w:tc><w:tcPr><w:tcW w:w="${widths[index]}" w:type="dxa"/>${pair ? "" : '<w:gridSpan w:val="2"/>'}<w:vAlign w:val="top"/></w:tcPr>${imageP}${captionMarkup(textoFigura(item.number, item.caption))}${folga}</w:tc>`;
   });
+  return `<w:tr><w:trPr><w:cantSplit/></w:trPr>${cells.join("")}</w:tr>`;
+}
+
+function imgTable(
+  blocks: BlocoFigura<FotoPronta>[],
+  relIds: Map<FotoPronta, string>,
+  docIds: Map<FotoPronta, number>,
+): string {
   const grid = '<w:tblGrid><w:gridCol w:w="4535"/><w:gridCol w:w="4535"/></w:tblGrid>';
   const borders =
     '<w:tblBorders><w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/><w:insideH w:val="nil"/><w:insideV w:val="nil"/></w:tblBorders>';
   const margins =
     '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar>';
-  return `<w:tbl><w:tblPr><w:tblW w:w="9070" w:type="dxa"/><w:tblInd w:w="0" w:type="dxa"/><w:jc w:val="center"/><w:tblLayout w:type="fixed"/>${borders}${margins}</w:tblPr>${grid}<w:tr><w:trPr><w:cantSplit/></w:trPr>${cells.join("")}</w:tr></w:tbl>`;
+  const rows = blocks
+    .map((block, index) => rowMarkup(block, relIds, docIds, index < blocks.length - 1))
+    .join("");
+  return `<w:tbl><w:tblPr><w:tblW w:w="9070" w:type="dxa"/><w:tblInd w:w="0" w:type="dxa"/><w:jc w:val="center"/><w:tblLayout w:type="fixed"/>${borders}${margins}</w:tblPr>${grid}${rows}</w:tbl>`;
 }
 
 function pagebreakMarkup(): string {
@@ -156,10 +171,15 @@ export async function buildRelatorioFotograficoDocx(partials: Array<{ caption: s
   const elements: string[] = [];
   pages.forEach((page, pageIndex) => {
     if (pageIndex > 0) elements.push(pagebreakMarkup());
-    elements.push(spacerMarkup(0.38));
+    const gradeEmPe = page.blocks.every((block) => block.orientation === "portrait");
+    if (gradeEmPe) {
+      elements.push(imgTable(page.blocks, relIds, docIds));
+      return;
+    }
+    elements.push(spacerMarkup(FLUXO_WORD_CM.folgaInicial));
     page.blocks.forEach((block, blockIndex) => {
-      if (blockIndex > 0) elements.push(spacerMarkup(0.98));
-      elements.push(imgTable(block, relIds, docIds));
+      if (blockIndex > 0) elements.push(spacerMarkup(FLUXO_WORD_CM.entreBlocos));
+      elements.push(imgTable([block], relIds, docIds));
     });
   });
 
